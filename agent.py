@@ -1,8 +1,7 @@
 """agent 组装入口。create_deep_agent 装配主智能体 + 飞书工具 + 子智能体 + skill。"""
+from deepagents import create_deep_agent
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
-
-from deepagents import create_deep_agent
 
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents import baokuan_analyst

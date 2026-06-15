@@ -1,6 +1,3 @@
-import os
-
-
 def test_agent_importable_and_compiled(monkeypatch):
     # 组装阶段会初始化 Anthropic 模型,需要 key 存在(不真实调用)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
