@@ -3,5 +3,8 @@
   "graphs": {
     "xhs_agent": "./agent.py:agent"
   },
+  "auth": {
+    "path": "./auth.py:auth"
+  },
   "env": ".env"
 }
