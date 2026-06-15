@@ -778,12 +778,22 @@ git commit -m "fix: 端到端联调调整"
 
 ## 验证记录(Task 9 完成后填写)
 
-- [ ] 飞书工具能读到真实表数据
-- [ ] 两步式流程正常(先选题、停顿、再文案)
-- [ ] 子智能体分析落盘且被主智能体读取
-- [ ] 文案以可复制分块格式输出并存入 /drafts/
-- [ ] 文案质量评估:________(可用 / 需调 prompt / 需调数据)
-- [ ] 是否进入 1b:________
+- [x] 飞书工具能读到真实表数据(单篇采集库 tbl24vSVeLvz45ig,32 行)
+- [x] 两步式流程正常(先选题、再文案;1a 无 checkpointer,验证时合并为单轮一次走完)
+- [x] 子智能体分析落盘(/analysis/厨房好物.md)且被主智能体读取
+- [x] 文案以可复制分块格式输出并存入 /drafts/厨房好物-1.md
+- [x] 风格沉淀写入 /shared/xhs-style.md(提炼出双问题模型、个人转折开场、标题情绪词分级)
+- [x] 文案质量评估:**可用**。选题与文案均引用真实爆款数据(乌兔 4222 赞、daisy 8470 赞等),口语化、有 emoji、无 AI 腔,达到实战可用度。
+- [x] 是否进入 1b:**是**,核心价值链验证通过,文案质量达标。
+
+### 联调中发现并修复的问题(均已提交)
+1. **StateBackend 读不到磁盘 skills** → 切换 FilesystemBackend(commit 0cd204d)。
+2. **FilesystemBackend Windows 绝对路径死锁** → 启用 virtual_mode=True(commit c7b8b86)。
+3. **中转 API 对无参数工具返回畸形响应**(空 content + stop_reason=tool_use)→ 给 read_xhs_data 加 scope 参数绕开(commit 51d5453)。中转地址 `http://43.255.157.166:6688`,Anthropic 兼容,经 ANTHROPIC_BASE_URL 接入。
+
+### 1a 阶段已知限制(留给 1b)
+- 无 checkpointer,对话记忆不跨轮(同一会话第二次 stream 丢上下文)。1b 接 Postgres checkpointer 解决。
+- 单篇采集库有 49 列含仿写中间字段(噪音),当前全字段读可跑通;如需提效可加列过滤。
 
 ---
 
