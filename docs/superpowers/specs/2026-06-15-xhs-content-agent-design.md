@@ -120,11 +120,20 @@
 
 **阶段一(现在,本地)** —— 再拆两步降低风险:
 - **1a 最小闭环**:引擎 + 应用① + 飞书读取 + 单会话。
-  先证明"读飞书爆款 → 拆解 → 出文案"这条核心价值链通且文案质量可用。
+  先证明"读飞书爆款 → 拆解 → 出文案"这条核心价值链通且文案质量可用。**✅ 已完成,端到端联调通过,文案质量达标。**
 - **1b 多用户化**:加 CompositeBackend(State+Store)+ 多会话 + 模拟多用户隔离 + Postgres + 官方前端。
   先 1a 验证价值,再 1b 加多人;若 1a 发现文案质量不行,不必做 1b。
 
-**阶段二**:接真飞书登录(OAuth)+ 迁腾讯云。
+**1b 再拆三步(每步独立计划 + 独立执行,全部完成后做整体复查):**
+- **1b-1 server + 共享/隔离后端**:CLI 直连 → LangGraph server 模式;三路由 CompositeBackend
+  (`/skills/`→FilesystemBackend(root=skills/,virtual_mode);`/shared/`→StoreBackend 共享;`/drafts/`+默认→StateBackend 随会话隔离);
+  多会话 + 跨轮记忆由 `langgraph dev` 自带开发态持久化提供。
+  **Postgres 延到部署态接**(A 方案:dev server 自带持久化已能验证功能,Postgres 是生产存储选择,上云时再接)。
+  用 langgraph_sdk 脚本验证:跨轮记忆、/shared 共享、/drafts 隔离。
+- **1b-2 Web 前端**:官方 Agent Chat UI(Next.js)接上 server,浏览器多会话聊天。
+- **1b-3 多用户**:飞书 OAuth 登录(本地先用可切换模拟用户占位)+ 按用户隔离会话。
+
+**阶段二**:接真飞书登录(OAuth)+ 迁腾讯云(此时接 Postgres checkpointer/store 作为生产持久化)。
 **阶段三**:加"运营账号"应用、配图等。
 
 ## 九、已知风险与待验证项
