@@ -81,3 +81,4 @@ def test_read_bitable_records_paginates_across_pages():
     assert result["rows"][0]["标题"] == "第一页"
     assert result["rows"][1]["标题"] == "第二页"
     assert route.call_count == 2
+    assert route.calls[1].request.url.params["page_token"] == "pg2"
