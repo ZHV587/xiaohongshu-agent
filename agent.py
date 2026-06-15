@@ -17,9 +17,11 @@ MAIN_MODEL = "anthropic:claude-sonnet-4-6"
 
 model = init_chat_model(model=MAIN_MODEL, temperature=0.7)
 
-# FilesystemBackend 让 skills 从磁盘加载、文件工具读写真实文件
-# (默认 StateBackend 只读 LangGraph state 内的虚拟文件,看不到磁盘上的 skills/)
-backend = FilesystemBackend(root_dir=os.getcwd())
+# FilesystemBackend 让 skills 从磁盘加载、文件工具读写真实文件。
+# virtual_mode=True:所有路径都是锚定在项目目录下的虚拟绝对路径
+# (如 /skills/、/analysis/、/drafts/、/shared/),映射到磁盘对应子目录,
+# 避免 Windows 绝对路径被 backend 拒绝,同时提供路径沙箱。
+backend = FilesystemBackend(root_dir=os.getcwd(), virtual_mode=True)
 
 agent = create_deep_agent(
     model=model,
