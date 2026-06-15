@@ -72,11 +72,14 @@ def read_bitable_records(
 
 
 @tool
-def read_xhs_data() -> dict[str, Any]:
+def read_xhs_data(scope: str = "all") -> dict[str, Any]:
     """读取飞书多维表格里的小红书爆款/对标数据。
 
     返回整表的列名清单与所有数据行,供你分析爆款规律、提炼选题与文案套路。
     你需要自行理解每一列的含义(如标题、正文、点赞、收藏、话题标签等)。
+
+    Args:
+        scope: 读取范围,目前固定读取整张表,传 "all" 即可。
 
     Returns:
         {"columns": [列名...], "rows": [{列名: 值, ...}, ...]}
