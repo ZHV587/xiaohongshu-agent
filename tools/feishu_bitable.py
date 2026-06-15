@@ -65,12 +65,10 @@ def read_bitable_records(
             continue
         break
 
-    columns: list[str] = []
+    seen: dict[str, None] = {}
     for row in rows:
-        for key in row:
-            if key not in columns:
-                columns.append(key)
-    return {"columns": columns, "rows": rows}
+        seen.update(dict.fromkeys(row))
+    return {"columns": list(seen), "rows": rows}
 
 
 @tool

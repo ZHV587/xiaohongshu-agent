@@ -47,3 +47,37 @@ def test_read_bitable_records_returns_columns_and_rows():
     assert set(result["columns"]) == {"标题", "点赞", "正文"}
     assert len(result["rows"]) == 2
     assert result["rows"][0]["标题"] == "露营好物"
+
+
+@respx.mock
+def test_read_bitable_records_paginates_across_pages():
+    respx.post(
+        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    ).mock(return_value=httpx.Response(200, json={"code": 0, "tenant_access_token": "t-abc", "expire": 7200}))
+
+    route = respx.get(
+        "https://open.feishu.cn/open-apis/bitable/v1/apps/APP/tables/TBL/records"
+    )
+    route.side_effect = [
+        httpx.Response(200, json={
+            "code": 0,
+            "data": {
+                "has_more": True,
+                "page_token": "pg2",
+                "items": [{"fields": {"标题": "第一页"}}],
+            },
+        }),
+        httpx.Response(200, json={
+            "code": 0,
+            "data": {
+                "has_more": False,
+                "items": [{"fields": {"标题": "第二页"}}],
+            },
+        }),
+    ]
+
+    result = read_bitable_records("cli_x", "secret_x", "APP", "TBL")
+    assert len(result["rows"]) == 2
+    assert result["rows"][0]["标题"] == "第一页"
+    assert result["rows"][1]["标题"] == "第二页"
+    assert route.call_count == 2
