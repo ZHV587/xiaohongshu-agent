@@ -27,6 +27,16 @@ def build_backend() -> CompositeBackend:
         default=StateBackend(),
         routes={
             "/skills/": skills_backend,
-            "/shared/": StoreBackend(),
+            "/shared/": StoreBackend(namespace=lambda rt: ("xhs-shared",)),
         },
     )
+
+
+def build_cli_backend() -> FilesystemBackend:
+    """CLI/进程内模式用:全部走磁盘 FilesystemBackend(与 1a 一致)。
+
+    StoreBackend 需要 server 注入 store,进程内 agent.stream 没有 server,
+    故 CLI 不用 CompositeBackend,直接用磁盘后端(覆盖写友好、无需 store)。
+    """
+    return FilesystemBackend(root_dir=_PROJECT_ROOT, virtual_mode=True)
+

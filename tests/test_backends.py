@@ -41,3 +41,10 @@ def test_build_backend_routes_drafts_to_default_state():
     # 白盒测试:直接验证路由决策;_get_backend_and_key 是框架内部 API
     target, _key = backend._get_backend_and_key("/drafts/x.md")
     assert isinstance(target, StateBackend)
+
+
+def test_build_cli_backend_is_filesystem():
+    """CLI 后端应是纯 FilesystemBackend(进程内无 server store)。"""
+    from deepagents.backends.filesystem import FilesystemBackend
+    from backends import build_cli_backend
+    assert isinstance(build_cli_backend(), FilesystemBackend)
