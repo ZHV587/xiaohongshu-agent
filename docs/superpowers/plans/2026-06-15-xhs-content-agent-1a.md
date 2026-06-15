@@ -4,7 +4,7 @@
 
 **Goal:** 基于 deepagents 搭建小红书文案智能体的阶段一 1a 最小闭环:读飞书多维表格爆款数据 → 分析子智能体拆解 → 两步式产出选题菜单与文案。
 
-**Architecture:** 对齐 deepagents 官方 "agent = folder" 范式。`create_deep_agent` 组装主智能体,挂载一个"按方向产出选题+文案" Skill 与一个"爆款分析"子智能体;飞书多维表格通过一个自定义只读工具动态读取(不写死字段);1a 阶段用单会话内存运行,文件走默认 StateBackend。
+**Architecture:** 对齐 deepagents 官方 "agent = folder" 范式。`create_deep_agent` 组装主智能体,挂载一个"按方向产出选题+文案" Skill 与一个"爆款分析"子智能体;飞书多维表格通过一个自定义只读工具动态读取(不写死字段);1a 阶段用单会话 CLI 运行,文件走 FilesystemBackend(根目录为项目目录,使 skills 从磁盘加载、文件工具读写真实文件)。
 
 **Tech Stack:** Python ≥3.11、deepagents、langchain、langchain-anthropic、httpx(飞书 API)、pytest、uv。
 
@@ -13,6 +13,15 @@
 参考设计文档:`docs/superpowers/specs/2026-06-15-xhs-content-agent-design.md`
 
 ---
+
+## 执行进度(Subagent-Driven 执行,分支 feat/xhs-agent-1a)
+
+- ✅ **Task 1-8 全部完成**,各任务均过两阶段审查(spec 合规 + 代码质量),并通过一次跨文件最终审查。13 个提交,5 个单测全绿。
+- 关键修正(最终审查发现并经源码核实):默认 `StateBackend` 读不到磁盘上的 `skills/`,导致 topic-content skill 静默不加载——已切换 `FilesystemBackend(root_dir=cwd)`,一并修复 `/shared/xhs-style.md` 二次写回问题。
+- ⏳ **Task 9(端到端联调)待执行** —— 需用户提供真实凭证(飞书 app_id/secret/app_token/table_id + ANTHROPIC_API_KEY)方可运行,验证文案质量并决定是否进入 1b。
+
+---
+
 
 ## 文件结构
 
