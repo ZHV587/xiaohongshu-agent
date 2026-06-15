@@ -28,6 +28,7 @@ def test_build_backend_routes_shared_to_store():
     from deepagents.backends.store import StoreBackend
 
     backend = build_backend()
+    # 白盒测试:直接验证路由决策;_get_backend_and_key 是框架内部 API
     target, _key = backend._get_backend_and_key("/shared/xhs-style.md")
     assert isinstance(target, StoreBackend)
 
@@ -37,5 +38,6 @@ def test_build_backend_routes_drafts_to_default_state():
     from deepagents.backends.state import StateBackend
 
     backend = build_backend()
+    # 白盒测试:直接验证路由决策;_get_backend_and_key 是框架内部 API
     target, _key = backend._get_backend_and_key("/drafts/x.md")
     assert isinstance(target, StateBackend)

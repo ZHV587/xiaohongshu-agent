@@ -14,10 +14,14 @@ from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
 
+# __file__ 是 backends.py 的绝对路径,其所在目录即项目根——
+# 不随调用时的工作目录漂移,比 os.getcwd() 健壮。
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 
 def build_backend() -> CompositeBackend:
     """构造三路由 CompositeBackend。"""
-    skills_root = os.path.join(os.getcwd(), "skills")
+    skills_root = os.path.join(_PROJECT_ROOT, "skills")
     skills_backend = FilesystemBackend(root_dir=skills_root, virtual_mode=True)
     return CompositeBackend(
         default=StateBackend(),
