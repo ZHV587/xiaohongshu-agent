@@ -12,7 +12,25 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from agent import agent
+from dotenv import load_dotenv
+from langchain.chat_models import init_chat_model
+from deepagents import create_deep_agent
+
+from backends import build_cli_backend
+from prompts import MAIN_SYSTEM_PROMPT
+from subagents import baokuan_analyst
+from tools.feishu_bitable import read_xhs_data
+
+load_dotenv()
+
+agent = create_deep_agent(
+    model=init_chat_model(model="anthropic:claude-sonnet-4-6", temperature=0.7),
+    tools=[read_xhs_data],
+    system_prompt=MAIN_SYSTEM_PROMPT,
+    subagents=[baokuan_analyst],
+    skills=["./skills/"],
+    backend=build_cli_backend(),
+)
 
 console = Console()
 

@@ -452,12 +452,15 @@ git commit -m "fix: 1b-1 联调调整"
 
 ## 验证记录(Task 6 完成后填写)
 
-- [ ] server 起得来,graph xhs_agent 加载成功
-- [ ] server 模式下中转模型可调用
-- [ ] 跨轮记忆:✓/✗ ________
-- [ ] /shared 跨会话共享:✓/✗ ________
-- [ ] /drafts 按会话隔离:✓/✗ ________
-- [ ] 1b-1 是否完成:________
+- [x] server 起得来,graph xhs_agent 加载成功(langgraph_runtime_inmem,http://127.0.0.1:2024)
+- [x] server 模式下中转模型可调用(三项验证均成功调用模型)
+- [x] 跨轮记忆:✓ 通过(第二轮答出暗号"菠萝啤")—— 修复 1a 无记忆痛点
+- [x] /shared 跨会话共享:✓ 通过(thread B 读到 thread A 写的 SHARED-OK 标记;dev server 确实注入了 store)
+- [x] /drafts 按会话隔离:✓ 通过(thread B 读不到 thread A 的 DRAFT-A-ONLY 草稿)
+- [x] 1b-1 是否完成:**是**,三路由共享/隔离模型 + 多会话 + 跨轮记忆全部验证有效
+
+### 设计风险点结论
+1b-1 计划中标注的风险"dev server 是否提供跨会话 store"——**已验证成立**:`langgraph dev` 的 inmem runtime 自动注入了 store,/shared 跨 thread 共享开箱即用,无需手写 InMemoryStore。Postgres 仍按 A 方案留到部署态。
 
 ---
 
