@@ -15,7 +15,9 @@ from langgraph_sdk import Auth
 auth = Auth()
 
 # 本地开发兜底用户:未带 token 时用它,保证单机调试不被挡。
-# 设为 None 可强制要求 token(更接近生产)。
+# ⚠️ 生产/上云前必须把 XHS_DEV_FALLBACK_USER 设为空(或代码改默认 None),
+#    否则任何不带 token 的请求都会被认成同一个用户,可越权访问其会话。
+#    设为空字符串时,下方 authenticate 会因 identity 为空而返回 401。
 _DEV_FALLBACK_USER = os.environ.get("XHS_DEV_FALLBACK_USER", "dev-user")
 
 
@@ -47,6 +49,8 @@ async def authenticate(headers: dict) -> dict:
             break
 
     identity = _identity_from_token(raw) or _DEV_FALLBACK_USER
+    if not identity:
+        raise Auth.exceptions.HTTPException(status_code=401, detail="缺少身份令牌(Authorization)")
     return {
         "identity": identity,
         "is_authenticated": True,
@@ -56,7 +60,9 @@ async def authenticate(headers: dict) -> dict:
 
 @auth.on.threads.create
 async def on_thread_create(ctx: Auth.types.AuthContext, value: dict) -> None:
-    """创建会话时,把 owner 写进 metadata,标记归属当前用户。"""
+    """创建会话时,把 owner 写进 metadata,标记归属当前用户。
+    注:此 handler 通过原地修改 value 注入 owner,不返回 filter(故返回 None),
+    与下方 read/search 等返回 dict filter 的 handler 不同。"""
     metadata = value.setdefault("metadata", {})
     metadata["owner"] = ctx.user.identity
 
@@ -104,7 +110,8 @@ async def on_store(ctx: Auth.types.AuthContext, value: dict) -> None:
 
 @auth.on.assistants
 async def on_assistants(ctx: Auth.types.AuthContext, value: dict) -> None:
-    """assistants(图定义)只读共享。"""
+    """assistants(图定义)全员共享(本地单图,所有操作放行)。
+    注:返回 None = 不加过滤,放行全部 assistant 操作,非仅只读。"""
     return None
 
 

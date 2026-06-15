@@ -4,15 +4,13 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 
 from backends import build_backend
-from prompts import MAIN_SYSTEM_PROMPT
+from prompts import MAIN_MODEL, MAIN_SYSTEM_PROMPT
 from subagents import baokuan_analyst
 from tools.feishu_bitable import read_xhs_data
 
 load_dotenv()
 
 # 主智能体默认 Claude(中文文案强);如需 GPT 改这里或用环境变量切换。
-MAIN_MODEL = "anthropic:claude-sonnet-4-6"
-
 model = init_chat_model(model=MAIN_MODEL, temperature=0.7)
 
 # 三路由 CompositeBackend:/skills/(磁盘共享只读)、/shared/(Store 共享)、

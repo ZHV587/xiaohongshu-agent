@@ -17,14 +17,14 @@ from langchain.chat_models import init_chat_model
 from deepagents import create_deep_agent
 
 from backends import build_cli_backend
-from prompts import MAIN_SYSTEM_PROMPT
+from prompts import MAIN_MODEL, MAIN_SYSTEM_PROMPT
 from subagents import baokuan_analyst
 from tools.feishu_bitable import read_xhs_data
 
 load_dotenv()
 
 agent = create_deep_agent(
-    model=init_chat_model(model="anthropic:claude-sonnet-4-6", temperature=0.7),
+    model=init_chat_model(model=MAIN_MODEL, temperature=0.7),
     tools=[read_xhs_data],
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[baokuan_analyst],
