@@ -7,6 +7,7 @@
 """
 import uuid
 
+from langchain_core.messages import AIMessage, ToolMessage
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -18,8 +19,7 @@ console = Console()
 
 def render(msg) -> None:
     """渲染一条消息:AI 文本、工具调用、工具结果。"""
-    mtype = msg.__class__.__name__
-    if mtype == "AIMessage":
+    if isinstance(msg, AIMessage):
         content = msg.content
         if isinstance(content, list):
             content = "\n".join(
@@ -36,7 +36,7 @@ def render(msg) -> None:
                 console.print("  [blue]>> 读取飞书爆款数据[/]")
             elif name == "write_file":
                 console.print(f"  [yellow]>> 写文件:[/] {tc.get('args', {}).get('file_path', '')}")
-    elif mtype == "ToolMessage":
+    elif isinstance(msg, ToolMessage):
         name = getattr(msg, "name", "")
         if name == "read_xhs_data":
             console.print("  [green]✓ 已读取数据[/]")
@@ -48,7 +48,6 @@ def main() -> None:
     thread_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     console.print("[bold blue]小红书文案智能体 (1a CLI)[/]  输入方向开始,exit 退出\n")
-    printed = 0
     while True:
         try:
             user_input = console.input("[bold cyan]你> [/]").strip()
@@ -58,15 +57,19 @@ def main() -> None:
             break
         if not user_input:
             continue
-        for chunk in agent.stream(
-            {"messages": [("user", user_input)]},
-            config=config,
-            stream_mode="values",
-        ):
-            msgs = chunk.get("messages", [])
-            for m in msgs[printed:]:
-                render(m)
-            printed = len(msgs)
+        printed = 0
+        try:
+            for chunk in agent.stream(
+                {"messages": [("user", user_input)]},
+                config=config,
+                stream_mode="values",
+            ):
+                msgs = chunk.get("messages", [])
+                for m in msgs[printed:]:
+                    render(m)
+                printed = len(msgs)
+        except Exception as e:
+            console.print(f"[red]出错:[/] {e}")
     console.print("\n[dim]已退出[/]")
 
 
