@@ -32,6 +32,9 @@ agent = create_deep_agent(
     skills=["./skills/"],
     backend=build_cli_backend(),
     middleware=[build_retry_middleware()],
+    # CLI 单机无 user 身份,只挂团队共享记忆(走磁盘 backend,文件落项目目录)。
+    # 个人隔离记忆依赖 server 注入的用户身份,CLI 不适用。
+    memory=["/memories/team/AGENTS.md"],
 )
 
 console = Console()

@@ -33,4 +33,8 @@ agent = create_deep_agent(
     skills=["./skills/"],
     backend=backend,
     middleware=[build_retry_middleware()],
+    # 自学习记忆:团队共享(全员一份方法论)+ 用户私有(按 open_id 隔离)。
+    # 团队在前、个人在后 —— sources 按序拼接注入,个人记忆覆盖团队默认。
+    # MemoryMiddleware 用 edit_file 写回,文件不存在时首轮跳过、由 agent 创建。
+    memory=["/memories/team/AGENTS.md", "/user-memories/AGENTS.md"],
 )
