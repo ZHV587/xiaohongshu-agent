@@ -19,7 +19,7 @@ export function ToolCalls({
   const resolvedIds = new Set(
     thread.messages
       .filter((m): m is ToolMessage => m.type === "tool")
-      .map((m) => (m as ToolMessage).tool_call_id)
+      .map((m) => m.tool_call_id)
       .filter(Boolean),
   );
 
@@ -28,7 +28,9 @@ export function ToolCalls({
       {toolCalls.map((tc, idx) => {
         const display = getToolDisplay(tc.name, tc.args as Record<string, any>);
         if (display.hidden) return null;
-        if (tc.id && resolvedIds.has(tc.id)) return null; // 已完成 → 交给 ToolResult 渲染
+        // 有 id 且已 resolved → 交给 ToolResult 渲染；
+        // 无 id 属异常数据（正常 SDK 路径 tool_call_id 必然存在），保守显示进行中条。
+        if (tc.id && resolvedIds.has(tc.id)) return null;
         return (
           <div
             key={tc.id || idx}
