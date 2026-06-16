@@ -17,6 +17,7 @@ import { useArtifact } from "../artifact";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { TopicCards } from "./topic-cards";
 import { CopyCard } from "./copy-card";
+import { LoaderCircle } from "lucide-react";
 
 function CustomComponent({
   message,
@@ -158,6 +159,16 @@ export function AssistantMessage({
                 {parseXhsBlocks(contentString).map((seg, i) => {
                   if (seg.kind === "topics") return <TopicCards key={i} data={seg.data} />;
                   if (seg.kind === "copy") return <CopyCard key={i} data={seg.data} />;
+                  if (seg.kind === "pending")
+                    return (
+                      <div
+                        key={i}
+                        className="border-border bg-card text-muted-foreground inline-flex w-fit items-center gap-2 rounded-xl border px-3.5 py-2 text-sm"
+                      >
+                        <LoaderCircle className="text-primary size-3.5 animate-spin" />
+                        {seg.lang === "xhs_topics" ? "正在整理选题…" : "正在生成文案…"}
+                      </div>
+                    );
                   return <MarkdownText key={i}>{seg.text}</MarkdownText>;
                 })}
               </div>
