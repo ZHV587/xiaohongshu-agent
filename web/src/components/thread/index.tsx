@@ -131,10 +131,10 @@ export function Thread() {
 
       // Message is defined, and it has not been logged yet. Save it, and send the error
       lastError.current = message;
-      toast.error("An error occurred. Please try again.", {
+      toast.error("出错了，请重试。", {
         description: (
           <p>
-            <strong>Error:</strong> <code>{message}</code>
+            <strong>错误：</strong> <code>{message}</code>
           </p>
         ),
         richColors: true,
