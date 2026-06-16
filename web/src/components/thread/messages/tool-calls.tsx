@@ -1,63 +1,41 @@
+// web/src/components/thread/messages/tool-calls.tsx
 import { AIMessage, ToolMessage } from "@langchain/langgraph-sdk";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, LoaderCircle, Check } from "lucide-react";
+import { useStreamContext } from "@/providers/Stream";
+import { getToolDisplay, extractRowCount } from "@/lib/tool-display";
 
-function isComplexValue(value: any): boolean {
-  return Array.isArray(value) || (typeof value === "object" && value !== null);
-}
-
+// 进行中状态条：仅当该 tool_call 还没有对应的 ToolResult 时显示
 export function ToolCalls({
   toolCalls,
 }: {
   toolCalls: AIMessage["tool_calls"];
 }) {
+  const thread = useStreamContext();
   if (!toolCalls || toolCalls.length === 0) return null;
 
+  // 已存在结果的 tool_call_id 集合
+  const resolvedIds = new Set(
+    thread.messages
+      .filter((m): m is ToolMessage => m.type === "tool")
+      .map((m) => (m as ToolMessage).tool_call_id)
+      .filter(Boolean),
+  );
+
   return (
-    <div className="mx-auto grid max-w-3xl grid-rows-[1fr_auto] gap-2">
+    <div className="mx-auto flex max-w-3xl flex-col gap-2">
       {toolCalls.map((tc, idx) => {
-        const args = tc.args as Record<string, any>;
-        const hasArgs = Object.keys(args).length > 0;
+        const display = getToolDisplay(tc.name, tc.args as Record<string, any>);
+        if (display.hidden) return null;
+        if (tc.id && resolvedIds.has(tc.id)) return null; // 已完成 → 交给 ToolResult 渲染
         return (
           <div
-            key={idx}
-            className="overflow-hidden rounded-lg border border-gray-200"
+            key={tc.id || idx}
+            className="border-border bg-card text-muted-foreground inline-flex w-fit items-center gap-2 rounded-xl border px-3.5 py-2 text-sm"
           >
-            <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
-              <h3 className="font-medium text-gray-900">
-                {tc.name}
-                {tc.id && (
-                  <code className="ml-2 rounded bg-gray-100 px-2 py-1 text-sm">
-                    {tc.id}
-                  </code>
-                )}
-              </h3>
-            </div>
-            {hasArgs ? (
-              <table className="min-w-full divide-y divide-gray-200">
-                <tbody className="divide-y divide-gray-200">
-                  {Object.entries(args).map(([key, value], argIdx) => (
-                    <tr key={argIdx}>
-                      <td className="px-4 py-2 text-sm font-medium whitespace-nowrap text-gray-900">
-                        {key}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-500">
-                        {isComplexValue(value) ? (
-                          <code className="rounded bg-gray-50 px-2 py-1 font-mono text-sm break-all">
-                            {JSON.stringify(value, null, 2)}
-                          </code>
-                        ) : (
-                          String(value)
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <code className="block p-3 text-sm">{"{}"}</code>
-            )}
+            <LoaderCircle className="text-primary size-3.5 animate-spin" />
+            {display.running}
           </div>
         );
       })}
@@ -65,127 +43,112 @@ export function ToolCalls({
   );
 }
 
+// 完成状态条 + 可展开朴素内容
 export function ToolResult({ message }: { message: ToolMessage }) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
 
-  let parsedContent: any;
-  let isJsonContent = false;
-
+  // 解析结果内容
+  let parsed: any = message.content;
+  let isJson = false;
   try {
     if (typeof message.content === "string") {
-      parsedContent = JSON.parse(message.content);
-      isJsonContent = isComplexValue(parsedContent);
+      parsed = JSON.parse(message.content);
+      isJson = typeof parsed === "object" && parsed !== null;
     }
   } catch {
-    // Content is not JSON, use as is
-    parsedContent = message.content;
+    parsed = message.content;
   }
 
-  const contentStr = isJsonContent
-    ? JSON.stringify(parsedContent, null, 2)
-    : String(message.content);
-  const contentLines = contentStr.split("\n");
-  const shouldTruncate = contentLines.length > 4 || contentStr.length > 500;
-  const displayedContent =
-    shouldTruncate && !isExpanded
-      ? contentStr.length > 500
-        ? contentStr.slice(0, 500) + "..."
-        : contentLines.slice(0, 4).join("\n") + "\n..."
-      : contentStr;
+  const rowCount =
+    message.name === "read_xhs_data" ? extractRowCount(message.content) : undefined;
+  const display = getToolDisplay(message.name, undefined, rowCount);
+  if (display.hidden) return null;
+
+  const rawStr =
+    typeof message.content === "string"
+      ? message.content
+      : JSON.stringify(message.content, null, 2);
+
+  const hasRows = isJson && Array.isArray(parsed?.rows) && Array.isArray(parsed?.columns);
 
   return (
-    <div className="mx-auto grid max-w-3xl grid-rows-[1fr_auto] gap-2">
-      <div className="overflow-hidden rounded-lg border border-gray-200">
-        <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {message.name ? (
-              <h3 className="font-medium text-gray-900">
-                Tool Result:{" "}
-                <code className="rounded bg-gray-100 px-2 py-1">
-                  {message.name}
-                </code>
-              </h3>
-            ) : (
-              <h3 className="font-medium text-gray-900">Tool Result</h3>
-            )}
-            {message.tool_call_id && (
-              <code className="ml-2 rounded bg-gray-100 px-2 py-1 text-sm">
-                {message.tool_call_id}
-              </code>
-            )}
-          </div>
-        </div>
-        <motion.div
-          className="min-w-full bg-gray-100"
-          initial={false}
-          animate={{ height: "auto" }}
-          transition={{ duration: 0.3 }}
-        >
-          <div className="p-3">
-            <AnimatePresence
-              mode="wait"
-              initial={false}
-            >
-              <motion.div
-                key={isExpanded ? "expanded" : "collapsed"}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.2 }}
+    <div className="mx-auto flex max-w-3xl flex-col">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="border-border inline-flex w-fit items-center gap-2 rounded-xl border bg-[oklch(0.97_0.02_145)] px-3.5 py-2 text-sm text-[oklch(0.45_0.08_145)] transition-colors hover:opacity-90"
+      >
+        <Check className="size-3.5" />
+        {display.done}
+        <ChevronDown
+          className={`size-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="border-border mt-2 rounded-xl border bg-card p-3">
+              {hasRows ? (
+                <RowCards columns={parsed.columns} rows={parsed.rows} />
+              ) : (
+                <div className="text-foreground/80 text-sm leading-relaxed whitespace-pre-wrap">
+                  {typeof parsed === "string" ? parsed : rawStr}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowRaw((v) => !v)}
+                className="text-muted-foreground border-border mt-3 w-full border-t pt-2 text-left text-xs hover:text-foreground"
               >
-                {isJsonContent ? (
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <tbody className="divide-y divide-gray-200">
-                      {(Array.isArray(parsedContent)
-                        ? isExpanded
-                          ? parsedContent
-                          : parsedContent.slice(0, 5)
-                        : Object.entries(parsedContent)
-                      ).map((item, argIdx) => {
-                        const [key, value] = Array.isArray(parsedContent)
-                          ? [argIdx, item]
-                          : [item[0], item[1]];
-                        return (
-                          <tr key={argIdx}>
-                            <td className="px-4 py-2 text-sm font-medium whitespace-nowrap text-gray-900">
-                              {key}
-                            </td>
-                            <td className="px-4 py-2 text-sm text-gray-500">
-                              {isComplexValue(value) ? (
-                                <code className="rounded bg-gray-50 px-2 py-1 font-mono text-sm break-all">
-                                  {JSON.stringify(value, null, 2)}
-                                </code>
-                              ) : (
-                                String(value)
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                ) : (
-                  <code className="block text-sm">{displayedContent}</code>
-                )}
-              </motion.div>
-            </AnimatePresence>
-          </div>
-          {((shouldTruncate && !isJsonContent) ||
-            (isJsonContent &&
-              Array.isArray(parsedContent) &&
-              parsedContent.length > 5)) && (
-            <motion.button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="flex w-full cursor-pointer items-center justify-center border-t-[1px] border-gray-200 py-2 text-gray-500 transition-all duration-200 ease-in-out hover:bg-gray-50 hover:text-gray-600"
-              initial={{ scale: 1 }}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              {isExpanded ? <ChevronUp /> : <ChevronDown />}
-            </motion.button>
-          )}
-        </motion.div>
-      </div>
+                ⧉ {showRaw ? "收起原始数据" : "查看原始（开发用）"}
+              </button>
+              {showRaw && (
+                <pre className="text-muted-foreground mt-2 max-h-64 overflow-auto rounded-lg bg-secondary p-2 text-xs whitespace-pre-wrap">
+                  {rawStr}
+                </pre>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// 通用行卡：按列名平铺「列名：值」，不猜字段语义
+function RowCards({ columns, rows }: { columns: string[]; rows: Record<string, any>[] }) {
+  const MAX = 8;
+  const shown = rows.slice(0, MAX);
+  return (
+    <div className="flex flex-col gap-2">
+      {shown.map((row, i) => (
+        <div key={i} className="border-border/60 rounded-lg border bg-secondary/40 px-3 py-2">
+          {columns.map((col) => {
+            const v = row[col];
+            if (v == null || v === "") return null;
+            const text = typeof v === "object" ? JSON.stringify(v) : String(v);
+            return (
+              <div key={col} className="flex gap-2 text-xs leading-relaxed">
+                <span className="text-muted-foreground min-w-[3rem] flex-shrink-0">{col}</span>
+                <span className="text-foreground break-all">{text}</span>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      {rows.length > MAX && (
+        <div className="text-muted-foreground pt-1 text-center text-xs">
+          还有 {rows.length - MAX} 条…
+        </div>
+      )}
     </div>
   );
 }
