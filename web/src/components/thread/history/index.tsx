@@ -1,3 +1,4 @@
+// web/src/components/thread/history/index.tsx
 import { Button } from "@/components/ui/button";
 import { useThreads } from "@/providers/Thread";
 import { Thread } from "@langchain/langgraph-sdk";
@@ -12,8 +13,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelRightOpen, PanelRightClose } from "lucide-react";
+import { SquarePen } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/utils";
+import { BRAND } from "@/lib/brand";
 
 function ThreadList({
   threads,
@@ -25,7 +28,7 @@ function ThreadList({
   const [threadId, setThreadId] = useQueryState("threadId");
 
   return (
-    <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
+    <div className="flex h-full w-full flex-col items-start gap-1 overflow-y-auto px-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
       {threads.map((t) => {
         let itemText = t.thread_id;
         if (
@@ -35,27 +38,28 @@ function ThreadList({
           Array.isArray(t.values.messages) &&
           t.values.messages?.length > 0
         ) {
-          const firstMessage = t.values.messages[0];
-          itemText = getContentString(firstMessage.content);
+          itemText = getContentString(t.values.messages[0].content);
         }
+        const active = t.thread_id === threadId;
         return (
-          <div
+          <button
             key={t.thread_id}
-            className="w-full px-1"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              onThreadClick?.(t.thread_id);
+              if (t.thread_id === threadId) return;
+              setThreadId(t.thread_id);
+            }}
+            className={cn(
+              "w-full truncate rounded-lg px-3 py-2 text-left text-sm transition-colors",
+              active
+                ? "bg-accent text-accent-foreground font-medium"
+                : "text-foreground/80 hover:bg-secondary",
+            )}
           >
-            <Button
-              variant="ghost"
-              className="w-[280px] items-start justify-start text-left font-normal"
-              onClick={(e) => {
-                e.preventDefault();
-                onThreadClick?.(t.thread_id);
-                if (t.thread_id === threadId) return;
-                setThreadId(t.thread_id);
-              }}
-            >
-              <p className="truncate text-ellipsis">{itemText}</p>
-            </Button>
-          </div>
+            {itemText}
+          </button>
         );
       })}
     </div>
@@ -64,24 +68,16 @@ function ThreadList({
 
 function ThreadHistoryLoading() {
   return (
-    <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
-      {Array.from({ length: 30 }).map((_, i) => (
-        <Skeleton
-          key={`skeleton-${i}`}
-          className="h-10 w-[280px]"
-        />
+    <div className="flex w-full flex-col gap-1 px-2">
+      {Array.from({ length: 12 }).map((_, i) => (
+        <Skeleton key={i} className="h-9 w-full" />
       ))}
     </div>
   );
 }
 
-export default function ThreadHistory() {
-  const isLargeScreen = useMediaQuery("(min-width: 1024px)");
-  const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
-    "chatHistoryOpen",
-    parseAsBoolean.withDefault(false),
-  );
-
+function SidebarBody() {
+  const [, setThreadId] = useQueryState("threadId");
   const { getThreads, threads, setThreads, threadsLoading, setThreadsLoading } =
     useThreads();
 
@@ -95,29 +91,50 @@ export default function ThreadHistory() {
   }, []);
 
   return (
+    <div className="flex h-full w-full flex-col">
+      {/* 品牌区 */}
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3">
+        <span className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-lg text-sm">
+          {BRAND.mark}
+        </span>
+        <span className="text-foreground text-[15px] font-semibold">{BRAND.name}</span>
+      </div>
+      {/* 新对话 */}
+      <div className="px-2 pb-2">
+        <Button
+          className="bg-primary text-primary-foreground hover:bg-primary/90 w-full justify-start gap-2"
+          onClick={() => setThreadId(null)}
+        >
+          <SquarePen className="size-4" />
+          新对话
+        </Button>
+      </div>
+      <div className="text-muted-foreground px-4 pt-2 pb-1 text-xs tracking-wide">最近</div>
+      <div className="min-h-0 flex-1">
+        {threadsLoading ? <ThreadHistoryLoading /> : <ThreadList threads={threads} />}
+      </div>
+      {/* 用户区（本地 mock 占位） */}
+      <div className="border-border mt-auto flex items-center gap-2.5 border-t px-4 py-3">
+        <span className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-full text-xs">
+          我
+        </span>
+        <span className="text-muted-foreground text-xs">团队成员</span>
+      </div>
+    </div>
+  );
+}
+
+export default function ThreadHistory() {
+  const isLargeScreen = useMediaQuery("(min-width: 1024px)");
+  const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
+    "chatHistoryOpen",
+    parseAsBoolean.withDefault(false),
+  );
+
+  return (
     <>
-      <div className="shadow-inner-right hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start gap-6 border-r-[1px] border-slate-300 lg:flex">
-        <div className="flex w-full items-center justify-between px-4 pt-1.5">
-          <Button
-            className="hover:bg-gray-100"
-            variant="ghost"
-            onClick={() => setChatHistoryOpen((p) => !p)}
-          >
-            {chatHistoryOpen ? (
-              <PanelRightOpen className="size-5" />
-            ) : (
-              <PanelRightClose className="size-5" />
-            )}
-          </Button>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Thread History
-          </h1>
-        </div>
-        {threadsLoading ? (
-          <ThreadHistoryLoading />
-        ) : (
-          <ThreadList threads={threads} />
-        )}
+      <div className="hidden h-screen w-[300px] shrink-0 flex-col border-r lg:flex">
+        <SidebarBody />
       </div>
       <div className="lg:hidden">
         <Sheet
@@ -127,17 +144,11 @@ export default function ThreadHistory() {
             setChatHistoryOpen(open);
           }}
         >
-          <SheetContent
-            side="left"
-            className="flex lg:hidden"
-          >
-            <SheetHeader>
-              <SheetTitle>Thread History</SheetTitle>
+          <SheetContent side="left" className="flex w-[300px] p-0 lg:hidden">
+            <SheetHeader className="sr-only">
+              <SheetTitle>会话历史</SheetTitle>
             </SheetHeader>
-            <ThreadList
-              threads={threads}
-              onThreadClick={() => setChatHistoryOpen((o) => !o)}
-            />
+            <SidebarBody />
           </SheetContent>
         </Sheet>
       </div>
