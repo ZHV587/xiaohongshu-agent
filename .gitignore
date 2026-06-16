@@ -11,6 +11,7 @@ drafts/
 shared/
 large_tool_results/
 .langgraph_api/
+.superpowers/
 
 # 前端(web/ agent-chat-ui)
 web/node_modules/
