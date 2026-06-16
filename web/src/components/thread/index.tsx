@@ -12,7 +12,6 @@ import {
   DO_NOT_RENDER_ID_PREFIX,
   ensureToolCallsHaveResponses,
 } from "@/lib/ensure-tool-responses";
-import { LangGraphLogoSVG } from "../icons/langgraph";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import {
   ArrowDown,
@@ -29,14 +28,8 @@ import ThreadHistory from "./history";
 import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
-import { Switch } from "../ui/switch";
-import { GitHubSVG } from "../icons/github";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../ui/tooltip";
+import { BRAND } from "@/lib/brand";
+import { ThreadActionsProvider } from "@/lib/thread-actions";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
 import {
@@ -82,32 +75,8 @@ function ScrollToBottom(props: { className?: string }) {
       onClick={() => scrollToBottom()}
     >
       <ArrowDown className="h-4 w-4" />
-      <span>Scroll to bottom</span>
+      <span>回到底部</span>
     </Button>
-  );
-}
-
-function OpenGitHubRepo() {
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <a
-            href="https://github.com/langchain-ai/agent-chat-ui"
-            target="_blank"
-            className="flex items-center justify-center"
-          >
-            <GitHubSVG
-              width="24"
-              height="24"
-            />
-          </a>
-        </TooltipTrigger>
-        <TooltipContent side="left">
-          <p>Open GitHub repo</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 
@@ -118,10 +87,6 @@ export function Thread() {
   const [threadId, _setThreadId] = useQueryState("threadId");
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
     "chatHistoryOpen",
-    parseAsBoolean.withDefault(false),
-  );
-  const [hideToolCalls, setHideToolCalls] = useQueryState(
-    "hideToolCalls",
     parseAsBoolean.withDefault(false),
   );
   const [input, setInput] = useState("");
@@ -194,6 +159,32 @@ export function Thread() {
     prevMessageLength.current = messages.length;
   }, [messages]);
 
+  const submitText = (text: string) => {
+    if (!text.trim() || isLoading) return;
+    setFirstTokenReceived(false);
+    const newHumanMessage: Message = {
+      id: uuidv4(),
+      type: "human",
+      content: text as Message["content"],
+    };
+    const toolMessages = ensureToolCallsHaveResponses(stream.messages);
+    const context =
+      Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
+    stream.submit(
+      { messages: [...toolMessages, newHumanMessage], context },
+      {
+        streamMode: ["values"],
+        streamSubgraphs: true,
+        streamResumable: true,
+        optimisticValues: (prev) => ({
+          ...prev,
+          context,
+          messages: [...(prev.messages ?? []), ...toolMessages, newHumanMessage],
+        }),
+      },
+    );
+  };
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
@@ -256,10 +247,11 @@ export function Thread() {
   );
 
   return (
+    <ThreadActionsProvider value={{ submitText }}>
     <div className="flex h-screen w-full overflow-hidden">
       <div className="relative hidden lg:flex">
         <motion.div
-          className="absolute z-20 h-full overflow-hidden border-r bg-white"
+          className="absolute z-20 h-full overflow-hidden border-r bg-sidebar"
           style={{ width: 300 }}
           animate={
             isLargeScreen
@@ -325,9 +317,6 @@ export function Thread() {
                   </Button>
                 )}
               </div>
-              <div className="absolute top-2 right-4 flex items-center">
-                <OpenGitHubRepo />
-              </div>
             </div>
           )}
           {chatStarted && (
@@ -360,24 +349,20 @@ export function Thread() {
                     damping: 30,
                   }}
                 >
-                  <LangGraphLogoSVG
-                    width={32}
-                    height={32}
-                  />
+                  <span className="bg-primary text-primary-foreground flex size-8 items-center justify-center rounded-lg">
+                    {BRAND.mark}
+                  </span>
                   <span className="text-xl font-semibold tracking-tight">
-                    Agent Chat
+                    {BRAND.name}
                   </span>
                 </motion.button>
               </div>
 
               <div className="flex items-center gap-4">
-                <div className="flex items-center">
-                  <OpenGitHubRepo />
-                </div>
                 <TooltipIconButton
                   size="lg"
                   className="p-4"
-                  tooltip="New thread"
+                  tooltip="新对话"
                   variant="ghost"
                   onClick={() => setThreadId(null)}
                 >
@@ -435,11 +420,24 @@ export function Thread() {
               footer={
                 <div className="sticky bottom-0 flex flex-col items-center gap-8 bg-white">
                   {!chatStarted && (
-                    <div className="flex items-center gap-3">
-                      <LangGraphLogoSVG className="h-8 flex-shrink-0" />
-                      <h1 className="text-2xl font-semibold tracking-tight">
-                        Agent Chat
-                      </h1>
+                    <div className="flex flex-col items-center gap-3">
+                      <span className="bg-primary text-primary-foreground flex size-14 items-center justify-center rounded-2xl text-3xl">
+                        {BRAND.mark}
+                      </span>
+                      <h1 className="text-2xl font-semibold tracking-tight">{BRAND.name}</h1>
+                      <p className="text-muted-foreground text-sm">{BRAND.slogan}</p>
+                      <div className="mt-2 flex max-w-xl flex-wrap justify-center gap-2">
+                        {BRAND.examples.map((ex) => (
+                          <button
+                            key={ex}
+                            type="button"
+                            onClick={() => submitText(ex)}
+                            className="border-border text-foreground/70 hover:border-primary hover:bg-accent rounded-full border bg-card px-3.5 py-1.5 text-xs transition-colors"
+                          >
+                            {ex}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -479,33 +477,18 @@ export function Thread() {
                             form?.requestSubmit();
                           }
                         }}
-                        placeholder="Type your message..."
+                        placeholder="说说你想写什么方向…"
                         className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 shadow-none ring-0 outline-none focus:ring-0 focus:outline-none"
                       />
 
                       <div className="flex items-center gap-6 p-2 pt-4">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <Switch
-                              id="render-tool-calls"
-                              checked={hideToolCalls ?? false}
-                              onCheckedChange={setHideToolCalls}
-                            />
-                            <Label
-                              htmlFor="render-tool-calls"
-                              className="text-sm text-gray-600"
-                            >
-                              Hide Tool Calls
-                            </Label>
-                          </div>
-                        </div>
                         <Label
                           htmlFor="file-input"
                           className="flex cursor-pointer items-center gap-2"
                         >
                           <Plus className="size-5 text-gray-600" />
                           <span className="text-sm text-gray-600">
-                            Upload PDF or Image
+                            上传图片或 PDF
                           </span>
                         </Label>
                         <input
@@ -523,7 +506,7 @@ export function Thread() {
                             className="ml-auto"
                           >
                             <LoaderCircle className="h-4 w-4 animate-spin" />
-                            Cancel
+                            停止
                           </Button>
                         ) : (
                           <Button
@@ -534,7 +517,7 @@ export function Thread() {
                               (!input.trim() && contentBlocks.length === 0)
                             }
                           >
-                            Send
+                            发送
                           </Button>
                         )}
                       </div>
@@ -561,5 +544,6 @@ export function Thread() {
         </div>
       </div>
     </div>
+    </ThreadActionsProvider>
   );
 }
