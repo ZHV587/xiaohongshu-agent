@@ -17,6 +17,7 @@ from langchain.chat_models import init_chat_model
 from deepagents import create_deep_agent
 
 from backends import build_cli_backend
+from middlewares import build_retry_middleware
 from prompts import MAIN_MODEL, MAIN_SYSTEM_PROMPT
 from subagents import baokuan_analyst
 from tools.feishu_bitable import read_xhs_data
@@ -24,12 +25,13 @@ from tools.feishu_bitable import read_xhs_data
 load_dotenv()
 
 agent = create_deep_agent(
-    model=init_chat_model(model=MAIN_MODEL, temperature=0.7),
+    model=init_chat_model(model=MAIN_MODEL, temperature=0.7, timeout=60, max_retries=4),
     tools=[read_xhs_data],
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[baokuan_analyst],
     skills=["./skills/"],
     backend=build_cli_backend(),
+    middleware=[build_retry_middleware()],
 )
 
 console = Console()
