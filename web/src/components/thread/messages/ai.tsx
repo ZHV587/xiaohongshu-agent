@@ -15,6 +15,9 @@ import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
 import { useArtifact } from "../artifact";
+import { parseXhsBlocks } from "@/lib/xhs-blocks";
+import { TopicCards } from "./topic-cards";
+import { CopyCard } from "./copy-card";
 
 function CustomComponent({
   message,
@@ -161,8 +164,12 @@ export function AssistantMessage({
         ) : (
           <>
             {contentString.length > 0 && (
-              <div className="py-1">
-                <MarkdownText>{contentString}</MarkdownText>
+              <div className="flex flex-col gap-3 py-1">
+                {parseXhsBlocks(contentString).map((seg, i) => {
+                  if (seg.kind === "topics") return <TopicCards key={i} data={seg.data} />;
+                  if (seg.kind === "copy") return <CopyCard key={i} data={seg.data} />;
+                  return <MarkdownText key={i}>{seg.text}</MarkdownText>;
+                })}
               </div>
             )}
 
