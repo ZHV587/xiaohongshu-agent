@@ -74,6 +74,10 @@ def save_uat(open_id: str, uat: str, refresh_token: str, expires_at: float, scop
         }
         _write_store(store)
 
+class TokenInvalidError(Exception):
+    """飞书明确拒绝（如 refresh_token 失效或过期）时抛出的异常"""
+    pass
+
 def _refresh_user_token(open_id: str, refresh_token: str) -> dict | None:
     app_id = os.environ.get("FEISHU_APP_ID")
     app_secret = os.environ.get("FEISHU_APP_SECRET")
@@ -89,9 +93,16 @@ def _refresh_user_token(open_id: str, refresh_token: str) -> dict | None:
             "client_secret": app_secret,
             "refresh_token": refresh_token
         }, timeout=15)
+        
+        # 飞书授权失效（如 refresh_token 过期）一般返回 400
+        if resp.status_code == 400:
+            logger.error(f"Feishu OAuth explicitly rejected refresh token for user {open_id}: {resp.text}")
+            raise TokenInvalidError("Refresh token is invalid or expired.")
+            
         if resp.status_code != 200:
             logger.error(f"Feishu refresh token API returned status {resp.status_code}: {resp.text}")
             return None
+            
         data = resp.json()
         uat = data.get("access_token")
         new_refresh = data.get("refresh_token")
@@ -104,8 +115,10 @@ def _refresh_user_token(open_id: str, refresh_token: str) -> dict | None:
             "refresh_token": new_refresh,
             "expires_at": time.time() + expires_in
         }
+    except TokenInvalidError:
+        raise
     except Exception as e:
-        logger.error(f"Failed to call Feishu refresh token API: {e}")
+        logger.error(f"Network error or server error during Feishu refresh token API call: {e}")
         return None
 
 def get_uat(open_id: str) -> str | None:
@@ -118,17 +131,23 @@ def get_uat(open_id: str) -> str | None:
     # Check if the token expires in less than 10 minutes
     if user_data["expires_at"] - time.time() < 600:
         logger.info(f"Token for user {open_id} expiring soon. Attempting refresh...")
-        refreshed = _refresh_user_token(open_id, user_data["refresh_token"])
-        if refreshed:
-            user_data.update(refreshed)
-            with _store_lock:
-                store = _read_store()
-                store[open_id] = user_data
-                _write_store(store)
-            logger.info(f"Token for user {open_id} successfully refreshed.")
-            return user_data["user_access_token"]
-        else:
-            logger.warning(f"Failed to refresh token for user {open_id}. Deleting token from store.")
+        try:
+            refreshed = _refresh_user_token(open_id, user_data["refresh_token"])
+            if refreshed:
+                user_data.update(refreshed)
+                with _store_lock:
+                    store = _read_store()
+                    store[open_id] = user_data
+                    _write_store(store)
+                logger.info(f"Token for user {open_id} successfully refreshed.")
+                return user_data["user_access_token"]
+            else:
+                # 刷新返回 None 表示网络抖动或 5xx 错误，保留记录不删除，返回 None
+                logger.warning(f"Failed to refresh token for user {open_id} due to network/server issues. Preserving record.")
+                return None
+        except TokenInvalidError:
+            # 明确的授权失效，在存储中删除该记录
+            logger.warning(f"OAuth refresh token invalid for user {open_id}. Deleting token from store.")
             with _store_lock:
                 store = _read_store()
                 if open_id in store:
