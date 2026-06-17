@@ -3,6 +3,7 @@ import shlex
 import subprocess
 import urllib.request
 import logging
+import threading
 from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,6 @@ def _run_lark_cli_update():
 
 def auto_update_lark_cli():
     """启动后台守护线程自动更新 lark-cli"""
-    import threading
     thread = threading.Thread(target=_run_lark_cli_update, daemon=True)
     thread.start()
 
