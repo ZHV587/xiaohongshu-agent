@@ -4,7 +4,10 @@ import subprocess
 import urllib.request
 import logging
 import threading
+import platform
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
+from tools.uat_store import get_uat
 
 logger = logging.getLogger(__name__)
 
@@ -34,52 +37,123 @@ def auto_update_lark_skills():
             # 异常静默降级，使用本地缓存文件，不阻塞进程启动
             logger.warning(f"Failed to auto-update skill {skill} (using local cached file): {e}")
 
+# BLACKLIST of subcommands to prevent security tampering
+_BLACKLIST_COMMANDS = {"auth", "config"}
+
 @tool
-def lark_cli(command: str) -> str:
+def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> str:
     """运行飞书官方命令行工具 (Lark Suite CLI) 的具体指令。
     
     你可以通过它操作飞书日历、即时通讯(发送消息)、云文档、多维表格等业务。
     注意：
     1. 传入参数 command 中不要包含 'lark-cli' 的前缀，只写具体服务 and 子命令。
-    2. 如果 Skill 说明书中让你运行 'lark-cli im +messages-send ...'，
-       你应该传入 'im +messages-send ...'。
-    
+    2. 对于写操作（例如发送消息、创建会议），需要用户二次确认。如果返回“需要确认”提示，
+       你必须用自然语言向用户表述风险，在用户确认同意后，传入 `yes=True` 重新运行该指令。
+       
     示例：
-    - 发送消息: im +messages-send --chat-id "oc_xxx" --text "文案草稿已经写好"
-    - 查看登录状态: auth status
-    - 统计多维表格: base +data-query --base-token "xxx"
+    - 发送消息: im +messages-send --chat-id "oc_xxx" --text "文案草稿已写好"
     """
     args = shlex.split(command.strip())
     if not args:
         return "Error: Command cannot be empty."
         
-    # 如果模型习惯性带了 lark-cli 前缀，做容错去除
     if args[0] == "lark-cli":
         args = args[1:]
         
     if not args:
         return "Error: Command cannot be empty."
-        
-    # 安全验证：限制二进制执行范围
-    # 强制加上 'lark-cli'，避免大模型传入 "rm -rf" 或 "curl" 等高危指令
-    cmd = ["lark-cli"] + args
+
+    # 1) Security block blacklist
+    sub_cmd = args[0].lower()
+    if sub_cmd in _BLACKLIST_COMMANDS:
+        return f"Error: Command service '{sub_cmd}' is disallowed for security reasons."
+
+    # 2) Identity resolution
+    # Get user identity from runtime config
+    server_info = getattr(config, "server_info", None) if config else None
+    user = getattr(server_info, "user", None) if server_info else None
+    open_id = getattr(user, "identity", None) if user else None
     
+    force_bot = False
+    clean_args = []
+    for arg in args:
+        if arg == "--as" and "--as" in args:
+            idx = args.index("--as")
+            if idx + 1 < len(args) and args[idx + 1].lower() == "bot":
+                force_bot = True
+                continue
+        if arg == "bot" and args[args.index(arg) - 1] == "--as":
+            continue
+        clean_args.append(arg)
+
+    # Resolve token injection
+    run_env = {
+        "PATH": os.environ.get("PATH", ""),
+        "LARKSUITE_CLI_CONTENT_SAFETY_MODE": "warn"
+    }
+    
+    if open_id and not force_bot:
+        token = get_uat(open_id)
+        if not token:
+            return "Please authorize Feishu access first. Please log in again using the UI panel to grant permissions."
+        run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
+        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
+    else:
+        # CLI fallback or forced bot
+        app_id = os.environ.get("FEISHU_APP_ID")
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
+        if not app_id or not app_secret:
+            return "Error: Bot credentials (FEISHU_APP_ID/SECRET) not configured."
+        run_env["LARKSUITE_CLI_APP_ID"] = app_id
+        run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
+        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "app"
+
+    # Append --yes parameter if approved by human
+    if yes:
+        clean_args.append("--yes")
+
+    # Add output format options if metadata command is not run
+    meta_cmds = {"--help", "schema", "--version", "-h"}
+    has_meta = any(c in clean_args for c in meta_cmds)
+    if not has_meta and "--format" not in clean_args:
+        clean_args.extend(["--format", "json"])
+
+    # 3) Execute process
+    executable = "lark-cli"
+    if platform.system() == "Windows":
+        executable = "lark-cli.cmd"
+
+    cmd = [executable] + clean_args
     try:
-        # 在子进程中执行指令并捕获输出
-        # shell=True 保证能识别全局 npm 安装的 Windows .cmd 包装路径
         result = subprocess.run(
             cmd,
+            env=run_env,
             capture_output=True,
             text=True,
             timeout=45,
-            shell=True
+            shell=False
         )
-        output = result.stdout + result.stderr
         
-        # 净化可能包含敏感 token 的输出，或控制过长文本
+        # 4) Handle exit codes
+        if result.returncode == 10:
+            # Safety confirmation required
+            return (
+                "⚠️ [Human-in-the-Loop Required]\n"
+                "The requested command requires safety confirmation to execute. Details:\n"
+                f"{result.stderr or result.stdout}\n"
+                "Please explain the details and risks to the user. Once approved, call the lark_cli tool again with yes=True."
+            )
+        elif result.returncode == 3:
+            # Insufficient scopes / permissions
+            return f"Feishu authorization scope insufficient (Exit Code 3). Error message:\n{result.stderr or result.stdout}\nPlease log in to Feishu and grant permissions."
+        elif result.returncode != 0:
+            return f"Lark CLI command execution failed (Exit Code {result.returncode}):\n{result.stderr or result.stdout}"
+
+        output = result.stdout
         if not output.strip():
-            return "Command executed successfully with no output."
-        return output[:5000] # 截断防护，避免打爆上下文
+            return "Command executed successfully."
+        return output[:10000] # Safe crop
+        
     except subprocess.TimeoutExpired:
         return "Error: Command execution timed out after 45 seconds."
     except Exception as e:
