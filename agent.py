@@ -16,10 +16,12 @@ from prompts import MAIN_MODEL, MAIN_SYSTEM_PROMPT
 from subagents import ANALYST_MODEL_NAME, baokuan_analyst
 from tools.feishu_bitable import read_xhs_data
 from tools.lark_cli import lark_cli, auto_update_lark_skills, auto_update_lark_cli
+from tools.internal_server import start_internal_server
 
 # 启动时自动从官方仓库同步最新的飞书技能（下载失败时自动静默降级，不影响启动）
 auto_update_lark_skills()
 auto_update_lark_cli()
+start_internal_server()
 
 
 load_dotenv()
