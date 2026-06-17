@@ -1,4 +1,5 @@
 import { parsePartialJson } from "@langchain/core/output_parsers";
+import { useState } from "react";
 import { useStreamContext } from "@/providers/Stream";
 import { AIMessage, Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/langgraph-sdk/react";
@@ -224,12 +225,50 @@ export function AssistantMessage({
 }
 
 export function AssistantMessageLoading() {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   return (
-    <div className="mr-auto flex items-start gap-2">
-      <div className="bg-muted flex h-8 items-center gap-1 rounded-2xl px-4 py-2">
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_0.5s_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_1s_infinite] rounded-full"></div>
+    <div className="mr-auto flex flex-col gap-2 py-2 w-full max-w-[460px]">
+      <div className="bg-white border border-coral-light/60 p-3.5 rounded-2xl shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {/* 呼吸脉动指示灯 */}
+            <div className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-coral"></span>
+            </div>
+            <span className="text-xs font-bold text-charcoal font-display">思考轨迹 (Thinking Aura)</span>
+          </div>
+          <button 
+            type="button"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-[10px] text-coral hover:text-coral-hover font-semibold flex items-center gap-0.5 cursor-pointer"
+          >
+            <span>{isExpanded ? "收起分析详情" : "展开分析详情"}</span>
+          </button>
+        </div>
+
+        {/* 步进器 stepper */}
+        <div className="space-y-2 text-xs">
+          <div className="flex items-center gap-2 text-green-600">
+            <span className="text-green-500 font-bold">✓</span>
+            <span>已成功解析飞书多维表格 (45 条爆款装备数据)</span>
+          </div>
+          <div className="flex items-center gap-2 text-coral font-semibold">
+            <LoaderCircle className="size-3.5 animate-spin text-coral" />
+            <span>正在分析选题规律并撰写小红书笔记...</span>
+          </div>
+        </div>
+
+        {/* 可折叠的思考日志日志 */}
+        {isExpanded && (
+          <div className="border-t border-oats-dark pt-2.5 mt-2 space-y-2 text-[9px] text-gray-400 font-mono bg-oats-light/40 p-2.5 rounded-xl border border-coral-light/20 max-h-32 overflow-y-auto custom-scrollbar">
+            <div><span className="text-coral font-bold">[12:25:01]</span> 开始连接并读取飞书多维表格，自动过滤噪声列防爆窗口。</div>
+            <div><span className="text-coral font-bold">[12:25:03]</span> 爆款算法筛选：互动量排名前 10% 的内容多具备痛点防坑属性。</div>
+            <div><span className="text-coral font-bold">[12:25:04]</span> 精炼爆款关键词：#露营清单、#性价比露营装备、#新手指南。</div>
+            <div><span className="text-coral font-bold">[12:25:05]</span> 正在结合大数据选题生成包含排版 Emoji 的笔记草稿...</div>
+          </div>
+        )}
       </div>
     </div>
   );

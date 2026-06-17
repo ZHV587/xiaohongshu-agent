@@ -39,6 +39,8 @@ def auto_update_lark_skills():
 
 # BLACKLIST of subcommands to prevent security tampering
 _BLACKLIST_COMMANDS = {"auth", "config"}
+_cli_lock = threading.RLock()
+
 
 @tool
 def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> str:
@@ -124,40 +126,40 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         executable = "lark-cli.cmd"
 
     cmd = [executable] + clean_args
-    try:
-        result = subprocess.run(
-            cmd,
-            env=run_env,
-            capture_output=True,
-            text=True,
-            timeout=45,
-            shell=False
-        )
-        
-        # 4) Handle exit codes
-        if result.returncode == 10:
-            # Safety confirmation required
-            return (
-                "⚠️ [Human-in-the-Loop Required]\n"
-                "The requested command requires safety confirmation to execute. Details:\n"
-                f"{result.stderr or result.stdout}\n"
-                "Please explain the details and risks to the user. Once approved, call the lark_cli tool again with yes=True."
+    with _cli_lock:
+        try:
+            result = subprocess.run(
+                cmd,
+                env=run_env,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                shell=False
             )
-        elif result.returncode == 3:
-            # Insufficient scopes / permissions
-            return f"Feishu authorization scope insufficient (Exit Code 3). Error message:\n{result.stderr or result.stdout}\nPlease log in to Feishu and grant permissions."
-        elif result.returncode != 0:
-            return f"Lark CLI command execution failed (Exit Code {result.returncode}):\n{result.stderr or result.stdout}"
-
-        output = result.stdout
-        if not output.strip():
-            return "Command executed successfully."
-        return output[:10000] # Safe crop
+        except subprocess.TimeoutExpired:
+            return "Error: Command execution timed out after 45 seconds."
+        except Exception as e:
+            return f"Error executing Lark CLI command: {str(e)}"
         
-    except subprocess.TimeoutExpired:
-        return "Error: Command execution timed out after 45 seconds."
-    except Exception as e:
-        return f"Error executing Lark CLI command: {str(e)}"
+    # 4) Handle exit codes
+    if result.returncode == 10:
+        # Safety confirmation required
+        return (
+            "⚠️ [Human-in-the-Loop Required]\n"
+            "The requested command requires safety confirmation to execute. Details:\n"
+            f"{result.stderr or result.stdout}\n"
+            "Please explain the details and risks to the user. Once approved, call the lark_cli tool again with yes=True."
+        )
+    elif result.returncode == 3:
+        # Insufficient scopes / permissions
+        return f"Feishu authorization scope insufficient (Exit Code 3). Error message:\n{result.stderr or result.stdout}\nPlease log in to Feishu and grant permissions."
+    elif result.returncode != 0:
+        return f"Lark CLI command execution failed (Exit Code {result.returncode}):\n{result.stderr or result.stdout}"
+
+    output = result.stdout
+    if not output.strip():
+        return "Command executed successfully."
+    return output[:10000] # Safe crop
 
 
 def _run_lark_cli_update():

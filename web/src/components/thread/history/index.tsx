@@ -56,10 +56,10 @@ function ThreadList({
               setThreadId(t.thread_id);
             }}
             className={cn(
-              "w-full truncate rounded-lg px-3 py-2 text-left text-sm transition-colors",
+              "w-full truncate rounded-lg px-3 py-2.5 text-left text-sm transition-all flex items-center justify-between",
               active
-                ? "bg-accent text-accent-foreground font-medium"
-                : "text-foreground/80 hover:bg-secondary",
+                ? "bg-oats text-coral border-l-2 border-coral font-semibold rounded-r-lg rounded-l-none pl-2"
+                : "text-charcoal hover:bg-oats/50 rounded-lg",
             )}
           >
             {itemText}
@@ -104,18 +104,20 @@ function UserArea() {
 
   const display = user.name || user.openId;
   return (
-    <div className="border-border mt-auto flex items-center gap-2.5 border-t px-4 py-3">
-      <span className="bg-primary text-primary-foreground flex size-7 shrink-0 items-center justify-center rounded-full text-xs">
-        {display.slice(0, 1)}
-      </span>
-      <span className="text-foreground/90 flex-1 truncate text-xs" title={display}>
-        {display}
-      </span>
+    <div className="border-oats-dark mt-auto flex items-center justify-between border-t p-4">
+      <div className="flex items-center gap-2.5">
+        <span className="bg-coral-light text-coral flex size-8 shrink-0 items-center justify-center rounded-lg font-bold text-xs">
+          {display.slice(0, 1).toUpperCase()}
+        </span>
+        <span className="text-charcoal font-semibold flex-1 truncate text-xs max-w-[150px]" title={display}>
+          {display}
+        </span>
+      </div>
       <button
         type="button"
         onClick={logout}
         title="退出登录"
-        className="text-muted-foreground hover:text-foreground shrink-0 transition-colors"
+        className="text-gray-400 hover:text-coral shrink-0 transition-colors cursor-pointer"
       >
         <LogOut className="size-4" />
       </button>

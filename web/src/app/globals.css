@@ -1,43 +1,62 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @plugin "tailwindcss-animate";
 
+/* Import Outfit font for display titles & Inter for body text */
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(0.985 0.006 70);
-  --foreground: oklch(0.32 0.012 60);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.32 0.012 60);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.32 0.012 60);
-  --primary: oklch(0.68 0.13 40);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.95 0.008 70);
-  --secondary-foreground: oklch(0.32 0.012 60);
-  --muted: oklch(0.95 0.008 70);
-  --muted-foreground: oklch(0.64 0.015 65);
-  --accent: oklch(0.94 0.025 50);
-  --accent-foreground: oklch(0.45 0.10 40);
+  --background: #FAF6F0; /* Oats default background */
+  --foreground: #2A2A2A; /* Charcoal default text */
+  --card: #ffffff;
+  --card-foreground: #2A2A2A;
+  --popover: #ffffff;
+  --popover-foreground: #2A2A2A;
+  --primary: #FF2442; /* Coral brand color */
+  --primary-foreground: #ffffff;
+  --secondary: #FCFAF7;
+  --secondary-foreground: #2A2A2A;
+  --muted: #F3EDE2;
+  --muted-foreground: #4A4A4A;
+  --accent: #FFEDF0;
+  --accent-foreground: #FF2442;
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: oklch(0.9 0.02 60);
-  --input: oklch(0.9 0.02 60);
-  --ring: oklch(0.68 0.13 40);
+  --border: #FFEDF0;
+  --input: #FAF6F0;
+  --ring: #FF2442;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --radius: 0.875rem;
-  --sidebar: oklch(0.95 0.008 70);
-  --sidebar-foreground: oklch(0.32 0.012 60);
-  --sidebar-primary: oklch(0.68 0.13 40);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.94 0.025 50);
-  --sidebar-accent-foreground: oklch(0.45 0.10 40);
-  --sidebar-border: oklch(0.9 0.02 60);
-  --sidebar-ring: oklch(0.68 0.13 40);
+  --radius: 1rem;
+  
+  --oats-default: #FAF6F0;
+  --oats-dark: #F3EDE2;
+  --oats-light: #FCFAF7;
+  
+  --coral-default: #FF2442;
+  --coral-hover: #E01E37;
+  --coral-light: #FFEDF0;
+  
+  --charcoal-default: #2A2A2A;
+  --charcoal-light: #4A4A4A;
+  --charcoal-dark: #1E1E1E;
+  
+  --topicblue-default: #007FFF;
+  --topicblue-light: #E6F2FF;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #2A2A2A;
+  --sidebar-primary: #FF2442;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #FAF6F0;
+  --sidebar-accent-foreground: #FF2442;
+  --sidebar-border: #F3EDE2;
+  --sidebar-ring: #FF2442;
 }
 
 .dark {
@@ -76,6 +95,21 @@
 }
 
 @theme inline {
+  --color-oats: var(--oats-default);
+  --color-oats-dark: var(--oats-dark);
+  --color-oats-light: var(--oats-light);
+  
+  --color-coral: var(--coral-default);
+  --color-coral-hover: var(--coral-hover);
+  --color-coral-light: var(--coral-light);
+  
+  --color-charcoal: var(--charcoal-default);
+  --color-charcoal-light: var(--charcoal-light);
+  --color-charcoal-dark: var(--charcoal-dark);
+  
+  --color-topicblue: var(--topicblue-default);
+  --color-topicblue-light: var(--topicblue-light);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -112,7 +146,33 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --font-sans: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  
+  --font-sans: 'Inter', -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-display: 'Outfit', -apple-system, "PingFang SC", sans-serif;
+}
+
+/* Custom scrollbars for oats/coral theme */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 36, 66, 0.15);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+/* 3D perspective settings for flipping cards */
+.perspective-1000 {
+  perspective: 1000px;
+}
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+.backface-hidden {
+  backface-visibility: hidden;
 }
 
 @layer base {
