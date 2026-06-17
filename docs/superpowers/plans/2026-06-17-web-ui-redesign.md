@@ -22,7 +22,7 @@
 **Files:**
 - Modify: [web/src/app/globals.css](file:///e:/小红书智能体/web/src/app/globals.css)
 
-- [ ] **Step 1: Declare global Oats/Coral/Charcoal theme colors**
+- [x] **Step 1: Declare global Oats/Coral/Charcoal theme colors**
 
 Modify [web/src/app/globals.css](file:///e:/小红书智能体/web/src/app/globals.css) to add font imports and Oats/Coral/Charcoal color tokens inside `:root`, mapping them in the `@theme inline` block.
 ```css
@@ -137,7 +137,7 @@ Modify [web/src/app/globals.css](file:///e:/小红书智能体/web/src/app/globa
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add web/src/app/globals.css
@@ -151,7 +151,7 @@ git commit -m "style: upgrade color variables and scrollbars in globals.css"
 **Files:**
 - Modify: [web/src/components/auth-gate.tsx](file:///e:/小红书智能体/web/src/components/auth-gate.tsx)
 
-- [ ] **Step 1: Restructure AuthGate to support 3D rotating card**
+- [x] **Step 1: Restructure AuthGate to support 3D rotating card**
 
 Rewrite `<AuthGate />` using `framer-motion` to wrap the login panel inside a flipping container. Clicking the "Feishu scan QR" option will rotate the card 180 degrees along the Y-axis.
 ```tsx
@@ -280,7 +280,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add web/src/components/auth-gate.tsx
@@ -294,7 +294,7 @@ git commit -m "feat: implement 3D card flip for Feishu auth QR card"
 **Files:**
 - Modify: [web/src/components/thread/history/index.tsx](file:///e:/小红书智能体/web/src/components/thread/history/index.tsx)
 
-- [ ] **Step 1: Apply Oats style accents and tags**
+- [x] **Step 1: Apply Oats style accents and tags**
 
 Update [web/src/components/thread/history/index.tsx](file:///e:/小红书智能体/web/src/components/thread/history/index.tsx) to match the sidebar mockup: a button styled in Coral red, and active menu items highlighted in Oats background with a prominent left-border indicator.
 ```tsx
@@ -304,7 +304,7 @@ Update [web/src/components/thread/history/index.tsx](file:///e:/小红书智能�
 // - Badge icons: text-[9px] bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.2 rounded
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add web/src/components/thread/history/index.tsx
@@ -318,7 +318,7 @@ git commit -m "style: apply oats and coral styling to thread history sidebar"
 **Files:**
 - Modify: [web/src/components/thread/index.tsx](file:///e:/小红书智能体/web/src/components/thread/index.tsx)
 
-- [ ] **Step 1: Implement Phone Simulator & Double-viewport Tab**
+- [x] **Step 1: Implement Phone Simulator & Double-viewport Tab**
 
 Replace the generic right artifact pane in [web/src/components/thread/index.tsx](file:///e:/小红书智能体/web/src/components/thread/index.tsx) with a high-fidelity Phone preview panel:
 - **Left Panel (Chat)**: Styled in Oats (`bg-oats`).
@@ -326,11 +326,11 @@ Replace the generic right artifact pane in [web/src/components/thread/index.tsx]
 - **Tab Header**: Allow switching between "📱 小红书手机预览" and "🔗 飞书同步协作".
 - **View Toggle**: Switch between "详情视窗" (single post view) and "瀑布流卡片" (feed preview).
 
-- [ ] **Step 2: Add Image Carousel component to simulator**
+- [x] **Step 2: Add Image Carousel component to simulator**
 
 In details view, render a full-bleed picture block using static campers/nature pictures (`https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?auto=format&fit=crop&w=500&q=80`). Provide overlay hover arrows `lucide-react` ChevronLeft/Right and page dot indicators at the bottom.
 
-- [ ] **Step 3: Implement 3D inline text editing card**
+- [x] **Step 3: Implement 3D inline text editing card**
 
 In the phone details view, clicking the text body will slide out the original text block, replaced with an active React text editor card:
 - Text inputs and textareas dynamically bound to the AI-generated text.
@@ -339,7 +339,7 @@ In the phone details view, clicking the text body will slide out the original te
 - **Hashtag Selector**: Provides buttons to append tags like `#露营分享` or `#户外美学` dynamically.
 - "Cancel" and "Save" buttons that return smooth concentric radius animation feedback.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add web/src/components/thread/index.tsx
@@ -353,7 +353,7 @@ git commit -m "feat: build high-fidelity phone simulator, tab layout and inline 
 **Files:**
 - Modify: [web/src/components/thread/index.tsx](file:///e:/小红书智能体/web/src/components/thread/index.tsx)
 
-- [ ] **Step 1: Write hotkey listener & Command Palette UI**
+- [x] **Step 1: Write hotkey listener & Command Palette UI**
 
 Register a global keystroke listener `keydown` for `Ctrl+P` (or `Cmd+P`) that shows/hides a floating modal. It renders quick commands:
 - `/polish 智能润色` (Automatically triggers writing modification prompt)
@@ -361,7 +361,7 @@ Register a global keystroke listener `keydown` for `Ctrl+P` (or `Cmd+P`) that sh
 - `/tags 话题生成` (Inserts tag prompts)
 Clicking a command will automatically update the text editor or thread prompt input area.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add web/src/components/thread/index.tsx
@@ -375,14 +375,14 @@ git commit -m "feat: add keyboard-driven Ctrl+P command palette modal"
 **Files:**
 - Modify: [web/src/components/thread/index.tsx](file:///e:/小红书智能体/web/src/components/thread/index.tsx)
 
-- [ ] **Step 1: Add a flying icon trigger**
+- [x] **Step 1: Add a flying icon trigger**
 
 When clicking the "Sync to Feishu Bitable" action button inside the "飞书同步协作" Tab, mount a floating motion element:
 - Positioned initially at the left chat panel send section.
 - Fly along a parabolic curve to the right Feishu Tab header.
 - Fade out while triggering a secondary pulse animation on the "Bitable Connected" state block.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add web/src/components/thread/index.tsx

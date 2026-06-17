@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `tests/test_lark_cli.py`
 
-- [ ] **Step 1: 编写单元测试用例**
+- [x] **Step 1: 编写单元测试用例**
   
   在 [tests/test_lark_cli.py](file:///e:/小红书智能体/tests/test_lark_cli.py) 文件末尾添加以下测试，验证 `auto_update_lark_cli` 函数的行为：
 
@@ -60,7 +60,7 @@
           )
   ```
 
-- [ ] **Step 2: 运行测试以验证失败（TDD）**
+- [x] **Step 2: 运行测试以验证失败（TDD）**
 
   Run: `uv run pytest tests/test_lark_cli.py -k "auto_update_lark_cli" -v`
   Expected: FAIL (ImportError / NameError，因为 `auto_update_lark_cli` 和 `_run_lark_cli_update` 还没有在 `tools/lark_cli.py` 中定义)
@@ -72,7 +72,7 @@
 **Files:**
 - Modify: `tools/lark_cli.py`
 
-- [ ] **Step 1: 编写最小实现代码**
+- [x] **Step 1: 编写最小实现代码**
 
   在 [tools/lark_cli.py](file:///e:/小红书智能体/tools/lark_cli.py) 中添加后台自动更新相关的实现代码：
 
@@ -106,17 +106,17 @@
       thread.start()
   ```
 
-- [ ] **Step 2: 运行测试并使其通过**
+- [x] **Step 2: 运行测试并使其通过**
 
   Run: `uv run pytest tests/test_lark_cli.py -k "auto_update_lark" -v`
   Expected: PASS
 
-- [ ] **Step 3: 运行所有单元测试以确保无回归**
+- [x] **Step 3: 运行所有单元测试以确保无回归**
 
   Run: `uv run pytest`
   Expected: PASS (17 tests passed)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add tests/test_lark_cli.py tools/lark_cli.py
@@ -131,7 +131,7 @@
 - Modify: `agent.py`
 - Modify: `cli.py`
 
-- [ ] **Step 1: 修改 `agent.py`**
+- [x] **Step 1: 修改 `agent.py`**
 
   在 [agent.py](file:///e:/小红书智能体/agent.py) 中，将 `auto_update_lark_cli` 导入并在启动阶段调用：
 
@@ -144,7 +144,7 @@
   auto_update_lark_cli()
   ```
 
-- [ ] **Step 2: 修改 `cli.py`**
+- [x] **Step 2: 修改 `cli.py`**
 
   在 [cli.py](file:///e:/小红书智能体/cli.py) 中，将 `auto_update_lark_cli` 导入并在启动阶段调用：
 
@@ -157,12 +157,12 @@
   auto_update_lark_cli()
   ```
 
-- [ ] **Step 3: 运行测试以确保启动逻辑未受影响**
+- [x] **Step 3: 运行测试以确保启动逻辑未受影响**
 
   Run: `uv run pytest`
   Expected: PASS (17 tests passed)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add agent.py cli.py
@@ -176,7 +176,7 @@
 **Files:**
 - Verify: `cli.py`
 
-- [ ] **Step 1: 运行 CLI 交互终端**
+- [x] **Step 1: 运行 CLI 交互终端**
 
   Run: `uv run python cli.py`
   Expected: 控制台正常启动且输出提示符 `你> `，控制台无报错。后台运行 `lark-cli update` 静默执行，可在一分钟内通过输入 `exit` 退出。

@@ -21,7 +21,7 @@
 **Files:**
 - Modify: [pyproject.toml](file:///e:/小红书智能体/pyproject.toml)
 
-- [ ] **Step 1: Add cryptography to dependencies**
+- [x] **Step 1: Add cryptography to dependencies**
 
 Modify [pyproject.toml](file:///e:/小红书智能体/pyproject.toml) to append `"cryptography>=42.0.0,<43.0.0"` in `dependencies`.
 ```toml
@@ -38,12 +38,12 @@ dependencies = [
 ]
 ```
 
-- [ ] **Step 2: Install the dependency**
+- [x] **Step 2: Install the dependency**
 
 Run: `uv pip install -e .` or `pip install -e .`
 Expected: Dependencies are successfully resolved and installed.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add pyproject.toml
@@ -57,7 +57,7 @@ git commit -m "build: add cryptography dependency for secure token storage"
 **Files:**
 - Create: [tools/lark_scopes.py](file:///e:/小红书智能体/tools/lark_scopes.py)
 
-- [ ] **Step 1: Create lark_scopes.py**
+- [x] **Step 1: Create lark_scopes.py**
 
 Create a clean definition of required scopes that matches both Python skills and Next.js authorize endpoints.
 ```python
@@ -80,7 +80,7 @@ LARK_SCOPES = [
 ]
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add tools/lark_scopes.py
@@ -95,7 +95,7 @@ git commit -m "feat: define Lark OAuth scopes constants"
 - Create: [tools/uat_store.py](file:///e:/小红书智能体/tools/uat_store.py)
 - Create: [tests/test_uat_store.py](file:///e:/小红书智能体/tests/test_uat_store.py)
 
-- [ ] **Step 1: Implement UAT encrypted storage logic**
+- [x] **Step 1: Implement UAT encrypted storage logic**
 
 Write `tools/uat_store.py` to encrypt/decrypt using `cryptography.fernet.Fernet` derived from `XHS_JWT_SECRET`. Include automated refresh using Feishu OAuth `/authen/v2/oauth/token` API.
 ```python
@@ -240,7 +240,7 @@ def get_uat(open_id: str) -> str | None:
     return user_data["user_access_token"]
 ```
 
-- [ ] **Step 2: Create UAT store unit tests**
+- [x] **Step 2: Create UAT store unit tests**
 
 Write `tests/test_uat_store.py` verifying file locking, encryption, serialization, and mocks of the refresh token API.
 ```python
@@ -310,12 +310,12 @@ def test_uat_auto_refresh_success(mock_post):
         mock_post.assert_called_once()
 ```
 
-- [ ] **Step 3: Run UAT storage tests**
+- [x] **Step 3: Run UAT storage tests**
 
 Run: `pytest tests/test_uat_store.py -v`
 Expected: Tests pass successfully.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tools/uat_store.py tests/test_uat_store.py
@@ -331,7 +331,7 @@ git commit -m "feat: implement encrypted UAT storage and test suites"
 - Modify: [agent.py](file:///e:/小红书智能体/agent.py)
 - Create: [tests/test_internal_server.py](file:///e:/小红书智能体/tests/test_internal_server.py)
 
-- [ ] **Step 1: Write the internal HTTP server**
+- [x] **Step 1: Write the internal HTTP server**
 
 Create `tools/internal_server.py`. It runs a lightweight `http.server.HTTPServer` on port `8081` in a background daemon thread, listening only on `127.0.0.1`. It parses JSON bodies and requires an HMAC-SHA256 signature calculated with `XHS_JWT_SECRET` in the `Authorization` header (`HMAC <hex_signature>`). The signature payload is built using a strict plain-text format: `"{open_id}:{uat}:{refresh_token}:{int(expires_at)}"` to avoid differences in JSON key ordering or space padding between TS and Python.
 ```python
@@ -431,7 +431,7 @@ def start_internal_server():
         return None
 ```
 
-- [ ] **Step 2: Start server during agent startup**
+- [x] **Step 2: Start server during agent startup**
 
 Modify [agent.py](file:///e:/小红书智能体/agent.py) to launch this HTTP server on import (same way CLI background update triggers).
 ```python
@@ -443,7 +443,7 @@ auto_update_lark_cli()
 start_internal_server()
 ```
 
-- [ ] **Step 3: Write tests for internal HTTP server**
+- [x] **Step 3: Write tests for internal HTTP server**
 
 Create `tests/test_internal_server.py` to assert correct HMAC check and JSON parsing.
 ```python
@@ -496,12 +496,12 @@ def test_authorized_post(running_server):
         mock_save.assert_called_once_with("usr_999", "uat_xxx", "ref_xxx", 1800000000, [], "Sync User")
 ```
 
-- [ ] **Step 4: Run internal server tests**
+- [x] **Step 4: Run internal server tests**
 
 Run: `pytest tests/test_internal_server.py -v`
 Expected: Tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tools/internal_server.py agent.py tests/test_internal_server.py
@@ -516,7 +516,7 @@ git commit -m "feat: add internal HMAC-authenticated UAT sync server"
 - Modify: [web/src/app/api/auth/feishu/login/route.ts](file:///e:/小红书智能体/web/src/app/api/auth/feishu/login/route.ts)
 - Modify: [web/src/app/api/auth/feishu/callback/route.ts](file:///e:/小红书智能体/web/src/app/api/auth/feishu/callback/route.ts)
 
-- [ ] **Step 1: Inject scopes into Authorize URL**
+- [x] **Step 1: Inject scopes into Authorize URL**
 
 Modify `web/src/app/api/auth/feishu/login/route.ts` to add the scopes.
 ```typescript
@@ -544,7 +544,7 @@ Modify `web/src/app/api/auth/feishu/login/route.ts` to add the scopes.
   authorizeUrl.searchParams.set("scope", scopes.join(" "));
 ```
 
-- [ ] **Step 2: Sign and forward UAT on authorization callback**
+- [x] **Step 2: Sign and forward UAT on authorization callback**
 
 Modify `web/src/app/api/auth/feishu/callback/route.ts` to capture the UAT, token scopes, refresh token, and expires_in, sign it using the plain text format, and forward it to Python's internal server.
 ```typescript
@@ -638,7 +638,7 @@ Modify `web/src/app/api/auth/feishu/callback/route.ts` to capture the UAT, token
   }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add web/src/app/api/auth/feishu/login/route.ts web/src/app/api/auth/feishu/callback/route.ts
@@ -653,7 +653,7 @@ git commit -m "feat: upgrade login scopes and post UAT on auth callback"
 - Modify: [tools/lark_cli.py](file:///e:/小红书智能体/tools/lark_cli.py)
 - Modify: [tests/test_lark_cli.py](file:///e:/小红书智能体/tests/test_lark_cli.py)
 
-- [ ] **Step 1: Harden subprocess call & token injection**
+- [x] **Step 1: Harden subprocess call & token injection**
 
 Modify `tools/lark_cli.py` to:
 - Take arguments: `command: str, yes: bool = False, config: RunnableConfig = None`.
@@ -802,7 +802,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         return f"Error executing Lark CLI command: {str(e)}"
 ```
 
-- [ ] **Step 2: Update unit tests for CLI**
+- [x] **Step 2: Update unit tests for CLI**
 
 Update `tests/test_lark_cli.py` to match the new dynamic environment logic, `shell=False` execution, and `exit 10` intercept mocks.
 ```python
@@ -831,12 +831,12 @@ def test_lark_cli_exit_10_confirmation(mock_run):
     assert "Human-in-the-Loop Required" in res
 ```
 
-- [ ] **Step 3: Run full Lark CLI tests**
+- [x] **Step 3: Run full Lark CLI tests**
 
 Run: `pytest tests/test_lark_cli.py -v`
 Expected: Tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tools/lark_cli.py tests/test_lark_cli.py
