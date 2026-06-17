@@ -1,8 +1,26 @@
 """子智能体定义。爆款分析子智能体在独立上下文拆解数据,结论落盘。"""
+from dotenv import load_dotenv
+from langchain.chat_models import init_chat_model
+
 from tools.feishu_bitable import read_xhs_data
 
-# 子智能体默认用便宜快的模型(设计:子智能体用便宜快模型)
-ANALYST_MODEL = "anthropic:claude-haiku-4-5-20251001"
+# 本模块在 agent.py 里先于其 load_dotenv() 被 import,而下面 init_chat_model 在
+# 模块加载时即构造,需要 ANTHROPIC_BASE_URL/KEY 已在环境里 —— 故这里自行加载 .env,
+# 不依赖调用方的导入顺序(否则子智能体可能读不到中转 BASE_URL)。
+load_dotenv()
+
+# 子智能体默认用便宜快的模型(设计:子智能体用便宜快模型)。
+# 模型名提取为常量,agent.py 的 RubricMiddleware 也用它(避免重复硬编码)。
+ANALYST_MODEL_NAME = "anthropic:claude-haiku-4-5-20251001"
+
+# 预初始化为带 timeout/max_retries 的实例(而非裸字符串):中转 43.255.157.166
+# 偶发 502,子智能体调模型同样需要重试保护,否则中转一抖子智能体就直接挂
+# (实测 502 常发生在 tool_node 里的子智能体执行阶段)。
+ANALYST_MODEL = init_chat_model(
+    ANALYST_MODEL_NAME,
+    timeout=60,
+    max_retries=4,
+)
 
 ANALYST_SYSTEM_PROMPT = """你是小红书爆款分析助手。你的任务是拆解给定方向的爆款笔记,
 提炼可复用的创作规律,并把结论写入指定文件。

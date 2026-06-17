@@ -1,16 +1,32 @@
-"""LangGraph 自定义鉴权(1b-3 多用户隔离)。
+"""LangGraph 自定义鉴权(1b-3 多用户隔离 + 真飞书 OAuth)。
 
-本地阶段:用请求头里的 mock token 模拟用户身份(无真飞书 OAuth,localhost 无公网回调)。
-  前端通过 Authorization: Bearer <token> 传身份,token 形如 "mock-user-<id>"。
-上云阶段:把 _identity_from_token 换成校验真飞书 OAuth token / JWT 即可,其余隔离逻辑不变。
+身份来源(按优先级):
+  1) 真飞书 OAuth:前端 Next.js 在飞书登录回调里用飞书 open_id 签发 HS256 JWT,
+     经 Authorization: Bearer <jwt> 传入。本模块用共享密钥 XHS_JWT_SECRET 验签,
+     取 payload.sub(飞书 open_id)作身份,payload.name 作显示名。
+  2) 本地 mock(仅当未配置 JWT 密钥时):token 形如 "mock-user-A" 直接当身份,
+     方便单机/脚本调试(verify_1b3.py 等)。
+  3) 兜底用户:未带 token 时用 XHS_DEV_FALLBACK_USER。上云务必置空 → 无 token 返 401。
 
 隔离模型(对应设计):
   - thread(会话)/ 其 /drafts → 按 user 隔离:owner metadata + search/read filter
   - /shared(风格)/ /skills(爆款方法论)→ 全员共享:store 不按 user 过滤
 """
+import base64
+import hashlib
+import hmac
+import json
 import os
+import time
+from pathlib import Path
 
+from dotenv import load_dotenv
 from langgraph_sdk import Auth
+
+# auth 作为鉴权中间件被 langgraph 用 importlib 独立加载,其加载时机/工作目录
+# 与主进程不同 —— 无参 load_dotenv() 可能找不到 .env,导致密钥读空而静默退回
+# mock 模式。故用 __file__ 显式推导 .env 路径(对齐项目历史教训:路径用 __file__)。
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 auth = Auth()
 
@@ -20,19 +36,85 @@ auth = Auth()
 #    设为空字符串时,下方 authenticate 会因 identity 为空而返回 401。
 _DEV_FALLBACK_USER = os.environ.get("XHS_DEV_FALLBACK_USER", "dev-user")
 
+# 与前端 Next.js 共享的 JWT 签名密钥。配置后启用真飞书 OAuth 身份校验;
+# 未配置(空)时退回 mock 模式,保证本地裸调试不被打断。
+_JWT_SECRET = os.environ.get("XHS_JWT_SECRET", "")
 
-def _identity_from_token(token: str | None) -> str | None:
-    """从 Bearer token 解析用户标识。
 
-    本地约定:token 形如 "mock-user-A" → 身份 "mock-user-A"。
-    上云时替换为:校验飞书 OAuth access_token → 返回飞书 open_id/user_id。
+def _b64url_decode(seg: str) -> bytes:
+    """解码 JWT 的 base64url 段(补足 padding)。"""
+    pad = "=" * (-len(seg) % 4)
+    return base64.urlsafe_b64decode(seg + pad)
+
+
+def _verify_jwt(token: str) -> dict | None:
+    """验证 HS256 JWT 签名与过期时间,通过则返回 payload,否则 None。
+
+    只接受 alg=HS256(防 alg=none / 算法混淆攻击)。
     """
-    if not token:
+    try:
+        header_seg, payload_seg, sig_seg = token.split(".")
+    except ValueError:
         return None
-    token = token.strip()
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
-    return token or None
+
+    try:
+        header = json.loads(_b64url_decode(header_seg))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if header.get("alg") != "HS256":
+        return None
+
+    expected = hmac.new(
+        _JWT_SECRET.encode(),
+        f"{header_seg}.{payload_seg}".encode(),
+        hashlib.sha256,
+    ).digest()
+    try:
+        actual = _b64url_decode(sig_seg)
+    except (ValueError, Exception):
+        return None
+    if not hmac.compare_digest(expected, actual):
+        return None
+
+    try:
+        payload = json.loads(_b64url_decode(payload_seg))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    exp = payload.get("exp")
+    if exp is not None and time.time() > exp:
+        return None  # 已过期
+    return payload
+
+
+def _strip_bearer(raw: str | None) -> str | None:
+    """剥掉 Authorization 头里的 "Bearer " 前缀,取出裸 token。"""
+    if not raw:
+        return None
+    raw = raw.strip()
+    if raw.lower().startswith("bearer "):
+        raw = raw[7:].strip()
+    return raw or None
+
+
+def _resolve_identity(raw: str | None) -> tuple[str | None, str | None]:
+    """从 Authorization 头解析 (identity, display_name)。
+
+    配了 JWT 密钥 → 必须是合法 JWT(否则视为无身份,走兜底/401);
+    没配密钥 → 退回 mock 模式,token 文本即身份。
+    """
+    token = _strip_bearer(raw)
+    if not token:
+        return None, None
+    if _JWT_SECRET:
+        payload = _verify_jwt(token)
+        if not payload:
+            return None, None  # 验签失败 → 无身份(交由 authenticate 决定兜底/拒绝)
+        sub = payload.get("sub")
+        if not sub:
+            return None, None
+        return sub, payload.get("name") or sub
+    # mock 模式:token 即身份
+    return token, token
 
 
 @auth.authenticate
@@ -48,13 +130,16 @@ async def authenticate(headers: dict) -> dict:
             raw = v.decode() if isinstance(v, bytes) else v
             break
 
-    identity = _identity_from_token(raw) or _DEV_FALLBACK_USER
+    identity, display_name = _resolve_identity(raw)
+    if not identity:
+        identity = _DEV_FALLBACK_USER or None
+        display_name = identity
     if not identity:
         raise Auth.exceptions.HTTPException(status_code=401, detail="缺少身份令牌(Authorization)")
     return {
         "identity": identity,
         "is_authenticated": True,
-        "display_name": identity,
+        "display_name": display_name or identity,
     }
 
 

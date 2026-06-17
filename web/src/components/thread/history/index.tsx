@@ -2,7 +2,7 @@
 import { Button } from "@/components/ui/button";
 import { useThreads } from "@/providers/Thread";
 import { Thread } from "@langchain/langgraph-sdk";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { getContentString } from "../utils";
 import { useQueryState, parseAsBoolean } from "nuqs";
@@ -13,10 +13,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SquarePen } from "lucide-react";
+import { SquarePen, LogIn, LogOut } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { BRAND } from "@/lib/brand";
+import { getCurrentUser, loginWithFeishu, logout, type CurrentUser } from "@/lib/auth";
 
 function ThreadList({
   threads,
@@ -30,7 +31,9 @@ function ThreadList({
   return (
     <div className="flex h-full w-full flex-col items-start gap-1 overflow-y-auto px-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
       {threads.map((t) => {
-        let itemText = t.thread_id;
+        // 优先用首条用户消息作标题;取不到(如失败/空会话)显示友好占位,
+        // 不暴露 thread_id 这种 UUID(此前会显示成一长串乱码似的 ID)。
+        let itemText = "未命名对话";
         if (
           typeof t.values === "object" &&
           t.values &&
@@ -38,7 +41,8 @@ function ThreadList({
           Array.isArray(t.values.messages) &&
           t.values.messages?.length > 0
         ) {
-          itemText = getContentString(t.values.messages[0].content);
+          const first = getContentString(t.values.messages[0].content).trim();
+          if (first) itemText = first;
         }
         const active = t.thread_id === threadId;
         return (
@@ -72,6 +76,49 @@ function ThreadHistoryLoading() {
       {Array.from({ length: 12 }).map((_, i) => (
         <Skeleton key={i} className="h-9 w-full" />
       ))}
+    </div>
+  );
+}
+
+function UserArea() {
+  // 客户端读 cookie 里的身份 JWT,展示当前飞书用户 / 登录入口。
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  useEffect(() => {
+    setUser(getCurrentUser());
+  }, []);
+
+  if (!user) {
+    return (
+      <div className="border-border mt-auto border-t px-2 py-3">
+        <Button
+          variant="ghost"
+          className="text-foreground/80 hover:bg-secondary w-full justify-start gap-2"
+          onClick={() => loginWithFeishu(window.location.pathname + window.location.search)}
+        >
+          <LogIn className="size-4" />
+          用飞书登录
+        </Button>
+      </div>
+    );
+  }
+
+  const display = user.name || user.openId;
+  return (
+    <div className="border-border mt-auto flex items-center gap-2.5 border-t px-4 py-3">
+      <span className="bg-primary text-primary-foreground flex size-7 shrink-0 items-center justify-center rounded-full text-xs">
+        {display.slice(0, 1)}
+      </span>
+      <span className="text-foreground/90 flex-1 truncate text-xs" title={display}>
+        {display}
+      </span>
+      <button
+        type="button"
+        onClick={logout}
+        title="退出登录"
+        className="text-muted-foreground hover:text-foreground shrink-0 transition-colors"
+      >
+        <LogOut className="size-4" />
+      </button>
     </div>
   );
 }
@@ -113,13 +160,8 @@ function SidebarBody() {
       <div className="min-h-0 flex-1">
         {threadsLoading ? <ThreadHistoryLoading /> : <ThreadList threads={threads} />}
       </div>
-      {/* 用户区（本地 mock 占位） */}
-      <div className="border-border mt-auto flex items-center gap-2.5 border-t px-4 py-3">
-        <span className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-full text-xs">
-          我
-        </span>
-        <span className="text-muted-foreground text-xs">团队成员</span>
-      </div>
+      {/* 用户区:飞书登录态 */}
+      <UserArea />
     </div>
   );
 }

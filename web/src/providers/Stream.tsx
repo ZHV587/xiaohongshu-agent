@@ -22,6 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { ArrowRight } from "lucide-react";
 import { PasswordInput } from "@/components/ui/password-input";
 import { getApiKey } from "@/lib/api-key";
+import { getAuthToken } from "@/lib/auth";
 import { useThreads } from "./Thread";
 import { toast } from "sonner";
 
@@ -55,6 +56,8 @@ async function checkGraphStatus(
     const headers = new Headers();
     if (apiKey) headers.set("X-Api-Key", apiKey);
     if (authScheme) headers.set("X-Auth-Scheme", authScheme);
+    const token = getAuthToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
 
     const res = await fetch(`${apiUrl}/info`, {
       headers,
@@ -86,11 +89,11 @@ const StreamSession = ({
     apiUrl,
     apiKey: apiKey ?? undefined,
     assistantId,
-    ...(authScheme && {
-      defaultHeaders: {
-        "X-Auth-Scheme": authScheme,
-      },
-    }),
+    defaultHeaders: {
+      ...(authScheme && { "X-Auth-Scheme": authScheme }),
+      // 真飞书 OAuth:身份 JWT 作 Bearer 传给后端,实现按用户隔离会话。
+      ...(getAuthToken() && { Authorization: `Bearer ${getAuthToken()}` }),
+    },
     threadId: threadId ?? null,
     fetchStateHistory: true,
     onCustomEvent: (event, options) => {
@@ -217,11 +220,10 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
           >
             <div className="flex flex-col gap-2">
               <Label htmlFor="apiUrl">
-                Deployment URL<span className="text-rose-500">*</span>
+                部署地址<span className="text-rose-500">*</span>
               </Label>
               <p className="text-muted-foreground text-sm">
-                This is the URL of your LangGraph deployment. Can be a local, or
-                production deployment.
+                你的 LangGraph 服务地址，可以是本地或线上部署。
               </p>
               <Input
                 id="apiUrl"
@@ -234,12 +236,10 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="assistantId">
-                Assistant / Graph ID<span className="text-rose-500">*</span>
+                图 / 助手 ID<span className="text-rose-500">*</span>
               </Label>
               <p className="text-muted-foreground text-sm">
-                This is the ID of the graph (can be the graph name), or
-                assistant to fetch threads from, and invoke when actions are
-                taken.
+                用于拉取会话并触发执行的图 ID（可填图名）或助手 ID。
               </p>
               <Input
                 id="assistantId"
@@ -253,10 +253,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
             <div className="flex flex-col gap-2">
               <Label htmlFor="apiKey">LangSmith API Key</Label>
               <p className="text-muted-foreground text-sm">
-                This is <strong>NOT</strong> required if using a local LangGraph
-                server. This value is stored in your browser's local storage and
-                is only used to authenticate requests sent to your LangGraph
-                server.
+                使用本地 LangGraph 服务时<strong>无需填写</strong>。该值仅保存在浏览器本地，用于向你的 LangGraph 服务发起鉴权请求。
               </p>
               <PasswordInput
                 id="apiKey"
@@ -271,10 +268,10 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
               <div className="flex items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
                   <Label htmlFor="agentBuilderEnabled">
-                    Built with Agent Builder
+                    使用 Agent Builder 构建
                   </Label>
                   <p className="text-muted-foreground text-sm">
-                    Enable this for Agent Builder deployments.
+                    Agent Builder 部署时开启此项。
                   </p>
                 </div>
                 <Switch
@@ -290,7 +287,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 type="submit"
                 size="lg"
               >
-                Continue
+                继续
                 <ArrowRight className="size-5" />
               </Button>
             </div>

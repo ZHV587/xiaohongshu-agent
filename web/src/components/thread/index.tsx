@@ -123,7 +123,23 @@ export function Thread() {
       return;
     }
     try {
-      const message = (stream.error as any).message;
+      const message = (stream.error as any).message ?? "";
+
+      // 会话不存在(后端 inmem 重启后旧 threadId 失效):静默清掉失效 ID 回到新对话,
+      // 不弹吓人的红色报错。匹配后端返回的 "Thread with ID ... not found" / 404。
+      const isThreadGone =
+        /thread\b.*\bnot found/i.test(message) ||
+        (/\b404\b/.test(message) && /thread/i.test(message));
+      if (isThreadGone) {
+        lastError.current = message;
+        setThreadId(null);
+        toast.info("该会话已失效，已为你开启新对话。", {
+          richColors: true,
+          closeButton: true,
+        });
+        return;
+      }
+
       if (!message || lastError.current === message) {
         // Message has already been logged. do not modify ref, return early.
         return;

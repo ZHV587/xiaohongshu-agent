@@ -11,6 +11,51 @@ from langchain_core.tools import tool
 
 FEISHU_BASE = "https://open.feishu.cn/open-apis"
 
+# 核心列白名单关键词:只保留对"分析爆款规律 + 写文案"有用的列,
+# 砍掉图片附件/链接/仿写流程/采集系统等噪声列(它们占数据体积大头却无分析价值)。
+# 用关键词子串匹配(而非精确列名),容忍飞书表列名的细微变动/前缀 emoji。
+_CORE_COLUMN_KEYWORDS = (
+    "标题",
+    "正文",
+    "视频文案",
+    "话题标签",
+    "分类标签",
+    "点赞",
+    "收藏",
+    "评论数",
+    "转发",
+    "播放",
+    "赞评比",
+    "赞藏比",
+    "爆款",
+    "博主",
+    "发布时间",
+    "关联搜索词",
+)
+
+# 明确排除的噪声关键词(优先级高于白名单:命中即剔除)。
+# 防止"隐藏的视频文案修正""仿写图片提示词"等大块噪声混入。
+_EXCLUDE_COLUMN_KEYWORDS = (
+    "仿写",
+    "图片",
+    "附件",
+    "链接",
+    "域名",
+    "采集",
+    "封面",
+    "海外",
+    "修正",
+    "隐藏",
+)
+
+
+def _is_core_column(name: str) -> bool:
+    """判断列是否属于核心分析列(先排除噪声,再匹配白名单)。"""
+    if any(kw in name for kw in _EXCLUDE_COLUMN_KEYWORDS):
+        return False
+    return any(kw in name for kw in _CORE_COLUMN_KEYWORDS)
+
+
 
 def fetch_token(app_id: str, app_secret: str) -> str:
     """用应用凭证换取 tenant_access_token。"""
@@ -32,8 +77,13 @@ def read_bitable_records(
     bitable_app_token: str,
     table_id: str,
     page_size: int = 200,
+    core_only: bool = True,
 ) -> dict[str, Any]:
     """读取整张多维表的记录,返回列名清单与数据行。
+
+    Args:
+        core_only: True(默认)只返回核心分析列(白名单过滤),大幅缩减体积,
+            避免超大结果触发 deepagents 转存文件 / 拖慢模型。False 返回全部列。
 
     Returns:
         {"columns": [列名...], "rows": [{列名: 值, ...}, ...]}
@@ -68,7 +118,17 @@ def read_bitable_records(
     seen: dict[str, None] = {}
     for row in rows:
         seen.update(dict.fromkeys(row))
-    return {"columns": list(seen), "rows": rows}
+    columns = list(seen)
+
+    if core_only:
+        # 只保留核心列,既裁列名清单,也裁每行内容,显著缩小返回体积。
+        core_cols = [c for c in columns if _is_core_column(c)]
+        # 兜底:若白名单一列都没命中(表结构大改),退回全列,避免返回空表。
+        if core_cols:
+            columns = core_cols
+            rows = [{c: r.get(c) for c in core_cols if c in r} for r in rows]
+
+    return {"columns": columns, "rows": rows}
 
 
 @tool

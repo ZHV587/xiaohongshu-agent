@@ -4,6 +4,7 @@ import { Thread } from "@/components/thread";
 import { StreamProvider } from "@/providers/Stream";
 import { ThreadProvider } from "@/providers/Thread";
 import { ArtifactProvider } from "@/components/thread/artifact";
+import { AuthGate } from "@/components/auth-gate";
 import { Toaster } from "@/components/ui/sonner";
 import React from "react";
 
@@ -11,13 +12,15 @@ export default function DemoPage(): React.ReactNode {
   return (
     <React.Suspense fallback={<div>加载中…</div>}>
       <Toaster />
-      <ThreadProvider>
-        <StreamProvider>
-          <ArtifactProvider>
-            <Thread />
-          </ArtifactProvider>
-        </StreamProvider>
-      </ThreadProvider>
+      <AuthGate>
+        <ThreadProvider>
+          <StreamProvider>
+            <ArtifactProvider>
+              <Thread />
+            </ArtifactProvider>
+          </StreamProvider>
+        </ThreadProvider>
+      </AuthGate>
     </React.Suspense>
   );
 }
