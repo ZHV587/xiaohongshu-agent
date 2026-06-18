@@ -18,6 +18,7 @@ web/node_modules/
 web/.next/
 web/.env
 web/out/
+web/tsconfig.tsbuildinfo
 node_modules/.cache/
 
 # CodeGraph 本地索引(可重建,不入库)
