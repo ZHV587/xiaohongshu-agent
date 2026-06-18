@@ -215,11 +215,6 @@ def build_router_middleware(pool: list[ModelCandidate]) -> ModelRouterMiddleware
     return ModelRouterMiddleware(pool)
 
 
-def get_quality_model_name(pool: list[ModelCandidate]) -> str:
-    """池中第一个候选的裸 id,供 RubricMiddleware(收字符串)。"""
-    return pool[0].model_id
-
-
 def verify_gateway(base_url: str, api_key: str) -> bool:
     """配置时连通性验证:能探到非空清单即视为'配上能用'。
 

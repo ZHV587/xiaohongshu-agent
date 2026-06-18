@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 from backends import build_backend
 from middlewares import build_retry_middleware
-from models import build_pool, build_primary_model, build_router_middleware, get_quality_model_name
+from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents import baokuan_analyst
 from tools.feishu_bitable import read_xhs_data
@@ -55,7 +55,7 @@ backend = build_backend()
 # 用便宜的 Haiku 做评分模型,控制成本。
 # 仅当调用方传入 rubric 时才激活,平时不增加开销。
 rubric_middleware = RubricMiddleware(
-    model=get_quality_model_name(pool),
+    model=build_primary_model(pool),
     system_prompt="""你是小红书文案质量检查员。评估文案是否满足以下标准:
 1. 标题有钩子,不平淡,能引起点击欲望
 2. 正文像真人写的小红书笔记,无 AI 腔(不要"首先/其次/总之"、不要"在…领域"等八股)

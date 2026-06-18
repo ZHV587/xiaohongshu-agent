@@ -356,17 +356,12 @@ def test_router_concurrent_mark_unhealthy_consistent():
     assert mw._is_cooling("g1") is True
 
 
-from models import build_primary_model, build_router_middleware, get_quality_model_name
+from models import build_primary_model, build_router_middleware
 
 
 def test_build_primary_model_returns_first_candidate_model():
     pool = [_candidate("g1", "claude-sonnet-4-6"), _candidate("g2", "gpt-4o")]
     assert build_primary_model(pool) is pool[0].model
-
-
-def test_get_quality_model_name_returns_first_id():
-    pool = [_candidate("g1", "claude-sonnet-4-6"), _candidate("g2", "gpt-4o")]
-    assert get_quality_model_name(pool) == "claude-sonnet-4-6"
 
 
 def test_build_router_middleware_wraps_pool():
