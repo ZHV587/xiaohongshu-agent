@@ -65,3 +65,78 @@ def discover_models(base_url: str, api_key: str) -> list[str] | None:
 
     _DISCOVER_CACHE[cache_key] = result
     return result
+
+
+def _build_chat_model(model_id: str, base_url: str, api_key: str) -> BaseChatModel:
+    """按铁律一构造模型实例:provider=openai + 网关 base_url/key。"""
+    return init_chat_model(
+        model=model_id,
+        model_provider="openai",
+        base_url=base_url,
+        api_key=api_key,
+        temperature=0.7,
+        timeout=60,
+        max_retries=2,
+    )
+
+
+def _read_gateways() -> list[tuple[str, str, str]]:
+    """读 env 得到 [(gateway_name, base_url, api_key)]。主网关 + 编号附加网关。"""
+    gateways: list[tuple[str, str, str]] = []
+    base = os.environ.get("LLM_BASE_URL", "").strip()
+    key = os.environ.get("LLM_API_KEY", "").strip()
+    if base and key:
+        gateways.append(("gateway_1", base, key))
+    n = 2
+    while True:
+        b = os.environ.get(f"LLM_GATEWAY_{n}_BASE_URL", "").strip()
+        k = os.environ.get(f"LLM_GATEWAY_{n}_API_KEY", "").strip()
+        if not (b and k):
+            break
+        gateways.append((f"gateway_{n}", b, k))
+        n += 1
+    return gateways
+
+
+def _read_whitelist() -> list[str]:
+    raw = os.environ.get("LLM_QUALITY_MODELS", "")
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
+def build_pool() -> list[ModelCandidate]:
+    """构造高质量候选池:各网关清单 ∩ 白名单;池为空则降级到白名单首个。"""
+    gateways = _read_gateways()
+    whitelist = _read_whitelist()
+    whitelist_set = set(whitelist)
+
+    pool: list[ModelCandidate] = []
+    for gw_name, base_url, api_key in gateways:
+        available = discover_models(base_url, api_key)
+        if not available:
+            continue
+        for model_id in available:
+            if model_id in whitelist_set:
+                pool.append(ModelCandidate(
+                    gateway_name=gw_name,
+                    model_id=model_id,
+                    model=_build_chat_model(model_id, base_url, api_key),
+                ))
+
+    if not pool:
+        if not gateways or not whitelist:
+            raise RuntimeError(
+                "无法构造模型池:LLM_BASE_URL/LLM_API_KEY/LLM_QUALITY_MODELS 至少一项缺失"
+            )
+        gw_name, base_url, api_key = gateways[0]
+        fallback_id = whitelist[0]
+        logger.warning(
+            "模型池为空(探测失败或白名单无交集),降级到白名单首个 %s @ %s",
+            fallback_id, base_url,
+        )
+        pool.append(ModelCandidate(
+            gateway_name=gw_name,
+            model_id=fallback_id,
+            model=_build_chat_model(fallback_id, base_url, api_key),
+        ))
+
+    return pool

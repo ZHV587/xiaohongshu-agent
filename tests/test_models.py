@@ -108,3 +108,57 @@ def test_discover_models_disabled_returns_none(monkeypatch):
     models_mod._DISCOVER_CACHE.clear()
     monkeypatch.setenv("DISCOVER_MODELS", "false")
     assert models_mod.discover_models("https://gw/v1", "key") is None
+
+
+from models import build_pool
+
+
+def _set_single_gateway(monkeypatch, quality="claude-sonnet-4-6,gpt-4o"):
+    monkeypatch.setenv("LLM_BASE_URL", "https://gw1/v1")
+    monkeypatch.setenv("LLM_API_KEY", "key1")
+    monkeypatch.setenv("LLM_QUALITY_MODELS", quality)
+    for n in (2, 3):
+        monkeypatch.delenv(f"LLM_GATEWAY_{n}_BASE_URL", raising=False)
+        monkeypatch.delenv(f"LLM_GATEWAY_{n}_API_KEY", raising=False)
+
+
+def test_build_pool_intersects_whitelist(monkeypatch):
+    models_mod._DISCOVER_CACHE.clear()
+    _set_single_gateway(monkeypatch)
+    monkeypatch.setattr(
+        models_mod, "discover_models",
+        lambda url, key: ["claude-sonnet-4-6", "gpt-4o", "cheap-model-x"],
+    )
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
+    pool = build_pool()
+    ids = [c.model_id for c in pool]
+    assert ids == ["claude-sonnet-4-6", "gpt-4o"]  # cheap-model-x 不在白名单被剔除
+
+
+def test_build_pool_multi_gateway(monkeypatch):
+    models_mod._DISCOVER_CACHE.clear()
+    _set_single_gateway(monkeypatch)
+    monkeypatch.setenv("LLM_GATEWAY_2_BASE_URL", "https://gw2/v1")
+    monkeypatch.setenv("LLM_GATEWAY_2_API_KEY", "key2")
+
+    def fake_discover(url, key):
+        return ["claude-sonnet-4-6"] if "gw1" in url else ["gpt-4o"]
+
+    monkeypatch.setattr(models_mod, "discover_models", fake_discover)
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
+    pool = build_pool()
+    assert [(c.gateway_name, c.model_id) for c in pool] == [
+        ("gateway_1", "claude-sonnet-4-6"),
+        ("gateway_2", "gpt-4o"),
+    ]
+
+
+def test_build_pool_empty_falls_back_to_first_whitelist(monkeypatch):
+    models_mod._DISCOVER_CACHE.clear()
+    _set_single_gateway(monkeypatch, quality="claude-sonnet-4-6,gpt-4o")
+    monkeypatch.setattr(models_mod, "discover_models", lambda url, key: None)  # 探测全失败
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
+    pool = build_pool()
+    assert len(pool) == 1
+    assert pool[0].model_id == "claude-sonnet-4-6"  # 白名单首个降级
+    assert pool[0].gateway_name == "gateway_1"
