@@ -104,17 +104,18 @@ export async function GET(req: NextRequest) {
   // ── Sync to Python UAT storage using HMAC signature ──────────
   try {
     const expiresAt = Math.floor(Date.now() / 1000 + expiresIn);
+    const rtStr = refreshToken || "";
     const bodyObj = {
       open_id: openId,
       uat: userToken,
-      refresh_token: refreshToken,
+      refresh_token: rtStr,
       expires_at: expiresAt,
       scopes: tokenData.scope ? tokenData.scope.split(" ") : [],
       name: name || openId
     };
     
     const bodyStr = JSON.stringify(bodyObj);
-    const signText = `${openId}:${userToken}:${refreshToken}:${expiresAt}`;
+    const signText = `${openId}:${userToken}:${rtStr}:${expiresAt}`;
     
     const crypto = await import("node:crypto");
     const signature = crypto

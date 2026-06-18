@@ -309,7 +309,7 @@ class InternalUATHandler(BaseHTTPRequestHandler):
                 payload = json.loads(body.decode("utf-8"))
                 open_id = payload["open_id"]
                 uat = payload["uat"]
-                refresh_token = payload["refresh_token"]
+                refresh_token = payload.get("refresh_token") or ""
                 expires_at = int(payload["expires_at"])
                 scopes = payload.get("scopes", [])
                 name = payload.get("name", "")

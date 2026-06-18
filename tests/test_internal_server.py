@@ -63,6 +63,27 @@ def test_authorized_post(running_server):
         assert resp.json() == {"ok": True}
         mock_save.assert_called_once_with("usr_999", "uat_xxx", "ref_xxx", 1800000000, [], "Sync User")
 
+def test_authorized_post_missing_refresh_token(running_server):
+    body = json.dumps({
+        "open_id": "usr_999",
+        "uat": "uat_xxx",
+        # refresh_token is omitted
+        "expires_at": 1800000000,
+        "scopes": [],
+        "name": "Sync User"
+    }).encode("utf-8")
+    
+    # HMAC expects refresh_token to fall back to empty string
+    sign_text = "usr_999:uat_xxx::1800000000"
+    sig = hmac.new(b"secret_key", sign_text.encode("utf-8"), hashlib.sha256).hexdigest()
+    headers = {"Authorization": f"HMAC {sig}"}
+    
+    with patch("tools.internal_server.save_uat") as mock_save:
+        resp = httpx.post("http://127.0.0.1:9090/_internal/uat", content=body, headers=headers)
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+        mock_save.assert_called_once_with("usr_999", "uat_xxx", "", 1800000000, [], "Sync User")
+
 @patch("tools.internal_server.get_uat")
 @patch("tools.internal_server.lark_cli")
 def test_chats_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
