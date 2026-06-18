@@ -1,250 +1,263 @@
-# 模型层重构设计 · 发现式选型 + 官方原生 fallback
+# 高质量模型自主调度系统 · 设计
 
 - 日期:2026-06-18
-- 范围:后端模型装配层(`agent.py` / `subagents.py` / `cli.py` + 新建 `models.py`)
+- 范围:后端模型装配与运行时调度(`agent.py` / `subagents.py` / `cli.py` + 新建 `models.py`)
 - 状态:设计已定,待写实现计划
+- 演进说明:本 spec 由"模型层重构(删 patch + 发现式选型)"演化而来。那只是本系统的**地基子集**;完整目标是一个**在 deepagents/langchain 原生机制基础上构建的、质量优先的多网关自主调度系统**。
 
 ---
 
 ## 1. 背景与动机
 
-### 1.1 现状的三个根本问题
+### 1.1 现状的根本问题
 
 **问题一:monkey-patch 篡改 deepagents 内部类型检查(脆弱 + 不合规)**
 
-`agent.py` 和 `subagents.py` 各自顶部有一段**逐字重复**的 ~35 行 monkey-patch,作用是:
+`agent.py` 与 `subagents.py` 各有一段逐字重复的 ~35 行 monkey-patch,替换 `deepagents._models.resolve_model`、`deepagents.graph.resolve_model` 及 `summarization` 模块内的 `isinstance`,目的是让 `RunnableWithFallbacks` 绕过 deepagents 的 `isinstance(model, BaseChatModel)` 检查。
 
-- 替换 `deepagents._models.resolve_model` 和 `deepagents.graph.resolve_model`
-- 替换 `deepagents.middleware.summarization` 模块内的内置 `isinstance`
-
-目的是让一个 `RunnableWithFallbacks` 对象绕过 deepagents 的 `isinstance(model, BaseChatModel)` 检查。
-
-已查证(deepagents 官方文档 + main 分支源码):**deepagents 只支持 `str` 或 `BaseChatModel` 两种 model 形态**,从未承诺支持 `RunnableWithFallbacks`。这段 patch 赌的是"官方永远只用 `isinstance` 卡类型"这个无契约保证的内部细节,升级即可能失效。LangChain 官方 [Issue #33129](https://github.com/langchain-ai/langchain/issues/33129) 已将"`create_agent` 接受 `RunnableWithFallbacks`"归类为 **Feature 并关闭**,无支持承诺。
+已查证:deepagents 官方只支持 `str` 或 `BaseChatModel`(文档 + main 源码);LangChain [Issue #33129](https://github.com/langchain-ai/langchain/issues/33129) 将"`create_agent` 接受 `RunnableWithFallbacks`"归为 Feature 并关闭,无支持承诺。这段 patch 赌的是无契约保证的内部实现细节,升级即可能失效。
 
 **问题二:模型构建逻辑重复 ~200 行**
 
-`agent.py::build_llm_model`(~100 行)与 `subagents.py::build_analyst_model`(~100 行)近乎逐字重复,仅"默认模型名"不同。两者都做:解析 env → `init_chat_model` → 硬编码 5 家 fallback 链 → `with_fallbacks`。
+`agent.py::build_llm_model` 与 `subagents.py::build_analyst_model` 近乎逐字重复(各 ~100 行):解析 env → `init_chat_model` → 硬编码 5 家 fallback 链 → `with_fallbacks`。
 
-**问题三:盲目指定模型,不问网关实际支持哪些**
+**问题三:盲目指定模型 + 无运行时容灾**
 
-代码硬编码具体型号(`gpt-4o`、`deepseek-chat`、`gemini-2.5-flash`…),触发条件仅"env 里有没有该家 key"。但实际部署走 OneAPI 这类中转网关(`LLM_BASE_URL`),一个 key 后面挂一批模型,代码**不知道这个网关实际开通了哪些**,硬调可能 404 / 型号名对不上 / 整条 fallback 是死的。
-
-正确姿势:**先发现(问网关 `GET /v1/models`),再从真实可用清单里选**。
+代码硬编码具体型号(`gpt-4o`/`deepseek-chat`/…),触发仅看"env 有无该家 key"。实际走 OneAPI 中转网关时,代码不知道网关实际开通了哪些模型,硬调可能 404 / 名字对不上。且容灾是静态 `with_fallbacks`,无健康度感知、不能跨网关、改链路要改代码。
 
 ### 1.2 现状事实快照(2026-06-18 实测)
 
-- `.env` 里 `LLM_MODEL` / `LLM_API_KEY` / `LLM_BASE_URL` **三者全空** → `build_llm_model` 的"OneAPI 路径"当前空跑。
-- 实际生效的是默认分支 `init_chat_model("claude-sonnet")`,经 `ANTHROPIC_BASE_URL=https://chat.aiprox.net` 打到中转网关。
-- `KIMI/DEEPSEEK/OPENAI` 的 key 均为 `sk-test-xxx` 假值,`GEMINI` 为空 → 当前 fallback 链**一条都装不起来**。
-- `ANALYST_MODEL_NAME` 这个常量除了给子智能体当模型,还被 `RubricMiddleware` 当评分模型字符串用(`agent.py`、`cli.py`)——删除时必须替换,否则 rubric 崩。
+- `.env` 中 `LLM_MODEL` / `LLM_API_KEY` / `LLM_BASE_URL` 三者全空 → OneAPI 路径空跑;实际走默认分支 `init_chat_model("claude-sonnet")` 经 `ANTHROPIC_BASE_URL=https://chat.aiprox.net`(一个 OpenAI/Anthropic 兼容中转网关)。
+- `KIMI/DEEPSEEK/OPENAI` 的 key 为 `sk-test-xxx` 假值,`GEMINI` 为空 → 当前 fallback 链一条都装不起来。
+- `ANALYST_MODEL_NAME` 常量除作子智能体模型外,还被 `RubricMiddleware` 当评分模型字符串用(`agent.py`/`cli.py`)。
 
 ---
 
-## 2. 设计目标
+## 2. 核心决策(全部已确认)
 
-完整、彻底消除历史债,所有路径走 LangChain / deepagents 官方接口,**零 monkey-patch、零自研模型包装类**:
-
-1. **合规**:主/子模型都只传单个合法 `BaseChatModel`;fallback 用官方原生 `ModelFallbackMiddleware`。
-2. **发现式选型**:启动时探测网关 `GET /v1/models`,从真实可用清单选模型,彻底消灭硬编码型号。
-3. **单一出口**:新建 `models.py` 为唯一模型装配模块,`agent.py` / `subagents.py` / `cli.py` 三入口完全共用,零特例。
-4. **单一配置路径**:统一到 `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` 一套 env,废弃 `ANTHROPIC_BASE_URL` 死路。
-5. **健壮**:探测失败优雅降级(单模型 + warning),绝不因网关抖动罢工。
-
----
-
-## 3. 关键技术决策(全部已用源码验证)
-
-| 决策 | 结论 | 验证 |
+| # | 决策 | 选择 |
 |---|---|---|
-| fallback 实现 | 官方 `langchain.agents.middleware.ModelFallbackMiddleware`,零自研 | 本地 langchain 1.3.9 已含此类;签名 `(first_model, *additional_models: str\|BaseChatModel)` |
-| 为何不自研 `FallbackChatModel(BaseChatModel)` | LangChain 1.3.9 / master **无** chat-model 层 fallback 类(`RunnableWithFallbacks` 继承 `RunnableSerializable` 非 `BaseChatModel`),官方解法是中间件而非包模型 | 实测 `issubclass` + master 源码 |
-| 中间件兼容性 | `ModelFallbackMiddleware` 经 `wrap_model_call` 工作(出错时 `request.override(model=fallback)` 依次重试),与 deepagents 必装的 `SummarizationMiddleware`、已用的 `ModelRetryMiddleware` 同机制,正交叠加无冲突 | 读 `model_fallback.py` 源码 |
-| retry 与 fallback 关系 | 互补:retry 对**同一模型**瞬时错误重试(`middlewares.py`,2 次指数退避);fallback 在某模型**彻底失败后切下一个**。叠加 = 完整容灾 | `middlewares.py` |
-| 模型发现 | `GET {base_url}/v1/models`,OpenAI 兼容标准接口,OneAPI 支持 | OneAPI 标准 |
-| 探测失败 | 优雅降级:偏好首选单模型 + warning,继续启动 | 用户决策 |
+| 1 | 容灾/选择实现机制 | 原生中间件 `wrap_model_call` 扩展点,**非 monkey-patch、非自研框架** |
+| 2 | 智能选择由谁做 | **中间件自动调度,agent 无感**(非 LLM 运行时自选) |
+| 3 | 范围 | 一次设计完整的自主调度系统 |
+| 4 | 实现约束 | **在 deepagents/langchain 原生基础上改**,产物是标准 `AgentMiddleware` 子类 |
+| 5 | 质量原则 | **质量优先,绝不为省钱降级** |
+| 6 | 主/子质量档 | **同档**,子智能体也用最高质量,共用一个池 |
+| 7 | 够格模型来源 | **配置白名单**,质量下限由用户掌控 |
+
+### 2.1 "智能"在质量优先下的准确含义
+
+池里**只放高质量模型**(白名单保证),因此任何选择都不掉质量。"智能"= **高质量模型之间的健康度感知容灾与负载分摊**,fallback 方向永远是"换一个一样好的",**绝不降级到低质量/廉价模型**。耗尽高质量候选则抛错交上层,不将就。
 
 ---
 
-## 4. 模块设计:`models.py`
+## 3. 可行性验证(全原生,已实测)
 
-唯一模型装配出口。对外接口:
+| 能力 | 原生支持点 | 验证 |
+|---|---|---|
+| 运行时换 url+key+model | `ModelRequest.override(model=任意 BaseChatModel 实例)`;每实例自带 url/key | ✅ override 即换网关 |
+| 按上下文做调度决策 | `wrap_model_call` 的 `request` 携带 `state`/`messages`/`runtime` | ✅ 中间件可读上下文 |
+| 失败换候选重试 | 同一 `wrap_model_call` 内反复 `handler(request.override(...))` | ✅ `ModelFallbackMiddleware` 即此模式 |
+| 官方扩展点 | `AgentMiddleware.wrap_model_call` / `awrap_model_call`,deepagents 自带中间件均重写 | ✅ 公开扩展点 |
+| 中间件单例持久 | 实例在图生命周期内复用,实例属性可存健康状态 | ✅ |
 
-```
-discover_models(base_url, api_key) -> list[str] | None
-    GET {base_url}/v1/models,带 Authorization: Bearer {key},超时 5s。
-    成功:解析 {"data":[{"id":...}]} 返回 id 列表。
-    失败(超时/非200/无此接口/JSON异常):返回 None + logger.warning。
-    进程内缓存:同 (base_url, key) 只探测一次(模块级 dict)。
-    可禁用:DISCOVER_MODELS=false 直接返回 None(测试/离线用)。
+---
 
-select_models(role, available) -> tuple[primary_name: str, fallback_names: list[str]]
-    role ∈ {"main", "analyst"}。available 为清单 list[str] 或 None。
-    各 role 有偏好优先级序常量 MAIN_PREFERENCE / ANALYST_PREFERENCE(按能力档位)。
-    规则见 §5。
+## 4. 两条实现铁律(自审实测,违反必崩)
 
-build_main_agent_model()  -> tuple[BaseChatModel, ModelFallbackMiddleware | None]
-build_analyst_model()     -> tuple[BaseChatModel, ModelFallbackMiddleware | None]
-    1. available = discover_models(LLM_BASE_URL, LLM_API_KEY)   # 带缓存
-    2. primary_name, fb_names = select_models(role, available)
-    3. primary = <按 §4.1 铁律一构造的完整实例>(primary_name)
-    4. fb_names 非空 → fallback 候选各按 §4.1 铁律一/铁律二构造为实例,
-                       ModelFallbackMiddleware(*实例们)
-       fb_names 为空 → 第二返回值 None
-    返回 (primary_model, fallback_middleware_or_None)
-    注:所有模型构造统一走 §4.1 的两条铁律,不在此重复参数。
+**铁律一:provider 一律 `openai`,所有模型经其所属网关的 base_url。**
 
-get_analyst_model_name()  -> str
-    复用 analyst 的 select 结果,返回 primary_name 字符串。
-    供 RubricMiddleware(收模型字符串,非实例)。评分模型与子智能体同档同源。
-```
-
-**职责单一性**:`models.py` 只做"读已有 env → 探测 → 选型 → 拼成官方接口对象"。不引入新配置项语义,不碰 deepagents 内部。可被单测独立覆盖。
-
-### 4.1 两条实现铁律(自审第二轮实测发现,违反必崩)
-
-**铁律一:provider 一律用 `openai`,所有模型都经 `LLM_BASE_URL` 网关。**
-
-OneAPI 是 OpenAI 兼容网关:它把 Claude / GPT / DeepSeek / Gemini 全部包装成 OpenAI 格式,统一从一个端点出。因此 `models.py` 构造**任何**模型(无论 id 是 `claude-sonnet-4-6` 还是 `gpt-4o`)都必须:
+OneAPI 是 OpenAI 兼容网关,把 Claude/GPT/… 统一成 OpenAI 格式。`/v1/models` 返回**裸 id**(无 provider 前缀)。任何模型构造必须:
 
 ```python
 init_chat_model(
-    model=model_id,            # /v1/models 返回的裸 id,直接用
-    model_provider="openai",   # ← 钉死 openai,不按名字推断 provider
-    base_url=os.environ["LLM_BASE_URL"],
-    api_key=os.environ["LLM_API_KEY"],
+    model=model_id,            # /v1/models 返回的裸 id
+    model_provider="openai",   # 钉死 openai,不按名字推断 provider
+    base_url=<该候选所属网关 url>,
+    api_key=<该网关 key>,
     temperature=..., timeout=60, max_retries=...,
 )
 ```
 
-**为什么**:`/v1/models` 返回的 id 是**裸名**(不带 provider 前缀)。若让 `init_chat_model` 按名字推断 provider,`claude-*` 会被推成 anthropic、走 anthropic 原生 SDK 端点 —— **绕开你的网关**,base_url 失效。统一 `openai` provider 才能保证所有调用都打到 OneAPI。
+否则裸名 `claude-*` 会被推成 anthropic 原生端点,绕开网关、base_url 失效。
 
-**铁律二:fallback 候选必须传「实例」给 `ModelFallbackMiddleware`,不能传字符串名。**
+**铁律二:`ModelRouterMiddleware` 必须同时实现 `wrap_model_call`(sync)与 `awrap_model_call`(async)。**
 
-实测 `ModelFallbackMiddleware.__init__`:对字符串 model 调的是**裸** `init_chat_model(model)` —— **不带 base_url/api_key**。若把 fallback 候选以字符串名传入,这些 fallback 会用裸配置构造,**打不到网关、找不到 key,静默失效**。因此:
+`AgentMiddleware` 有 sync/async 两个扩展点。**CLI**(`agent.stream`,同步)走 sync;**LangGraph Server**(生产前端路径,async)走 async。**只实现 sync 版会导致调度在 server 模式被完全绕过、静默失效**。两版共享同一套健康度状态与选择逻辑,差异仅 `handler` vs `await handler`。
 
-```python
-fallback_instances = [
-    init_chat_model(n, model_provider="openai", base_url=..., api_key=..., ...)  # 完整配置
-    for n in fb_names
-]
-fallback_mw = ModelFallbackMiddleware(*fallback_instances)  # 传实例,不传名字
+---
+
+## 5. 模块设计:`models.py`
+
+唯一模型装配与调度出口。
+
+```
+ModelCandidate(dataclass):
+    gateway_name: str         # 网关标识(日志/健康度键用)
+    model_id: str             # 裸 id
+    model: BaseChatModel       # 按铁律一构造的完整实例(provider=openai+该网关url/key)
+
+build_pool() -> list[ModelCandidate]
+    1. 从 env 读资源池:一个或多个网关 (name, url, key)(§7)
+    2. 读质量白名单 LLM_QUALITY_MODELS(逗号分隔的裸 id 集合)
+    3. 对每个网关 discover_models(url, key) 探测 GET /v1/models(超时5s,带缓存,可禁用)
+    4. 候选 = Σ_网关 (该网关清单 ∩ 白名单),各构造为 ModelCandidate(铁律一)
+    5. 池为空时降级:见 §8
+
+verify_gateway(url, key) -> bool
+    配置时连通性验证:探测一次 /v1/models,可解析即视为"配上能用"。
+    供配置写入路径调用(本次后端提供函数;web 联动后续立项)。
+
+build_primary_model(pool) -> BaseChatModel
+    返回池中第一个候选的 model 实例,作为 create_deep_agent(model=...) 的初始模型。
+    (运行时实际用哪个由 ModelRouterMiddleware 每次覆盖决定)
+
+build_router_middleware(pool) -> ModelRouterMiddleware
+    构造调度中间件,主/子/评分各取一个(共用同一 pool,同档)。
+
+get_quality_model_name(pool) -> str
+    返回池中第一个候选的裸 id 字符串,供 RubricMiddleware(收字符串)。
+    评分也用高质量池(质量优先下评分不得用廉价模型)。
 ```
 
-primary 模型同理 —— 始终是完整配置的实例。
+### 5.1 `ModelRouterMiddleware`(系统核心)
+
+```
+class ModelRouterMiddleware(AgentMiddleware):
+    持有:pool(候选列表)、_health(dict: gateway_name → 冷却到期时间戳/健康标记)
+
+    _select_healthy() -> list[ModelCandidate]   # 过滤掉冷却中的,按轮询排序
+    _mark_unhealthy(candidate)                   # 记一个冷却到期时间(如 +30s)
+    _is_retryable(exc) -> bool                   # 瞬时错误判定(503/超时/限流…)
+
+    wrap_model_call(request, handler):           # sync(CLI)
+        for cand in 健康候选轮转:
+            try: return handler(request.override(model=cand.model))
+            except e:
+                if _is_retryable(e): _mark_unhealthy(cand); continue
+                else: raise                       # 非瞬时错误(400/鉴权)直接抛,不换
+        raise last_exception                      # 全部高质量候选耗尽
+
+    awrap_model_call(request, handler):          # async(Server)—— 同逻辑,await handler
+```
+
+**共享瞬时错误谓词**:`middlewares.py` 已有渠道无关的 `_is_retryable`(看状态码 503/限流 + httpx 传输层异常)。本系统将其**抽取为共享函数**(如 `middlewares.is_retryable_error`),`ModelRetryMiddleware` 与 `ModelRouterMiddleware` 共用,避免两套判定漂移。
+
+**职责单一**:`models.py` 只做"读 env → 探测 → 按白名单构造高质量候选 → 提供调度中间件"。不碰 deepagents 内部,可单测。
 
 ---
 
-## 5. 选型规则(配置优先 + 清单校验)
+## 6. 健康度并发语义(自审澄清)
 
-`select_models(role, available)` 决策表:
+健康度状态(`_health` dict)在 server 模式下被并发请求读写。设计为 **best-effort 提示,非强一致状态**:
 
-| 情况 | primary | fallbacks |
-|---|---|---|
-| 清单可用 且 用户 `LLM_MODEL` 在清单中 | 用 `LLM_MODEL` | 清单 ∩ role 偏好序的其余模型,按偏好序排列 |
-| 清单可用 且 `LLM_MODEL` 未设或不在清单 | role 偏好序中**第一个命中清单**的 | 清单 ∩ role 偏好序的其余模型 |
-| **清单不可用(None)** 且 `LLM_MODEL` 已设 | 用 `LLM_MODEL`(尊重用户显式指定) | **空 → 不挂 fallback** |
-| **清单不可用(None)** 且 `LLM_MODEL` 未设 | role 的 `DEFAULT_MODEL`(见下) | **空 → 不挂 fallback** |
-
-**降级默认值**:每个 role 有一个独立常量 `MAIN_DEFAULT_MODEL` / `ANALYST_DEFAULT_MODEL`(如裸名 `claude-sonnet-4-6` / `claude-haiku-4-5`)。它就是 `*_PREFERENCE` 序的首元素(裸 id),降级时按 §4.1 铁律一构造(provider=openai + LLM_BASE_URL)。它是"无清单可校验下的最佳猜测",对应 §1.2 现状下唯一已知能跑通的型号,作为兜底安全。
-
-- 偏好序与 DEFAULT 全程用**裸 id**(与 `/v1/models` 返回格式一致),provider 由 §4.1 铁律一统一注入,**不在型号名里写 provider 前缀**(避免与"统一 openai"冲突)。
-- `MAIN_PREFERENCE`:强模型档(sonnet 档优先,后接同档其他厂商强模型)。
-- `ANALYST_PREFERENCE`:便宜快档(haiku 档优先,后接同档便宜模型)。
-- 主/子从**同一份**清单各选自己档位 —— 容灾策略分离,子智能体不会 fallback 到昂贵模型。
-- 偏好序仅含**档位语义的型号名**,真实可用性由清单交集裁决;清单里没有的型号自动跳过,**不会再出现"硬调一个不存在的型号"**。
+- 只记"某网关不健康 + 冷却到期时间戳";读时用 `time.monotonic()` 比较当前时间(运行时代码,标准库可用,不受时钟回拨影响)。
+- **不加锁**(锁会拖慢热路径)。竞态下最坏后果:两个并发请求同时试了同一个刚挂的网关,各失败一次后各自标记——**无害,只多一次重试**。
+- 冷却到期后自动重新纳入候选(自愈)。
 
 ---
 
-## 6. 三入口收敛
+## 7. 配置(env)
+
+**废弃**:`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` 作为模型主路径(历史死路)。
+
+**资源池(多网关)**:
+```
+# 主网关(必填)
+LLM_BASE_URL / LLM_API_KEY
+# 附加网关(可选,按序号扩展;留空即单网关)
+LLM_GATEWAY_2_BASE_URL / LLM_GATEWAY_2_API_KEY
+LLM_GATEWAY_3_BASE_URL / LLM_GATEWAY_3_API_KEY
+...
+```
+
+**质量白名单(必填)**:
+```
+LLM_QUALITY_MODELS=claude-sonnet-4-6,claude-opus-4,gpt-4o,...
+# 裸 id,逗号分隔。池 = 各网关清单 ∩ 此白名单。默认安全:不在白名单的模型永不被用。
+```
+
+**开关(可选)**:
+```
+DISCOVER_MODELS=false   # 关探测,走 §8 降级(测试/离线)
+```
+
+**迁移动作(实施时必做)**:当前 `.env` 用 `ANTHROPIC_BASE_URL=https://chat.aiprox.net` + `ANTHROPIC_API_KEY` 在跑。统一后迁入 `LLM_BASE_URL=https://chat.aiprox.net`、`LLM_API_KEY=<原 ANTHROPIC_API_KEY 值>`,并设 `LLM_QUALITY_MODELS`。`models.py` 只读新变量。`.env.example` 重写本节文档化。
+
+> ⚠️ 安全提醒:当前 `.env` 的真实密钥(`ANTHROPIC_API_KEY`/`FEISHU_APP_SECRET` 等)已在本次对话暴露,实施时一并轮换。
+
+---
+
+## 8. 错误处理与降级
+
+- **探测失败**(超时/非200/无 /v1/models/JSON异常):`discover_models` 返回 None,`logger.warning`,该网关本次不纳入池。
+- **池为空降级**:所有网关都探测失败 / 白名单交集为空时 → 用一个降级默认候选(`LLM_QUALITY_MODELS` 的**第一个**裸 id,按铁律一构造,走主网关)启动 + 醒目 warning。降级也只在白名单内,**绝不掉质量**。系统继续可用。
+- **运行时容灾链**:`ModelRetryMiddleware`(`middlewares.py`,同模型瞬时错误 2 次退避)→ `ModelRouterMiddleware`(换同档候选/跨网关)→ 全部耗尽抛错交上层(CLI try/except、前端错误提示)。retry 与 router 正交叠加。
+
+---
+
+## 9. 三入口收敛
 
 ```python
-# agent.py —— 删:顶部 35 行 patch、build_llm_model 全函数
-main_model, main_fb = build_main_agent_model()
-rubric_middleware = RubricMiddleware(model=get_analyst_model_name(), ...)
+# 共用:pool = build_pool()
+
+# agent.py —— 删:顶部35行patch、build_llm_model
+pool = build_pool()
 agent = create_deep_agent(
-    model=main_model,                                   # 单个合法 BaseChatModel
-    subagents=[baokuan_analyst],
-    middleware=[build_retry_middleware(), rubric_middleware]
-               + ([main_fb] if main_fb else []),        # 官方 ModelFallbackMiddleware
-    ...                                                 # 其余 backend/skills/memory/permissions 不变
+    model=build_primary_model(pool),
+    subagents=[baokuan_analyst],                                  # 见 subagents.py
+    middleware=[build_retry_middleware(),
+                RubricMiddleware(model=get_quality_model_name(pool), ...),
+                build_router_middleware(pool)],                    # 调度中间件
+    ...                                                            # backend/skills/memory/permissions 不变
 )
 
-# subagents.py —— 删:顶部 35 行 patch、build_analyst_model(~100 行)、ANALYST_MODEL_NAME 常量
-analyst_model, analyst_fb = build_analyst_model()
+# subagents.py —— 删:顶部35行patch、build_analyst_model(~100行)、ANALYST_MODEL_NAME 常量
 baokuan_analyst = {
-    "name": "baokuan-analyst",
-    "description": ...,
-    "system_prompt": ANALYST_SYSTEM_PROMPT,
-    "model": analyst_model,                             # 单个合法 BaseChatModel
+    "name": "baokuan-analyst", "description": ..., "system_prompt": ANALYST_SYSTEM_PROMPT,
+    "model": build_primary_model(pool),                           # 同池(同档)
     "tools": [read_xhs_data],
-    "middleware": ([analyst_fb] if analyst_fb else []), # 子智能体自挂 fallback(SubAgent spec 支持 middleware 字段)
+    "middleware": [build_router_middleware(pool)],                # 子智能体自挂调度(SubAgent spec 支持 middleware 字段,已验证)
 }
 
-# cli.py —— 删:裸 init_chat_model;改为与 agent.py 同款 build_main_agent_model()
-#   rubric model 同样改 get_analyst_model_name();三入口零特例
+# cli.py —— 删:裸 init_chat_model;与 agent.py 同款,三入口零特例
 ```
 
-**注**:`SubAgent` TypedDict 的 `middleware` 字段已由 deepagents 支持(`deepagents/middleware/subagents.py`),给子智能体挂 `ModelFallbackMiddleware` 是官方支持路径。
+`SubAgent` spec 的 `middleware` 字段被 `create_sub_agent` 读取(`spec.get("middleware", [])`,已实测),给子智能体挂调度中间件是官方支持路径。
 
 ---
 
-## 7. 配置(env)统一
+## 10. 测试策略
 
-**废弃**:`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` 作为主路径(历史死路)。
-
-**统一为单一路径**:
-- `LLM_BASE_URL` — 模型网关(OneAPI / OpenAI 兼容中转)地址
-- `LLM_API_KEY` — 网关 key
-- `LLM_MODEL` — (可选)偏好主模型名;留空则从清单按偏好序自动选
-- `DISCOVER_MODELS` — (可选)`false` 关闭探测,走降级单模型(测试/离线)
-
-`.env.example` 重写这一节,明确文档化单一路径及各字段语义。**不保留旧 env 名的兼容读取** —— 配置 schema 以正确为准。
-
-**迁移动作(实施时必做)**:当前 `.env` 实际用 `ANTHROPIC_BASE_URL=https://chat.aiprox.net` + `ANTHROPIC_API_KEY=...` 在跑。统一后这两个值需手工迁入新路径:`LLM_BASE_URL=https://chat.aiprox.net`、`LLM_API_KEY=<原 ANTHROPIC_API_KEY 值>`。`models.py` **只读 `LLM_*`**,不再读 `ANTHROPIC_*`;旧变量保留在 `.env` 也不会被新代码使用(可删)。这是一次性人工迁移,实施计划须含"更新本地 `.env`"一步并验证启动。
-
-> ⚠️ 安全提醒(实施前):当前 `.env` 中 `ANTHROPIC_API_KEY`、`FEISHU_APP_SECRET` 等真实密钥已在本次对话中暴露,建议借这次改动一并轮换。
-
-> 子智能体备用厂商 key(KIMI/DEEPSEEK/GEMINI/OPENAI 直连)在"发现式选型"下不再需要:fallback 候选一律走同一个 `LLM_BASE_URL` 网关的真实清单。直连厂商的多 key 探测逻辑随 `build_*_model` 旧实现一并删除。
+- **`test_agent_assembly.py`(现有)**:`sk-ant-test` 假环境下设 `DISCOVER_MODELS=false`,确保组装不发真实网络请求。验证 agent 仍可组装。
+- **`tests/test_models.py`(新增)**:
+  - `build_pool`:单网关 / 多网关 / 白名单交集 / 池为空降级。
+  - `discover_models`:mock 200 正常解析 / 非200→None / 超时→None / 缓存只请求一次 / `DISCOVER_MODELS=false` 跳过。
+  - `ModelRouterMiddleware.wrap_model_call`:首候选成功直接返回 / 首候选 503 标记不健康并切下一个 / 全部耗尽抛错 / 非瞬时错误(400)不换直接抛 / 冷却到期重新纳入。
+  - **`awrap_model_call`:与 sync 同样的分支全覆盖**(铁律二,async 不可漏测)。
+  - 健康度并发:模拟两个并发标记同一网关不健康,断言无异常、最终一致冷却。
 
 ---
 
-## 8. 错误处理
-
-- **探测健壮性**:超时 / 非 200 / 网关无 `/v1/models` / JSON 异常 → `discover_models` 返回 `None` → 降级单模型,`logger.warning` 记录原因,**不致命**。
-- **降级语义**:清单不可用时,用偏好序首选单模型启动,不挂 fallback(§5 第三行)。系统继续可用。
-- **retry × fallback 链路**:单模型瞬时错误由 `ModelRetryMiddleware`(2 次退避)兜底;模型彻底失败由 `ModelFallbackMiddleware` 切下一个;全部耗尽 → 抛错交上层(CLI try/except、前端错误提示)。
-
----
-
-## 9. 测试策略
-
-- **`test_agent_assembly.py`(现有)**:在 `sk-ant-test` 假环境下设 `DISCOVER_MODELS=false`,确保组装测试**不发真实网络请求**到网关。验证 agent 仍可组装(`hasattr invoke/astream`)。
-- **`models.py` 新增单测**:
-  - `select_models` 四分支(对齐 §5 决策表):清单可用+偏好命中 / 清单可用+LLM_MODEL 指定 / 清单 None+LLM_MODEL 已设(用指定值) / 清单 None+LLM_MODEL 未设(用 role DEFAULT)。
-  - `discover_models`:mock HTTP 200 正常解析 / 非 200 返回 None / 超时返回 None / 缓存命中只请求一次 / `DISCOVER_MODELS=false` 跳过。
-  - `build_*_model`:有 fallback 时第二返回值是 `ModelFallbackMiddleware`,无清单时为 `None`。
-
----
-
-## 10. 改动清单
+## 11. 改动清单
 
 | 操作 | 文件 | 说明 |
 |---|---|---|
-| 🆕 新建 | `models.py` | 唯一模型出口(~120 行) |
-| ➖ 删 monkey-patch ×35 行 | `agent.py`、`subagents.py` | 逐字重复的 patch |
-| ➖ 删 `build_llm_model` / `build_analyst_model`(~200 行) | `agent.py`、`subagents.py` | 含直连多厂商 fallback 旧逻辑 |
-| ➖ 删 `ANALYST_MODEL_NAME` 常量 | `subagents.py` | 改 `get_analyst_model_name()` 动态 |
-| ✏️ 改入口装配 | `agent.py`、`subagents.py`、`cli.py` | 三入口共用 models.py |
-| ✏️ rubric 模型名动态 | `agent.py`、`cli.py` | `get_analyst_model_name()` |
-| ✏️ env 统一 + 重写文档 | `.env` / `.env.example` | 单一 `LLM_*` 路径 |
-| ✏️ 测试补充 | `tests/test_agent_assembly.py` + 新 `tests/test_models.py` | 见 §9 |
+| 🆕 新建 | `models.py` | 资源池 + `ModelRouterMiddleware` + 探测/验证(核心,~200 行) |
+| ➖ 删 monkey-patch ×35 行 | `agent.py`、`subagents.py` | 逐字重复 patch |
+| ➖ 删 `build_llm_model`/`build_analyst_model`(~200行) | `agent.py`、`subagents.py` | 含直连多厂商旧 fallback |
+| ➖ 删 `ANALYST_MODEL_NAME` 常量 | `subagents.py` | 改 `get_quality_model_name(pool)` |
+| ✏️ 改入口装配 | `agent.py`、`subagents.py`、`cli.py` | 三入口共用 pool + 调度中间件 |
+| ✏️ env 统一 + 重写文档 | `.env` / `.env.example` | 多网关资源池 + 质量白名单 |
+| ✏️ 测试 | `tests/test_agent_assembly.py` + 新 `tests/test_models.py` | 见 §10,含 async 全覆盖 |
 
-**净效果**:删 ~270 行重复/脆弱代码,加 ~120 行集中可测代码。fallback 能力不减反增(从真实清单选,且 retry×fallback 双层)。100% 官方接口,零 monkey-patch,零自研包装类。
+**净效果**:删 ~270 行重复/脆弱代码,加 ~200 行集中可测代码。获得:零 monkey-patch、零自研框架(纯原生中间件)、质量优先的多网关健康度容灾调度,sync/async 双路径生效。
 
 ---
 
-## 11. 显式非目标(本次不做)
+## 12. 显式非目标(本次不做)
 
-- **配置界面联动**(让 web 前端拉取可用模型下拉选)—— 独立的更大工作,后续单独立项(方案 B)。本次只做后端模型层。
-- **探测结果跨进程/磁盘缓存** —— 本次仅进程内缓存,够用。
-- **fallback 候选的价格/延迟动态排序** —— 本次按偏好档位序,不做运行时性能感知调度。
+- **web 配置界面联动**(前端拉取/下拉选模型、可视化配置、配置时调 `verify_gateway`)—— 后端调度稳定后单独立项。本次仅提供 `verify_gateway` 后端函数。
+- **按任务难度选模型**(质量优先已排除"简单任务用弱模型")。
+- **LLM 真·自主选模型**(已定为中间件调度)。
+- **跨进程共享健康度状态**(本次进程内 best-effort;多副本部署各自独立,可接受)。
