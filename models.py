@@ -203,3 +203,27 @@ class ModelRouterMiddleware(AgentMiddleware):
                 raise  # 非瞬时错误(400/鉴权)不换候选
         assert last_exc is not None
         raise last_exc
+
+
+def build_primary_model(pool: list[ModelCandidate]) -> BaseChatModel:
+    """池中第一个候选实例,作为 create_deep_agent(model=...) 初始模型。"""
+    return pool[0].model
+
+
+def build_router_middleware(pool: list[ModelCandidate]) -> ModelRouterMiddleware:
+    """构造调度中间件(主/子/评分各取一个,共用同一池)。"""
+    return ModelRouterMiddleware(pool)
+
+
+def get_quality_model_name(pool: list[ModelCandidate]) -> str:
+    """池中第一个候选的裸 id,供 RubricMiddleware(收字符串)。"""
+    return pool[0].model_id
+
+
+def verify_gateway(base_url: str, api_key: str) -> bool:
+    """配置时连通性验证:能探到非空清单即视为'配上能用'。
+
+    委托 discover_models;能返回非空清单为 True。供配置写入路径调用
+    (本次仅后端函数;web 联动后续立项,见 spec §12)。
+    """
+    return bool(discover_models(base_url, api_key))

@@ -354,3 +354,35 @@ def test_router_concurrent_mark_unhealthy_consistent():
     for t in threads: t.join()
     assert errors == []
     assert mw._is_cooling("g1") is True
+
+
+from models import build_primary_model, build_router_middleware, get_quality_model_name
+
+
+def test_build_primary_model_returns_first_candidate_model():
+    pool = [_candidate("g1", "claude-sonnet-4-6"), _candidate("g2", "gpt-4o")]
+    assert build_primary_model(pool) is pool[0].model
+
+
+def test_get_quality_model_name_returns_first_id():
+    pool = [_candidate("g1", "claude-sonnet-4-6"), _candidate("g2", "gpt-4o")]
+    assert get_quality_model_name(pool) == "claude-sonnet-4-6"
+
+
+def test_build_router_middleware_wraps_pool():
+    pool = [_candidate("g1", "a")]
+    mw = build_router_middleware(pool)
+    assert isinstance(mw, ModelRouterMiddleware)
+    assert mw._pool is pool
+
+
+def test_verify_gateway_true_when_discoverable(monkeypatch):
+    from models import verify_gateway
+    monkeypatch.setattr(models_mod, "discover_models", lambda url, key: ["claude-sonnet-4-6"])
+    assert verify_gateway("https://gw/v1", "key") is True
+
+
+def test_verify_gateway_false_when_none(monkeypatch):
+    from models import verify_gateway
+    monkeypatch.setattr(models_mod, "discover_models", lambda url, key: None)
+    assert verify_gateway("https://gw/v1", "key") is False
