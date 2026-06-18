@@ -13,7 +13,6 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from dotenv import load_dotenv
-from langchain.chat_models import init_chat_model
 from deepagents import (
     FilesystemPermission,
     GeneralPurposeSubagentProfile,
@@ -25,8 +24,9 @@ from deepagents import (
 
 from backends import build_cli_backend
 from middlewares import build_retry_middleware
-from prompts import MAIN_MODEL, MAIN_SYSTEM_PROMPT
-from subagents import ANALYST_MODEL_NAME, baokuan_analyst
+from models import build_pool, build_primary_model, build_router_middleware
+from prompts import MAIN_SYSTEM_PROMPT
+from subagents import baokuan_analyst
 from tools.feishu_bitable import read_xhs_data
 from tools.lark_cli import lark_cli, auto_update_lark_skills, auto_update_lark_cli
 
@@ -38,14 +38,17 @@ auto_update_lark_cli()
 load_dotenv()
 
 # ── 安全加固(与 agent.py 保持一致)──────────────────────────────────
-register_harness_profile("anthropic", HarnessProfileConfig(
+register_harness_profile("openai", HarnessProfileConfig(
     excluded_tools=frozenset({"execute", "write_todos"}),
     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
 ))
 
+# ── 高质量模型自主调度:构造模型池(与 agent.py 保持一致)──────────────
+pool = build_pool()
+
 # ── 文案质量评分(与 agent.py 保持一致)──────────────────────────────
 rubric_middleware = RubricMiddleware(
-    model=ANALYST_MODEL_NAME,
+    model=build_primary_model(pool),
     system_prompt="""你是小红书文案质量检查员。评估文案是否满足以下标准:
 1. 标题有钩子,不平淡,能引起点击欲望
 2. 正文像真人写的小红书笔记,无 AI 腔(不要"首先/其次/总之"、不要"在…领域"等八股)
@@ -59,13 +62,13 @@ rubric_middleware = RubricMiddleware(
 )
 
 agent = create_deep_agent(
-    model=init_chat_model(model=MAIN_MODEL, temperature=0.7, timeout=60, max_retries=4),
+    model=build_primary_model(pool),
     tools=[read_xhs_data, lark_cli],
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[baokuan_analyst],
     skills=["./skills/"],
     backend=build_cli_backend(),
-    middleware=[build_retry_middleware(), rubric_middleware],
+    middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(pool)],
     # CLI 单机无 user 身份,只挂团队共享记忆(走磁盘 backend,文件落项目目录)。
     # 个人隔离记忆依赖 server 注入的用户身份,CLI 不适用。
     memory=["/memories/team/AGENTS.md"],

@@ -12,6 +12,11 @@
 1. 所有模型用 `model_provider="openai"` + 该网关的 `base_url`/`api_key` 构造(裸 id 不走 provider 推断)。
 2. `ModelRouterMiddleware` 必须**同时**实现 sync 的 `wrap_model_call` 和 async 的 `awrap_model_call` —— 默认 sync 版会 `raise NotImplementedError`,只写 async 会让 CLI(`stream`)崩、只写 sync 会让 Server(`astream`)绕过调度。
 
+> **执行修正(2026-06-18,实际偏离本计划文字之处以此为准):**
+> 1. **get_quality_model_name 已废弃删除。** 本计划 Task 7/8/10 让 RubricMiddleware 用 get_quality_model_name(pool)(返回裸 id 字符串)。执行中发现:裸 id 字符串经 RubricMiddleware 内部 init 会按名推断 provider(claude-* 推成 anthropic 原生端点),拿真实 ANTHROPIC_API_KEY 绕开网关泄漏,违反铁律一。已改为 model=build_primary_model(pool)(传按铁律一构造好的 BaseChatModel 实例,resolve_model 对实例不推断),并删除该函数。下文凡 get_quality_model_name 字样均作废。
+> 2. **铁律三(新增):register_harness_profile 的 key 必须用 openai。** 铁律一钉死 provider=openai 后,旧 anthropic key 会让 harness profile 失配,导致 excluded_tools(execute/write_todos)安全加固失效、execute shell 工具暴露。详见 spec 铁律三。
+> 3. 上述两点均已加回归测试钉死(tests/test_agent_assembly.py),反证验证可捕获回归。
+
 ---
 
 ## File Structure

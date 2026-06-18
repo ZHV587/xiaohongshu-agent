@@ -85,6 +85,10 @@ init_chat_model(
 
 `AgentMiddleware` 有 sync/async 两个扩展点。**CLI**(`agent.stream`,同步)走 sync;**LangGraph Server**(生产前端路径,async)走 async。**只实现 sync 版会导致调度在 server 模式被完全绕过、静默失效**。两版共享同一套健康度状态与选择逻辑,差异仅 `handler` vs `await handler`。
 
+**铁律三:`register_harness_profile` 的 key 必须用 `"openai"`(铁律一的衍生约束)。**
+
+deepagents 按模型**解析后的 provider** 匹配 harness profile key(先 `provider:model` 精确,再 `provider` 前缀,否则 None→空默认 profile)。铁律一把所有模型钉死 `provider="openai"`,故 `agent.py` / `cli.py` 顶部用于安全加固的 `register_harness_profile(...)` 必须以 `"openai"` 注册。**若沿用历史的 `"anthropic"` key,profile 静默失配 → `excluded_tools`(`execute`/`write_todos`)与 `general_purpose_subagent=disabled` 全部失效 → `execute`(shell)等危险工具重新暴露给文案智能体。****验证方式(重要)**:工具排除由 `_ToolExclusionMiddleware` 在模型调用时对 `request.tools` 做 `override(tools=filtered)` 实现,不从编译图的 `tools` 节点删除——故静态读 `agent.nodes['tools']` 永远是全集,观测不到此修复。正确验证:(a) 主模型(openai)的 `_harness_profile_for_model` 命中且解析出的 `excluded_tools` 非空;(b) 驱动 `_ToolExclusionMiddleware` 确认 `execute`/`write_todos` 被实际滤掉;(c) 主模型的 "No harness profile matched" 日志消失。已实测:key=`"anthropic"` 时主模型 profile 未命中、`excluded_tools` 为空;改 `"openai"` 后命中、`execute`/`write_todos` 被过滤。Task 12 须加回归测试钉住(防改回 `"anthropic"`,静态测试测不出)。
+
 ---
 
 ## 5. 模块设计:`models.py`
@@ -115,9 +119,11 @@ build_primary_model(pool) -> BaseChatModel
 build_router_middleware(pool) -> ModelRouterMiddleware
     构造调度中间件,主/子/评分各取一个(共用同一 pool,同档)。
 
-get_quality_model_name(pool) -> str
-    返回池中第一个候选的裸 id 字符串,供 RubricMiddleware(收字符串)。
-    评分也用高质量池(质量优先下评分不得用廉价模型)。
+[已删除] get_quality_model_name —— 设计修正:原返回裸 id 字符串供 RubricMiddleware,
+    但其收字符串后 init 会按名推断 provider(claude-*→anthropic 原生端点),拿
+    ANTHROPIC_API_KEY 直发官方绕开网关,违反铁律一且密钥外泄。RubricMiddleware 文档明确
+    接受 BaseChatModel 实例,故评分改传 build_primary_model(pool) 实例(resolve_model
+    对实例不推断)。本函数已删。评分仍用高质量池(与主/子同档)。
 ```
 
 ### 5.1 `ModelRouterMiddleware`(系统核心)
