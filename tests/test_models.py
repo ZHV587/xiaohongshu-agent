@@ -272,3 +272,85 @@ def test_router_cooldown_expires_and_heals(monkeypatch):
 
     clock["t"] = 1031.0                        # 已过 30s 冷却窗口
     assert mw._is_cooling("g1") is False       # 自愈:重新可用
+
+
+async def test_router_async_first_success():
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+    seen = []
+
+    async def handler(req):
+        seen.append(req.model)
+        return "OK"
+
+    out = await mw.awrap_model_call(_fake_request(), handler)
+    assert out == "OK"
+    assert seen == [pool[0].model]
+
+
+async def test_router_async_switches_on_retryable():
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+    seen = []
+
+    async def handler(req):
+        seen.append(req.model)
+        if req.model is pool[0].model:
+            raise FakeStatusError(503)
+        return "OK2"
+
+    out = await mw.awrap_model_call(_fake_request(), handler)
+    assert out == "OK2"
+    assert seen == [pool[0].model, pool[1].model]
+    assert mw._is_cooling("g1") is True
+
+
+async def test_router_async_non_retryable_raises():
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+    calls = []
+
+    async def handler(req):
+        calls.append(req.model)
+        raise FakeStatusError(400)
+
+    try:
+        await mw.awrap_model_call(_fake_request(), handler)
+        assert False, "应抛出"
+    except FakeStatusError as e:
+        assert e.status_code == 400
+    assert calls == [pool[0].model]
+
+
+async def test_router_async_all_exhausted_raises_last():
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+
+    async def handler(req):
+        raise FakeStatusError(503)
+
+    try:
+        await mw.awrap_model_call(_fake_request(), handler)
+        assert False, "应抛出"
+    except FakeStatusError as e:
+        assert e.status_code == 503
+
+
+def test_router_concurrent_mark_unhealthy_consistent():
+    """并发标记同一网关不健康:无异常,最终一致冷却(spec §6 best-effort 无锁)。"""
+    import threading
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+    errors = []
+
+    def worker():
+        try:
+            mw._mark_unhealthy(pool[0])
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert errors == []
+    assert mw._is_cooling("g1") is True

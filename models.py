@@ -189,3 +189,17 @@ class ModelRouterMiddleware(AgentMiddleware):
                 raise  # 非瞬时错误(400/鉴权)不换候选
         assert last_exc is not None
         raise last_exc
+
+    async def awrap_model_call(self, request: ModelRequest, handler):
+        last_exc: Exception | None = None
+        for cand in self._ordered_candidates():
+            try:
+                return await handler(request.override(model=cand.model))
+            except Exception as exc:  # noqa: BLE001
+                if is_retryable_error(exc):
+                    self._mark_unhealthy(cand)
+                    last_exc = exc
+                    continue
+                raise  # 非瞬时错误(400/鉴权)不换候选
+        assert last_exc is not None
+        raise last_exc
