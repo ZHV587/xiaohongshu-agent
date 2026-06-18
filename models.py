@@ -28,3 +28,40 @@ class ModelCandidate:
     gateway_name: str
     model_id: str
     model: BaseChatModel
+
+
+# 进程内探测缓存:同 (base_url, key) 只探一次。
+_DISCOVER_CACHE: dict[tuple[str, str], list[str] | None] = {}
+
+_DISCOVER_TIMEOUT = 5.0
+
+
+def discover_models(base_url: str, api_key: str) -> list[str] | None:
+    """探测网关 GET /v1/models,返回裸 id 列表;失败或禁用返回 None。"""
+    if os.environ.get("DISCOVER_MODELS") == "false":
+        return None
+
+    cache_key = (base_url, api_key)
+    if cache_key in _DISCOVER_CACHE:
+        return _DISCOVER_CACHE[cache_key]
+
+    url = base_url.rstrip("/") + "/models"
+    result: list[str] | None
+    try:
+        resp = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=_DISCOVER_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        result = [item["id"] for item in data.get("data", []) if "id" in item]
+        if not result:
+            logger.warning("discover_models: %s 返回空清单", url)
+            result = None
+    except Exception as exc:  # noqa: BLE001 — 探测失败一律降级,不致命
+        logger.warning("discover_models 探测 %s 失败,降级: %s", url, exc)
+        result = None
+
+    _DISCOVER_CACHE[cache_key] = result
+    return result
