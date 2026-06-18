@@ -52,7 +52,7 @@ backend = build_backend()
 
 # ── 文案质量评分中间件 ────────────────────────────────────────────
 # 生成文案后自动评估质量,不合格让智能体重写(最多重试 2 轮)。
-# 用便宜的 Haiku 做评分模型,控制成本。
+# 评分用主模型同档实例(质量优先不降级);传实例而非裸 id,避免 provider 推断绕网关。
 # 仅当调用方传入 rubric 时才激活,平时不增加开销。
 rubric_middleware = RubricMiddleware(
     model=build_primary_model(pool),

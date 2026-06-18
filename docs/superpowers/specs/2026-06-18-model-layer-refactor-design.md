@@ -119,9 +119,11 @@ build_primary_model(pool) -> BaseChatModel
 build_router_middleware(pool) -> ModelRouterMiddleware
     构造调度中间件,主/子/评分各取一个(共用同一 pool,同档)。
 
-get_quality_model_name(pool) -> str
-    返回池中第一个候选的裸 id 字符串,供 RubricMiddleware(收字符串)。
-    评分也用高质量池(质量优先下评分不得用廉价模型)。
+[已删除] get_quality_model_name —— 设计修正:原返回裸 id 字符串供 RubricMiddleware,
+    但其收字符串后 init 会按名推断 provider(claude-*→anthropic 原生端点),拿
+    ANTHROPIC_API_KEY 直发官方绕开网关,违反铁律一且密钥外泄。RubricMiddleware 文档明确
+    接受 BaseChatModel 实例,故评分改传 build_primary_model(pool) 实例(resolve_model
+    对实例不推断)。本函数已删。评分仍用高质量池(与主/子同档)。
 ```
 
 ### 5.1 `ModelRouterMiddleware`(系统核心)
