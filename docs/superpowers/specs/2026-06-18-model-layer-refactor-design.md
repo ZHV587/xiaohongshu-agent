@@ -84,12 +84,14 @@ select_models(role, available) -> tuple[primary_name: str, fallback_names: list[
 
 build_main_agent_model()  -> tuple[BaseChatModel, ModelFallbackMiddleware | None]
 build_analyst_model()     -> tuple[BaseChatModel, ModelFallbackMiddleware | None]
-    1. available = discover_models(...)            # 带缓存
+    1. available = discover_models(LLM_BASE_URL, LLM_API_KEY)   # 带缓存
     2. primary_name, fb_names = select_models(role, available)
-    3. primary = init_chat_model(primary_name, temperature, timeout, max_retries, ...)
-    4. fb_names 非空 → ModelFallbackMiddleware(*[init_chat_model(n,...) for n in fb_names])
+    3. primary = <按 §4.1 铁律一构造的完整实例>(primary_name)
+    4. fb_names 非空 → fallback 候选各按 §4.1 铁律一/铁律二构造为实例,
+                       ModelFallbackMiddleware(*实例们)
        fb_names 为空 → 第二返回值 None
     返回 (primary_model, fallback_middleware_or_None)
+    注:所有模型构造统一走 §4.1 的两条铁律,不在此重复参数。
 
 get_analyst_model_name()  -> str
     复用 analyst 的 select 结果,返回 primary_name 字符串。
@@ -97,6 +99,38 @@ get_analyst_model_name()  -> str
 ```
 
 **职责单一性**:`models.py` 只做"读已有 env → 探测 → 选型 → 拼成官方接口对象"。不引入新配置项语义,不碰 deepagents 内部。可被单测独立覆盖。
+
+### 4.1 两条实现铁律(自审第二轮实测发现,违反必崩)
+
+**铁律一:provider 一律用 `openai`,所有模型都经 `LLM_BASE_URL` 网关。**
+
+OneAPI 是 OpenAI 兼容网关:它把 Claude / GPT / DeepSeek / Gemini 全部包装成 OpenAI 格式,统一从一个端点出。因此 `models.py` 构造**任何**模型(无论 id 是 `claude-sonnet-4-6` 还是 `gpt-4o`)都必须:
+
+```python
+init_chat_model(
+    model=model_id,            # /v1/models 返回的裸 id,直接用
+    model_provider="openai",   # ← 钉死 openai,不按名字推断 provider
+    base_url=os.environ["LLM_BASE_URL"],
+    api_key=os.environ["LLM_API_KEY"],
+    temperature=..., timeout=60, max_retries=...,
+)
+```
+
+**为什么**:`/v1/models` 返回的 id 是**裸名**(不带 provider 前缀)。若让 `init_chat_model` 按名字推断 provider,`claude-*` 会被推成 anthropic、走 anthropic 原生 SDK 端点 —— **绕开你的网关**,base_url 失效。统一 `openai` provider 才能保证所有调用都打到 OneAPI。
+
+**铁律二:fallback 候选必须传「实例」给 `ModelFallbackMiddleware`,不能传字符串名。**
+
+实测 `ModelFallbackMiddleware.__init__`:对字符串 model 调的是**裸** `init_chat_model(model)` —— **不带 base_url/api_key**。若把 fallback 候选以字符串名传入,这些 fallback 会用裸配置构造,**打不到网关、找不到 key,静默失效**。因此:
+
+```python
+fallback_instances = [
+    init_chat_model(n, model_provider="openai", base_url=..., api_key=..., ...)  # 完整配置
+    for n in fb_names
+]
+fallback_mw = ModelFallbackMiddleware(*fallback_instances)  # 传实例,不传名字
+```
+
+primary 模型同理 —— 始终是完整配置的实例。
 
 ---
 
@@ -111,8 +145,9 @@ get_analyst_model_name()  -> str
 | **清单不可用(None)** 且 `LLM_MODEL` 已设 | 用 `LLM_MODEL`(尊重用户显式指定) | **空 → 不挂 fallback** |
 | **清单不可用(None)** 且 `LLM_MODEL` 未设 | role 的 `DEFAULT_MODEL`(见下) | **空 → 不挂 fallback** |
 
-**降级默认值**:每个 role 有一个独立常量 `MAIN_DEFAULT_MODEL` / `ANALYST_DEFAULT_MODEL`(如 `claude-sonnet-4-6` / `claude-haiku-4-5`),它是 `*_PREFERENCE` 序的首元素的**完整 provider:model 形式**,保证 `init_chat_model` 能直接构造。降级时它是"无清单可校验下的最佳猜测",与今天默认分支行为一致 —— 这是 §1.2 现状下唯一已知能跑通的型号,故作为兜底是安全的。
+**降级默认值**:每个 role 有一个独立常量 `MAIN_DEFAULT_MODEL` / `ANALYST_DEFAULT_MODEL`(如裸名 `claude-sonnet-4-6` / `claude-haiku-4-5`)。它就是 `*_PREFERENCE` 序的首元素(裸 id),降级时按 §4.1 铁律一构造(provider=openai + LLM_BASE_URL)。它是"无清单可校验下的最佳猜测",对应 §1.2 现状下唯一已知能跑通的型号,作为兜底安全。
 
+- 偏好序与 DEFAULT 全程用**裸 id**(与 `/v1/models` 返回格式一致),provider 由 §4.1 铁律一统一注入,**不在型号名里写 provider 前缀**(避免与"统一 openai"冲突)。
 - `MAIN_PREFERENCE`:强模型档(sonnet 档优先,后接同档其他厂商强模型)。
 - `ANALYST_PREFERENCE`:便宜快档(haiku 档优先,后接同档便宜模型)。
 - 主/子从**同一份**清单各选自己档位 —— 容灾策略分离,子智能体不会 fallback 到昂贵模型。
