@@ -5,6 +5,7 @@ import urllib.request
 import logging
 import threading
 import platform
+import json
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from tools.uat_store import get_uat
@@ -49,6 +50,68 @@ _IS_WINDOWS = platform.system() == "Windows"
 # BLACKLIST of subcommands to prevent security tampering
 _BLACKLIST_COMMANDS = {"auth", "config"}
 _cli_lock = threading.RLock()
+
+_cached_brand = None
+
+def get_lark_brand() -> str:
+    """Detect whether lark-cli is configured to use 'feishu' or 'lark' brand.
+    Prioritizes reading config file directly for speed, falls back to running lark-cli command.
+    """
+    import sys
+    if "pytest" in sys.modules:
+        return "feishu"
+
+    global _cached_brand
+    if _cached_brand is not None:
+        return _cached_brand
+    
+    # Try reading the config file directly first
+    config_paths = []
+    userprofile = os.environ.get("USERPROFILE")
+    if userprofile:
+        config_paths.append(os.path.join(userprofile, ".lark-cli", "config.json"))
+    home = os.environ.get("HOME")
+    if home:
+        config_paths.append(os.path.join(home, ".lark-cli", "config.json"))
+        
+    for path in config_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    brand = data.get("brand")
+                    if brand:
+                        _cached_brand = brand.lower()
+                        return _cached_brand
+            except Exception:
+                pass
+                
+    # Fallback to config show
+    try:
+        executable = "lark-cli.cmd" if platform.system() == "Windows" else "lark-cli"
+        config_env = {}
+        for k in ["PATH", "SystemRoot", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "USERNAME", "HOME"]:
+            if k in os.environ:
+                config_env[k] = os.environ[k]
+        result = subprocess.run(
+            [executable, "config", "show"],
+            env=config_env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            shell=False
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            brand = data.get("brand")
+            if brand:
+                _cached_brand = brand.lower()
+                return _cached_brand
+    except Exception:
+        pass
+        
+    _cached_brand = "feishu"
+    return _cached_brand
 
 
 @tool
@@ -104,22 +167,37 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         "PATH": os.environ.get("PATH", ""),
         "LARKSUITE_CLI_CONTENT_SAFETY_MODE": "warn"
     }
+    # Windows and Unix environment variables required by Node.js/lark-cli to locate home, temp, and system paths
+    for k in ["SystemRoot", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "USERNAME", "HOME"]:
+        if k in os.environ:
+            run_env[k] = os.environ[k]
     
+    brand = get_lark_brand()
+
     if open_id and not force_bot:
         token = get_uat(open_id)
         if not token:
             return "Please authorize Feishu access first. Please log in again using the UI panel to grant permissions."
-        run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
-        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
+        if brand == "feishu":
+            run_env["LARK_USER_ACCESS_TOKEN"] = token
+            run_env["LARK_DEFAULT_AS"] = "user"
+        else:
+            run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
+            run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
     else:
         # CLI fallback or forced bot
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")
         if not app_id or not app_secret:
             return "Error: Bot credentials (FEISHU_APP_ID/SECRET) not configured."
-        run_env["LARKSUITE_CLI_APP_ID"] = app_id
-        run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
-        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "app"
+        if brand == "feishu":
+            run_env["LARK_APP_ID"] = app_id
+            run_env["LARK_APP_SECRET"] = app_secret
+            run_env["LARK_DEFAULT_AS"] = "bot"
+        else:
+            run_env["LARKSUITE_CLI_APP_ID"] = app_id
+            run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
+            run_env["LARKSUITE_CLI_DEFAULT_AS"] = "bot"
 
 
     # Append --yes parameter if approved by human
@@ -173,7 +251,10 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     output = result.stdout
     if not output.strip():
         return "Command executed successfully."
-    return output[:10000] # Safe crop
+    # Crop only if excessively large (e.g. > 10MB) to prevent context window blowup
+    if len(output) > 10 * 1024 * 1024:
+        return output[:10 * 1024 * 1024] + "\n... (truncated due to excessive size)"
+    return output
 
 
 def _run_lark_cli_update():

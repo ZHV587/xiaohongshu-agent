@@ -434,7 +434,10 @@ class InternalUATHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-                self._send_response_json(200, {"ok": True})
+                self._send_response_json(200, {
+                    "ok": True,
+                    "redirect_url": f"https://feishu.cn/base/{app_token}?table={table_id}"
+                })
             except Exception as e:
                 logger.error(f"Exception during sync processing: {e}")
                 self._send_response_json(500, {"error": str(e)})

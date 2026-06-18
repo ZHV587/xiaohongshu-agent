@@ -6,7 +6,7 @@ import { useStreamContext } from "@/providers/Stream";
 import { useState, FormEvent } from "react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
-import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
+import { AssistantMessage } from "./messages/ai";
 import { HumanMessage } from "./messages/human";
 import {
   DO_NOT_RENDER_ID_PREFIX,
@@ -42,6 +42,110 @@ import { BRAND } from "@/lib/brand";
 import { ThreadActionsProvider } from "@/lib/thread-actions";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
+
+interface MessageGroup {
+  id: string;
+  type: "human" | "assistant";
+  humanMessage?: Message;
+  aiMessage?: Message;
+  toolCalls?: { name: string; args?: any; result?: any; id?: string }[];
+  isThinkingOnly?: boolean;
+}
+
+function groupMessages(messages: Message[]): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  let currentGroup: MessageGroup | null = null;
+
+  for (const msg of messages) {
+    if (msg.id?.startsWith(DO_NOT_RENDER_ID_PREFIX)) {
+      continue;
+    }
+
+    if (msg.type === "human") {
+      if (currentGroup) {
+        groups.push(currentGroup);
+      }
+      currentGroup = {
+        id: msg.id || Math.random().toString(),
+        type: "human",
+        humanMessage: msg,
+      };
+    } else if (msg.type === "ai") {
+      const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
+      const textContent = typeof msg.content === "string" ? msg.content : "";
+
+      if (hasToolCalls) {
+        if (!currentGroup || currentGroup.type !== "assistant") {
+          if (currentGroup) {
+            groups.push(currentGroup);
+          }
+          currentGroup = {
+            id: msg.id || Math.random().toString(),
+            type: "assistant",
+            toolCalls: [],
+          };
+        }
+        currentGroup.toolCalls = currentGroup.toolCalls || [];
+        msg.tool_calls!.forEach((tc) => {
+          if (!currentGroup!.toolCalls!.some((item) => item.id === tc.id)) {
+            currentGroup!.toolCalls!.push({
+              id: tc.id,
+              name: tc.name,
+              args: tc.args,
+            });
+          }
+        });
+      }
+
+      if (textContent.trim().length > 0 || !hasToolCalls) {
+        if (!currentGroup || currentGroup.type !== "assistant") {
+          if (currentGroup) {
+            groups.push(currentGroup);
+          }
+          currentGroup = {
+            id: msg.id || Math.random().toString(),
+            type: "assistant",
+          };
+        }
+        currentGroup.aiMessage = msg;
+        currentGroup.isThinkingOnly = false;
+      }
+    } else if (msg.type === "tool") {
+      if (!currentGroup || currentGroup.type !== "assistant") {
+        if (currentGroup) {
+          groups.push(currentGroup);
+        }
+        currentGroup = {
+          id: msg.id || Math.random().toString(),
+          type: "assistant",
+          toolCalls: [],
+        };
+      }
+      currentGroup.toolCalls = currentGroup.toolCalls || [];
+      const toolCallId = msg.tool_call_id;
+      const existingCall = currentGroup.toolCalls.find((tc) => tc.id === toolCallId);
+      if (existingCall) {
+        existingCall.result = msg.content;
+      } else {
+        currentGroup.toolCalls.push({
+          id: toolCallId,
+          name: msg.name || "unknown",
+          result: msg.content,
+        });
+      }
+    }
+  }
+
+  if (currentGroup) {
+    if (currentGroup.type === "assistant" && !currentGroup.aiMessage) {
+      currentGroup.isThinkingOnly = true;
+    }
+    groups.push(currentGroup);
+  }
+
+  return groups;
+}
+
 
 function StickyToBottomContent(props: {
   content: ReactNode;
@@ -143,9 +247,46 @@ export function Thread() {
   // 抛物线飞行动效触发器
   const [isFlying, setIsFlying] = useState(false);
 
+  // 底部点赞收藏状态变量
+  const [likeCount, setLikeCount] = useState(1280);
+  const [isLiked, setIsLiked] = useState(false);
+  const [collectCount, setCollectCount] = useState(342);
+  const [isCollected, setIsCollected] = useState(false);
+  const [showPlusOne, setShowPlusOne] = useState(false);
+
   // Ctrl+P 智能润色工具箱弹窗
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [cmdSearch, setCmdSearch] = useState("");
+
+  // 飞书多维表格跳转链接
+  const [bitableUrl, setBitableUrl] = useState<string | null>(null);
+
+  // 原位编辑器 Ref (用于自适应高度)
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 初始化时拉取配置中的 Bitable 链接
+  useEffect(() => {
+    fetch("/api/config")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.ok && data.configs) {
+          const appToken = data.configs.FEISHU_BITABLE_APP_TOKEN;
+          const tableId = data.configs.FEISHU_BITABLE_TABLE_ID;
+          if (appToken && tableId) {
+            setBitableUrl(`https://feishu.cn/base/${appToken}?table=${tableId}`);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // 自适应高度 Editor text area auto grow
+  useEffect(() => {
+    if (isEditingText && textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.max(textareaRef.current.scrollHeight, 160)}px`;
+    }
+  }, [draftContent, isEditingText]);
 
   const setThreadId = (id: string | null) => {
     _setThreadId(id);
@@ -190,13 +331,9 @@ export function Thread() {
             }
           }
         })
-        .catch(() => {
-          // 降级使用 mock 数据
-          setFeishuChats([
-            { chat_id: "oc_chat_10293", name: "小红书文案运营审核群 (oc_chat_10293)" },
-            { chat_id: "oc_chat_88301", name: "露营项目内容策划小组 (oc_chat_88301)" }
-          ]);
-          setSelectedChatId("oc_chat_10293");
+        .catch((err) => {
+          toast.error("获取飞书群聊列表失败，请检查授权状态");
+          setFeishuChats([]);
         })
         .finally(() => {
           setIsFetchingChats(false);
@@ -271,6 +408,9 @@ export function Thread() {
               if (data.ok) {
                 setSyncStep(4); // 成功
                 toast.success("成功同步修改至飞书多维表格！");
+                if (data.redirect_url) {
+                  setBitableUrl(data.redirect_url);
+                }
               } else {
                 throw new Error(data.error || "Sync error");
               }
@@ -692,24 +832,25 @@ export function Thread() {
                 contentClassName="pt-8 pb-16 max-w-3xl mx-auto flex flex-col gap-4 w-full"
                 content={
                   <>
-                    {messages
-                      .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                      .map((message, index) =>
-                        message.type === "human" ? (
-                          <HumanMessage
-                            key={message.id || `${message.type}-${index}`}
-                            message={message}
-                            isLoading={isLoading}
-                          />
-                        ) : (
-                          <AssistantMessage
-                            key={message.id || `${message.type}-${index}`}
-                            message={message}
-                            isLoading={isLoading}
-                            handleRegenerate={handleRegenerate}
-                          />
-                        )
-                      )}
+                    {groupMessages(messages).map((group, index, arr) => {
+                      const isLast = index === arr.length - 1;
+                      return group.type === "human" ? (
+                        <HumanMessage
+                          key={group.id}
+                          message={group.humanMessage!}
+                          isLoading={isLoading && isLast}
+                        />
+                      ) : (
+                        <AssistantMessage
+                          key={group.id}
+                          message={group.aiMessage}
+                          isLoading={isLoading}
+                          handleRegenerate={handleRegenerate}
+                          precedingTools={group.toolCalls}
+                          isThinkingOnly={group.isThinkingOnly}
+                        />
+                      );
+                    })}
                     {hasNoAIOrToolMessages && !!stream.interrupt && (
                       <AssistantMessage
                         key="interrupt-msg"
@@ -719,7 +860,14 @@ export function Thread() {
                       />
                     )}
                     {isLoading && !firstTokenReceived && (
-                      <AssistantMessageLoading />
+                      (!messages.length || messages[messages.length - 1].type === "human") && (
+                        <div className="mr-auto flex flex-col gap-2 py-2 w-full max-w-[460px]">
+                          <div className="bg-white border border-coral-light/60 p-3.5 rounded-2xl shadow-xs flex items-center gap-2.5">
+                            <LoaderCircle className="size-4 animate-spin text-coral" />
+                            <span className="text-xs text-charcoal-light">正在启动智能分析...</span>
+                          </div>
+                        </div>
+                      )
                     )}
                   </>
                 }
@@ -846,28 +994,36 @@ export function Thread() {
           <div className="relative flex flex-col border-l border-coral-light/50 bg-white shadow-lg overflow-hidden h-full z-10 w-[480px]">
             {/* Tab 页头 */}
             <div className="flex items-center justify-between border-b border-coral-light/60 bg-oats-light/20 px-3 py-2 shrink-0">
-              <div className="flex gap-1">
+              <div className="flex bg-oats-dark/60 p-1 rounded-xl gap-1 relative border border-coral-light/40 select-none">
                 <button
                   onClick={() => setRightTab("mock")}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
-                    rightTab === "mock"
-                      ? "text-coral bg-coral-light border border-coral/10"
-                      : "text-gray-500 hover:text-charcoal"
-                  )}
+                  className="relative px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer z-10 border-none bg-transparent outline-none"
                 >
-                  📱 小红书手机预览
+                  {rightTab === "mock" && (
+                    <motion.div
+                      layoutId="activeTabIndicator"
+                      className="absolute inset-0 bg-white rounded-lg shadow-sm z-[-1]"
+                      transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                    />
+                  )}
+                  <span className={cn("transition-colors duration-200", rightTab === "mock" ? "text-coral" : "text-gray-500 hover:text-charcoal")}>
+                    📱 小红书手机预览
+                  </span>
                 </button>
                 <button
                   onClick={() => setRightTab("feishu")}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
-                    rightTab === "feishu"
-                      ? "text-coral bg-coral-light border border-coral/10"
-                      : "text-gray-500 hover:text-charcoal"
-                  )}
+                  className="relative px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer z-10 border-none bg-transparent outline-none"
                 >
-                  🔗 飞书同步协作
+                  {rightTab === "feishu" && (
+                    <motion.div
+                      layoutId="activeTabIndicator"
+                      className="absolute inset-0 bg-white rounded-lg shadow-sm z-[-1]"
+                      transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                    />
+                  )}
+                  <span className={cn("transition-colors duration-200", rightTab === "feishu" ? "text-coral" : "text-gray-500 hover:text-charcoal")}>
+                    🔗 飞书同步协作
+                  </span>
                 </button>
               </div>
 
@@ -980,16 +1136,58 @@ export function Thread() {
                         <div className="p-3 flex flex-col gap-2.5 border-t border-oats-dark bg-oats-light/60 transition-all">
                           <div className="flex justify-between items-center text-[10px]">
                             <span className="font-bold text-gray-500">✏️ 原位修改文案</span>
-                            <span
+                            <div
                               className={cn(
-                                "text-[9px] border px-2 py-0.5 rounded",
+                                "flex items-center gap-1.5 border px-2 py-0.5 rounded transition-all duration-300",
                                 draftContent.length > 1000
-                                  ? "bg-red-50 text-red-700 border-red-200"
+                                  ? "bg-red-50 text-red-700 border-red-200 animate-shake"
+                                  : draftContent.length >= 800
+                                  ? "bg-amber-50 text-amber-700 border-amber-200"
                                   : "bg-green-50 text-green-700 border-green-200"
                               )}
                             >
-                              字数：{draftContent.length} / 1000 字 {draftContent.length > 1000 && "⚠️"}
-                            </span>
+                              <svg className="size-3.5 transform -rotate-90 select-none" viewBox="0 0 20 20">
+                                <circle
+                                  cx="10"
+                                  cy="10"
+                                  r="8"
+                                  fill="none"
+                                  stroke={
+                                    draftContent.length > 1000
+                                      ? "#FCA5A5"
+                                      : draftContent.length >= 800
+                                      ? "#FDE68A"
+                                      : "#A7F3D0"
+                                  }
+                                  strokeWidth="2.5"
+                                  className="opacity-40"
+                                />
+                                <motion.circle
+                                  cx="10"
+                                  cy="10"
+                                  r="8"
+                                  fill="none"
+                                  stroke={
+                                    draftContent.length > 1000
+                                      ? "#EF4444"
+                                      : draftContent.length >= 800
+                                      ? "#F59E0B"
+                                      : "#10B981"
+                                  }
+                                  strokeWidth="2.5"
+                                  strokeDasharray="50.265"
+                                  initial={{ strokeDashoffset: 50.265 }}
+                                  animate={{
+                                    strokeDashoffset: 50.265 - (Math.min(draftContent.length, 1000) / 1000) * 50.265
+                                  }}
+                                  transition={{ type: "spring", stiffness: 120, damping: 15 }}
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                              <span className="text-[9px] font-semibold">
+                                字数：{draftContent.length} / 1000 字 {draftContent.length > 1000 && "⚠️"}
+                              </span>
+                            </div>
                           </div>
                           <input
                             type="text"
@@ -998,10 +1196,12 @@ export function Thread() {
                             className="w-full text-[10px] font-bold border border-coral-light/60 rounded-lg p-1.5 bg-white focus:outline-none focus:border-coral"
                           />
                           <textarea
+                            ref={textareaRef}
                             id="edit-body-input"
                             value={draftContent}
                             onChange={(e) => setDraftContent(e.target.value)}
-                            className="w-full text-[10px] border border-coral-light/60 rounded-lg p-2 bg-white h-40 focus:outline-none focus:border-coral resize-none custom-scrollbar"
+                            className="w-full text-[10px] border border-coral-light/60 rounded-lg p-2 bg-white focus:outline-none focus:border-coral resize-none custom-scrollbar transition-[height] duration-100"
+                            style={{ minHeight: "160px" }}
                           />
 
                           {/* 快捷 Emoji 点击 */}
@@ -1058,10 +1258,66 @@ export function Thread() {
                     </div>
 
                     {/* 模拟器底部互动栏 */}
-                    <div className="h-10 border-t border-gray-100 flex items-center justify-between px-5 bg-white shrink-0 text-gray-400 select-none">
-                      <div className="flex items-center gap-1"><Heart className="size-3.5" /><span className="text-[8px]">点赞</span></div>
-                      <div className="flex items-center gap-1"><Star className="size-3.5" /><span className="text-[8px]">收藏</span></div>
-                      <div className="flex items-center gap-1"><MessageSquare className="size-3.5" /><span className="text-[8px]">评论</span></div>
+                    <div className="h-10 border-t border-gray-100 flex items-center justify-between px-5 bg-white shrink-0 text-gray-400 select-none relative">
+                      
+                      {/* Plus One floating animation */}
+                      <AnimatePresence>
+                        {showPlusOne && (
+                          <motion.span
+                            initial={{ opacity: 0, y: 0 }}
+                            animate={{ opacity: 1, y: -25 }}
+                            exit={{ opacity: 0 }}
+                            className="absolute left-6 text-[10px] font-bold text-coral"
+                          >
+                            +1
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+
+                      <button 
+                        onClick={() => {
+                          if (!isLiked) {
+                            setShowPlusOne(true);
+                            setTimeout(() => setShowPlusOne(false), 800);
+                          }
+                          setIsLiked(!isLiked);
+                          setLikeCount((c) => isLiked ? c - 1 : c + 1);
+                        }}
+                        className="flex items-center gap-1 cursor-pointer hover:text-coral transition-colors outline-none border-none bg-transparent"
+                      >
+                        <motion.div
+                          animate={{ scale: isLiked ? [1, 1.45, 0.9, 1.1, 1] : 1 }}
+                          transition={{ duration: 0.4 }}
+                        >
+                          <Heart className={cn("size-3.5 transition-colors", isLiked ? "text-coral fill-coral" : "text-gray-400")} />
+                        </motion.div>
+                        <span className={cn("text-[8px] font-medium", isLiked ? "text-coral" : "text-gray-400")}>
+                          {likeCount >= 1000 ? `${(likeCount / 1000).toFixed(1)}k` : likeCount}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setIsCollected(!isCollected);
+                          setCollectCount((c) => isCollected ? c - 1 : c + 1);
+                        }}
+                        className="flex items-center gap-1 cursor-pointer hover:text-coral transition-colors outline-none border-none bg-transparent"
+                      >
+                        <motion.div
+                          animate={{ scale: isCollected ? [1, 1.45, 0.9, 1.1, 1] : 1 }}
+                          transition={{ duration: 0.4 }}
+                        >
+                          <Star className={cn("size-3.5 transition-colors", isCollected ? "text-coral fill-coral" : "text-gray-400")} />
+                        </motion.div>
+                        <span className={cn("text-[8px] font-medium", isCollected ? "text-coral" : "text-gray-400")}>
+                          {collectCount}
+                        </span>
+                      </button>
+
+                      <div className="flex items-center gap-1 text-gray-400 select-none">
+                        <MessageSquare className="size-3.5" />
+                        <span className="text-[8px] font-medium">88</span>
+                      </div>
                     </div>
 
                   </div>
@@ -1175,18 +1431,34 @@ export function Thread() {
                     </div>
                   )}
 
-                  <div className="pt-1 flex gap-2">
+                  <div className="pt-1 flex flex-col gap-2">
                     <button
                       onClick={handleSyncToFeishu}
                       disabled={isSyncing}
                       className={cn(
-                        "flex-1 text-white text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer",
+                        "w-full text-white text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer",
                         syncStep === 4 ? "bg-green-500 hover:bg-green-600" : "bg-coral hover:bg-coral-hover"
                       )}
                     >
                       <CloudUpload className="size-4" />
                       <span>{syncStep === 4 ? "多维表格写入成功！" : "立即同步至飞书多维表格"}</span>
                     </button>
+                    {bitableUrl && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        className="text-center mt-1 overflow-hidden"
+                      >
+                        <a
+                          href={bitableUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] text-coral hover:underline font-bold transition-all"
+                        >
+                          <span>🔗 点击直接打开飞书多维表格 ↗</span>
+                        </a>
+                      </motion.div>
+                    )}
                   </div>
                 </div>
 

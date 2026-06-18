@@ -18,7 +18,7 @@ import { useArtifact } from "../artifact";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { TopicCards } from "./topic-cards";
 import { CopyCard } from "./copy-card";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, ChevronDown } from "lucide-react";
 
 function CustomComponent({
   message,
@@ -103,14 +103,176 @@ function Interrupt({
   );
 }
 
+export function ThinkingAura({
+  toolCalls,
+  status = "done",
+}: {
+  toolCalls: { name: string; args?: any; result?: any }[];
+  status?: "running" | "done";
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [mountedTime, setMountedTime] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setMountedTime(new Date());
+  }, []);
+
+  const formatOffsetTime = (offsetSeconds: number) => {
+    if (!mountedTime) return "00:00:00";
+    const t = new Date(mountedTime.getTime() + offsetSeconds * 1000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
+  };
+
+  if (!toolCalls || toolCalls.length === 0) return null;
+
+  const visibleCalls = toolCalls.filter(tc => {
+    if (!tc.name) return false;
+    const path = tc.args ? String(tc.args.file_path ?? tc.args.path ?? tc.args.filename ?? "") : "";
+    if (path.includes("/skills/")) return false;
+    if (tc.name === "read_file" && (path.includes("/analysis/") || path.includes("/shared/"))) return false;
+    if ((tc.name === "write_file" || tc.name === "edit_file") && path.includes("/analysis/")) return false;
+    return true;
+  });
+
+  if (visibleCalls.length === 0) return null;
+
+  const steps: { label: string; isDone: boolean; key: string }[] = [];
+  const logLines: string[] = [];
+
+  let seconds = 0;
+  visibleCalls.forEach((tc, idx) => {
+    const isLast = idx === visibleCalls.length - 1;
+    const isStepDone = status === "done" || !isLast;
+
+    if (tc.name === "read_xhs_data") {
+      let countText = "";
+      if (tc.result) {
+        try {
+          const resObj = typeof tc.result === "string" ? JSON.parse(tc.result) : tc.result;
+          if (resObj && Array.isArray(resObj.rows)) {
+            countText = ` (${resObj.rows.length} 条爆款数据)`;
+          }
+        } catch (e) {
+          console.debug(e);
+        }
+      }
+      steps.push({
+        key: `read_xhs_data-${idx}`,
+        label: isStepDone ? `已成功解析飞书多维表格${countText}` : "正在读取飞书多维表格数据...",
+        isDone: isStepDone,
+      });
+      logLines.push(`[${formatOffsetTime(seconds)}] 开始连接并读取飞书多维表格，自动过滤噪声列以优化上下文。`);
+      seconds += 2;
+      if (isStepDone) {
+        logLines.push(`[${formatOffsetTime(seconds)}] 成功获取并拉平多维表格记录，完成核心字段白名单过滤。`);
+      }
+    } else if (tc.name === "task") {
+      steps.push({
+        key: `task-${idx}`,
+        label: isStepDone ? "已完成爆款数据深度分析" : "正在分析选题规律...",
+        isDone: isStepDone,
+      });
+      logLines.push(`[${formatOffsetTime(seconds)}] 启动分析智能体，解析近 30 天爆款互动量及标题规律。`);
+      seconds += 1;
+      logLines.push(`[${formatOffsetTime(seconds)}] 爆款算法筛选：互动量排名前 10% 的内容多具备痛点防坑属性。`);
+      seconds += 1;
+      logLines.push(`[${formatOffsetTime(seconds)}] 精炼爆款关键词：#露营清单、#性价比露营装备、#新手指南。`);
+    } else if (tc.name === "write_file" || tc.name === "edit_file" || tc.name === "replace_file_content" || tc.name === "multi_replace_file_content" || tc.name === "write_to_file") {
+      const path = tc.args ? String(tc.args.file_path ?? tc.args.path ?? tc.args.filename ?? "") : "";
+      let typeText = "写入本地缓存";
+      if (path.includes("/shared/")) typeText = "更新风格库";
+      if (path.includes("/drafts/")) typeText = "生成小红书草稿";
+      steps.push({
+        key: `write-${idx}`,
+        label: isStepDone ? `已成功${typeText}` : `正在${typeText}...`,
+        isDone: isStepDone,
+      });
+      logLines.push(`[${formatOffsetTime(seconds)}] 正在结合大数据选题生成包含排版 Emoji 的笔记草稿并${typeText}...`);
+      seconds += 1;
+    } else {
+      steps.push({
+        key: `other-${idx}`,
+        label: isStepDone ? `已完成 ${tc.name} 指令执行` : `正在执行 ${tc.name} 指令...`,
+        isDone: isStepDone,
+      });
+      logLines.push(`[${formatOffsetTime(seconds)}] 调度底层工具 [${tc.name}] 进行数据接口交互...`);
+    }
+    seconds += 1;
+  });
+
+  if (status === "running") {
+    steps.push({
+      key: "running-loader",
+      label: "正在分析选题规律并撰写小红书笔记...",
+      isDone: false,
+    });
+  }
+
+  return (
+    <div className="mr-auto flex flex-col gap-2 py-2 w-full max-w-[460px] select-none">
+      <div className="bg-white border border-coral-light/60 p-3.5 rounded-2xl shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="relative flex h-2 w-2">
+              {status === "running" && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral opacity-75"></span>
+              )}
+              <span className={cn("relative inline-flex rounded-full h-2 w-2", status === "running" ? "bg-coral" : "bg-green-500")}></span>
+            </div>
+            <span className="text-xs font-bold text-charcoal font-display">思考轨迹 (Thinking Aura)</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-[10px] text-coral hover:text-coral-hover font-semibold flex items-center gap-0.5 cursor-pointer border-none bg-transparent outline-none"
+          >
+            <span>{isExpanded ? "收起分析详情" : "展开分析详情"}</span>
+            <ChevronDown className={cn("size-3 transition-transform", isExpanded && "rotate-180")} />
+          </button>
+        </div>
+
+        <div className="space-y-2 text-xs">
+          {steps.map((step) => (
+            <div key={step.key} className={cn("flex items-center gap-2", step.isDone ? "text-green-600" : "text-coral font-semibold")}>
+              {step.isDone ? (
+                <span className="text-green-500 font-bold">✓</span>
+              ) : (
+                <LoaderCircle className="size-3.5 animate-spin text-coral" />
+              )}
+              <span>{step.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {isExpanded && (
+          <div className="border-t border-oats-dark pt-2.5 mt-2 space-y-2 text-[9px] text-gray-400 font-mono bg-oats-light/40 p-2.5 rounded-xl border border-coral-light/20 max-h-32 overflow-y-auto custom-scrollbar">
+            {logLines.map((line, index) => (
+              <div key={index}>
+                <span className="text-coral font-bold">{line.substring(0, 10)}</span>
+                {line.substring(10)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export function AssistantMessage({
   message,
   isLoading,
   handleRegenerate,
+  precedingTools = [],
+  isThinkingOnly = false,
 }: {
   message: Message | undefined;
   isLoading: boolean;
   handleRegenerate: (parentCheckpoint: Checkpoint | null | undefined) => void;
+  precedingTools?: { id?: string; name: string; args?: any; result?: any }[];
+  isThinkingOnly?: boolean;
 }) {
   const content = message?.content ?? [];
   const contentString = getContentString(content);
@@ -144,7 +306,15 @@ export function AssistantMessage({
   return (
     <div className="group mr-auto flex w-full items-start gap-2">
       <div className="flex w-full flex-col gap-2">
-        {isToolResult ? (
+        {precedingTools && precedingTools.length > 0 && (
+          <ThinkingAura
+            toolCalls={precedingTools}
+            status={isThinkingOnly && isLoading ? "running" : "done"}
+          />
+        )}
+
+        {!isThinkingOnly && (
+          isToolResult ? (
           <>
             <ToolResult message={message} />
             <Interrupt
@@ -218,70 +388,11 @@ export function AssistantMessage({
               />
             </div>
           </>
-        )}
+        ))}
       </div>
     </div>
   );
 }
 
 export function AssistantMessageLoading() {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [mountedTime, setMountedTime] = useState<Date | null>(null);
-
-  useEffect(() => {
-    setMountedTime(new Date());
-  }, []);
-
-  const formatOffsetTime = (offsetSeconds: number) => {
-    if (!mountedTime) return "00:00:00";
-    const t = new Date(mountedTime.getTime() + offsetSeconds * 1000);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
-  };
-
-  return (
-    <div className="mr-auto flex flex-col gap-2 py-2 w-full max-w-[460px]">
-      <div className="bg-white border border-coral-light/60 p-3.5 rounded-2xl shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {/* 呼吸脉动指示灯 */}
-            <div className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-coral"></span>
-            </div>
-            <span className="text-xs font-bold text-charcoal font-display">思考轨迹 (Thinking Aura)</span>
-          </div>
-          <button 
-            type="button"
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="text-[10px] text-coral hover:text-coral-hover font-semibold flex items-center gap-0.5 cursor-pointer"
-          >
-            <span>{isExpanded ? "收起分析详情" : "展开分析详情"}</span>
-          </button>
-        </div>
-
-        {/* 步进器 stepper */}
-        <div className="space-y-2 text-xs">
-          <div className="flex items-center gap-2 text-green-600">
-            <span className="text-green-500 font-bold">✓</span>
-            <span>已成功解析飞书多维表格 (45 条爆款装备数据)</span>
-          </div>
-          <div className="flex items-center gap-2 text-coral font-semibold">
-            <LoaderCircle className="size-3.5 animate-spin text-coral" />
-            <span>正在分析选题规律并撰写小红书笔记...</span>
-          </div>
-        </div>
-
-        {/* 可折叠的思考日志日志 */}
-        {isExpanded && (
-          <div className="border-t border-oats-dark pt-2.5 mt-2 space-y-2 text-[9px] text-gray-400 font-mono bg-oats-light/40 p-2.5 rounded-xl border border-coral-light/20 max-h-32 overflow-y-auto custom-scrollbar">
-            <div><span className="text-coral font-bold">[{formatOffsetTime(0)}]</span> 开始连接并读取飞书多维表格，自动过滤噪声列防爆窗口。</div>
-            <div><span className="text-coral font-bold">[{formatOffsetTime(2)}]</span> 爆款算法筛选：互动量排名前 10% 的内容多具备痛点防坑属性。</div>
-            <div><span className="text-coral font-bold">[{formatOffsetTime(3)}]</span> 精炼爆款关键词：#露营清单、#性价比露营装备、#新手指南。</div>
-            <div><span className="text-coral font-bold">[{formatOffsetTime(4)}]</span> 正在结合大数据选题生成包含排版 Emoji 的笔记草稿...</div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }

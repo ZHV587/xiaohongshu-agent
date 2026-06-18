@@ -30,14 +30,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 auth = Auth()
 
-# 本地开发兜底用户:未带 token 时用它,保证单机调试不被挡。
-# ⚠️ 生产/上云前必须把 XHS_DEV_FALLBACK_USER 设为空(或代码改默认 None),
-#    否则任何不带 token 的请求都会被认成同一个用户,可越权访问其会话。
-#    设为空字符串时,下方 authenticate 会因 identity 为空而返回 401。
-_DEV_FALLBACK_USER = os.environ.get("XHS_DEV_FALLBACK_USER", "dev-user")
-
-# 与前端 Next.js 共享的 JWT 签名密钥。配置后启用真飞书 OAuth 身份校验;
-# 未配置(空)时退回 mock 模式,保证本地裸调试不被打断。
+# 与前端 Next.js 共享的 JWT 签名密钥。配置后启用真飞书 OAuth 身份校验
 _JWT_SECRET = os.environ.get("XHS_JWT_SECRET", "")
 
 
@@ -64,8 +57,13 @@ def _verify_jwt(token: str) -> dict | None:
     if header.get("alg") != "HS256":
         return None
 
+    try:
+        jwt_key = _JWT_SECRET.encode()
+    except Exception:
+        return None
+
     expected = hmac.new(
-        _JWT_SECRET.encode(),
+        jwt_key,
         f"{header_seg}.{payload_seg}".encode(),
         hashlib.sha256,
     ).digest()
@@ -98,23 +96,18 @@ def _strip_bearer(raw: str | None) -> str | None:
 
 def _resolve_identity(raw: str | None) -> tuple[str | None, str | None]:
     """从 Authorization 头解析 (identity, display_name)。
-
-    配了 JWT 密钥 → 必须是合法 JWT(否则视为无身份,走兜底/401);
-    没配密钥 → 退回 mock 模式,token 文本即身份。
+    必须是合法 JWT。
     """
     token = _strip_bearer(raw)
-    if not token:
+    if not token or not _JWT_SECRET:
         return None, None
-    if _JWT_SECRET:
-        payload = _verify_jwt(token)
-        if not payload:
-            return None, None  # 验签失败 → 无身份(交由 authenticate 决定兜底/拒绝)
-        sub = payload.get("sub")
-        if not sub:
-            return None, None
-        return sub, payload.get("name") or sub
-    # mock 模式:token 即身份
-    return token, token
+    payload = _verify_jwt(token)
+    if not payload:
+        return None, None
+    sub = payload.get("sub")
+    if not sub:
+        return None, None
+    return sub, payload.get("name") or sub
 
 
 @auth.authenticate
@@ -132,10 +125,7 @@ async def authenticate(headers: dict) -> dict:
 
     identity, display_name = _resolve_identity(raw)
     if not identity:
-        identity = _DEV_FALLBACK_USER or None
-        display_name = identity
-    if not identity:
-        raise Auth.exceptions.HTTPException(status_code=401, detail="缺少身份令牌(Authorization)")
+        raise Auth.exceptions.HTTPException(status_code=401, detail="缺少身份令牌(Authorization)或签名无效")
     return {
         "identity": identity,
         "is_authenticated": True,

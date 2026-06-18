@@ -8,16 +8,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { BRAND } from "@/lib/brand";
 import { getCurrentUser, loginWithFeishu, type CurrentUser } from "@/lib/auth";
-import { motion, AnimatePresence } from "framer-motion";
-import { KeyRound, ShieldAlert, CheckCircle2, QrCode } from "lucide-react";
-import { AUTH_COOKIE } from "@/lib/constants"; // ✅ 从共享常量导入，避免服务端模块边界泄漏
+import { KeyRound } from "lucide-react";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [ready, setReady] = useState(false); // 客户端挂载后才判定,避免 SSR 闪烁
   const [authError, setAuthError] = useQueryState("auth_error");
-  const [isFlipped, setIsFlipped] = useState(false);
-  const [scanSuccess, setScanSuccess] = useState(false);
 
   useEffect(() => {
     setUser(getCurrentUser());
@@ -42,138 +38,37 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // 已登录:放行。
   if (user) return <>{children}</>;
 
-  const handleSimulateLogin = async () => {
-    setScanSuccess(true);
-    try {
-      const resp = await fetch("/api/auth/feishu/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          openId: "dev-open-id-local",
-          name: "本地测试用户 (调试)"
-        })
-      });
-      if (!resp.ok) {
-        throw new Error(await resp.text());
-      }
-      setTimeout(() => {
-        setUser({
-          openId: "dev-open-id-local",
-          name: "本地测试用户 (调试)"
-        });
-      }, 1200);
-    } catch (e) {
-      setScanSuccess(false);
-      toast.error(`模拟登录失败: ${(e as Error).message}`);
-    }
-  };
-
-
   // 未登录:全屏中文登录页,锁住应用。
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-oats p-4 select-none">
-      <div className="w-[380px] h-[400px] perspective-1000">
-        <motion.div
-          className="relative w-full h-full preserve-3d"
-          animate={{ rotateY: isFlipped ? 180 : 0 }}
-          transition={{ type: "spring", stiffness: 150, damping: 20 }}
-          style={{ width: "100%", height: "100%" }}
-        >
-          {/* 登录卡片正面 */}
-          <div className="absolute inset-0 w-full h-full backface-hidden bg-white border border-coral-light rounded-2xl shadow-xl p-8 flex flex-col justify-between">
-            <div className="flex flex-col items-center text-center gap-3">
-              <span className="bg-coral text-white text-3xl size-14 flex items-center justify-center rounded-2xl shadow-md">🍠</span>
-              <h2 className="text-xl font-bold tracking-tight text-charcoal font-display">{BRAND.name}</h2>
-              <p className="text-xs text-charcoal-light leading-relaxed">
-                绑定您的飞书应用与用户身份，解锁多维表格爆款分析、即时协作和自动分发功能。
-              </p>
-            </div>
-            
-            <div className="flex flex-col gap-2">
-              {/* 真实飞书 OAuth 授权按钮 */}
-              <Button
-                id="feishu-oauth-login-btn"
-                size="lg"
-                className="w-full bg-coral hover:bg-coral-hover text-white py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer border-none"
-                onClick={() => loginWithFeishu("/")}
-              >
-                <KeyRound className="size-4" />
-                <span>飞书授权登录</span>
-              </Button>
-              {/* 本地调试：扫码模拟 */}
-              <button
-                id="feishu-scan-login-btn"
-                className="w-full text-xs text-gray-400 hover:text-coral transition-colors flex items-center justify-center gap-1.5 py-1"
-                onClick={() => setIsFlipped(true)}
-              >
-                <QrCode className="size-3" />
-                <span>本地调试：模拟扫码</span>
-              </button>
-            </div>
+    <div 
+      className="flex h-screen w-screen items-center justify-center p-4 select-none"
+      style={{
+        background: "radial-gradient(circle at center, #FFEDF0 0%, #FAF6F0 100%)"
+      }}
+    >
+      <div className="w-[380px] h-[340px]">
+        <div className="w-full h-full bg-white/75 backdrop-blur-md border border-white/50 rounded-2xl shadow-2xl p-8 flex flex-col justify-between">
+          <div className="flex flex-col items-center text-center gap-3">
+            <span className="bg-coral text-white text-3xl size-14 flex items-center justify-center rounded-2xl shadow-md">🍠</span>
+            <h2 className="text-xl font-bold tracking-tight text-charcoal font-display">{BRAND.name}</h2>
+            <p className="text-xs text-charcoal-light leading-relaxed">
+              绑定您的飞书应用与用户身份，解锁多维表格爆款分析、即时协作和自动分发功能。
+            </p>
           </div>
-
-          {/* 登录卡片背面 */}
-          <div className="absolute inset-0 w-full h-full backface-hidden bg-white border border-coral-light rounded-2xl shadow-xl p-8 flex flex-col justify-between [transform:rotateY(180deg)]">
-            <AnimatePresence mode="wait">
-              {!scanSuccess ? (
-                <motion.div
-                  key="scan-view"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="flex flex-col items-center justify-between h-full w-full"
-                >
-                  <div className="flex items-start gap-2.5 text-left w-full">
-                    <ShieldAlert className="size-5 text-coral shrink-0 mt-0.5" />
-                    <div className="flex-grow">
-                      <h4 className="text-xs font-bold text-coral">本地调试模式</h4>
-                      <p className="text-[9px] text-gray-400 mt-0.5">点击下方图案模拟飞书扫码授权成功（仅限本地开发环境）。</p>
-                    </div>
-                  </div>
-
-                  <div 
-                    id="mock-scan-qrcode"
-                    onClick={handleSimulateLogin}
-                    className="relative bg-white p-2.5 border border-coral-light rounded-xl shadow-md cursor-pointer group"
-                  >
-                    <div className="w-24 h-24 bg-gray-100 flex flex-wrap p-1.5 gap-1 justify-center items-center rounded-lg">
-                      <div className="w-8 h-8 border border-gray-400 bg-gray-800"></div>
-                      <div className="w-8 h-8 bg-gray-300"></div>
-                      <div className="w-8 h-8 border border-gray-400 bg-gray-800"></div>
-                      <div className="w-8 h-8 bg-gray-300"></div>
-                    </div>
-                    <div className="absolute inset-0 bg-white/95 rounded-xl flex flex-col justify-center items-center text-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <QrCode className="size-5 text-coral mb-0.5 animate-pulse" />
-                      <span className="text-[10px] text-coral font-bold font-sans">点击模拟扫码</span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setIsFlipped(false)}
-                    className="text-xs text-gray-400 hover:text-coral transition-colors"
-                  >
-                    返回上一步
-                  </button>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="success-view"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="flex flex-col items-center justify-center h-full gap-3"
-                >
-                  <div className="w-14 h-14 rounded-full bg-green-500 flex items-center justify-center text-white shadow-lg">
-                    <CheckCircle2 className="size-8 stroke-[2.5]" />
-                  </div>
-                  <div className="text-center">
-                    <h4 className="text-sm font-bold text-charcoal">授权绑定成功</h4>
-                    <p className="text-[10px] text-gray-400 mt-1">正在载入文案工作台环境，请稍候...</p>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+          
+          <div className="flex flex-col gap-2">
+            {/* 真实飞书 OAuth 授权按钮 */}
+            <Button
+              id="feishu-oauth-login-btn"
+              size="lg"
+              className="w-full bg-coral hover:bg-coral-hover text-white py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer border-none"
+              onClick={() => loginWithFeishu("/")}
+            >
+              <KeyRound className="size-4" />
+              <span>飞书授权登录</span>
+            </Button>
           </div>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

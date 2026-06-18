@@ -172,7 +172,10 @@ def test_sync_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
     }):
         resp = httpx.post("http://127.0.0.1:9090/_internal/sync", json=body, headers=headers)
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True}
+        assert resp.json() == {
+            "ok": True,
+            "redirect_url": "https://feishu.cn/base/bas_mock?table=tbl_mock"
+        }
         
         # 验证是否正确调用了 2 次 CLI
         assert mock_lark_cli.func.call_count == 2
