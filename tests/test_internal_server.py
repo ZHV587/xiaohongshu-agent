@@ -11,22 +11,22 @@ from tools.internal_server import start_internal_server
 
 @pytest.fixture(scope="module")
 def running_server():
-    with patch.dict(os.environ, {"XHS_JWT_SECRET": "secret_key", "XHS_INTERNAL_PORT": "9090"}):
+    with patch.dict(os.environ, {"XHS_JWT_SECRET": "secret_key", "XHS_INTERNAL_PORT": "19090"}):
         server = start_internal_server()
         yield server
         if server:
             server.shutdown()
 
 def test_status_endpoint(running_server):
-    resp = httpx.get("http://127.0.0.1:9090/_internal/status")
+    resp = httpx.get("http://127.0.0.1:19090/_internal/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
     assert "bot_configured" in data
-    assert data["internal_port"] == 9090
+    assert data["internal_port"] == 19090
 
 def test_unauthorized_post(running_server):
-    resp = httpx.post("http://127.0.0.1:9090/_internal/uat", content=b"{}")
+    resp = httpx.post("http://127.0.0.1:19090/_internal/uat", content=b"{}")
     assert resp.status_code == 401
 
 def test_signature_mismatch(running_server):
@@ -39,7 +39,7 @@ def test_signature_mismatch(running_server):
         "scopes": [],
         "name": "Sync User"
     }).encode("utf-8")
-    resp = httpx.post("http://127.0.0.1:9090/_internal/uat", content=body, headers=headers)
+    resp = httpx.post("http://127.0.0.1:19090/_internal/uat", content=body, headers=headers)
     assert resp.status_code == 403
 
 def test_authorized_post(running_server):
@@ -58,7 +58,7 @@ def test_authorized_post(running_server):
     headers = {"Authorization": f"HMAC {sig}"}
     
     with patch("tools.internal_server.save_uat") as mock_save:
-        resp = httpx.post("http://127.0.0.1:9090/_internal/uat", content=body, headers=headers)
+        resp = httpx.post("http://127.0.0.1:19090/_internal/uat", content=body, headers=headers)
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
         mock_save.assert_called_once_with("usr_999", "uat_xxx", "ref_xxx", 1800000000, [], "Sync User")
@@ -79,7 +79,7 @@ def test_authorized_post_missing_refresh_token(running_server):
     headers = {"Authorization": f"HMAC {sig}"}
     
     with patch("tools.internal_server.save_uat") as mock_save:
-        resp = httpx.post("http://127.0.0.1:9090/_internal/uat", content=body, headers=headers)
+        resp = httpx.post("http://127.0.0.1:19090/_internal/uat", content=body, headers=headers)
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
         mock_save.assert_called_once_with("usr_999", "uat_xxx", "", 1800000000, [], "Sync User")
@@ -114,7 +114,7 @@ def test_chats_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
         "Authorization": f"HMAC {sig}"
     }
     
-    resp = httpx.get("http://127.0.0.1:9090/_internal/chats", headers=headers)
+    resp = httpx.get("http://127.0.0.1:19090/_internal/chats", headers=headers)
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
@@ -170,7 +170,7 @@ def test_sync_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
         "FEISHU_BITABLE_APP_TOKEN": "bas_mock",
         "FEISHU_BITABLE_TABLE_ID": "tbl_mock"
     }):
-        resp = httpx.post("http://127.0.0.1:9090/_internal/sync", json=body, headers=headers)
+        resp = httpx.post("http://127.0.0.1:19090/_internal/sync", json=body, headers=headers)
         assert resp.status_code == 200
         assert resp.json() == {
             "ok": True,
@@ -214,13 +214,13 @@ def test_notify_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
     
     headers = {"Authorization": f"HMAC {sig}"}
     
-    resp = httpx.post("http://127.0.0.1:9090/_internal/notify", json=body, headers=headers)
+    resp = httpx.post("http://127.0.0.1:19090/_internal/notify", json=body, headers=headers)
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
     mock_lark_cli.func.assert_called_once()
 
 def test_get_config_unauthorized(running_server):
-    resp = httpx.get("http://127.0.0.1:9090/_internal/config")
+    resp = httpx.get("http://127.0.0.1:19090/_internal/config")
     assert resp.status_code == 401
 
 def test_get_config_success(running_server):
@@ -239,7 +239,7 @@ def test_get_config_success(running_server):
         "FEISHU_APP_ID": "cli_test_id",
         "FEISHU_APP_SECRET": "test_secret"
     }):
-        resp = httpx.get("http://127.0.0.1:9090/_internal/config", headers=headers)
+        resp = httpx.get("http://127.0.0.1:19090/_internal/config", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -265,7 +265,7 @@ def test_post_config_success(running_server):
     headers = {"Authorization": f"HMAC {sig}"}
     
     with patch("tools.internal_server._update_env_file") as mock_update_env:
-        resp = httpx.post("http://127.0.0.1:9090/_internal/config", json=body, headers=headers)
+        resp = httpx.post("http://127.0.0.1:19090/_internal/config", json=body, headers=headers)
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
         assert os.environ.get("FEISHU_APP_ID") == "cli_new_id"
