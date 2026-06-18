@@ -22,7 +22,7 @@ from langchain.agents.middleware import ModelRetryMiddleware
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
-def _is_retryable(exc: Exception) -> bool:
+def is_retryable_error(exc: Exception) -> bool:
     """渠道无关地判断异常是否值得重试。"""
     # 各家 SDK 的 APIStatusError 都把 HTTP 状态码挂在 .status_code 上。
     status = getattr(exc, "status_code", None)
@@ -41,7 +41,7 @@ def build_retry_middleware() -> ModelRetryMiddleware:
     """构造 agent 节点级重试 middleware(指数退避 + jitter,渠道无关)。"""
     return ModelRetryMiddleware(
         max_retries=2,
-        retry_on=_is_retryable,
+        retry_on=is_retryable_error,
         backoff_factor=2.0,
         initial_delay=1.0,
         max_delay=30.0,
