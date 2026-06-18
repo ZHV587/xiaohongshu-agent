@@ -253,3 +253,22 @@ def test_router_all_exhausted_raises_last():
         assert False, "应抛出"
     except FakeStatusError as e:
         assert e.status_code == 503
+
+
+def test_router_cooldown_expires_and_heals(monkeypatch):
+    """冷却到期后,被标记的网关重新回到健康候选(spec §6 自愈)。"""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(models_mod.time, "monotonic", lambda: clock["t"])
+
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+
+    # 标记 g1 不健康(冷却 30s,到期时间 = 1000 + 30 = 1030)
+    mw._mark_unhealthy(pool[0])
+    assert mw._is_cooling("g1") is True       # 当前 t=1000 < 1030,冷却中
+
+    clock["t"] = 1029.0                        # 还没到期
+    assert mw._is_cooling("g1") is True
+
+    clock["t"] = 1031.0                        # 已过 30s 冷却窗口
+    assert mw._is_cooling("g1") is False       # 自愈:重新可用
