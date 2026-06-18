@@ -37,7 +37,7 @@ load_dotenv()
 # - execute: Shell 命令执行,文案场景不需要,留着是安全隐患
 # - write_todos: todo list,两步式工作流(出选题→写文案)不需要
 # - general-purpose: 默认通用子智能体,已有 baokuan-analyst,多一个会让模型选错
-register_harness_profile("anthropic", HarnessProfileConfig(
+register_harness_profile("openai", HarnessProfileConfig(
     excluded_tools=frozenset({"execute", "write_todos"}),
     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
 ))

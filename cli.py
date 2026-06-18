@@ -38,7 +38,7 @@ auto_update_lark_cli()
 load_dotenv()
 
 # ── 安全加固(与 agent.py 保持一致)──────────────────────────────────
-register_harness_profile("anthropic", HarnessProfileConfig(
+register_harness_profile("openai", HarnessProfileConfig(
     excluded_tools=frozenset({"execute", "write_todos"}),
     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
 ))
