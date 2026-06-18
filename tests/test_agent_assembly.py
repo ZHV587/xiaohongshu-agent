@@ -67,7 +67,8 @@ def test_harness_profile_excludes_dangerous_tools(monkeypatch):
         "register_harness_profile 的 key 可能不是 'openai'"
     )
     assert "execute" in profile.excluded_tools
-    assert "write_todos" in profile.excluded_tools
+    assert "write_todos" not in profile.excluded_tools  # write_todos is now enabled
+
 
 
 def test_rubric_uses_model_instance_not_string(monkeypatch):

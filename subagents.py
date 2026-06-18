@@ -39,7 +39,7 @@ _pool = build_pool()
 baokuan_analyst = {
     "name": "baokuan-analyst",
     "description": (
-        "拆解飞书数据里某个方向的小红书爆款,提炼选题角度、标题套路、正文结构、"
+        "拆解飞书数据里某个方向的小红书爆款,提炼选题角度、标题套路、正文结构, "
         "情绪点与标签习惯。委派时请说明:分析哪个方向,以及把结论写到哪个文件路径"
         "(如 '分析露营装备方向,结论写到 /analysis/露营装备.md')。"
     ),
@@ -48,3 +48,12 @@ baokuan_analyst = {
     "tools": [read_xhs_data],
     "middleware": [build_router_middleware(_pool)],
 }
+
+monitor_subagent = {
+    "name": "background-monitor",
+    "description": (
+        "后台监测小红书和飞书新增爆款,并进行异步分析(长周期后台任务)。"
+    ),
+    "graph_id": "xhs-background-monitor",
+}
+

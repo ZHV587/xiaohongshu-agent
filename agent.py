@@ -19,7 +19,7 @@ from backends import build_backend
 from middlewares import build_retry_middleware
 from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
-from subagents import baokuan_analyst
+from subagents import baokuan_analyst, monitor_subagent
 from tools.feishu_bitable import read_xhs_data
 from tools.lark_cli import lark_cli, auto_update_lark_skills, auto_update_lark_cli
 from tools.internal_server import start_internal_server
@@ -35,10 +35,10 @@ load_dotenv()
 
 # ── 安全加固:关掉本场景不需要的内置工具和默认子智能体 ──────────────────
 # - execute: Shell 命令执行,文案场景不需要,留着是安全隐患
-# - write_todos: todo list,两步式工作流(出选题→写文案)不需要
+# - write_todos: 已重新启用，方便长任务执行规划
 # - general-purpose: 默认通用子智能体,已有 baokuan-analyst,多一个会让模型选错
 register_harness_profile("openai", HarnessProfileConfig(
-    excluded_tools=frozenset({"execute", "write_todos"}),
+    excluded_tools=frozenset({"execute"}),
     general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
 ))
 
@@ -72,9 +72,10 @@ agent = create_deep_agent(
     model=build_primary_model(pool),
     tools=[read_xhs_data, lark_cli],
     system_prompt=MAIN_SYSTEM_PROMPT,
-    subagents=[baokuan_analyst],
+    subagents=[baokuan_analyst, monitor_subagent],
     skills=["./skills/"],
     backend=backend,
+    interrupt_on={"lark_cli": True},
     middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(pool)],
     # 自学习记忆:团队共享(全员一份方法论)+ 用户私有(按 open_id 隔离)。
     # 团队在前、个人在后 —— sources 按序拼接注入,个人记忆覆盖团队默认。
@@ -86,7 +87,7 @@ agent = create_deep_agent(
         FilesystemPermission(operations=["read"], paths=["/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/drafts/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/analysis/**"], mode="allow"),
-        FilesystemPermission(operations=["write"], paths=["/shared/**"], mode="allow"),
+        FilesystemPermission(operations=["write"], paths=["/shared/**"], mode="interrupt"),
         FilesystemPermission(operations=["write"], paths=["/memories/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/user-memories/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/**"], mode="deny"),
