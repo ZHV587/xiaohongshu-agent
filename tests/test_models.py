@@ -162,3 +162,15 @@ def test_build_pool_empty_falls_back_to_first_whitelist(monkeypatch):
     assert len(pool) == 1
     assert pool[0].model_id == "claude-sonnet-4-6"  # 白名单首个降级
     assert pool[0].gateway_name == "gateway_1"
+
+
+def test_build_pool_no_intersection_falls_back(monkeypatch):
+    models_mod._DISCOVER_CACHE.clear()
+    _set_single_gateway(monkeypatch, quality="claude-sonnet-4-6,gpt-4o")
+    # 探测成功,但返回的型号都不在白名单 → 无交集 → 应降级到白名单首个
+    monkeypatch.setattr(models_mod, "discover_models", lambda url, key: ["only-cheap-x", "only-cheap-y"])
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
+    pool = build_pool()
+    assert len(pool) == 1
+    assert pool[0].model_id == "claude-sonnet-4-6"
+    assert pool[0].gateway_name == "gateway_1"

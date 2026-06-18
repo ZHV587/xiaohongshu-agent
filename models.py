@@ -99,6 +99,7 @@ def _read_gateways() -> list[tuple[str, str, str]]:
 
 
 def _read_whitelist() -> list[str]:
+    """读 LLM_QUALITY_MODELS env,返回去空白过滤后的模型 id 列表;未设置返回 []。"""
     raw = os.environ.get("LLM_QUALITY_MODELS", "")
     return [m.strip() for m in raw.split(",") if m.strip()]
 
