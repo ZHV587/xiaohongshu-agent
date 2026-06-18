@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button";
 import { BRAND } from "@/lib/brand";
 import { getCurrentUser, loginWithFeishu, type CurrentUser } from "@/lib/auth";
 import { motion, AnimatePresence } from "framer-motion";
-import { KeyRound, ShieldAlert, CheckCircle2, QrCode, LogIn } from "lucide-react";
-import { AUTH_COOKIE } from "@/lib/server/feishu";
+import { KeyRound, ShieldAlert, CheckCircle2, QrCode } from "lucide-react";
+import { AUTH_COOKIE } from "@/lib/constants"; // ✅ 从共享常量导入，避免服务端模块边界泄漏
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -42,22 +42,37 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // 已登录:放行。
   if (user) return <>{children}</>;
 
-  const handleSimulateLogin = () => {
+  const handleSimulateLogin = async () => {
     setScanSuccess(true);
-    setTimeout(() => {
-      // 写入本地调试 JWT 认证 cookie，模拟飞书登录成功
-      document.cookie = `${AUTH_COOKIE}=mock-jwt-token; path=/; max-age=604800`;
-      setUser({
-        openId: "dev-user",
-        name: "本地测试用户 (调试)"
+    try {
+      const resp = await fetch("/api/auth/feishu/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          openId: "dev-open-id-local",
+          name: "本地测试用户 (调试)"
+        })
       });
-    }, 1200);
+      if (!resp.ok) {
+        throw new Error(await resp.text());
+      }
+      setTimeout(() => {
+        setUser({
+          openId: "dev-open-id-local",
+          name: "本地测试用户 (调试)"
+        });
+      }, 1200);
+    } catch (e) {
+      setScanSuccess(false);
+      toast.error(`模拟登录失败: ${(e as Error).message}`);
+    }
   };
+
 
   // 未登录:全屏中文登录页,锁住应用。
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-oats p-4 select-none">
-      <div className="w-[380px] h-[340px] perspective-1000">
+      <div className="w-[380px] h-[400px] perspective-1000">
         <motion.div
           className="relative w-full h-full preserve-3d"
           animate={{ rotateY: isFlipped ? 180 : 0 }}
@@ -75,14 +90,25 @@ export function AuthGate({ children }: { children: ReactNode }) {
             </div>
             
             <div className="flex flex-col gap-2">
+              {/* 真实飞书 OAuth 授权按钮 */}
               <Button
+                id="feishu-oauth-login-btn"
                 size="lg"
                 className="w-full bg-coral hover:bg-coral-hover text-white py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer border-none"
+                onClick={() => loginWithFeishu("/")}
+              >
+                <KeyRound className="size-4" />
+                <span>飞书授权登录</span>
+              </Button>
+              {/* 本地调试：扫码模拟 */}
+              <button
+                id="feishu-scan-login-btn"
+                className="w-full text-xs text-gray-400 hover:text-coral transition-colors flex items-center justify-center gap-1.5 py-1"
                 onClick={() => setIsFlipped(true)}
               >
-                <QrCode className="size-4" />
-                <span>使用飞书扫码安全登录</span>
-              </Button>
+                <QrCode className="size-3" />
+                <span>本地调试：模拟扫码</span>
+              </button>
             </div>
           </div>
 
@@ -100,12 +126,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   <div className="flex items-start gap-2.5 text-left w-full">
                     <ShieldAlert className="size-5 text-coral shrink-0 mt-0.5" />
                     <div className="flex-grow">
-                      <h4 className="text-xs font-bold text-coral">飞书授权登录</h4>
-                      <p className="text-[9px] text-gray-400 mt-0.5">请使用飞书移动端扫描下方二维码以授予智能体接口协作权限。</p>
+                      <h4 className="text-xs font-bold text-coral">本地调试模式</h4>
+                      <p className="text-[9px] text-gray-400 mt-0.5">点击下方图案模拟飞书扫码授权成功（仅限本地开发环境）。</p>
                     </div>
                   </div>
 
                   <div 
+                    id="mock-scan-qrcode"
                     onClick={handleSimulateLogin}
                     className="relative bg-white p-2.5 border border-coral-light rounded-xl shadow-md cursor-pointer group"
                   >

@@ -12,7 +12,55 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from tools.uat_store import save_uat, get_uat
 from tools.lark_cli import lark_cli
 
+# 修复 Windows 环境下 NO_PROXY 中包含 ::1 导致 httpx 崩溃的 bug
+if "NO_PROXY" in os.environ:
+    os.environ["NO_PROXY"] = ",".join(
+        item for item in os.environ["NO_PROXY"].split(",")
+        if ":" not in item
+    )
+
+
 logger = logging.getLogger(__name__)
+
+def _update_env_file(updates: dict[str, str]):
+    env_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", ".env")
+    )
+    if not os.path.exists(env_path):
+        try:
+            with open(env_path, "w", encoding="utf-8") as f:
+                pass
+        except Exception:
+            return
+            
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        new_lines = []
+        applied = set()
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                new_lines.append(line)
+                continue
+            parts = stripped.split("=", 1)
+            key = parts[0].strip()
+            if key in updates:
+                new_lines.append(f"{key}={updates[key]}\n")
+                applied.add(key)
+            else:
+                new_lines.append(line)
+                
+        for key, value in updates.items():
+            if key not in applied:
+                new_lines.append(f"{key}={value}\n")
+                
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+            
+    except Exception as e:
+        logger.error(f"Failed to update .env file: {e}")
 
 # Mock classes to support langgraph style RunnableConfig for lark_cli
 class MockUser:
@@ -90,6 +138,52 @@ class InternalUATHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # 2) Endpoint: /_internal/config (Retrieve current credentials and model configs)
+        if self.path == "/_internal/config":
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("HMAC "):
+                self._send_error(401, "Unauthorized: Missing HMAC signature.")
+                return
+
+            open_id = self.headers.get("X-Open-ID", "").strip()
+            timestamp_str = self.headers.get("X-Timestamp", "").strip()
+            if not open_id or not timestamp_str:
+                self._send_error(400, "Bad Request: Missing X-Open-ID or X-Timestamp header.")
+                return
+
+            try:
+                timestamp = int(timestamp_str)
+                if abs(time.time() - timestamp) > 300:
+                    self._send_error(403, "Forbidden: Timestamp expired/replay detected.")
+                    return
+            except ValueError:
+                self._send_error(400, "Bad Request: Invalid timestamp format.")
+                return
+
+            sign_text = f"{open_id}:{timestamp}"
+            if not self._verify_hmac(sign_text):
+                self._send_error(403, "Forbidden: Signature validation failed.")
+                return
+
+            self._send_response_json(200, {
+                "ok": True,
+                "configs": {
+                    "FEISHU_APP_ID": os.environ.get("FEISHU_APP_ID", ""),
+                    "FEISHU_APP_SECRET": os.environ.get("FEISHU_APP_SECRET", ""),
+                    "FEISHU_BITABLE_APP_TOKEN": os.environ.get("FEISHU_BITABLE_APP_TOKEN", ""),
+                    "FEISHU_BITABLE_TABLE_ID": os.environ.get("FEISHU_BITABLE_TABLE_ID", ""),
+                    "LLM_API_KEY": os.environ.get("LLM_API_KEY", ""),
+                    "LLM_BASE_URL": os.environ.get("LLM_BASE_URL", ""),
+                    "LLM_MODEL": os.environ.get("LLM_MODEL", ""),
+                    "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
+                    "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
+                    "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
+                    "KIMI_API_KEY": os.environ.get("KIMI_API_KEY", ""),
+                    "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", "")
+                }
+            })
+            return
+
         # 2) Endpoint: /_internal/chats (Retrieve authorized user groups)
         if self.path.startswith("/_internal/chats"):
             auth_header = self.headers.get("Authorization", "")
@@ -145,13 +239,9 @@ class InternalUATHandler(BaseHTTPRequestHandler):
                 
                 # Filter to only return actual groups, omitting single chats
                 chats_list = []
-                items = []
-                if "items" in data:
-                    items = data["items"]
-                elif "data" in data and "items" in data["data"]:
-                    items = data["data"]["items"]
+                chats = data["data"]["chats"] or []
 
-                for item in items:
+                for item in chats:
                     if item.get("chat_mode") == "group":
                         chats_list.append({
                             "chat_id": item.get("chat_id"),
@@ -173,7 +263,43 @@ class InternalUATHandler(BaseHTTPRequestHandler):
             self._send_error(401, "Unauthorized: Missing HMAC signature.")
             return
 
-        # 1) Endpoint: /_internal/uat (Save/Sync UAT)
+        # 1) Endpoint: /_internal/config (Update credentials and model configs)
+        if self.path == "/_internal/config":
+            body = self._read_body()
+            if body is None:
+                return
+
+            try:
+                payload = json.loads(body.decode("utf-8"))
+                timestamp = int(payload["timestamp"])
+
+                # Anti-replay check
+                if abs(time.time() - timestamp) > 300:
+                    self._send_error(403, "Forbidden: Timestamp expired/replay detected.")
+                    return
+
+                # Signature bound to configs dict + timestamp
+                configs = payload["configs"]
+                configs_str = json.dumps(configs, sort_keys=True, separators=(',', ':'))
+                sign_text = f"{configs_str}:{timestamp}"
+                if not self._verify_hmac(sign_text):
+                    self._send_error(403, "Forbidden: Signature validation failed.")
+                    return
+
+                # Update in-memory env vars
+                for key, val in configs.items():
+                    os.environ[key] = str(val)
+
+                # Persist to local .env file
+                _update_env_file(configs)
+
+                self._send_response_json(200, {"ok": True})
+            except Exception as e:
+                logger.error(f"Exception during config processing: {e}")
+                self._send_response_json(500, {"error": str(e)})
+            return
+
+        # 2) Endpoint: /_internal/uat (Save/Sync UAT)
         if self.path == "/_internal/uat":
             body = self._read_body()
             if body is None:
@@ -252,25 +378,21 @@ class InternalUATHandler(BaseHTTPRequestHandler):
                 if not cli_fields_resp.startswith("Error"):
                     try:
                         fields_data = json.loads(cli_fields_resp)
-                        items = []
-                        if "items" in fields_data:
-                            items = fields_data["items"]
-                        elif "data" in fields_data and "items" in fields_data["data"]:
-                            items = fields_data["data"]["items"]
+                        fields = fields_data["data"]["fields"]
                             
                         found_body = None
                         found_title = None
                         
-                        # Fuzzy match heuristics for body and title text fields
-                        for f in items:
-                            fname = f.get("field_name", "")
+                        # Fuzzy match heuristics for body and title text fields using name & id schema
+                        for f in fields:
+                            fname = f.get("name", "")
                             
                             # Match body text column
                             if any(kw in fname for kw in ["正文", "内容", "文案", "主正文", "Body", "Content"]):
-                                found_body = f.get("field_id", fname)
+                                found_body = f.get("id", fname)
                             # Match title column
                             if any(kw in fname for kw in ["标题", "主题", "Title", "Subject"]):
-                                found_title = f.get("field_id", fname)
+                                found_title = f.get("id", fname)
                                 
                         if found_body:
                             body_field = found_body

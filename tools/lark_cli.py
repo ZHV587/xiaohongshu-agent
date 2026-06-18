@@ -30,12 +30,21 @@ def auto_update_lark_skills():
             with urllib.request.urlopen(url, timeout=3.0) as response:
                 content = response.read()
                 if content:
-                    with open(target_file, "wb") as f:
-                        f.write(content)
-                    logger.info(f"Successfully auto-updated skill {skill} from GitHub.")
+                    existing_content = b""
+                    if os.path.exists(target_file):
+                        with open(target_file, "rb") as f:
+                            existing_content = f.read()
+                    if content != existing_content:
+                        with open(target_file, "wb") as f:
+                            f.write(content)
+                        logger.info(f"Successfully auto-updated skill {skill} from GitHub.")
+                    else:
+                        logger.info(f"Skill {skill} is already up to date. Skipping write to prevent watchfiles reload.")
         except Exception as e:
             # 异常静默降级，使用本地缓存文件，不阻塞进程启动
             logger.warning(f"Failed to auto-update skill {skill} (using local cached file): {e}")
+
+_IS_WINDOWS = platform.system() == "Windows"
 
 # BLACKLIST of subcommands to prevent security tampering
 _BLACKLIST_COMMANDS = {"auth", "config"}
@@ -55,6 +64,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     示例：
     - 发送消息: im +messages-send --chat-id "oc_xxx" --text "文案草稿已写好"
     """
+
     args = shlex.split(command.strip())
     if not args:
         return "Error: Command cannot be empty."
@@ -89,6 +99,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         clean_args.append(arg)
 
     # Resolve token injection
+
     run_env = {
         "PATH": os.environ.get("PATH", ""),
         "LARKSUITE_CLI_CONTENT_SAFETY_MODE": "warn"
@@ -110,6 +121,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
         run_env["LARKSUITE_CLI_DEFAULT_AS"] = "app"
 
+
     # Append --yes parameter if approved by human
     if yes:
         clean_args.append("--yes")
@@ -122,11 +134,13 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
 
     # 3) Execute process
     executable = "lark-cli"
-    if platform.system() == "Windows":
+    if _IS_WINDOWS:
         executable = "lark-cli.cmd"
 
     cmd = [executable] + clean_args
+
     with _cli_lock:
+
         try:
             result = subprocess.run(
                 cmd,

@@ -1161,7 +1161,7 @@ export function Thread() {
                   {syncStepsVisible && (
                     <div className="border border-coral-light/50 rounded-xl p-2.5 bg-oats-light/40 space-y-1.5 text-[10px] transition-all">
                       <div className={cn("flex items-center gap-1.5", syncStep >= 1 ? "text-green-600 font-semibold" : "text-gray-400")}>
-                        {syncStep === 1 ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5 text-green-500" />}
+                        {syncStep === 1 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 1 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
                         <span>正在验证飞书 CLI 环境配置...</span>
                       </div>
                       <div className={cn("flex items-center gap-1.5", syncStep >= 2 ? "text-green-600 font-semibold" : "text-gray-400")}>

@@ -18,7 +18,7 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
           <button
             key={i}
             type="button"
-            onClick={() => submitText(`写第 ${i + 1} 个`)}
+            onClick={() => submitText(`我选第 ${i + 1} 个选题："${topic}"。请帮我围绕这个选题写一篇完整的小红书爆款文案。`)}
             className="border-border hover:border-primary hover:bg-accent group flex items-center gap-3 rounded-xl border bg-card px-3.5 py-3 text-left transition-colors"
           >
             <span className="bg-accent text-primary flex size-6 flex-shrink-0 items-center justify-center rounded-md text-xs font-semibold">

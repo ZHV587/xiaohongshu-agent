@@ -43,5 +43,5 @@ export function getFeishuConfig(): FeishuOAuthConfig {
 }
 
 // 前端可读的身份 cookie(JWT,发给后端当 Bearer)与 CSRF state cookie 名。
-export const AUTH_COOKIE = "xhs_auth";
-export const STATE_COOKIE = "xhs_oauth_state";
+// 从共享常量 re-export，避免客户端组件直接 import 服务端模块。
+export { AUTH_COOKIE, STATE_COOKIE } from "@/lib/constants";

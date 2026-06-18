@@ -19,3 +19,23 @@ web/.next/
 web/.env
 web/out/
 node_modules/.cache/
+
+# CodeGraph 本地索引(可重建,不入库)
+.codegraph/
+
+# 飞书 CLI 本地目录(可能含 token/缓存)
+.lark-cli/
+
+# 本地调试/部署脚本(临时,不入库)
+tools/check_backend_ports.py
+tools/check_deploy_done.py
+tools/check_live.py
+tools/check_ports.py
+tools/check_real_user.py
+tools/check_server_ports_new.py
+tools/deploy.py
+tools/fix_venv.py
+tools/run_backend.py
+
+# 模拟登录接口(本地测试用,不入生产)
+web/src/app/api/auth/feishu/simulate/

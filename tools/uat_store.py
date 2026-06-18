@@ -10,6 +10,7 @@ import threading
 import httpx
 from cryptography.fernet import Fernet
 from pathlib import Path
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,41 @@ logger = logging.getLogger(__name__)
 _store_lock = threading.Lock()
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 _DEFAULT_STORE_PATH = _PROJECT_ROOT / ".uat_store.enc"
+
+_pg_initialized = False
+_pg_init_lock = threading.Lock()
+
+def _ensure_pg_table() -> None:
+    global _pg_initialized
+    if _pg_initialized:
+        return
+    postgres_uri = os.environ.get("POSTGRES_URI")
+    if not postgres_uri:
+        return
+    with _pg_init_lock:
+        if _pg_initialized:
+            return
+        try:
+            import psycopg
+            with psycopg.connect(postgres_uri, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS lark_uat_tokens (
+                            open_id VARCHAR(255) PRIMARY KEY,
+                            user_access_token TEXT NOT NULL,
+                            refresh_token TEXT NOT NULL,
+                            expires_at DOUBLE PRECISION NOT NULL,
+                            scopes TEXT[] NOT NULL,
+                            name VARCHAR(255) NOT NULL,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+            _pg_initialized = True
+            logger.info("Successfully checked/created PostgreSQL lark_uat_tokens table.")
+        except Exception as e:
+            logger.error(f"Failed to initialize PostgreSQL Lark token table: {e}")
 
 def _get_fernet_key() -> bytes:
     jwt_secret = os.environ.get("XHS_JWT_SECRET", "default_fallback_secret_for_key_derivation_32bytes")
@@ -63,6 +98,30 @@ def _write_store(data: dict) -> None:
         logger.error(f"Error writing token storage: {e}")
 
 def save_uat(open_id: str, uat: str, refresh_token: str, expires_at: float, scopes: list, name: str) -> None:
+    postgres_uri = os.environ.get("POSTGRES_URI")
+    if postgres_uri:
+        _ensure_pg_table()
+        try:
+            import psycopg
+            with psycopg.connect(postgres_uri) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO lark_uat_tokens (open_id, user_access_token, refresh_token, expires_at, scopes, name)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (open_id) DO UPDATE SET
+                            user_access_token = EXCLUDED.user_access_token,
+                            refresh_token = EXCLUDED.refresh_token,
+                            expires_at = EXCLUDED.expires_at,
+                            scopes = EXCLUDED.scopes,
+                            name = EXCLUDED.name,
+                            updated_at = CURRENT_TIMESTAMP;
+                    """, (open_id, uat, refresh_token, expires_at, scopes, name))
+            logger.info(f"Saved UAT token for user {open_id} to PostgreSQL database.")
+            return
+        except Exception as e:
+            logger.error(f"Failed to save UAT token to PostgreSQL database: {e}. Falling back to file storage.")
+
+    # File storage fallback
     with _store_lock:
         store = _read_store()
         store[open_id] = {
@@ -122,6 +181,61 @@ def _refresh_user_token(open_id: str, refresh_token: str) -> dict | None:
         return None
 
 def get_uat(open_id: str) -> str | None:
+    postgres_uri = os.environ.get("POSTGRES_URI")
+    if postgres_uri:
+        _ensure_pg_table()
+        try:
+            import psycopg
+            with psycopg.connect(postgres_uri) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT user_access_token, refresh_token, expires_at, scopes, name
+                        FROM lark_uat_tokens
+                        WHERE open_id = %s;
+                    """, (open_id,))
+                    row = cur.fetchone()
+            
+            if not row:
+                return None
+            
+            user_data = {
+                "user_access_token": row[0],
+                "refresh_token": row[1],
+                "expires_at": row[2],
+                "scopes": row[3],
+                "name": row[4]
+            }
+
+            # Check if the token expires in less than 10 minutes
+            if user_data["expires_at"] - time.time() < 600:
+                logger.info(f"Database token for user {open_id} expiring soon. Attempting refresh...")
+                try:
+                    refreshed = _refresh_user_token(open_id, user_data["refresh_token"])
+                    if refreshed:
+                        user_data.update(refreshed)
+                        with psycopg.connect(postgres_uri) as conn:
+                            with conn.cursor() as cur:
+                                cur.execute("""
+                                    UPDATE lark_uat_tokens
+                                    SET user_access_token = %s, refresh_token = %s, expires_at = %s, updated_at = CURRENT_TIMESTAMP
+                                    WHERE open_id = %s;
+                                """, (user_data["user_access_token"], user_data["refresh_token"], user_data["expires_at"], open_id))
+                        logger.info(f"Database token for user {open_id} successfully refreshed in PostgreSQL.")
+                        return user_data["user_access_token"]
+                    else:
+                        logger.warning(f"Failed to refresh database token for user {open_id} due to network issues. Preserving record.")
+                        return None
+                except TokenInvalidError:
+                    logger.warning(f"OAuth refresh token invalid for user {open_id}. Deleting database token record.")
+                    with psycopg.connect(postgres_uri) as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("DELETE FROM lark_uat_tokens WHERE open_id = %s;", (open_id,))
+                    return None
+            return user_data["user_access_token"]
+        except Exception as e:
+            logger.error(f"Failed to load UAT token from PostgreSQL database: {e}. Falling back to file storage.")
+
+    # File storage fallback
     with _store_lock:
         store = _read_store()
     user_data = store.get(open_id)
@@ -142,11 +256,9 @@ def get_uat(open_id: str) -> str | None:
                 logger.info(f"Token for user {open_id} successfully refreshed.")
                 return user_data["user_access_token"]
             else:
-                # 刷新返回 None 表示网络抖动或 5xx 错误，保留记录不删除，返回 None
                 logger.warning(f"Failed to refresh token for user {open_id} due to network/server issues. Preserving record.")
                 return None
         except TokenInvalidError:
-            # 明确的授权失效，在存储中删除该记录
             logger.warning(f"OAuth refresh token invalid for user {open_id}. Deleting token from store.")
             with _store_lock:
                 store = _read_store()

@@ -8,6 +8,7 @@ import {
 } from "@/lib/server/feishu";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   let cfg;
@@ -25,9 +26,14 @@ export async function GET(req: NextRequest) {
   // 登录成功后回跳的前端页面(默认根路径),从 ?next= 取并做同源约束。
   const next = req.nextUrl.searchParams.get("next") || "/";
 
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "124.221.173.80:9091";
+  const protocol = req.headers.get("x-forwarded-proto") || "http";
+  const actualHost = host.split(",")[0].trim();
+  const origin = `${protocol}://${actualHost}`;
+
   const authorizeUrl = new URL(FEISHU_AUTHORIZE_URL);
   authorizeUrl.searchParams.set("client_id", cfg.appId);
-  authorizeUrl.searchParams.set("redirect_uri", cfg.redirectUri);
+  authorizeUrl.searchParams.set("redirect_uri", `${origin}/api/auth/feishu/callback`);
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("state", state);
 

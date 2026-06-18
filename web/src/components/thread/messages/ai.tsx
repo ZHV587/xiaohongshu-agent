@@ -1,5 +1,5 @@
 import { parsePartialJson } from "@langchain/core/output_parsers";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useStreamContext } from "@/providers/Stream";
 import { AIMessage, Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/langgraph-sdk/react";
@@ -226,6 +226,18 @@ export function AssistantMessage({
 
 export function AssistantMessageLoading() {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [mountedTime, setMountedTime] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setMountedTime(new Date());
+  }, []);
+
+  const formatOffsetTime = (offsetSeconds: number) => {
+    if (!mountedTime) return "00:00:00";
+    const t = new Date(mountedTime.getTime() + offsetSeconds * 1000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
+  };
 
   return (
     <div className="mr-auto flex flex-col gap-2 py-2 w-full max-w-[460px]">
@@ -263,10 +275,10 @@ export function AssistantMessageLoading() {
         {/* 可折叠的思考日志日志 */}
         {isExpanded && (
           <div className="border-t border-oats-dark pt-2.5 mt-2 space-y-2 text-[9px] text-gray-400 font-mono bg-oats-light/40 p-2.5 rounded-xl border border-coral-light/20 max-h-32 overflow-y-auto custom-scrollbar">
-            <div><span className="text-coral font-bold">[12:25:01]</span> 开始连接并读取飞书多维表格，自动过滤噪声列防爆窗口。</div>
-            <div><span className="text-coral font-bold">[12:25:03]</span> 爆款算法筛选：互动量排名前 10% 的内容多具备痛点防坑属性。</div>
-            <div><span className="text-coral font-bold">[12:25:04]</span> 精炼爆款关键词：#露营清单、#性价比露营装备、#新手指南。</div>
-            <div><span className="text-coral font-bold">[12:25:05]</span> 正在结合大数据选题生成包含排版 Emoji 的笔记草稿...</div>
+            <div><span className="text-coral font-bold">[{formatOffsetTime(0)}]</span> 开始连接并读取飞书多维表格，自动过滤噪声列防爆窗口。</div>
+            <div><span className="text-coral font-bold">[{formatOffsetTime(2)}]</span> 爆款算法筛选：互动量排名前 10% 的内容多具备痛点防坑属性。</div>
+            <div><span className="text-coral font-bold">[{formatOffsetTime(3)}]</span> 精炼爆款关键词：#露营清单、#性价比露营装备、#新手指南。</div>
+            <div><span className="text-coral font-bold">[{formatOffsetTime(4)}]</span> 正在结合大数据选题生成包含排版 Emoji 的笔记草稿...</div>
           </div>
         )}
       </div>

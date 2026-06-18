@@ -105,3 +105,128 @@ def test_uat_refresh_network_failure_preserves(mock_post):
         store = _read_store()
         assert open_id in store
         assert store[open_id]["user_access_token"] == old_uat
+
+
+@pytest.fixture
+def mock_psycopg_env():
+    import sys
+    import tools.uat_store
+    tools.uat_store._pg_initialized = False
+    
+    mock_psycopg = MagicMock()
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+    mock_psycopg.connect.return_value.__enter__.return_value = mock_conn
+    
+    with patch.dict(sys.modules, {"psycopg": mock_psycopg}):
+        yield mock_psycopg, mock_conn, mock_cur
+        
+    tools.uat_store._pg_initialized = False
+
+
+def test_save_uat_postgres(mock_psycopg_env):
+    mock_psycopg, mock_conn, mock_cur = mock_psycopg_env
+    
+    open_id = "pg_usr_123"
+    uat = "pg_token"
+    refresh = "pg_refresh"
+    expires_at = time.time() + 3600
+    
+    with patch.dict(os.environ, {"POSTGRES_URI": "postgresql://mock_url"}):
+        save_uat(open_id, uat, refresh, expires_at, ["scopes"], "PG User")
+        
+        # Verify psycopg connect was called (both for ensure_pg_table and for insert)
+        mock_psycopg.connect.assert_any_call("postgresql://mock_url", autocommit=True)
+        mock_psycopg.connect.assert_any_call("postgresql://mock_url")
+        
+        # Verify table check and insert execute
+        execute_calls = mock_cur.execute.call_args_list
+        assert len(execute_calls) >= 2
+        # First execute should contain CREATE TABLE IF NOT EXISTS
+        assert "CREATE TABLE IF NOT EXISTS" in execute_calls[0][0][0]
+        # Second execute should contain INSERT INTO lark_uat_tokens
+        assert "INSERT INTO lark_uat_tokens" in execute_calls[1][0][0]
+        assert execute_calls[1][0][1] == (open_id, uat, refresh, expires_at, ["scopes"], "PG User")
+
+
+def test_get_uat_postgres_fresh(mock_psycopg_env):
+    mock_psycopg, mock_conn, mock_cur = mock_psycopg_env
+    
+    open_id = "pg_usr_456"
+    uat = "pg_token_fresh"
+    refresh = "pg_refresh_fresh"
+    expires_at = time.time() + 3600  # fresh, > 10 min
+    
+    # Mock row returned by fetchone
+    mock_cur.fetchone.return_value = (uat, refresh, expires_at, ["scopes"], "PG User Fresh")
+    
+    with patch.dict(os.environ, {"POSTGRES_URI": "postgresql://mock_url"}):
+        retrieved = get_uat(open_id)
+        assert retrieved == uat
+        
+        # Verify select execute
+        execute_calls = mock_cur.execute.call_args_list
+        assert len(execute_calls) >= 2
+        assert "SELECT user_access_token" in execute_calls[1][0][0]
+        assert execute_calls[1][0][1] == (open_id,)
+
+
+@patch("tools.uat_store._refresh_user_token")
+def test_get_uat_postgres_expired_refresh_success(mock_refresh, mock_psycopg_env):
+    mock_psycopg, mock_conn, mock_cur = mock_psycopg_env
+    
+    open_id = "pg_usr_exp"
+    uat = "pg_token_exp"
+    refresh = "pg_refresh_exp"
+    expires_at = time.time() + 100  # expiring in 100 seconds (< 600)
+    
+    new_uat = "pg_token_new"
+    new_refresh = "pg_refresh_new"
+    new_expires_at = time.time() + 7200
+    
+    # Mock database responses
+    mock_cur.fetchone.return_value = (uat, refresh, expires_at, ["scopes"], "PG User Exp")
+    mock_refresh.return_value = {
+        "user_access_token": new_uat,
+        "refresh_token": new_refresh,
+        "expires_at": new_expires_at
+    }
+    
+    with patch.dict(os.environ, {"POSTGRES_URI": "postgresql://mock_url"}):
+        retrieved = get_uat(open_id)
+        assert retrieved == new_uat
+        
+        # Verify select, then update
+        execute_calls = mock_cur.execute.call_args_list
+        assert any("UPDATE lark_uat_tokens" in call[0][0] for call in execute_calls)
+        
+        # Find the update call and check parameters
+        update_call = [call for call in execute_calls if "UPDATE lark_uat_tokens" in call[0][0]][0]
+        assert update_call[0][1] == (new_uat, new_refresh, new_expires_at, open_id)
+
+
+@patch("tools.uat_store._refresh_user_token")
+def test_get_uat_postgres_expired_refresh_invalid_delete(mock_refresh, mock_psycopg_env):
+    from tools.uat_store import TokenInvalidError
+    mock_psycopg, mock_conn, mock_cur = mock_psycopg_env
+    
+    open_id = "pg_usr_invalid"
+    uat = "pg_token_invalid"
+    refresh = "pg_refresh_invalid"
+    expires_at = time.time() + 100
+    
+    # Mock database responses
+    mock_cur.fetchone.return_value = (uat, refresh, expires_at, ["scopes"], "PG User Invalid")
+    mock_refresh.side_effect = TokenInvalidError("Invalid refresh token")
+    
+    with patch.dict(os.environ, {"POSTGRES_URI": "postgresql://mock_url"}):
+        retrieved = get_uat(open_id)
+        assert retrieved is None
+        
+        # Verify select, then delete
+        execute_calls = mock_cur.execute.call_args_list
+        assert any("DELETE FROM lark_uat_tokens" in call[0][0] for call in execute_calls)
+        
+        delete_call = [call for call in execute_calls if "DELETE FROM lark_uat_tokens" in call[0][0]][0]
+        assert delete_call[0][1] == (open_id,)

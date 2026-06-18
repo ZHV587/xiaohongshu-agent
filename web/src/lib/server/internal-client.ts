@@ -33,6 +33,13 @@ export async function forwardToInternalServer(
     } else if (path === "/_internal/notify") {
       const contentHash = crypto.createHash("sha256").update(content).digest("hex");
       signText = `${openId}:${extraBody.chatId}:${contentHash}:${timestamp}`;
+    } else if (path === "/_internal/config") {
+      const sortedConfigs: any = {};
+      Object.keys(extraBody.configs || {}).sort().forEach((key) => {
+        sortedConfigs[key] = extraBody.configs[key];
+      });
+      const sortedConfigsStr = JSON.stringify(sortedConfigs);
+      signText = `${sortedConfigsStr}:${timestamp}`;
     } else {
       signText = `${openId}:${extraBody.uat}:${extraBody.refresh_token}:${extraBody.expires_at}`;
     }

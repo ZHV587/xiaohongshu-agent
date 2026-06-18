@@ -11,10 +11,19 @@ import {
 import { signJwt } from "@/lib/server/jwt";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function getActualOrigin(req: NextRequest): string {
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "127.0.0.1:9091";
+  const protocol = req.headers.get("x-forwarded-proto") || "http";
+  const actualHost = host.split(",")[0].trim();
+  return `${protocol}://${actualHost}`;
+}
 
 function fail(req: NextRequest, msg: string) {
   // 失败时回首页并带上错误,前端可 toast 提示。
-  const url = new URL("/", req.nextUrl.origin);
+  const origin = getActualOrigin(req);
+  const url = new URL("/", origin);
   url.searchParams.set("auth_error", msg);
   return NextResponse.redirect(url);
 }
@@ -40,7 +49,7 @@ export async function GET(req: NextRequest) {
 
   // 1) 授权码换 user_access_token(v2 接口,JSON 体)
   let userToken: string;
-  let refreshToken: string;
+  let refreshToken: string | undefined;
   let expiresIn: number;
   let tokenData: any;
   try {
@@ -52,18 +61,19 @@ export async function GET(req: NextRequest) {
         client_id: cfg.appId,
         client_secret: cfg.appSecret,
         code,
-        redirect_uri: cfg.redirectUri,
+        redirect_uri: `${getActualOrigin(req)}/api/auth/feishu/callback`,
       }),
     });
     tokenData = await tokenResp.json();
     // v2 返回 access_token;部分老接口包在 data 下,做个兼容。
     userToken = tokenData.access_token ?? tokenData?.data?.access_token;
-    refreshToken = tokenData.refresh_token ?? tokenData?.data?.refresh_token;
+    refreshToken = tokenData.refresh_token ?? tokenData?.data?.refresh_token; // v2 可能不返回
     expiresIn = tokenData.expires_in ?? tokenData?.data?.expires_in ?? 7200;
-    if (!userToken || !refreshToken) {
+    if (!userToken) {
+      console.error("[Feishu Callback] token exchange failed:", JSON.stringify(tokenData));
       return fail(
         req,
-        `换取 token 失败：${tokenData.error_description ?? tokenData.msg ?? "未知错误"}`,
+        `换取 token 失败：${tokenData.error_description ?? tokenData.msg ?? tokenData.message ?? JSON.stringify(tokenData)}`,
       );
     }
   } catch {
@@ -133,7 +143,7 @@ export async function GET(req: NextRequest) {
   // 3) 签发本系统 JWT(后端 auth.py 用同一密钥验签,取 sub 作身份)
   const jwt = signJwt({ sub: openId, name }, cfg.jwtSecret);
 
-  const res = NextResponse.redirect(new URL(next, req.nextUrl.origin));
+  const res = NextResponse.redirect(new URL(next, getActualOrigin(req)));
   // 可读 cookie(非 httpOnly):前端 JS 要读出来塞进 Authorization 头发给后端。
   res.cookies.set(AUTH_COOKIE, jwt, {
     httpOnly: false,

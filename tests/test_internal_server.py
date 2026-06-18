@@ -68,12 +68,12 @@ def test_authorized_post(running_server):
 def test_chats_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
     mock_get_uat.return_value = "mock_user_token"
     
-    # 模拟飞书群聊列表返回数据
+    # 模拟新版飞书群聊列表返回数据
     mock_lark_cli.func.return_value = json.dumps({
         "code": 0,
         "msg": "success",
         "data": {
-            "items": [
+            "chats": [
                 {"chat_id": "oc_chat_1", "name": "露营小组", "chat_mode": "group"},
                 {"chat_id": "oc_chat_2", "name": "运营大群", "chat_mode": "group"},
                 {"chat_id": "oc_p2p_3", "name": "私聊", "chat_mode": "p2p"}
@@ -106,13 +106,13 @@ def test_chats_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
 def test_sync_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
     mock_get_uat.return_value = "mock_user_token"
     
-    # 1. 模拟 Bitable 字段列名列表返回数据
+    # 1. 模拟新版 Bitable 字段列名列表返回数据
     fields_resp = json.dumps({
         "code": 0,
         "data": {
-            "items": [
-                {"field_id": "fld_title", "field_name": "文案标题", "type": 1},
-                {"field_id": "fld_body", "field_name": "笔记正文", "type": 1}
+            "fields": [
+                {"id": "fld_title", "name": "文案标题", "type": 1},
+                {"id": "fld_body", "name": "笔记正文", "type": 1}
             ]
         }
     })
@@ -194,3 +194,56 @@ def test_notify_endpoint_success(mock_lark_cli, mock_get_uat, running_server):
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
     mock_lark_cli.func.assert_called_once()
+
+def test_get_config_unauthorized(running_server):
+    resp = httpx.get("http://127.0.0.1:9090/_internal/config")
+    assert resp.status_code == 401
+
+def test_get_config_success(running_server):
+    open_id = "usr_config"
+    ts = int(time.time())
+    sign_text = f"{open_id}:{ts}"
+    sig = hmac.new(b"secret_key", sign_text.encode("utf-8"), hashlib.sha256).hexdigest()
+    
+    headers = {
+        "X-Open-ID": open_id,
+        "X-Timestamp": str(ts),
+        "Authorization": f"HMAC {sig}"
+    }
+    
+    with patch.dict(os.environ, {
+        "FEISHU_APP_ID": "cli_test_id",
+        "FEISHU_APP_SECRET": "test_secret"
+    }):
+        resp = httpx.get("http://127.0.0.1:9090/_internal/config", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["configs"]["FEISHU_APP_ID"] == "cli_test_id"
+        assert data["configs"]["FEISHU_APP_SECRET"] == "test_secret"
+
+def test_post_config_success(running_server):
+    configs = {
+        "FEISHU_APP_ID": "cli_new_id",
+        "FEISHU_APP_SECRET": "new_secret",
+        "FEISHU_BITABLE_APP_TOKEN": "new_token",
+        "FEISHU_BITABLE_TABLE_ID": "new_table"
+    }
+    ts = int(time.time())
+    configs_str = json.dumps(configs, sort_keys=True, separators=(',', ':'))
+    sign_text = f"{configs_str}:{ts}"
+    sig = hmac.new(b"secret_key", sign_text.encode("utf-8"), hashlib.sha256).hexdigest()
+    
+    body = {
+        "configs": configs,
+        "timestamp": ts
+    }
+    headers = {"Authorization": f"HMAC {sig}"}
+    
+    with patch("tools.internal_server._update_env_file") as mock_update_env:
+        resp = httpx.post("http://127.0.0.1:9090/_internal/config", json=body, headers=headers)
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+        assert os.environ.get("FEISHU_APP_ID") == "cli_new_id"
+        assert os.environ.get("FEISHU_APP_SECRET") == "new_secret"
+        mock_update_env.assert_called_once_with(configs)
