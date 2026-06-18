@@ -174,3 +174,82 @@ def test_build_pool_no_intersection_falls_back(monkeypatch):
     assert len(pool) == 1
     assert pool[0].model_id == "claude-sonnet-4-6"
     assert pool[0].gateway_name == "gateway_1"
+
+
+from models import ModelRouterMiddleware
+
+
+def _candidate(name, mid):
+    return ModelCandidate(gateway_name=name, model_id=mid, model=object())
+
+
+def _fake_request():
+    """最小 ModelRequest 替身:只需 override(model=...) 返回带 model 的对象。"""
+    class Req:
+        def __init__(self, model=None):
+            self.model = model
+        def override(self, model):
+            return Req(model=model)
+    return Req()
+
+
+def test_router_first_candidate_success():
+    pool = [_candidate("g1", "claude-sonnet-4-6"), _candidate("g2", "gpt-4o")]
+    mw = ModelRouterMiddleware(pool)
+    seen = []
+
+    def handler(req):
+        seen.append(req.model)
+        return "OK"
+
+    out = mw.wrap_model_call(_fake_request(), handler)
+    assert out == "OK"
+    assert seen == [pool[0].model]  # 只用了首候选
+
+
+def test_router_switches_on_retryable():
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+    seen = []
+
+    def handler(req):
+        seen.append(req.model)
+        if req.model is pool[0].model:
+            raise FakeStatusError(503)
+        return "OK2"
+
+    out = mw.wrap_model_call(_fake_request(), handler)
+    assert out == "OK2"
+    assert seen == [pool[0].model, pool[1].model]  # 切到了第二个
+    assert mw._is_cooling("g1") is True            # g1 被标记不健康
+
+
+def test_router_non_retryable_raises_immediately():
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+    calls = []
+
+    def handler(req):
+        calls.append(req.model)
+        raise FakeStatusError(400)  # 鉴权/参数类,不换
+
+    try:
+        mw.wrap_model_call(_fake_request(), handler)
+        assert False, "应抛出"
+    except FakeStatusError as e:
+        assert e.status_code == 400
+    assert calls == [pool[0].model]  # 没切第二个
+
+
+def test_router_all_exhausted_raises_last():
+    pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+    mw = ModelRouterMiddleware(pool)
+
+    def handler(req):
+        raise FakeStatusError(503)
+
+    try:
+        mw.wrap_model_call(_fake_request(), handler)
+        assert False, "应抛出"
+    except FakeStatusError as e:
+        assert e.status_code == 503

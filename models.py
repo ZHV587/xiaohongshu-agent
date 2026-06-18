@@ -141,3 +141,51 @@ def build_pool() -> list[ModelCandidate]:
         ))
 
     return pool
+
+
+_COOLDOWN_SECONDS = 30.0
+
+
+class ModelRouterMiddleware(AgentMiddleware):
+    """质量优先的运行时调度:从健康候选轮转选模型,失败切同档下一个。
+
+    健康度为 best-effort 无锁状态(spec §6):_health 存网关名→冷却到期时间。
+    """
+
+    def __init__(self, pool: list[ModelCandidate]) -> None:
+        super().__init__()
+        if not pool:
+            raise ValueError("ModelRouterMiddleware 需要非空候选池")
+        self._pool = pool
+        self._health: dict[str, float] = {}  # gateway_name -> 冷却到期(monotonic)
+        self._rr = 0  # 轮询游标
+
+    def _is_cooling(self, gateway_name: str) -> bool:
+        until = self._health.get(gateway_name)
+        return until is not None and time.monotonic() < until
+
+    def _mark_unhealthy(self, candidate: ModelCandidate) -> None:
+        self._health[candidate.gateway_name] = time.monotonic() + _COOLDOWN_SECONDS
+
+    def _ordered_candidates(self) -> list[ModelCandidate]:
+        """轮询起点 + 健康优先:先健康候选(从轮询游标起),冷却中的垫后(兜底)。"""
+        n = len(self._pool)
+        rotated = [self._pool[(self._rr + i) % n] for i in range(n)]
+        self._rr = (self._rr + 1) % n
+        healthy = [c for c in rotated if not self._is_cooling(c.gateway_name)]
+        cooling = [c for c in rotated if self._is_cooling(c.gateway_name)]
+        return healthy + cooling  # 全冷却时仍尝试(自愈窗口)
+
+    def wrap_model_call(self, request: ModelRequest, handler):
+        last_exc: Exception | None = None
+        for cand in self._ordered_candidates():
+            try:
+                return handler(request.override(model=cand.model))
+            except Exception as exc:  # noqa: BLE001
+                if is_retryable_error(exc):
+                    self._mark_unhealthy(cand)
+                    last_exc = exc
+                    continue
+                raise  # 非瞬时错误(400/鉴权)不换候选
+        assert last_exc is not None
+        raise last_exc
