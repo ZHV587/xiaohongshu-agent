@@ -48,12 +48,3 @@ baokuan_analyst = {
     "tools": [read_xhs_data],
     "middleware": [build_router_middleware(_pool)],
 }
-
-monitor_subagent = {
-    "name": "background-monitor",
-    "description": (
-        "后台监测小红书和飞书新增爆款,并进行异步分析(长周期后台任务)。"
-    ),
-    "graph_id": "xhs-background-monitor",
-}
-

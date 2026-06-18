@@ -19,7 +19,7 @@ from backends import build_backend
 from middlewares import build_retry_middleware
 from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
-from subagents import baokuan_analyst, monitor_subagent
+from subagents import baokuan_analyst
 from tools.feishu_bitable import read_xhs_data
 from tools.lark_cli import lark_cli, auto_update_lark_skills, auto_update_lark_cli
 from tools.internal_server import start_internal_server
@@ -72,7 +72,7 @@ agent = create_deep_agent(
     model=build_primary_model(pool),
     tools=[read_xhs_data, lark_cli],
     system_prompt=MAIN_SYSTEM_PROMPT,
-    subagents=[baokuan_analyst, monitor_subagent],
+    subagents=[baokuan_analyst],
     skills=["./skills/"],
     backend=backend,
     interrupt_on={"lark_cli": True},

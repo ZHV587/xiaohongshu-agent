@@ -33,8 +33,8 @@ def test_agent_importable_and_compiled(monkeypatch):
     assert hasattr(agent_module.agent, "astream")
 
 
-def test_harness_profile_excludes_dangerous_tools(monkeypatch):
-    """安全点A:profile 必须注册在 key="openai" 下,且排除 execute/write_todos。
+def test_harness_profile_excludes_execute(monkeypatch):
+    """安全点A:profile 必须注册在 key="openai" 下,且排除 execute(shell 执行)。
 
     机制:agent.py 装配时调 register_harness_profile("openai", ...)。
     deepagents 用 model 的 provider(铁律一钉死 openai)拼 "openai:<model>"
@@ -42,6 +42,9 @@ def test_harness_profile_excludes_dangerous_tools(monkeypatch):
     _ToolExclusionMiddleware 在模型调用时把工具从 request.tools 抹掉。
     若 key 误写 "anthropic",查 "openai:claude-sonnet-4-6" 命中不到本次注册,
     excluded_tools 退回空集 → execute 暴露。
+
+    注:write_todos 已重新启用(长任务规划需要),故不在排除集;真正的危险
+    工具是 execute(shell 命令执行),它必须始终被排除。
 
     注意:_HARNESS_PROFILES 是进程级全局,跨 reload 累积(additive merge)。
     为让本用例只观测「本次 agent 装配注册了什么」、不被同会话其它用例污染,
@@ -67,7 +70,7 @@ def test_harness_profile_excludes_dangerous_tools(monkeypatch):
         "register_harness_profile 的 key 可能不是 'openai'"
     )
     assert "execute" in profile.excluded_tools
-    assert "write_todos" not in profile.excluded_tools  # write_todos is now enabled
+    assert "write_todos" not in profile.excluded_tools  # write_todos 已启用(长任务规划)
 
 
 
