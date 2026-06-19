@@ -23,7 +23,7 @@ from langgraph_sdk import get_client
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-URL = "http://127.0.0.1:2030"
+URL = "http://127.0.0.1:2024"
 GRAPH = "xhs_agent"
 _JWT_SECRET = os.environ.get("XHS_JWT_SECRET", "")
 

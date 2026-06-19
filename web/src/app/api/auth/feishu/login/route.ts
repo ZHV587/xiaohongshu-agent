@@ -26,10 +26,7 @@ export async function GET(req: NextRequest) {
   // 登录成功后回跳的前端页面(默认根路径),从 ?next= 取并做同源约束。
   const next = req.nextUrl.searchParams.get("next") || "/";
 
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "124.221.173.80:9091";
-  const protocol = req.headers.get("x-forwarded-proto") || "http";
-  const actualHost = host.split(",")[0].trim();
-  const origin = `${protocol}://${actualHost}`;
+  const origin = getActualOrigin(req);
 
   const authorizeUrl = new URL(FEISHU_AUTHORIZE_URL);
   authorizeUrl.searchParams.set("client_id", cfg.appId);
@@ -62,4 +59,12 @@ export async function GET(req: NextRequest) {
     path: "/",
   });
   return res;
+}
+
+function getActualOrigin(req: NextRequest): string {
+  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.replace(/\/$/, "");
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
+  const protocol = req.headers.get("x-forwarded-proto") || "http";
+  const actualHost = host.split(",")[0].trim();
+  return `${protocol}://${actualHost}`;
 }

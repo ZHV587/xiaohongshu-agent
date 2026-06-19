@@ -138,8 +138,16 @@ function SidebarBody({
 }) {
   const [, setThreadId] = useQueryState("threadId");
   const [, setView] = useQueryState("view");
+  const [isAdmin, setIsAdmin] = useState(false);
   const { getThreads, threads, setThreads, threadsLoading, setThreadsLoading } =
     useThreads();
+
+  useEffect(() => {
+    fetch("/api/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setIsAdmin(Boolean(data?.user?.isAdmin)))
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -161,24 +169,28 @@ function SidebarBody({
           <span className="text-foreground text-[15px] font-semibold">{BRAND.name}</span>
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            title="AI模型配置"
-            onClick={onLlmConfigOpen}
-            className="size-8 text-gray-400 hover:text-coral transition-colors"
-          >
-            <Sparkles className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="飞书对接配置"
-            onClick={onFeishuConfigOpen}
-            className="size-8 text-gray-400 hover:text-coral transition-colors"
-          >
-            <SlidersHorizontal className="size-4" />
-          </Button>
+          {isAdmin && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="AI模型配置"
+                onClick={onLlmConfigOpen}
+                className="size-8 text-gray-400 hover:text-coral transition-colors"
+              >
+                <Sparkles className="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="飞书对接配置"
+                onClick={onFeishuConfigOpen}
+                className="size-8 text-gray-400 hover:text-coral transition-colors"
+              >
+                <SlidersHorizontal className="size-4" />
+              </Button>
+            </>
+          )}
         </div>
       </div>
       {/* 新对话 */}

@@ -6,8 +6,10 @@ CompositeBackend 按路径前缀路由(已实测:路由会剥掉前缀):
   共享只读,virtual_mode=True 避免 Windows 绝对路径问题。
 - /shared/ → StoreBackend,跨会话/用户共享(风格沉淀)。server 注入 store。
 - /memories/ → StoreBackend,团队共享自学习记忆(MemoryMiddleware 的 AGENTS.md)。
+- /shared/ → ConcurrencySafeStoreBackend,跨会话/用户共享(风格沉淀)。server 注入 store。
+- /memories/ → ConcurrencySafeStoreBackend,团队共享自学习记忆(MemoryMiddleware 的 AGENTS.md)。
   与 /shared/ 同 namespace,全员一份团队方法论。
-- /user-memories/ → StoreBackend,按 user 隔离的个人记忆(namespace 含 open_id)。
+- /user-memories/ → ConcurrencySafeStoreBackend,按 user 隔离的个人记忆(namespace 含 open_id)。
 - /drafts/ 及其他 → 默认 StateBackend,随会话隔离。
 """
 import os
@@ -20,6 +22,11 @@ from deepagents.backends.store import StoreBackend
 # __file__ 是 backends.py 的绝对路径,其所在目录即项目根——
 # 不随调用时的工作目录漂移,比 os.getcwd() 健壮。
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+class ConcurrencySafeStoreBackend(StoreBackend):
+    """已废弃进程内悲观锁，直接继承官方 StoreBackend 原生操作以实现水平扩展友好。"""
+    pass
 
 
 def _user_memory_namespace(rt) -> tuple[str, ...]:
@@ -45,11 +52,11 @@ def _user_memory_namespace(rt) -> tuple[str, ...]:
 
 def build_backend() -> CompositeBackend:
     """构造多路由 CompositeBackend(server 模式)。"""
-    skills_root = os.path.join(_PROJECT_ROOT, "skills")
+    skills_root = os.path.join(_PROJECT_ROOT, ".agents", "skills")
     skills_backend = FilesystemBackend(root_dir=skills_root, virtual_mode=True)
-    shared_store = StoreBackend(namespace=lambda rt: ("xhs-shared",))
-    team_memory = StoreBackend(namespace=lambda rt: ("xhs-shared",))
-    user_memory = StoreBackend(namespace=_user_memory_namespace)
+    shared_store = ConcurrencySafeStoreBackend(namespace=lambda rt: ("xhs-shared",))
+    team_memory = ConcurrencySafeStoreBackend(namespace=lambda rt: ("xhs-shared",))
+    user_memory = ConcurrencySafeStoreBackend(namespace=_user_memory_namespace)
     return CompositeBackend(
         default=StateBackend(),
         routes={

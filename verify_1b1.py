@@ -4,11 +4,40 @@
 再在本终端跑 `uv run python verify_1b1.py`。
 """
 import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import os
+import time
+from pathlib import Path
 
+from dotenv import load_dotenv
 from langgraph_sdk import get_client
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 URL = "http://127.0.0.1:2024"
 GRAPH = "xhs_agent"  # 对应 langgraph.json 里的 graph 名
+_JWT_SECRET = os.environ.get("XHS_JWT_SECRET", "")
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _make_jwt(sub: str, name: str) -> str:
+    """用 XHS_JWT_SECRET 签一个合法 HS256 JWT(对齐 auth.py 的验签)。"""
+    header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = _b64url(json.dumps({"sub": sub, "name": name, "exp": int(time.time()) + 3600}).encode())
+    sig = _b64url(hmac.new(_JWT_SECRET.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
+    return f"{header}.{payload}.{sig}"
+
+
+def client_as(sub: str, name: str):
+    """带身份头的客户端:配了密钥用真 JWT,否则退回 mock 头。"""
+    token = _make_jwt(sub, name) if _JWT_SECRET else f"mock-user-{sub}"
+    return get_client(url=URL, headers={"Authorization": f"Bearer {token}"})
 
 
 def text_of(messages: list) -> str:
@@ -37,7 +66,7 @@ async def run_turn(client, thread_id: str, text: str) -> list:
 
 
 async def main():
-    client = get_client(url=URL)
+    client = client_as("ou_alice_001", "Alice")
 
     print("=" * 60)
     print("验证 1:跨轮记忆(同一 thread 两轮)")

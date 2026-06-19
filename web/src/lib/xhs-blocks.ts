@@ -3,10 +3,12 @@ export interface TextSegment { kind: "text"; text: string }
 export interface TopicsSegment {
   kind: "topics";
   data: { intro?: string; topics: string[] };
+  isPending?: boolean;
 }
 export interface CopySegment {
   kind: "copy";
   data: { title: string; body: string; tags: string[] };
+  isPending?: boolean;
 }
 export interface PendingSegment { kind: "pending"; lang: "xhs_topics" | "xhs_copy" }
 export type Segment = TextSegment | TopicsSegment | CopySegment | PendingSegment;
@@ -16,9 +18,7 @@ const FENCE_RE = /```(xhs_topics|xhs_copy)\s*\n([\s\S]*?)```/g;
 
 /**
  * 把内容字符串切成有序片段。
- * - 命中 fence 且 JSON.parse 成功且结构合法 → topics/copy 段
- * - 解析失败 → 该 fence 原样并入文本段（降级）
- * - 无 fence → 整体一个 text 段
+ * 支持在流式输出（未闭合或非法 JSON 状态）时，增量提取局部字段进行平滑渲染，解决页面闪烁或无流式吐字的问题。
  */
 export function parseXhsBlocks(content: string): Segment[] {
   const segments: Segment[] = [];
@@ -37,10 +37,21 @@ export function parseXhsBlocks(content: string): Segment[] {
       pushText(content.slice(lastIndex, m.index));
       segments.push(parsed);
       lastIndex = m.index + full.length;
+    } else {
+      // 即使闭合，如果 JSON 解析失败（可能带有未闭合转义符），我们也采用增量解析挽救，避免降级为裸露 JSON
+      pushText(content.slice(lastIndex, m.index));
+      if (lang === "xhs_topics") {
+        const partialData = parsePartialXhsTopics(inner);
+        segments.push({ kind: "topics", data: partialData, isPending: true });
+      } else {
+        const partialData = parsePartialXhsCopy(inner);
+        segments.push({ kind: "copy", data: partialData, isPending: true });
+      }
+      lastIndex = m.index + full.length;
     }
-    // parsed 为 null 时不前移 lastIndex，fence 留在文本里降级
   }
-  // 未闭合 fence 检测：对剩余尾部文本找最后一个 xhs_* 开头标记
+
+  // 处理未闭合流式文本检测
   const rest = content.slice(lastIndex);
   const openRe = /```(xhs_topics|xhs_copy)\b/g;
   let lastOpen: RegExpExecArray | null = null;
@@ -51,17 +62,33 @@ export function parseXhsBlocks(content: string): Segment[] {
     const afterOpen = rest.slice(lastOpen.index + lastOpen[0].length);
     const hasClosing = afterOpen.includes("```");
     if (!hasClosing) {
-      // 未闭合：开头标记之前的文本正常渲染，块体隐藏，push 占位
+      // 未闭合状态（大模型正在吐字）：将前段文本 push，后段正在流动的 JSON 部分增量提取渲染
       pushText(rest.slice(0, lastOpen.index));
-      segments.push({ kind: "pending", lang: lastOpen[1] as "xhs_topics" | "xhs_copy" });
+      const lang = lastOpen[1];
+      if (lang === "xhs_topics") {
+        const partialData = parsePartialXhsTopics(afterOpen);
+        segments.push({ kind: "topics", data: partialData, isPending: true });
+      } else {
+        const partialData = parsePartialXhsCopy(afterOpen);
+        segments.push({ kind: "copy", data: partialData, isPending: true });
+      }
     } else {
-      // 有闭合标记但主正则未匹配（JSON 非法降级），原样作文本
-      pushText(rest);
+      // 虽包含闭合标记但主正则未匹配上（JSON 暂时非法），依然用增量解析降噪
+      const inner = afterOpen.split("```")[0];
+      pushText(rest.slice(0, lastOpen.index));
+      const lang = lastOpen[1];
+      if (lang === "xhs_topics") {
+        const partialData = parsePartialXhsTopics(inner);
+        segments.push({ kind: "topics", data: partialData, isPending: true });
+      } else {
+        const partialData = parsePartialXhsCopy(inner);
+        segments.push({ kind: "copy", data: partialData, isPending: true });
+      }
     }
   } else {
     pushText(rest);
   }
-  // 全是空 → 至少回一个 text 段，保证调用方有内容渲染
+
   if (segments.length === 0) segments.push({ kind: "text", text: content });
   return segments;
 }
@@ -79,10 +106,108 @@ function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | nu
     }
     return null;
   }
-  // xhs_copy
   if (obj && typeof obj.title === "string" && typeof obj.body === "string") {
     const tags = Array.isArray(obj.tags) ? obj.tags.filter((t: unknown) => typeof t === "string") : [];
     return { kind: "copy", data: { title: obj.title, body: obj.body, tags } };
   }
   return null;
+}
+
+// 增量容错 JSON 字段解析器 - 提取 Copy
+function parsePartialXhsCopy(inner: string) {
+  let title = "";
+  let body = "";
+  let tags: string[] = [];
+
+  const titleClosedMatch = /"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/.exec(inner);
+  if (titleClosedMatch) {
+    title = titleClosedMatch[1];
+  } else {
+    const titleOpenMatch = /"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)$/.exec(inner);
+    if (titleOpenMatch) {
+      title = titleOpenMatch[1];
+    }
+  }
+
+  const bodyClosedMatch = /"body"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/.exec(inner);
+  if (bodyClosedMatch) {
+    body = bodyClosedMatch[1];
+  } else {
+    const bodyOpenMatch = /"body"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)$/.exec(inner);
+    if (bodyOpenMatch) {
+      body = bodyOpenMatch[1];
+    }
+  }
+
+  const tagsSegmentMatch = /"tags"\s*:\s*\[([^\]]*)/.exec(inner);
+  if (tagsSegmentMatch) {
+    const tagsContent = tagsSegmentMatch[1];
+    const tagMatches = tagsContent.match(/"[^"\\]*(?:\\.[^"\\]*)*"/g) || [];
+    tags = tagMatches.map(t => t.slice(1, -1));
+    const lastTagOpenMatch = /"([^"\\]*(?:\\.[^"\\]*)*)$/.exec(tagsContent);
+    if (lastTagOpenMatch && !tagsContent.trim().endsWith('"') && !tagsContent.trim().endsWith(',')) {
+      tags.push(lastTagOpenMatch[1]);
+    }
+  }
+
+  const cleanString = (str: string) => {
+    try {
+      return JSON.parse(`"${str.replace(/\n/g, "\\n")}"`);
+    } catch {
+      return str
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\")
+        .replace(/\\t/g, "\t");
+    }
+  };
+
+  return {
+    title: cleanString(title),
+    body: cleanString(body),
+    tags: tags.map(cleanString)
+  };
+}
+
+// 增量容错 JSON 字段解析器 - 提取 Topics
+function parsePartialXhsTopics(inner: string) {
+  let intro = "";
+  let topics: string[] = [];
+
+  const introClosedMatch = /"intro"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/.exec(inner);
+  if (introClosedMatch) {
+    intro = introClosedMatch[1];
+  } else {
+    const introOpenMatch = /"intro"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)$/.exec(inner);
+    if (introOpenMatch) {
+      intro = introOpenMatch[1];
+    }
+  }
+
+  const topicsSegmentMatch = /"topics"\s*:\s*\[([^\]]*)/.exec(inner);
+  if (topicsSegmentMatch) {
+    const topicsContent = topicsSegmentMatch[1];
+    const topicMatches = topicsContent.match(/"[^"\\]*(?:\\.[^"\\]*)*"/g) || [];
+    topics = topicMatches.map(t => t.slice(1, -1));
+    const lastTopicOpenMatch = /"([^"\\]*(?:\\.[^"\\]*)*)$/.exec(topicsContent);
+    if (lastTopicOpenMatch && !topicsContent.trim().endsWith('"') && !topicsContent.trim().endsWith(',')) {
+      topics.push(lastTopicOpenMatch[1]);
+    }
+  }
+
+  const cleanString = (str: string) => {
+    try {
+      return JSON.parse(`"${str.replace(/\n/g, "\\n")}"`);
+    } catch {
+      return str
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\");
+    }
+  };
+
+  return {
+    intro: cleanString(intro),
+    topics: topics.map(cleanString)
+  };
 }

@@ -95,19 +95,34 @@ def _strip_bearer(raw: str | None) -> str | None:
 
 
 def _resolve_identity(raw: str | None) -> tuple[str | None, str | None]:
-    """从 Authorization 头解析 (identity, display_name)。
-    必须是合法 JWT。
-    """
+    """从 Authorization 头解析 (identity, display_name)。"""
     token = _strip_bearer(raw)
-    if not token or not _JWT_SECRET:
+
+    # 优先检查 JWT 秘钥是否配置
+    if _JWT_SECRET:
+        # JWT 模式: 必须是合法 JWT，拒绝 mock tokens
+        if not token:
+            return None, None
+        payload = _verify_jwt(token)
+        if not payload:
+            return None, None
+        sub = payload.get("sub")
+        if not sub:
+            return None, None
+        return sub, payload.get("name") or sub
+    else:
+        # Mock/开发模式: 未配置 XHS_JWT_SECRET
+        if token and token.startswith("mock-user-"):
+            ident = token[len("mock-user-"):]
+            return ident, ident
+
+        # 兜底用户
+        fallback = os.environ.get("XHS_DEV_FALLBACK_USER", "").strip()
+        if fallback:
+            return fallback, fallback
+
         return None, None
-    payload = _verify_jwt(token)
-    if not payload:
-        return None, None
-    sub = payload.get("sub")
-    if not sub:
-        return None, None
-    return sub, payload.get("name") or sub
+
 
 
 @auth.authenticate

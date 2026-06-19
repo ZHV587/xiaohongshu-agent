@@ -1,0 +1,6 @@
+{
+  "excluded_tools": ["execute"],
+  "general_purpose_subagent": {
+    "enabled": false
+  }
+}

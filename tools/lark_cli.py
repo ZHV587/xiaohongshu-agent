@@ -22,7 +22,7 @@ def auto_update_lark_skills():
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     for skill in skills:
-        target_dir = os.path.join(project_root, "skills", skill)
+        target_dir = os.path.join(project_root, ".agents", "skills", skill)
         os.makedirs(target_dir, exist_ok=True)
         target_file = os.path.join(target_dir, "SKILL.md")
         url = base_url.format(skill)

@@ -9,12 +9,14 @@ import {
   getFeishuConfig,
 } from "@/lib/server/feishu";
 import { signJwt } from "@/lib/server/jwt";
+import { forwardToInternalServer } from "@/lib/server/internal-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function getActualOrigin(req: NextRequest): string {
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "127.0.0.1:9091";
+  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.replace(/\/$/, "");
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
   const protocol = req.headers.get("x-forwarded-proto") || "http";
   const actualHost = host.split(",")[0].trim();
   return `${protocol}://${actualHost}`;
@@ -106,7 +108,6 @@ export async function GET(req: NextRequest) {
     const expiresAt = Math.floor(Date.now() / 1000 + expiresIn);
     const rtStr = refreshToken || "";
     const bodyObj = {
-      open_id: openId,
       uat: userToken,
       refresh_token: rtStr,
       expires_at: expiresAt,
@@ -114,24 +115,7 @@ export async function GET(req: NextRequest) {
       name: name || openId
     };
     
-    const bodyStr = JSON.stringify(bodyObj);
-    const signText = `${openId}:${userToken}:${rtStr}:${expiresAt}`;
-    
-    const crypto = await import("node:crypto");
-    const signature = crypto
-      .createHmac("sha256", cfg.jwtSecret)
-      .update(signText)
-      .digest("hex");
-
-    const internalPort = process.env.XHS_INTERNAL_PORT || "8081";
-    const syncResp = await fetch(`http://127.0.0.1:${internalPort}/_internal/uat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `HMAC ${signature}`
-      },
-      body: bodyStr
-    });
+    const syncResp = await forwardToInternalServer("/_internal/uat", "POST", openId, bodyObj);
     
     if (!syncResp.ok) {
       const errMsg = await syncResp.text();

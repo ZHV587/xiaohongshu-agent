@@ -1,66 +1,88 @@
-import crypto from "node:crypto";
-import { getFeishuConfig } from "@/lib/server/feishu";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import path from "node:path";
+
+const execFileAsync = promisify(execFile);
 
 export async function forwardToInternalServer(
-  path: string,
+  pathName: string,
   method: "GET" | "POST",
   openId: string,
   extraBody?: any,
   extraHeaders?: any
 ): Promise<Response> {
-  const cfg = getFeishuConfig();
-  const internalPort = process.env.XHS_INTERNAL_PORT || "8081";
-  const url = `http://127.0.0.1:${internalPort}${path}`;
-  const timestamp = Math.floor(Date.now() / 1000);
-
-  let signText = "";
-  let bodyStr = "";
-
-  if (method === "GET") {
-    signText = `${openId}:${timestamp}`;
+  const scriptPath = path.resolve(process.cwd(), "../tools/cli_runner.py");
+  
+  let action = "";
+  const runnerArgs: string[] = [scriptPath, "--open-id", openId];
+  
+  if (pathName === "/_internal/sync") {
+    action = "sync";
+    const { recordId, title, content } = extraBody || {};
+    runnerArgs.push("--action", "sync", "--record-id", String(recordId), "--title", String(title), "--content", String(content));
+  } else if (pathName === "/_internal/notify") {
+    action = "notify";
+    const { chatId, title, content } = extraBody || {};
+    runnerArgs.push("--action", "notify", "--chat-id", String(chatId), "--title", String(title), "--content", String(content));
+  } else if (pathName === "/_internal/chats") {
+    action = "chats";
+    runnerArgs.push("--action", "chats");
+  } else if (pathName === "/_internal/uat") {
+    action = "save-uat";
+    const { uat, refresh_token, expires_at, scopes, name } = extraBody || {};
+    runnerArgs.push(
+      "--action", "save-uat",
+      "--uat", String(uat),
+      "--refresh-token", String(refresh_token || ""),
+      "--expires-at", String(expires_at),
+      "--scopes", (scopes || []).join(","),
+      "--name", String(name || "")
+    );
   } else {
-    const content = extraBody?.content || "";
-    const bodyObj = {
-      open_id: openId,
-      timestamp,
-      ...extraBody
-    };
-    bodyStr = JSON.stringify(bodyObj);
-
-    if (path === "/_internal/sync") {
-      const contentHash = crypto.createHash("sha256").update(content).digest("hex");
-      signText = `${openId}:${extraBody.recordId}:${contentHash}:${timestamp}`;
-    } else if (path === "/_internal/notify") {
-      const contentHash = crypto.createHash("sha256").update(content).digest("hex");
-      signText = `${openId}:${extraBody.chatId}:${contentHash}:${timestamp}`;
-    } else if (path === "/_internal/config") {
-      const sortedConfigs: any = {};
-      Object.keys(extraBody.configs || {}).sort().forEach((key) => {
-        sortedConfigs[key] = extraBody.configs[key];
-      });
-      const sortedConfigsStr = JSON.stringify(sortedConfigs);
-      signText = `${sortedConfigsStr}:${timestamp}`;
-    } else {
-      signText = `${openId}:${extraBody.uat}:${extraBody.refresh_token}:${extraBody.expires_at}`;
-    }
+    return new Response(JSON.stringify({ error: `Unknown internal path: ${pathName}` }), { status: 404 });
   }
 
-  const signature = crypto
-    .createHmac("sha256", cfg.jwtSecret)
-    .update(signText)
-    .digest("hex");
+  try {
+    let executable = "uv";
+    let cmdArgs = ["run", "python", ...runnerArgs];
 
-  const headers: any = {
-    "Authorization": `HMAC ${signature}`,
-    ...extraHeaders
-  };
+    if (process.platform !== "win32") {
+      // 生产服务器环境 (Linux)
+      // 直接用虚拟环境的 python 解释器跑，跳过 uv 包装
+      executable = process.env.XHS_PYTHON_BIN || "/home/ubuntu/xiaohongshu-agent/.venv/bin/python3";
+      cmdArgs = runnerArgs;
+    }
 
-  if (method === "GET") {
-    headers["X-Open-ID"] = openId;
-    headers["X-Timestamp"] = timestamp.toString();
-    return fetch(url, { method, headers });
-  } else {
-    headers["Content-Type"] = "application/json";
-    return fetch(url, { method, headers, body: bodyStr });
+    const { stdout, stderr } = await execFileAsync(executable, cmdArgs, {
+      cwd: path.resolve(process.cwd(), ".."),
+      env: { ...process.env }
+    });
+    
+    if (stderr && stderr.trim().toLowerCase().includes("error")) {
+      console.error(`cli_runner stderr: ${stderr}`);
+    }
+    
+    const result = JSON.parse(stdout.trim());
+    if (result.ok === false) {
+      return new Response(JSON.stringify({ error: result.error || "Execution failed" }), { status: 500 });
+    }
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  } catch (e: any) {
+    console.error(`Failed to run cli_runner for action ${action}:`, e);
+    let errorMsg = e.message;
+    if (e.stdout) {
+      try {
+        const result = JSON.parse(e.stdout.trim());
+        if (result.error) {
+          errorMsg = result.error;
+        }
+      } catch {
+        // Ignore JSON parsing errors for stdout
+      }
+    }
+    return new Response(JSON.stringify({ error: errorMsg }), { status: 500 });
   }
 }

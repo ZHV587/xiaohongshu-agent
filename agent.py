@@ -5,9 +5,9 @@ if "NO_PROXY" in os.environ:
 if "no_proxy" in os.environ:
     del os.environ["no_proxy"]
 
+import json
 from deepagents import (
     FilesystemPermission,
-    GeneralPurposeSubagentProfile,
     HarnessProfileConfig,
     RubricMiddleware,
     create_deep_agent,
@@ -20,15 +20,45 @@ from middlewares import build_retry_middleware
 from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents import baokuan_analyst
+import sys
+import threading
+import asyncio
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
 from tools.feishu_bitable import read_xhs_data
-from tools.lark_cli import lark_cli, auto_update_lark_skills, auto_update_lark_cli
-from tools.internal_server import start_internal_server
+from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
+
+def get_lark_mcp_tools():
+    """通过 stdio 传输动态连接本地的 lark-cli MCP 服务并获取工具。"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    server_path = os.path.join(current_dir, "lark_mcp_server.py")
+    
+    client = MultiServerMCPClient({
+        "lark-cli": {
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [server_path]
+        }
+    })
+    
+    result = []
+    def run_in_thread():
+        new_loop = asyncio.new_event_loop()
+        try:
+            res = new_loop.run_until_complete(client.get_tools())
+            result.append(res)
+        finally:
+            new_loop.close()
+            
+    t = threading.Thread(target=run_in_thread)
+    t.start()
+    t.join()
+    return result[0] if result else []
 
 # 启动时自动从官方仓库同步最新的飞书技能（下载失败时自动静默降级，不影响启动）
 if os.environ.get("DISABLE_AUTO_UPDATE") != "true":
     auto_update_lark_skills()
     auto_update_lark_cli()
-start_internal_server()
 
 
 load_dotenv()
@@ -37,10 +67,9 @@ load_dotenv()
 # - execute: Shell 命令执行,文案场景不需要,留着是安全隐患
 # - write_todos: 已重新启用，方便长任务执行规划
 # - general-purpose: 默认通用子智能体,已有 baokuan-analyst,多一个会让模型选错
-register_harness_profile("openai", HarnessProfileConfig(
-    excluded_tools=frozenset({"execute"}),
-    general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-))
+# 采用官方推荐的外部声明式配置文件进行初始化，彻底移除 Python 代码级硬编码配置
+with open("deepagents_harness.json", "r", encoding="utf-8") as f:
+    register_harness_profile("openai", HarnessProfileConfig.from_dict(json.load(f)))
 
 # ── 高质量模型自主调度:构造模型池 ──────────────────────────────────
 # 探测/白名单出候选模型池,主模型 + 路由中间件 + 评分模型均从此池调度。
@@ -70,12 +99,11 @@ rubric_middleware = RubricMiddleware(
 
 agent = create_deep_agent(
     model=build_primary_model(pool),
-    tools=[read_xhs_data, lark_cli],
+    tools=[read_xhs_data] + get_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[baokuan_analyst],
-    skills=["./skills/"],
     backend=backend,
-    interrupt_on={"lark_cli": True},
+    interrupt_on={"execute_lark_command": True},
     middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(pool)],
     # 自学习记忆:团队共享(全员一份方法论)+ 用户私有(按 open_id 隔离)。
     # 团队在前、个人在后 —— sources 按序拼接注入,个人记忆覆盖团队默认。

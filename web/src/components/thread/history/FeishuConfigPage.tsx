@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { SlidersHorizontal, Loader2, Check, ArrowLeft } from "lucide-react";
+import { SlidersHorizontal, Loader2, Check, ArrowLeft, HelpCircle, BookOpen, KeyRound, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -57,101 +57,176 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-white p-6 overflow-y-auto text-left">
-      <div className="flex justify-between items-center border-b pb-4 mb-6">
+    <div className="flex flex-col h-full w-full bg-oats p-6 overflow-y-auto text-left custom-scrollbar">
+      <div className="flex justify-between items-center border-b border-border/80 pb-4 mb-6">
         <div>
           <h2 className="text-lg font-bold text-charcoal flex items-center gap-2">
             <SlidersHorizontal className="size-5 text-coral animate-pulse" />
             飞书同步与多维表格配置
           </h2>
-          <p className="text-xs text-gray-400 mt-1">配置飞书开放平台应用凭证与同步存放小红书文案的多维表格参数</p>
+          <p className="text-xs text-charcoal-light mt-1">配置飞书开放平台应用凭证与同步存放小红书文案的多维表格参数</p>
         </div>
-        <Button variant="outline" size="sm" onClick={onClose} className="text-xs flex items-center gap-1">
+        <Button variant="outline" size="sm" onClick={onClose} className="text-xs flex items-center gap-1 bg-white hover:bg-oats-dark border-border/60 text-charcoal">
           <ArrowLeft className="size-3" /> 返回会话
         </Button>
       </div>
 
       {loading ? (
         <div className="space-y-4 py-8">
-          <div className="h-4 bg-gray-100 rounded animate-pulse w-1/3" />
-          <div className="h-10 bg-gray-100 rounded animate-pulse w-full" />
+          <div className="h-6 bg-oats-dark rounded animate-pulse w-1/4" />
+          <div className="h-20 bg-oats-dark rounded animate-pulse w-full" />
+          <div className="h-20 bg-oats-dark rounded animate-pulse w-full" />
         </div>
       ) : (
-        <form onSubmit={handleSave} className="space-y-6 max-w-2xl">
-          <div className="space-y-4">
-            <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">飞书自建应用资质</h3>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="app-id" className="text-xs font-medium text-gray-500">App ID</Label>
-                <Input
-                  id="app-id"
-                  type="text"
-                  value={configs.FEISHU_APP_ID || ""}
-                  onChange={(e) => setConfigs({ ...configs, FEISHU_APP_ID: e.target.value })}
-                  placeholder="cli_xxx"
-                  required
-                />
+        <form onSubmit={handleSave} className="w-full max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_400px] gap-8 items-start">
+            {/* 左侧：表单配置 */}
+            <div className="space-y-6 bg-white/40 p-5 rounded-2xl border border-border/30 backdrop-blur-xs">
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">飞书自建应用资质</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="app-id" className="text-xs font-medium text-charcoal-light">App ID</Label>
+                    <Input
+                      id="app-id"
+                      type="text"
+                      value={configs.FEISHU_APP_ID || ""}
+                      onChange={(e) => setConfigs({ ...configs, FEISHU_APP_ID: e.target.value })}
+                      placeholder="cli_xxx"
+                      required
+                      className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="app-secret" className="text-xs font-medium text-charcoal-light">App Secret</Label>
+                    <PasswordInput
+                      id="app-secret"
+                      value={configs.FEISHU_APP_SECRET || ""}
+                      onChange={(e) => setConfigs({ ...configs, FEISHU_APP_SECRET: e.target.value })}
+                      placeholder="••••••••••••••••"
+                      required
+                      className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400">请确保在飞书开放平台后台授予该应用“云文档 ➔ 多维表格”的读取和写入权限。</p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="app-secret" className="text-xs font-medium text-gray-500">App Secret</Label>
-                <PasswordInput
-                  id="app-secret"
-                  value={configs.FEISHU_APP_SECRET || ""}
-                  onChange={(e) => setConfigs({ ...configs, FEISHU_APP_SECRET: e.target.value })}
-                  placeholder="••••••••••••••••"
-                  required
-                />
+
+              <div className="space-y-4 pt-4">
+                <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">爆款库多维表格坐标</h3>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="bitable-app-token" className="text-xs font-medium text-charcoal-light">Bitable App Token</Label>
+                    <Input
+                      id="bitable-app-token"
+                      type="text"
+                      value={configs.FEISHU_BITABLE_APP_TOKEN || ""}
+                      onChange={(e) => setConfigs({ ...configs, FEISHU_BITABLE_APP_TOKEN: e.target.value })}
+                      placeholder="bascnxxxxxxxxxxxx"
+                      required
+                      className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="bitable-table-id" className="text-xs font-medium text-charcoal-light">Bitable Table ID (数据表 ID)</Label>
+                    <Input
+                      id="bitable-table-id"
+                      type="text"
+                      value={configs.FEISHU_BITABLE_TABLE_ID || ""}
+                      onChange={(e) => setConfigs({ ...configs, FEISHU_BITABLE_TABLE_ID: e.target.value })}
+                      placeholder="tblxxxxxxxxx"
+                      required
+                      className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400">App Token 位于表格 URL 中 `base/` 后面的一长串字符，Table ID 对应具体数据表的子 ID。</p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-border/80 pt-4 mt-6">
+                <Button
+                  type="submit"
+                  disabled={saving}
+                  className="bg-coral hover:bg-coral-hover text-white active:scale-95 disabled:opacity-50 px-6 py-2.5 text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-md shadow-coral/10 transition-all cursor-pointer border-none"
+                >
+                  {saving && <Loader2 className="size-4 animate-spin" />}
+                  {saving ? "正在应用..." : "应用飞书配置"}
+                </Button>
               </div>
             </div>
-            <p className="text-[10px] text-gray-400">请确保在飞书开放平台后台授予该应用“云文档 ➔ 多维表格”的读取和写入权限。</p>
-          </div>
 
-          <div className="space-y-4 pt-4">
-            <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">爆款库多维表格坐标</h3>
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="bitable-app-token" className="text-xs font-medium text-gray-500">Bitable App Token</Label>
-                <Input
-                  id="bitable-app-token"
-                  type="text"
-                  value={configs.FEISHU_BITABLE_APP_TOKEN || ""}
-                  onChange={(e) => setConfigs({ ...configs, FEISHU_BITABLE_APP_TOKEN: e.target.value })}
-                  placeholder="bascnxxxxxxxxxxxx"
-                  required
-                />
+            {/* 右侧：飞书指南与向导 */}
+            <div className="hidden lg:flex flex-col gap-6 sticky top-0">
+              {/* 多维表格参数寻找步骤 */}
+              <div className="bg-white border border-border/60 rounded-2xl p-5 space-y-4 shadow-sm text-xs">
+                <h3 className="font-bold text-charcoal flex items-center gap-1.5 border-b pb-2">
+                  <BookOpen className="size-4 text-coral" />
+                  如何定位表格参数？
+                </h3>
+                <div className="space-y-3 text-charcoal-light leading-relaxed">
+                  <div>
+                    <span className="font-semibold text-charcoal block mb-0.5">1. Bitable App Token (应用凭证)</span>
+                    <p className="text-[11px]">
+                      打开您的飞书多维表格，在浏览器的地址栏中，URL 路径里紧随 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">/base/</code> 后面的一长串乱码字符即为 App Token。
+                    </p>
+                    <span className="text-[10px] text-gray-400 block mt-0.5 font-mono">
+                      https://.../base/<span className="text-coral underline font-bold">bascnXXXXXXXXXXXXXX</span>?table=...
+                    </span>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-charcoal block mb-0.5">2. Bitable Table ID (数据表子 ID)</span>
+                    <p className="text-[11px]">
+                      在多维表格页面底部切换工作表时，浏览器地址栏中 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">table=</code> 参数后面的值，即为当前数据表的子 ID。
+                    </p>
+                    <span className="text-[10px] text-gray-400 block mt-0.5 font-mono">
+                      https://.../base/...?table=<span className="text-coral underline font-bold">tblXXXXXXXXX</span>&view=...
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="bitable-table-id" className="text-xs font-medium text-gray-500">Bitable Table ID (数据表 ID)</Label>
-                <Input
-                  id="bitable-table-id"
-                  type="text"
-                  value={configs.FEISHU_BITABLE_TABLE_ID || ""}
-                  onChange={(e) => setConfigs({ ...configs, FEISHU_BITABLE_TABLE_ID: e.target.value })}
-                  placeholder="tblxxxxxxxxx"
-                  required
-                />
+
+              {/* 自建应用授权清单 */}
+              <div className="bg-white border border-border/60 rounded-2xl p-5 space-y-3.5 shadow-sm text-xs">
+                <h3 className="font-bold text-charcoal flex items-center gap-1.5 border-b pb-2">
+                  <KeyRound className="size-4 text-coral" />
+                  飞书自建应用必要权限
+                </h3>
+                <p className="text-charcoal-light leading-relaxed">
+                  为了让机器人能够向飞书群内推送文案卡片以及将选题保存到多维表格中，请确保您的应用已申请开通以下权限：
+                </p>
+                <div className="grid grid-cols-1 gap-1.5 font-mono text-[10px]">
+                  <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
+                    <Check className="size-3.5 text-emerald-500 shrink-0" />
+                    <span>bitable:app (表格读写)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
+                    <Check className="size-3.5 text-emerald-500 shrink-0" />
+                    <span>im:chat (获取群组信息)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
+                    <Check className="size-3.5 text-emerald-500 shrink-0" />
+                    <span>im:message (群聊消息发送)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 提示信息 */}
+              <div className="bg-white border border-border/60 rounded-2xl p-5 space-y-2 shadow-sm text-[10px] text-charcoal-light flex items-start gap-2">
+                <Info className="size-4 text-coral shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-charcoal block mb-0.5">请记得在飞书平台“发布版本”</span>
+                  自建应用在修改任何权限范围 (Scope) 后，必须在“版本管理与发布”中创建一个新版本并申请上线。若状态为“已上线”，权限修改才会真正对 API 调用生效。
+                </div>
               </div>
             </div>
-            <p className="text-[10px] text-gray-400">App Token 位于表格 URL 中 `base/` 后面的一长串字符，Table ID 对应具体数据表的子 ID。</p>
-          </div>
-
-          <div className="flex items-center justify-end gap-2 border-t pt-4 mt-6">
-            <Button
-              type="submit"
-              disabled={saving}
-              className="bg-coral hover:bg-coral-hover active:scale-95 disabled:opacity-50 text-white px-5 py-2 text-sm font-medium rounded-xl flex items-center gap-1.5 shadow-md shadow-coral/10 transition-all cursor-pointer border-none"
-            >
-              {saving && <Loader2 className="size-4 animate-spin" />}
-              {saving ? "保存中..." : "保存配置"}
-            </Button>
           </div>
         </form>
       )}
 
       {showToast && (
-        <div className="fixed bottom-6 right-6 bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-300 z-50">
-          <Check className="size-4 text-white" />
-          <span>飞书配置热更新成功，即时生效。</span>
+        <div className="fixed bottom-6 right-6 bg-charcoal text-white px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-300 z-50 border border-border/10">
+          <Check className="size-4 text-emerald-400" />
+          <span>飞书同步配置更新成功，已即时热重载生效！</span>
         </div>
       )}
     </div>

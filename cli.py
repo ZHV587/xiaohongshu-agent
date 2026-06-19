@@ -13,9 +13,9 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from dotenv import load_dotenv
+import json
 from deepagents import (
     FilesystemPermission,
-    GeneralPurposeSubagentProfile,
     HarnessProfileConfig,
     RubricMiddleware,
     create_deep_agent,
@@ -27,8 +27,41 @@ from middlewares import build_retry_middleware
 from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents import baokuan_analyst
+import sys
+import threading
+import asyncio
+from langchain_mcp_adapters.client import MultiServerMCPClient
+import os
+
 from tools.feishu_bitable import read_xhs_data
-from tools.lark_cli import lark_cli, auto_update_lark_skills, auto_update_lark_cli
+from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
+
+def get_lark_mcp_tools():
+    """通过 stdio 传输动态连接本地的 lark-cli MCP 服务并获取工具。"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    server_path = os.path.join(current_dir, "lark_mcp_server.py")
+    
+    client = MultiServerMCPClient({
+        "lark-cli": {
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [server_path]
+        }
+    })
+    
+    result = []
+    def run_in_thread():
+        new_loop = asyncio.new_event_loop()
+        try:
+            res = new_loop.run_until_complete(client.get_tools())
+            result.append(res)
+        finally:
+            new_loop.close()
+            
+    t = threading.Thread(target=run_in_thread)
+    t.start()
+    t.join()
+    return result[0] if result else []
 
 # 启动时自动从官方仓库同步最新的飞书技能（下载失败时自动静默降级，不影响启动）
 auto_update_lark_skills()
@@ -38,10 +71,9 @@ auto_update_lark_cli()
 load_dotenv()
 
 # ── 安全加固(与 agent.py 保持一致)──────────────────────────────────
-register_harness_profile("openai", HarnessProfileConfig(
-    excluded_tools=frozenset({"execute", "write_todos"}),
-    general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-))
+# 采用官方推荐的外部声明式配置文件进行初始化，彻底移除 Python 代码级硬编码配置
+with open("deepagents_harness.json", "r", encoding="utf-8") as f:
+    register_harness_profile("openai", HarnessProfileConfig.from_dict(json.load(f)))
 
 # ── 高质量模型自主调度:构造模型池(与 agent.py 保持一致)──────────────
 pool = build_pool()
@@ -63,10 +95,9 @@ rubric_middleware = RubricMiddleware(
 
 agent = create_deep_agent(
     model=build_primary_model(pool),
-    tools=[read_xhs_data, lark_cli],
+    tools=[read_xhs_data] + get_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[baokuan_analyst],
-    skills=["./skills/"],
     backend=build_cli_backend(),
     middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(pool)],
     # CLI 单机无 user 身份,只挂团队共享记忆(走磁盘 backend,文件落项目目录)。
