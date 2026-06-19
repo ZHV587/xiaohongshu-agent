@@ -62,6 +62,8 @@ uv run python verify_1b1.py
 - `XHS_EMBEDDING_MODEL` 默认 `text-embedding-3-small`；`XHS_EMBEDDING_BASE_URL` / `XHS_EMBEDDING_API_KEY` 未设置时回退到 `LLM_BASE_URL` / `LLM_API_KEY`。
 - DeepAgents/LangGraph 仍是唯一 agent runtime；第三阶段只新增普通 LangChain tools 并挂入 `create_deep_agent`。
 - 项目不恢复交互式 Python CLI 运行入口；飞书 `lark-cli` 只作为 server/worker 内部 adapter。
+- 飞书写操作不再经过 frontend business API，而是由 Agent tools 发起，并通过 HITL 完成人工确认。
+- MCP 是官方工具路径；MCP tools 必须经 interceptor 或等价 adapter 传递受控身份上下文。
 - Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster 暂不作为第一闭环启动依赖，它们通过 `resource_outbox` 后续接入。
 
 ## 测试
