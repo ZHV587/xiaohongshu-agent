@@ -95,6 +95,61 @@ def test_upsert_same_mapping_creates_second_version(migrated_conn):
     assert [event["event_type"] for event in events] == ["imported", "updated"]
 
 
+def test_upsert_identical_mapping_is_idempotent(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+    kwargs = {
+        "tenant_id": "default",
+        "actor_open_id": "ou_owner",
+        "resource_type": "feishu_doc",
+        "title": "相同标题",
+        "content_text": "相同内容",
+        "content_json": {"source": "wiki"},
+        "visibility": "team",
+        "owner_open_id": "ou_owner",
+        "mapping": {"system": "feishu", "external_type": "docx", "external_id": "doc-replay"},
+        "outbox_topics": ["meili_index", "embedding_generate"],
+    }
+
+    first = repo.upsert_resource(**kwargs)
+    second = repo.upsert_resource(**kwargs)
+
+    assert second.id == first.id
+    assert second.version == 1
+    assert repo.debug_counts()["resource_versions"] == 1
+    assert repo.debug_counts()["resource_events"] == 1
+    assert repo.debug_counts()["resource_outbox"] == 2
+
+
+def test_first_sync_failure_is_persisted_as_unbound_event(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+
+    repo.mark_mapping_failed(
+        tenant_id="default",
+        actor_open_id="ou_sync",
+        system="feishu",
+        external_type="docx",
+        external_id="doc-first-failure",
+        error="document parse failed",
+    )
+
+    event = migrated_conn.execute(
+        """
+        select resource_id, event_type, actor_open_id, payload
+        from resource_events
+        where tenant_id = 'default'
+        """
+    ).fetchone()
+    assert event["resource_id"] is None
+    assert event["event_type"] == "sync_failed"
+    assert event["actor_open_id"] == "ou_sync"
+    assert event["payload"] == {
+        "system": "feishu",
+        "external_type": "docx",
+        "external_id": "doc-first-failure",
+        "error": "document parse failed",
+    }
+
+
 def test_permission_filter_blocks_other_private_resource(migrated_conn):
     repo = ResourceRepository(migrated_conn)
     created = repo.upsert_resource(
