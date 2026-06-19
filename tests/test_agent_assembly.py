@@ -101,6 +101,7 @@ def test_rubric_uses_model_instance_not_string(monkeypatch):
         def __init__(self, *, model=None, **kwargs):
             super().__init__()
             captured["model"] = model
+            captured["system_prompt"] = kwargs.get("system_prompt", "")
 
     _set_assembly_env(monkeypatch)
     deepagents.RubricMiddleware = _CapturingRubric
@@ -117,6 +118,12 @@ def test_rubric_uses_model_instance_not_string(monkeypatch):
     # 必须是实例,不能是裸字符串 —— 否则会按名推断 provider 绕网关
     assert isinstance(model, BaseChatModel)
     assert not isinstance(model, str)
+
+    rubric_prompt = captured["system_prompt"]
+    assert "resource_id" in rubric_prompt
+    assert "updated_at" in rubric_prompt
+    assert "无依据" in rubric_prompt or "没有依据" in rubric_prompt
+    assert "当前数据不足" in rubric_prompt
 
 
 def test_agent_exposes_shared_model_registry(monkeypatch):
