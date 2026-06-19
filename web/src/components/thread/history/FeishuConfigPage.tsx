@@ -214,7 +214,11 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
                     <Check className="size-3.5 text-emerald-500 shrink-0" />
-                    <span>docx:document:read (文档块只读)</span>
+                    <span>wiki:node:retrieve (获取节点列表)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
+                    <Check className="size-3.5 text-emerald-500 shrink-0" />
+                    <span>docx:document:readonly (文档块只读)</span>
                   </div>
                   <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
                     <Check className="size-3.5 text-emerald-500 shrink-0" />

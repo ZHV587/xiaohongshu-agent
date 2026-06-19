@@ -49,7 +49,8 @@ export async function GET(req: NextRequest) {
     "calendar:calendar.event:create",
     "wiki:space:read",
     "wiki:node:read",
-    "docx:document:read",
+    "wiki:node:retrieve",
+    "docx:document:readonly",
   ];
   authorizeUrl.searchParams.set("scope", scopes.join(" "));
 
