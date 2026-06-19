@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import math
 
 import pytest
@@ -7,6 +8,18 @@ import pytest
 from data_foundation.graph import expand_graph
 from data_foundation.repository import ResourceRepository
 from data_foundation.search import keyword_search, semantic_search
+
+
+class _User:
+    identity = "ou_owner"
+
+
+class _ServerInfo:
+    user = _User()
+
+
+class _Config:
+    server_info = _ServerInfo()
 
 
 class _FakeRepository:
@@ -426,3 +439,38 @@ def test_expand_graph_invisible_start_returns_nothing(migrated_conn):
 
     assert graph.nodes == []
     assert graph.edges == []
+
+
+def test_tools_reject_missing_identity():
+    from data_foundation.tools import search_resources
+
+    with pytest.raises(PermissionError, match="Missing LangGraph user identity"):
+        search_resources.func("露营", config=None)
+
+
+def test_search_tool_returns_structured_json(monkeypatch, migrated_conn):
+    from data_foundation import tools as df_tools
+
+    repo = ResourceRepository(migrated_conn)
+    repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="topic",
+        title="露营装备",
+        content_text="帐篷 天幕",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+    )
+
+    @contextmanager
+    def repository():
+        yield ResourceRepository(migrated_conn)
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+
+    result = df_tools.search_resources.func("露营", limit=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["results"][0]["title"] == "露营装备"
+    assert "content_text" not in result["results"][0]

@@ -132,3 +132,16 @@ def test_agent_exposes_shared_model_registry(monkeypatch):
     assert status["hot_reload_coverage"]["main_agent"] is True
     assert status["hot_reload_coverage"]["subagents"] is True
     assert status["hot_reload_coverage"]["rubric"] is False
+
+
+def test_agent_registers_data_foundation_tools(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import agent as agent_module
+
+    agent_module = importlib.reload(agent_module)
+    tool_names = {getattr(tool, "name", "") for tool in agent_module.phase3_tools}
+
+    assert {"search_resources", "semantic_search_resources", "graph_expand", "get_resource"} <= tool_names

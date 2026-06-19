@@ -1300,7 +1300,7 @@ git commit -m "feat: add postgres search and graph expansion"
 - Modify: `tests/data_foundation/test_search_graph_tools.py`
 - Modify: `tests/test_agent_assembly.py`
 
-- [ ] **Step 1: Add failing tool tests**
+- [x] **Step 1: Add failing tool tests**
 
 Append to `tests/data_foundation/test_search_graph_tools.py`:
 
@@ -1368,7 +1368,7 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
     assert {"search_resources", "semantic_search_resources", "graph_expand", "get_resource"} <= tool_names
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -1378,7 +1378,7 @@ uv run pytest tests/data_foundation/test_search_graph_tools.py tests/test_agent_
 
 Expected before implementation: FAIL because `data_foundation.tools` and `agent.phase3_tools` are missing.
 
-- [ ] **Step 3: Implement DeepAgents tool wrappers**
+- [x] **Step 3: Implement DeepAgents tool wrappers**
 
 Create `data_foundation/tools.py`:
 
@@ -1494,7 +1494,7 @@ def graph_expand(resource_ids: list[str], hops: int = 1, edge_types: list[str] |
 phase3_tools = [search_resources, semantic_search_resources, graph_expand, get_resource]
 ```
 
-- [ ] **Step 4: Register tools in `agent.py`**
+- [x] **Step 4: Register tools in `agent.py`**
 
 Modify imports in `agent.py`:
 
@@ -1510,7 +1510,7 @@ Modify the `create_deep_agent` call:
 
 This keeps DeepAgents native assembly intact and only adds normal LangChain tools.
 
-- [ ] **Step 5: Run tool and assembly tests**
+- [x] **Step 5: Run tool and assembly tests**
 
 Run:
 
@@ -1520,7 +1520,7 @@ uv run pytest tests/data_foundation/test_search_graph_tools.py tests/test_agent_
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add agent.py data_foundation tests
