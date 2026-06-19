@@ -26,6 +26,21 @@ def test_lark_cli_blacklist(mock_run):
     assert "disallowed" in res
     mock_run.assert_not_called()
 
+
+class _MockServerInfoWithoutIdentity:
+    user = object()
+
+
+class _MockConfigWithoutIdentity:
+    server_info = _MockServerInfoWithoutIdentity()
+
+
+@patch("tools.lark_cli.subprocess.run")
+def test_lark_cli_server_mode_without_identity_does_not_fallback_to_bot(mock_run):
+    res = lark_cli.func("im +chat-list", config=_MockConfigWithoutIdentity())
+    assert "Current server request has no Feishu user identity" in res
+    mock_run.assert_not_called()
+
 @patch("tools.lark_cli.subprocess.run")
 def test_lark_cli_successful_run(mock_run):
     mock_resp = MagicMock()

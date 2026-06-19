@@ -13,6 +13,20 @@ def test_read_xhs_data_missing_env():
         assert "FEISHU_BITABLE_APP_TOKEN" in res["error"]
 
 
+def test_read_xhs_data_does_not_print_tokens(capsys):
+    with patch.dict(os.environ, {
+        "FEISHU_BITABLE_APP_TOKEN": "mock_app_token",
+        "FEISHU_BITABLE_TABLE_ID": "mock_table_id",
+    }):
+        with patch("tools.lark_cli.lark_cli") as mock_lark_cli:
+            mock_lark_cli.func.return_value = "Error: stop"
+            read_xhs_data.func()
+
+    captured = capsys.readouterr()
+    assert "mock_app_token" not in captured.out
+    assert "mock_table_id" not in captured.out
+
+
 @patch("tools.lark_cli.lark_cli")
 def test_read_xhs_data_success(mock_lark_cli):
     # Set mock environment variables

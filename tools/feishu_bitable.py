@@ -89,7 +89,6 @@ def read_xhs_data(scope: str = "all", config: RunnableConfig = None) -> dict[str
 
     app_token = os.environ.get("FEISHU_BITABLE_APP_TOKEN", "")
     table_id = os.environ.get("FEISHU_BITABLE_TABLE_ID", "")
-    print("DEBUG inside function: app_token =", repr(app_token), "table_id =", repr(table_id))
     if not app_token or not table_id:
         return {
             "error": "环境变量缺失：FEISHU_BITABLE_APP_TOKEN 或 FEISHU_BITABLE_TABLE_ID 未配置。",

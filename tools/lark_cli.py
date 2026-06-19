@@ -148,6 +148,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     server_info = getattr(config, "server_info", None) if config else None
     user = getattr(server_info, "user", None) if server_info else None
     open_id = getattr(user, "identity", None) if user else None
+    server_mode = server_info is not None
     
     force_bot = False
     clean_args = []
@@ -184,6 +185,8 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         else:
             run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
             run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
+    elif server_mode and not force_bot:
+        return "Please authorize Feishu access first. Current server request has no Feishu user identity."
     else:
         # CLI fallback or forced bot
         app_id = os.environ.get("FEISHU_APP_ID")
