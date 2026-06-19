@@ -20,6 +20,7 @@ def _set_assembly_env(monkeypatch):
     monkeypatch.setenv("LLM_BASE_URL", "https://test-gw/v1")
     monkeypatch.setenv("LLM_API_KEY", "test-key")
     monkeypatch.setenv("LLM_QUALITY_MODELS", "claude-sonnet-4-6")
+    monkeypatch.setenv("XHS_SYNC_ENABLED", "false")
 
 
 def test_agent_importable_and_compiled(monkeypatch):
@@ -193,3 +194,20 @@ def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
     assert interrupts["execute_lark_command"] is True
     assert interrupts["sync_copy_to_feishu"] is True
     assert interrupts["send_review_notification"] is True
+
+
+def test_agent_does_not_start_scheduler_unless_enabled(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+    monkeypatch.delenv("XHS_SYNC_ENABLED", raising=False)
+
+    import importlib
+    import dotenv
+    import data_foundation.scheduler as scheduler
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: False)
+    scheduler._started = False
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    assert scheduler._started is False
