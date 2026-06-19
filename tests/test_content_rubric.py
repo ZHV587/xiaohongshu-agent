@@ -25,6 +25,19 @@ def test_ordinary_response_does_not_activate_rubric():
     assert middleware.after_agent(state, runtime=None) is None
 
 
+def test_structured_content_activates_from_message_blocks():
+    middleware = ContentRubricActivator()
+    state = {
+        "messages": [
+            AIMessage(content=[{"type": "text", "text": "```xhs_copy\n{}\n```"}])
+        ]
+    }
+
+    assert middleware.after_agent(state, runtime=None) == {
+        "rubric": DEFAULT_CONTENT_RUBRIC
+    }
+
+
 def test_caller_rubric_is_preserved():
     middleware = ContentRubricActivator()
     state = {

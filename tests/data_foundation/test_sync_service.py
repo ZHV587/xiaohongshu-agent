@@ -126,6 +126,35 @@ def test_sync_service_records_failed_when_everything_fails(monkeypatch):
     assert repo.finished["error"] == "bad base\nbad wiki"
 
 
+def test_sync_service_includes_source_loader_errors(monkeypatch):
+    from data_foundation.sync_service import sync_feishu_sources
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(
+        "data_foundation.sync_service.sync_base_rows",
+        lambda *_args, **_kwargs: SyncResult(imported=0, errors=[]),
+    )
+    monkeypatch.setattr(
+        "data_foundation.sync_service.sync_wiki_documents",
+        lambda *_args, **_kwargs: SyncResult(imported=0, errors=[]),
+    )
+
+    result = sync_feishu_sources(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_user",
+        triggered_by="manual",
+        source_errors=["base: not configured"],
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert result["failed"] == 1
+    assert result["errors"] == ["base: not configured"]
+    assert repo.finished is not None
+    assert repo.finished["error"] == "base: not configured"
+
+
 def test_sync_service_records_failed_when_sync_raises(monkeypatch):
     from data_foundation.sync_service import sync_feishu_sources
 

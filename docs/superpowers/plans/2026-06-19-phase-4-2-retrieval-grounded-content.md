@@ -36,39 +36,43 @@
 - Modify: `data_foundation/tools.py`
 - Modify: `tests/data_foundation/test_search_graph_tools.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
-Add a row-level test asserting `_result_from_row(...)` serializes `updated_at` as ISO 8601 in `metadata`, and a tool test asserting `get_resource` returns `updated_at` beside `version`.
+Add row-level and tool tests asserting retrieval returns `source_updated_at` from `resource_mappings.external_updated_at` and `indexed_at` from `resources.updated_at`, without exposing an ambiguous evidence `updated_at`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/data_foundation/test_search_graph_tools.py -q`
 
 Expected: FAIL because freshness is absent from both payloads.
 
-- [ ] **Step 3: Implement the minimum payload changes**
+- [x] **Step 3: Implement the minimum payload changes**
 
-In `_result_from_row`, add:
-
-```python
-updated_at = row.get("updated_at") if hasattr(row, "get") else row["updated_at"]
-if updated_at is not None:
-    metadata["updated_at"] = updated_at.isoformat()
-```
-
-In `get_resource`, add:
+In `_result_from_row`, return distinct source/index freshness:
 
 ```python
-"updated_at": resource.updated_at.isoformat() if resource.updated_at else None,
+source_updated_at = row.get("source_updated_at") if hasattr(row, "get") else None
+indexed_at = row.get("updated_at") if hasattr(row, "get") else row["updated_at"]
+if source_updated_at is not None:
+    metadata["source_updated_at"] = source_updated_at.isoformat()
+if indexed_at is not None:
+    metadata["indexed_at"] = indexed_at.isoformat()
 ```
 
-- [ ] **Step 4: Verify GREEN**
+In `get_resource`, return:
+
+```python
+"source_updated_at": resource.source_updated_at.isoformat() if resource.source_updated_at else None,
+"indexed_at": resource.updated_at.isoformat() if resource.updated_at else None,
+```
+
+- [x] **Step 4: Verify GREEN**
 
 Run: `uv run pytest tests/data_foundation/test_search_graph_tools.py -q`
 
 Expected: PASS, with database-backed cases skipped when `TEST_XHS_DATABASE_URL` is absent.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add data_foundation/search.py data_foundation/tools.py tests/data_foundation/test_search_graph_tools.py
@@ -82,7 +86,7 @@ git commit -m "feat: expose resource freshness to agents"
 - Modify: `prompts.py`
 - Modify: `.agents/skills/topic-content/SKILL.md`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Create tests that read both contracts and assert they contain:
 
@@ -96,41 +100,41 @@ REQUIRED_TOOLS = {
 }
 ```
 
-Also assert both define an `evidence` array with `resource_id`, `title`, `summary`, and `updated_at`, state that direct Feishu reads are fallback-only, and contain the exact user-facing phrase `当前数据不足`.
+Also assert both define an `evidence` array with `resource_id`, `title`, `summary`, `source_updated_at`, and `indexed_at`; state that direct Feishu reads are not allowed as unsynchronized fallback; and contain the exact user-facing phrase `当前数据不足`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_grounded_content_contract.py -q`
 
 Expected: FAIL because the current contracts are Feishu-first and have no evidence schema.
 
-- [ ] **Step 3: Update the main prompt**
+- [x] **Step 3: Update the main prompt**
 
 Specify this order:
 
 1. Call `search_resources` first.
 2. Optionally call `semantic_search_resources`; failure must fall back to keyword results.
 3. Use `get_resource` for selected source details and `graph_expand` only when related context adds value.
-4. Use direct Feishu reads only when unified results are empty and explain that they are fallback data.
-5. When no usable source remains, say `当前数据不足`, recommend `sync_feishu_resources` or additional data, and do not output fabricated claims.
+4. Do not call direct Feishu readers as content evidence fallback; when unified results are empty, sync Feishu resources through `sync_feishu_resources` and retry retrieval.
+5. When no usable source remains, say `当前数据不足`, recommend sync/additional data, and do not output fabricated claims.
 
 Extend both fenced JSON examples with:
 
 ```json
-"evidence": [{"resource_id": "资源ID", "title": "来源标题", "summary": "支持本次创作的关键依据", "updated_at": "2026-06-19T12:30:00+00:00"}]
+"evidence": [{"resource_id": "资源ID", "title": "来源标题", "summary": "支持本次创作的关键依据", "source_updated_at": "2026-05-01T08:00:00+00:00", "indexed_at": "2026-06-19T12:30:00+00:00"}]
 ```
 
-- [ ] **Step 4: Update the official skill**
+- [x] **Step 4: Update the official skill**
 
 Mirror the same retrieval order, fallback rule, degradation phrase, and evidence schema in `.agents/skills/topic-content/SKILL.md`.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `uv run pytest tests/test_grounded_content_contract.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add prompts.py .agents/skills/topic-content/SKILL.md tests/test_grounded_content_contract.py
@@ -143,7 +147,7 @@ git commit -m "feat: ground content workflow in unified retrieval"
 - Create: `tests/test_subagents.py`
 - Modify: `subagents.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Build the analyst with existing model fixtures or lightweight stubs and assert its tool names include:
 
@@ -151,25 +155,25 @@ Build the analyst with existing model fixtures or lightweight stubs and assert i
 {"search_resources", "semantic_search_resources", "graph_expand", "get_resource"}
 ```
 
-Assert `ANALYST_SYSTEM_PROMPT` prioritizes `search_resources`, treats Feishu tools as fallback, records source IDs and freshness, and explicitly reports insufficient data.
+Assert `ANALYST_SYSTEM_PROMPT` prioritizes `search_resources`, forbids direct Feishu readers as unsynchronized fallback, records source IDs plus source/index freshness, and explicitly reports insufficient data.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_subagents.py -q`
 
 Expected: FAIL because the subagent only has direct Feishu tools.
 
-- [ ] **Step 3: Implement the official subagent extension**
+- [x] **Step 3: Implement the official subagent extension**
 
-Import the four retrieval tools from `data_foundation.tools`, add them to the subagent `tools` list before the Feishu fallback tools, and revise the prompt/description to produce an evidence section containing source ID, title, summary, and freshness.
+Import the four retrieval tools from `data_foundation.tools`, add them to the subagent `tools` list, and revise the prompt/description to produce an evidence section containing source ID, title, summary, `source_updated_at`, and `indexed_at`. Direct Feishu readers are intentionally not exposed to the analyst.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `uv run pytest tests/test_subagents.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add subagents.py tests/test_subagents.py
@@ -182,32 +186,32 @@ git commit -m "feat: add unified retrieval to analyst subagent"
 - Modify: `tests/test_agent_assembly.py`
 - Modify: `agent.py`
 
-- [ ] **Step 1: Write a failing assembly test**
+- [x] **Step 1: Write a failing assembly test**
 
 Extend the capturing `RubricMiddleware` test double to retain `system_prompt`, then assert the rubric checks all four policies: source evidence, source freshness, unsupported claims, and explicit insufficient-data degradation.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_agent_assembly.py -q`
 
 Expected: FAIL because the current rubric only says content should have data support.
 
-- [ ] **Step 3: Update the rubric prompt**
+- [x] **Step 3: Update the rubric prompt**
 
 Keep existing style checks and add concrete rejection criteria:
 
 - topics/copy must include evidence summaries and resource IDs when data is used;
-- stale `updated_at` values must not be presented as current facts without qualification;
+- stale `source_updated_at` values must not be presented as current facts without qualification, and `indexed_at` must not be used as source freshness;
 - claims not supported by retrieved content must be removed or labeled as creative inference;
 - when sources are empty or unusable, the response must say `当前数据不足` and suggest sync/additional data.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `uv run pytest tests/test_agent_assembly.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add agent.py tests/test_agent_assembly.py
@@ -224,21 +228,21 @@ git commit -m "feat: enforce grounding in content rubric"
 - Modify: `web/src/components/thread/messages/topic-cards.tsx`
 - Modify: `web/src/components/thread/messages/copy-card.tsx`
 
-- [ ] **Step 1: Add the TypeScript unit-test runner**
+- [x] **Step 1: Add the TypeScript unit-test runner**
 
 Use the installed `esbuild` JavaScript API to bundle `src/lib/xhs-blocks.test.ts` to a temporary directory, execute it with `node --test`, propagate the exit code, and remove the temporary directory in `finally`. Add `"test:unit": "node scripts/run-unit-tests.mjs"` to `package.json`.
 
-- [ ] **Step 2: Write failing parser tests**
+- [x] **Step 2: Write failing parser tests**
 
 Test that valid topic and copy evidence survives parsing, malformed evidence entries are filtered, and payloads without evidence remain backward compatible with `evidence: []`.
 
-- [ ] **Step 3: Verify RED**
+- [x] **Step 3: Verify RED**
 
 Run from `web`: `npm run test:unit`
 
 Expected: FAIL because the parser drops evidence.
 
-- [ ] **Step 4: Add the evidence type and parser**
+- [x] **Step 4: Add the evidence type and parser**
 
 Define:
 
@@ -247,17 +251,18 @@ export interface SourceEvidence {
   resource_id: string;
   title: string;
   summary: string;
-  updated_at?: string;
+  source_updated_at?: string;
+  indexed_at?: string;
 }
 ```
 
-Add `evidence: SourceEvidence[]` to both segment data shapes. Parse only objects with non-empty string `resource_id`, `title`, and `summary`; preserve optional string `updated_at`; return `[]` when absent or invalid. Partial streaming output may keep `evidence: []` until complete JSON is available.
+Add `evidence: SourceEvidence[]` to both segment data shapes. Parse only objects with non-empty string `resource_id`, `title`, and `summary`; preserve optional ISO-like `source_updated_at` and `indexed_at`; return `[]` when absent or invalid. Partial streaming output may keep `evidence: []` until complete JSON is available.
 
-- [ ] **Step 5: Render compact evidence sections**
+- [x] **Step 5: Render compact evidence sections**
 
 Under each card's primary content, render a single un-nested evidence section labeled `创作依据`, listing source title and summary. Use `Database` from `lucide-react`; keep evidence out of `CopyCard.fullText` so one-click copy only copies publishable content.
 
-- [ ] **Step 6: Verify GREEN and type safety**
+- [x] **Step 6: Verify GREEN and type safety**
 
 Run from `web`:
 
@@ -269,7 +274,7 @@ npm run lint -- src
 
 Expected: unit tests and TypeScript pass; lint has no new errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add web/package.json web/scripts/run-unit-tests.mjs web/src/lib/xhs-blocks.test.ts web/src/lib/xhs-blocks.ts web/src/components/thread/messages/topic-cards.tsx web/src/components/thread/messages/copy-card.tsx
@@ -282,15 +287,15 @@ git commit -m "feat: display content source evidence"
 - Modify: `README.md`
 - Modify: `docs/superpowers/specs/2026-06-19-phase-4-production-data-loop-design.md`
 
-- [ ] **Step 1: Document Phase 4.2 behavior**
+- [x] **Step 1: Document Phase 4.2 behavior**
 
 Document retrieval-first creation, visible source summaries, semantic-to-keyword fallback, explicit insufficient-data behavior, and the unchanged official DeepAgents extension boundary.
 
-- [ ] **Step 2: Update Phase 4 status**
+- [x] **Step 2: Update Phase 4 status**
 
 Mark Phase 4.2 complete while leaving 4.3-4.5 pending.
 
-- [ ] **Step 3: Run focused regression**
+- [x] **Step 3: Run focused regression**
 
 ```bash
 uv run pytest tests/test_grounded_content_contract.py tests/test_subagents.py tests/test_agent_assembly.py tests/data_foundation/test_search_graph_tools.py -q
@@ -298,7 +303,7 @@ uv run pytest tests/test_grounded_content_contract.py tests/test_subagents.py te
 
 Expected: PASS, allowing configured Postgres integration skips.
 
-- [ ] **Step 4: Run full regression**
+- [x] **Step 4: Run full regression**
 
 ```bash
 uv run pytest -q
@@ -310,7 +315,7 @@ npm run lint -- src
 
 Expected: backend and frontend checks pass with no new warnings.
 
-- [ ] **Step 5: Inspect changes**
+- [x] **Step 5: Inspect changes**
 
 ```bash
 git diff --check
@@ -319,13 +324,78 @@ git status --short
 
 Expected: no whitespace errors and only intended Phase 4.2 files are modified.
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 ```bash
 git add README.md docs/superpowers/specs/2026-06-19-phase-4-production-data-loop-design.md
 git commit -m "docs: document retrieval-grounded content loop"
 git push origin master
 ```
+
+### Task 7: Activate Rubric For Structured Content At Runtime
+
+**Files:**
+- Create: `content_rubric.py`
+- Modify: `agent.py`
+- Create: `tests/test_content_rubric.py`
+- Modify: `tests/test_agent_assembly.py`
+
+- [x] Write failing tests proving a final `xhs_topics` or `xhs_copy` response receives the default content rubric, while ordinary status responses do not.
+- [x] Verify RED because the current RubricMiddleware receives no invocation-state rubric.
+- [x] Add an official `AgentMiddleware.after_agent` activator after RubricMiddleware in the middleware list, so reverse after-agent ordering injects the rubric before grading.
+- [x] Add an assembly-order regression and verify GREEN.
+- [x] Commit with `fix: activate content rubric at runtime`.
+
+### Task 8: Separate Source Freshness From Index Freshness
+
+**Files:**
+- Modify: `data_foundation/models.py`
+- Modify: `data_foundation/repository.py`
+- Modify: `data_foundation/search.py`
+- Modify: `data_foundation/tools.py`
+- Modify: `tests/data_foundation/test_search_graph_tools.py`
+
+- [x] Write failing tests for `source_updated_at` from `resource_mappings.external_updated_at` and `indexed_at` from `resources.updated_at`.
+- [x] Verify RED because only local `updated_at` is currently exposed.
+- [x] Add source freshness to keyword, semantic, and full-resource queries without changing tenant/permission filters.
+- [x] Return distinct ISO fields and verify GREEN.
+- [x] Commit with `fix: distinguish source and index freshness`.
+
+### Task 9: Make Manual Feishu Sync Retrieve Real Inputs
+
+**Files:**
+- Modify: `tools/feishu_bitable.py`
+- Modify: `tools/feishu_wiki.py`
+- Create: `data_foundation/feishu_source_loader.py`
+- Modify: `data_foundation/tools.py`
+- Modify: `tests/test_feishu_bitable.py`
+- Modify: `tests/test_feishu_wiki.py`
+- Modify: `tests/data_foundation/test_tools.py`
+
+- [x] Write failing tests proving the loader preserves Base/Wiki source identity and the sync tool passes non-empty fetched inputs to `sync_feishu_sources`.
+- [x] Verify RED because the current tool always passes empty lists.
+- [x] Preserve record/document tokens when available; when the Base adapter lacks a record ID, use an explicit deterministic `snapshot:<sha256>` identity and label it as a snapshot rather than inventing a Feishu ID.
+- [x] Return a failed/not-configured result when neither source can be read; never report a successful empty recovery sync.
+- [x] Verify GREEN and commit with `fix: load real feishu inputs for manual sync`.
+
+### Task 10: Make Evidence Provenance Honest End To End
+
+**Files:**
+- Modify: `prompts.py`
+- Modify: `.agents/skills/topic-content/SKILL.md`
+- Modify: `subagents.py`
+- Modify: `agent.py`
+- Modify: `tests/test_grounded_content_contract.py`
+- Modify: `tests/test_subagents.py`
+- Modify: `tests/test_agent_assembly.py`
+- Modify: `web/src/lib/xhs-blocks.ts`
+- Modify: `web/src/lib/xhs-blocks.test.ts`
+
+- [x] Write failing tests for the `source_updated_at`/`indexed_at` evidence schema, ISO validation, and the removal of direct unsynchronized Feishu fallback from the creation contract.
+- [x] Verify RED against the current `updated_at` and fallback contract.
+- [x] Require Postgres resource evidence for generated content; when no resources exist, sync first or report insufficient data instead of creating from untracked fallback records.
+- [x] Update parser validation and all prompt/subagent/rubric terminology.
+- [x] Run complete backend/frontend regression and commit with `fix: make content evidence provenance explicit`.
 
 ---
 
@@ -335,6 +405,6 @@ git push origin master
 
 **Official-framework boundary:** All Agent-facing behavior stays in DeepAgents `tools`, `skills`, `subagents`, and `middleware`. Postgres remains behind LangChain tools, the Web remains the only business entry, and no CLI, management backend, private graph mutation, or database access from prompts/components is introduced.
 
-**Type consistency:** The evidence contract is consistently named `evidence` with `resource_id`, `title`, `summary`, and optional `updated_at` in prompts, skill, parser, and cards. Retrieval freshness is consistently ISO 8601.
+**Type consistency:** The evidence contract is consistently named `evidence` with `resource_id`, `title`, `summary`, and optional `source_updated_at` / `indexed_at` in prompts, skill, parser, and cards. Retrieval freshness is consistently ISO 8601.
 
 **Placeholder scan:** No deferred implementation markers or unspecified error-handling steps remain.

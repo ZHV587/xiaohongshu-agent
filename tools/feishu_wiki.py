@@ -13,6 +13,16 @@ from langchain_core.runnables import RunnableConfig
 
 logger = logging.getLogger(__name__)
 
+
+def _external_updated_at(item: dict[str, Any]) -> Any | None:
+    return (
+        item.get("last_modified_time")
+        or item.get("modified_time")
+        or item.get("updated_time")
+        or item.get("update_time")
+    )
+
+
 @tool
 def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
     """读取飞书知识空间里的文档内容。
@@ -22,14 +32,16 @@ def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
     Returns:
         {"documents": [{"title": "文档标题", "content": "文档 markdown 内容"}, ...]}
     """
-    from tools.lark_cli import lark_cli  # 延迟 import，避免循环依赖
-
-    space_id = os.environ.get("FEISHU_WIKI_SPACE_ID", "7648177996175543260")
+    space_id = os.environ.get("FEISHU_WIKI_SPACE_ID", "")
     if not space_id:
         return {
             "error": "环境变量缺失：FEISHU_WIKI_SPACE_ID 未配置。",
             "documents": [],
+            "source_errors": [],
+            "wiki_space_id": "",
         }
+
+    from tools.lark_cli import lark_cli  # 延迟 import，避免循环依赖
 
     # 1. 列出知识空间的所有节点
     # 使用 --page-all 自动翻页
@@ -46,6 +58,8 @@ def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
         return {
             "error": f"lark-cli 获取知识库节点失败：{resp}",
             "documents": [],
+            "source_errors": [],
+            "wiki_space_id": space_id,
         }
 
     try:
@@ -54,6 +68,8 @@ def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
         return {
             "error": f"lark-cli 返回非 JSON 格式：{resp[:300]}",
             "documents": [],
+            "source_errors": [],
+            "wiki_space_id": space_id,
         }
 
     # 根据 data["data"]["items"] 遍历
@@ -64,9 +80,10 @@ def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
         items = data.get("items", [])
 
     if not items:
-        return {"documents": []}
+        return {"documents": [], "source_errors": [], "wiki_space_id": space_id}
 
     documents = []
+    source_errors: list[str] = []
     # 限制拉取文档的总数，避免超时和大量 token 消耗，这里上限设为 20 篇文档
     doc_count = 0
     max_docs = 20
@@ -91,12 +108,14 @@ def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
 
             if fetch_resp.startswith("Error") or fetch_resp.startswith("⚠️") or fetch_resp.startswith("Feishu"):
                 logger.warning(f"Failed to fetch document content for {title} ({obj_token}): {fetch_resp}")
+                source_errors.append(f"wiki document {obj_token}: {fetch_resp}")
                 continue
 
             try:
                 fetch_data = json.loads(fetch_resp)
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse document JSON for {title}: {fetch_resp[:300]}")
+                source_errors.append(f"wiki document {obj_token}: invalid JSON response")
                 continue
 
             # 从 fetch_data 里提取 content
@@ -114,9 +133,12 @@ def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
                 content = fetch_data.get("content", "")
 
             documents.append({
+                "node_token": item.get("node_token"),
+                "obj_token": obj_token,
                 "title": title,
                 "content": content,
+                "external_updated_at": _external_updated_at(item),
             })
             doc_count += 1
 
-    return {"documents": documents}
+    return {"documents": documents, "source_errors": source_errors, "wiki_space_id": space_id}

@@ -3,6 +3,7 @@ import { ChevronRight, Database } from "lucide-react";
 import { useThreadActions } from "@/lib/thread-actions";
 import { MarkdownText } from "../markdown-text";
 import type { TopicsSegment } from "@/lib/xhs-blocks";
+import { EvidenceTime } from "./evidence-time";
 
 export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
   const { submitText } = useThreadActions();
@@ -50,6 +51,7 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
               <div key={source.resource_id} className="text-xs leading-relaxed">
                 <div className="text-foreground/80 font-medium">{source.title}</div>
                 <div className="text-muted-foreground">{source.summary}</div>
+                <EvidenceTime sourceUpdatedAt={source.source_updated_at} indexedAt={source.indexed_at} />
               </div>
             ))}
           </div>

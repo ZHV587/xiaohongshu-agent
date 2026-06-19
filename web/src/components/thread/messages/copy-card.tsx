@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Copy, CopyCheck, Database } from "lucide-react";
 import type { CopySegment } from "@/lib/xhs-blocks";
+import { EvidenceTime } from "./evidence-time";
 
 export function CopyCard({ data }: { data: CopySegment["data"] }) {
   const [copied, setCopied] = useState(false);
@@ -61,6 +62,7 @@ export function CopyCard({ data }: { data: CopySegment["data"] }) {
                 <div key={source.resource_id} className="text-xs leading-relaxed">
                   <div className="text-foreground/80 font-medium">{source.title}</div>
                   <div className="text-muted-foreground">{source.summary}</div>
+                  <EvidenceTime sourceUpdatedAt={source.source_updated_at} indexedAt={source.indexed_at} />
                 </div>
               ))}
             </div>

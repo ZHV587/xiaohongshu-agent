@@ -4,7 +4,8 @@ export interface SourceEvidence {
   resource_id: string;
   title: string;
   summary: string;
-  updated_at?: string;
+  source_updated_at?: string;
+  indexed_at?: string;
 }
 export interface TopicsSegment {
   kind: "topics";
@@ -149,9 +150,18 @@ function parseEvidence(value: unknown): SourceEvidence[] {
       title: source.title,
       summary: source.summary,
     };
-    if (typeof source.updated_at === "string") evidence.updated_at = source.updated_at;
+    const sourceUpdatedAt = parseIsoTimestamp(source.source_updated_at);
+    const indexedAt = parseIsoTimestamp(source.indexed_at);
+    if (sourceUpdatedAt) evidence.source_updated_at = sourceUpdatedAt;
+    if (indexedAt) evidence.indexed_at = indexedAt;
     return [evidence];
   });
+}
+
+function parseIsoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return undefined;
+  return Number.isNaN(Date.parse(value)) ? undefined : value;
 }
 
 // 增量容错 JSON 字段解析器 - 提取 Copy

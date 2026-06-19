@@ -121,7 +121,8 @@ def test_rubric_uses_model_instance_not_string(monkeypatch):
 
     rubric_prompt = captured["system_prompt"]
     assert "resource_id" in rubric_prompt
-    assert "updated_at" in rubric_prompt
+    assert "source_updated_at" in rubric_prompt
+    assert "indexed_at" in rubric_prompt
     assert "无依据" in rubric_prompt or "没有依据" in rubric_prompt
     assert "当前数据不足" in rubric_prompt
 
@@ -189,6 +190,33 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
         "get_data_foundation_status",
         "sync_feishu_resources",
     } <= tool_names
+
+
+def test_agent_does_not_expose_raw_feishu_readers(monkeypatch):
+    import importlib
+    import deepagents
+
+    captured = {}
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create_deep_agent(*args, **kwargs):
+        captured["tools"] = kwargs["tools"]
+        return real_create(*args, **kwargs)
+
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+    deepagents.create_deep_agent = _capturing_create_deep_agent
+    try:
+        import agent as agent_module
+
+        importlib.reload(agent_module)
+    finally:
+        deepagents.create_deep_agent = real_create
+
+    tool_names = {getattr(tool, "name", "") for tool in captured["tools"]}
+    assert "read_xhs_data" not in tool_names
+    assert "read_feishu_wiki" not in tool_names
+    assert "sync_feishu_resources" in tool_names
 
 
 def test_agent_registers_feishu_action_tools(monkeypatch):

@@ -19,8 +19,10 @@ def test_baokuan_analyst_registers_unified_retrieval_tools():
 
 
 def test_baokuan_analyst_requires_evidence_and_explicit_degradation():
-    assert ANALYST_SYSTEM_PROMPT.index("search_resources") < ANALYST_SYSTEM_PROMPT.index("read_xhs_data")
-    assert "兜底" in ANALYST_SYSTEM_PROMPT or "回退" in ANALYST_SYSTEM_PROMPT
+    assert "创作分析不得调用" in ANALYST_SYSTEM_PROMPT
+    assert "read_xhs_data" in ANALYST_SYSTEM_PROMPT
+    assert "read_feishu_wiki" in ANALYST_SYSTEM_PROMPT
     assert "resource_id" in ANALYST_SYSTEM_PROMPT
-    assert "updated_at" in ANALYST_SYSTEM_PROMPT
+    assert "source_updated_at" in ANALYST_SYSTEM_PROMPT
+    assert "indexed_at" in ANALYST_SYSTEM_PROMPT
     assert "当前数据不足" in ANALYST_SYSTEM_PROMPT

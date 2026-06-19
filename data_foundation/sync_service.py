@@ -13,6 +13,7 @@ def sync_feishu_sources(
     triggered_by: str,
     base_rows: list[dict[str, Any]] | None = None,
     wiki_documents: list[dict[str, Any]] | None = None,
+    source_errors: list[str] | None = None,
     app_token: str = "",
     table_id: str = "",
     wiki_space_id: str = "",
@@ -31,7 +32,7 @@ def sync_feishu_sources(
     )
 
     created = 0
-    errors: list[str] = []
+    errors: list[str] = list(source_errors or [])
     try:
         base_result = sync_base_rows(
             repo,

@@ -12,6 +12,7 @@ def test_read_feishu_wiki_missing_env(mock_lark_cli):
         res = read_feishu_wiki.func()
         assert "error" in res
         assert "FEISHU_WIKI_SPACE_ID" in res["error"]
+        assert res["source_errors"] == []
 
 
 @patch("tools.lark_cli.lark_cli")
@@ -75,8 +76,13 @@ def test_read_feishu_wiki_success(mock_lark_cli):
         assert "error" not in res
         assert len(res["documents"]) == 2
         assert res["documents"][0]["title"] == "露营核心装备"
+        assert res["documents"][0]["node_token"] == "wikcn1"
+        assert res["documents"][0]["obj_token"] == "docx1"
         assert "双顶天幕" in res["documents"][0]["content"]
+        assert res["wiki_space_id"] == "mock_space_id"
         assert res["documents"][1]["title"] == "营地防坑指南"
+        assert res["documents"][1]["node_token"] == "wikcn3"
+        assert res["documents"][1]["obj_token"] == "docx2"
         assert "检查草坪" in res["documents"][1]["content"]
 
         # Assert calls
@@ -108,3 +114,21 @@ def test_read_feishu_wiki_lark_cli_error(mock_lark_cli):
         res = read_feishu_wiki.func()
         assert "error" in res
         assert "lark-cli" in res["error"]
+
+
+@patch("tools.lark_cli.lark_cli")
+def test_read_feishu_wiki_collects_document_fetch_errors(mock_lark_cli):
+    mock_lark_cli.func.side_effect = [
+        json.dumps({"data": {"items": [{
+            "node_token": "wik_bad",
+            "obj_token": "doc_bad",
+            "obj_type": "docx",
+            "title": "读取失败",
+        }]}}),
+        "Error: denied",
+    ]
+    with patch.dict(os.environ, {"FEISHU_WIKI_SPACE_ID": "mock_space_id"}):
+        res = read_feishu_wiki.func()
+
+    assert res["documents"] == []
+    assert res["source_errors"] == ["wiki document doc_bad: Error: denied"]

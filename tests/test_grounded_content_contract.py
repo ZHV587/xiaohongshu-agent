@@ -15,7 +15,13 @@ REQUIRED_TOOLS = {
     "get_resource",
     "sync_feishu_resources",
 }
-EVIDENCE_FIELDS = {"resource_id", "title", "summary", "updated_at"}
+EVIDENCE_FIELDS = {
+    "resource_id",
+    "title",
+    "summary",
+    "source_updated_at",
+    "indexed_at",
+}
 
 
 def _contracts() -> dict[str, str]:
@@ -25,13 +31,13 @@ def _contracts() -> dict[str, str]:
     }
 
 
-def test_contracts_require_unified_postgres_retrieval_before_feishu_fallback():
+def test_contracts_require_unified_postgres_retrieval_without_untracked_fallback():
     for name, contract in _contracts().items():
         assert REQUIRED_TOOLS <= {
             tool for tool in REQUIRED_TOOLS if f"`{tool}`" in contract
         }, name
-        assert contract.index("`search_resources`") < contract.index("`read_xhs_data`"), name
-        assert "仅" in contract and "回退" in contract, name
+        assert "创作流程不得调用" in contract, name
+        assert "`read_xhs_data`" in contract and "`read_feishu_wiki`" in contract, name
         assert "关键词" in contract and "semantic_search_resources" in contract, name
 
 
@@ -47,6 +53,9 @@ def test_contracts_forbid_fabricating_missing_source_freshness():
         assert "更新时间" in contract, name
         assert "未知" in contract, name
         assert "不得猜" in contract, name
+        assert "source_updated_at" in contract, name
+        assert "indexed_at" in contract, name
+        assert '"updated_at"' not in contract, name
 
 
 def test_contracts_include_evidence_schema_in_topics_and_copy():

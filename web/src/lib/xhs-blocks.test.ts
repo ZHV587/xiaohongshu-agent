@@ -5,7 +5,7 @@ import { parseXhsBlocks } from "./xhs-blocks";
 
 test("preserves valid topic evidence", () => {
   const [segment] = parseXhsBlocks(`\`\`\`xhs_topics
-{"intro":"方向建议","topics":["轻量露营"],"evidence":[{"resource_id":"note-1","title":"高互动露营笔记","summary":"轻量装备清单更易收藏","updated_at":"2026-06-18T08:00:00Z"}]}
+{"intro":"方向建议","topics":["轻量露营"],"evidence":[{"resource_id":"note-1","title":"高互动露营笔记","summary":"轻量装备清单更易收藏","source_updated_at":"2026-05-01T08:00:00Z","indexed_at":"2026-06-18T08:00:00Z"}]}
 \`\`\``);
 
   assert.equal(segment.kind, "topics");
@@ -15,7 +15,8 @@ test("preserves valid topic evidence", () => {
       resource_id: "note-1",
       title: "高互动露营笔记",
       summary: "轻量装备清单更易收藏",
-      updated_at: "2026-06-18T08:00:00Z",
+      source_updated_at: "2026-05-01T08:00:00Z",
+      indexed_at: "2026-06-18T08:00:00Z",
     },
   ]);
 });
@@ -49,4 +50,16 @@ test("keeps payloads without evidence backward compatible", () => {
   if (topics.kind !== "topics" || copy.kind !== "copy") return;
   assert.deepEqual(topics.data.evidence, []);
   assert.deepEqual(copy.data.evidence, []);
+});
+
+test("discards malformed evidence timestamps without dropping the source", () => {
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_copy
+{"title":"标题","body":"正文","tags":[],"evidence":[{"resource_id":"note-4","title":"来源","summary":"摘要","source_updated_at":"not-a-date","indexed_at":""}]}
+\`\`\``);
+
+  assert.equal(segment.kind, "copy");
+  if (segment.kind !== "copy") return;
+  assert.deepEqual(segment.data.evidence, [
+    {resource_id: "note-4", title: "来源", summary: "摘要"},
+  ]);
 });

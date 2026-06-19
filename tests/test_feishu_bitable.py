@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 import pytest
 from unittest.mock import patch, MagicMock
 from tools.feishu_bitable import read_xhs_data
@@ -123,3 +124,80 @@ def test_read_xhs_data_lark_cli_error(mock_lark_cli):
         res = read_xhs_data.func()
         assert "error" in res
         assert "失败" in res["error"]
+
+
+@patch("tools.lark_cli.lark_cli")
+def test_read_xhs_data_preserves_native_record_identity(mock_lark_cli):
+    with patch.dict(os.environ, {
+        "FEISHU_BITABLE_APP_TOKEN": "mock_app_token",
+        "FEISHU_BITABLE_TABLE_ID": "mock_table_id",
+    }):
+        mock_lark_cli.func.return_value = json.dumps({
+            "data": {
+                "has_more": False,
+                "items": [
+                    {"record_id": "rec_native", "fields": {"标题": "原生记录", "点赞": 99}},
+                ],
+            }
+        })
+
+        res = read_xhs_data.func()
+
+    assert res["sync_rows"] == [{
+        "record_id": "rec_native",
+        "identity_kind": "feishu_record_id",
+        "fields": {"标题": "原生记录", "点赞": 99},
+    }]
+    assert res["app_token"] == "mock_app_token"
+    assert res["table_id"] == "mock_table_id"
+
+
+@patch("tools.lark_cli.lark_cli")
+def test_read_xhs_data_preserves_feishu_millisecond_updated_time(mock_lark_cli):
+    with patch.dict(os.environ, {
+        "FEISHU_BITABLE_APP_TOKEN": "mock_app_token",
+        "FEISHU_BITABLE_TABLE_ID": "mock_table_id",
+    }):
+        mock_lark_cli.func.return_value = json.dumps({
+            "data": {
+                "has_more": False,
+                "items": [
+                    {
+                        "record_id": "rec_native",
+                        "fields": {"标题": "原生记录"},
+                        "last_modified_time": "1714550400000",
+                    },
+                ],
+            }
+        })
+
+        res = read_xhs_data.func()
+
+    assert res["sync_rows"][0]["external_updated_at"] == "1714550400000"
+
+
+@patch("tools.lark_cli.lark_cli")
+def test_read_xhs_data_labels_matrix_identity_as_deterministic_content_snapshot(mock_lark_cli):
+    fields = {"标题": "无 ID 记录", "点赞": 12}
+    expected_hash = hashlib.sha256(
+        json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    with patch.dict(os.environ, {
+        "FEISHU_BITABLE_APP_TOKEN": "mock_app_token",
+        "FEISHU_BITABLE_TABLE_ID": "mock_table_id",
+    }):
+        mock_lark_cli.func.return_value = json.dumps({
+            "data": {
+                "has_more": False,
+                "fields": ["标题", "点赞"],
+                "data": [["无 ID 记录", 12]],
+            }
+        })
+
+        res = read_xhs_data.func()
+
+    assert res["sync_rows"] == [{
+        "record_id": f"snapshot:{expected_hash}",
+        "identity_kind": "content_snapshot",
+        "fields": fields,
+    }]

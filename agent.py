@@ -26,8 +26,6 @@ from subagents import build_baokuan_analyst
 from data_foundation.scheduler import start_background_services
 from data_foundation.tools import phase3_tools
 from tools.feishu_actions import feishu_action_tools
-from tools.feishu_bitable import read_xhs_data
-from tools.feishu_wiki import read_feishu_wiki
 from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
 from tools.lark_mcp import load_lark_mcp_tools
 
@@ -71,7 +69,7 @@ rubric_middleware = RubricMiddleware(
 3. 有 emoji 点缀但不过度
 4. 标签 5~10 个且与内容相关
 5. 使用数据时,选题和文案必须带关键依据摘要及对应 resource_id,不能只声称“来自数据”
-6. 检查来源 updated_at:过时来源不能被包装成当前事实,必须说明时效限制
+6. 检查来源 source_updated_at 与 indexed_at:源端过时不能被包装成当前事实,索引时间不能冒充源端更新时间
 7. 删除或改写检索内容无法支持的无依据断言;创意推断必须明确是推断,不能冒充事实
 8. 没有可用来源时必须明确说“当前数据不足”,并建议同步飞书资源或补充数据,不得凭空编造
 9. 文案有记忆点,读完能记住一两个关键信息
@@ -83,7 +81,7 @@ content_rubric_activator = ContentRubricActivator()
 
 agent = create_deep_agent(
     model=initial_model,
-    tools=[read_xhs_data, read_feishu_wiki] + phase3_tools + feishu_action_tools + load_lark_mcp_tools(),
+    tools=phase3_tools + feishu_action_tools + load_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[build_baokuan_analyst(model_registry, initial_model)],
     backend=backend,

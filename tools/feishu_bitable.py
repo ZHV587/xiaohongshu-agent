@@ -9,6 +9,7 @@
 import os
 import json
 import shlex
+import hashlib
 from typing import Any
 
 from langchain_core.tools import tool
@@ -72,6 +73,20 @@ def _filter_rows(rows: list[dict], core_only: bool) -> tuple[list[str], list[dic
     return columns, rows
 
 
+def _snapshot_id(fields: dict[str, Any]) -> str:
+    canonical = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"snapshot:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def _external_updated_at(item: dict[str, Any]) -> Any | None:
+    return (
+        item.get("last_modified_time")
+        or item.get("modified_time")
+        or item.get("updated_time")
+        or item.get("update_time")
+    )
+
+
 @tool
 def read_xhs_data(scope: str = "all", config: RunnableConfig = None) -> dict[str, Any]:
     """读取飞书多维表格里的小红书爆款/对标数据。
@@ -85,8 +100,6 @@ def read_xhs_data(scope: str = "all", config: RunnableConfig = None) -> dict[str
     Returns:
         {"columns": [列名...], "rows": [{列名: 值, ...}, ...]}
     """
-    from tools.lark_cli import lark_cli  # 延迟 import，避免循环依赖
-
     app_token = os.environ.get("FEISHU_BITABLE_APP_TOKEN", "")
     table_id = os.environ.get("FEISHU_BITABLE_TABLE_ID", "")
     if not app_token or not table_id:
@@ -94,9 +107,15 @@ def read_xhs_data(scope: str = "all", config: RunnableConfig = None) -> dict[str
             "error": "环境变量缺失：FEISHU_BITABLE_APP_TOKEN 或 FEISHU_BITABLE_TABLE_ID 未配置。",
             "columns": [],
             "rows": [],
+            "sync_rows": [],
+            "app_token": app_token,
+            "table_id": table_id,
         }
 
+    from tools.lark_cli import lark_cli  # 延迟 import，避免循环依赖
+
     all_rows: list[dict] = []
+    all_sync_rows: list[dict[str, Any]] = []
     offset = 0
     limit = 200
 
@@ -119,6 +138,9 @@ def read_xhs_data(scope: str = "all", config: RunnableConfig = None) -> dict[str
                 "error": f"lark-cli 读取多维表格失败：{resp}",
                 "columns": [],
                 "rows": [],
+                "sync_rows": [],
+                "app_token": app_token,
+                "table_id": table_id,
             }
 
         try:
@@ -128,22 +150,51 @@ def read_xhs_data(scope: str = "all", config: RunnableConfig = None) -> dict[str
                 "error": f"lark-cli 返回非 JSON 格式：{resp[:300]}",
                 "columns": [],
                 "rows": [],
+                "sync_rows": [],
+                "app_token": app_token,
+                "table_id": table_id,
             }
 
-        # 解析矩阵结构 (fields list + data lists)
+        # lark-cli may return native records or a compact matrix.
         block = data["data"]
-        fields_names = block["fields"]
-        rows_data = block["data"]
-        
-        page_rows_count = len(rows_data)
-        for row in rows_data:
-            # 将列名列表与值列表拉平为字典，跳过 None 值以节省体积
-            fields_dict = {
-                fields_names[i]: row[i]
-                for i in range(min(len(fields_names), len(row)))
-                if row[i] is not None
-            }
-            all_rows.append(fields_dict)
+        items = block.get("items")
+        if isinstance(items, list):
+            page_rows_count = len(items)
+            for item in items:
+                fields_dict = item.get("fields") if isinstance(item, dict) else None
+                record_id = item.get("record_id") if isinstance(item, dict) else None
+                if not isinstance(fields_dict, dict) or not record_id:
+                    continue
+                _, filtered = _filter_rows([fields_dict], core_only=True)
+                filtered_fields = filtered[0]
+                all_rows.append(filtered_fields)
+                sync_row = {
+                    "record_id": str(record_id),
+                    "identity_kind": "feishu_record_id",
+                    "fields": filtered_fields,
+                }
+                external_updated_at = _external_updated_at(item)
+                if external_updated_at is not None:
+                    sync_row["external_updated_at"] = external_updated_at
+                all_sync_rows.append(sync_row)
+        else:
+            fields_names = block.get("fields", [])
+            rows_data = block.get("data", [])
+            page_rows_count = len(rows_data)
+            for row in rows_data:
+                fields_dict = {
+                    fields_names[i]: row[i]
+                    for i in range(min(len(fields_names), len(row)))
+                    if row[i] is not None
+                }
+                _, filtered = _filter_rows([fields_dict], core_only=True)
+                filtered_fields = filtered[0]
+                all_rows.append(filtered_fields)
+                all_sync_rows.append({
+                    "record_id": _snapshot_id(filtered_fields),
+                    "identity_kind": "content_snapshot",
+                    "fields": filtered_fields,
+                })
 
         # 分页：若 has_more 且本页有数据，增加 offset 并继续
         if block.get("has_more") and page_rows_count > 0:
@@ -152,4 +203,11 @@ def read_xhs_data(scope: str = "all", config: RunnableConfig = None) -> dict[str
             break
 
     columns, rows = _filter_rows(all_rows, core_only=True)
-    return {"columns": columns, "rows": rows}
+    return {
+        "columns": columns,
+        "rows": rows,
+        "sync_rows": all_sync_rows,
+        "source_errors": [],
+        "app_token": app_token,
+        "table_id": table_id,
+    }

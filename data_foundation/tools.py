@@ -10,6 +10,7 @@ from langchain_core.tools import tool
 from langchain_openai import OpenAIEmbeddings
 
 from data_foundation.db import connect
+from data_foundation.feishu_source_loader import load_feishu_sources
 from data_foundation.graph import expand_graph as expand_graph_query
 from data_foundation.permissions import actor_from_config, default_tenant_id
 from data_foundation.repository import ResourceRepository
@@ -150,14 +151,25 @@ def get_data_foundation_status(config: RunnableConfig | None = None) -> dict[str
 def sync_feishu_resources(config: RunnableConfig | None = None) -> dict[str, Any]:
     """Trigger a manual Feishu resource sync for the current user."""
     actor = actor_from_config(config)
+    loaded_sources = load_feishu_sources(config)
+    base_rows = loaded_sources["base_rows"]
+    wiki_documents = loaded_sources["wiki_documents"]
+    source_errors = list(loaded_sources["source_errors"])
+    if not base_rows and not wiki_documents and not source_errors:
+        source_errors.append("No readable Feishu resources were returned from configured sources")
+
     with _repository() as repo:
         return sync_feishu_sources(
             repo,
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
             triggered_by="manual",
-            base_rows=[],
-            wiki_documents=[],
+            base_rows=base_rows,
+            wiki_documents=wiki_documents,
+            source_errors=source_errors,
+            app_token=loaded_sources["app_token"],
+            table_id=loaded_sources["table_id"],
+            wiki_space_id=loaded_sources["wiki_space_id"],
         )
 
 

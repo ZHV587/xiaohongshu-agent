@@ -38,6 +38,8 @@ def sync_base_rows(
     for row in rows:
         record_id = str(row.get("record_id") or "<missing>")
         external_id = f"{app_token}:{table_id}:{record_id}"
+        identity_kind = str(row.get("identity_kind") or "feishu_record_id")
+        external_type = "base_record" if identity_kind == "feishu_record_id" else "base_record_snapshot"
         try:
             if record_id == "<missing>":
                 raise ValueError("record_id is required")
@@ -50,12 +52,12 @@ def sync_base_rows(
                 resource_type="feishu_base_record",
                 title=title,
                 content_text=body,
-                content_json={"fields": fields},
+                content_json={"fields": fields, "identity_kind": identity_kind},
                 visibility="team",
                 owner_open_id=actor_open_id,
                 mapping={
                     "system": "feishu",
-                    "external_type": "base_record",
+                    "external_type": external_type,
                     "external_id": external_id,
                     "external_updated_at": row.get("external_updated_at"),
                     "sync_status": "synced",
@@ -70,7 +72,7 @@ def sync_base_rows(
                 tenant_id=tenant_id,
                 actor_open_id=actor_open_id,
                 system="feishu",
-                external_type="base_record",
+                external_type=external_type,
                 external_id=external_id,
                 error=message,
             )
