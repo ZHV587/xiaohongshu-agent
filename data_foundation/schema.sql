@@ -119,3 +119,32 @@ create table if not exists resource_outbox (
 
 create index if not exists idx_resource_outbox_ready
   on resource_outbox (status, available_at, topic);
+
+create table if not exists sync_runs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  source text not null,
+  triggered_by text not null,
+  actor_open_id text not null,
+  status text not null default 'running',
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  created_count int not null default 0,
+  updated_count int not null default 0,
+  skipped_count int not null default 0,
+  failed_count int not null default 0,
+  error text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check(source in ('feishu', 'outbox')),
+  check(triggered_by in ('manual', 'scheduler', 'system')),
+  check(status in ('running', 'success', 'partial_success', 'failed', 'skipped'))
+);
+
+create index if not exists idx_sync_runs_tenant_recent
+  on sync_runs (tenant_id, started_at desc);
+
+create index if not exists idx_sync_runs_running
+  on sync_runs (tenant_id, source, status)
+  where status = 'running';
