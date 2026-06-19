@@ -64,6 +64,7 @@ uv run python verify_1b1.py
 - 项目不恢复交互式 Python CLI 运行入口；飞书 `lark-cli` 只作为 server/worker 内部 adapter。
 - 飞书写操作不再经过 frontend business API，而是由 Agent tools 发起，并通过 HITL 完成人工确认。
 - MCP 是官方工具路径；MCP tools 必须经 interceptor 或等价 adapter 传递受控身份上下文。
+- Phase 4.1 已加入 Postgres 记录的 `sync_runs`、Agent 可查询的数据底座状态、手动飞书同步 tool，以及由 `XHS_SYNC_ENABLED=true` 控制的后台 outbox worker。
 - Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster 暂不作为第一闭环启动依赖，它们通过 `resource_outbox` 后续接入。
 
 ## 测试
