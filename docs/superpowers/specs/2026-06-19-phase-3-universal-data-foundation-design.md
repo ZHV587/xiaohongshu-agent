@@ -55,8 +55,26 @@ DeepAgents / LangGraph
 - Python DAL 负责资源模型、同步、检索、权限过滤和审计。
 - Agent 只调用 tools，不直接连接 Postgres、Meilisearch、Neo4j 或飞书底层 API。
 - 数据同步任务可以由管理 API、后台 worker 或 Dagster 触发，但写入必须统一经过 DAL。
+- 项目自身不恢复 CLI 运行入口；`lark-cli bridge` 仅作为飞书 API adapter 被 server/worker 调用。
 
 ## 4. Postgres 权威数据模型
+
+### 4.0 数据库前置条件
+
+第三阶段正式环境必须提供 Postgres 连接字符串:
+
+- `XHS_DATABASE_URL`
+
+必要扩展:
+
+- `pgcrypto`: 使用 `gen_random_uuid()` 生成 UUID。
+- `vector`: pgvector 向量列和近邻索引。
+
+迁移策略:
+
+- 所有 schema 变更以 SQL migration 文件落地，禁止在应用启动时隐式改表。
+- migration 必须可重复验证，测试环境必须从空库完整迁移成功。
+- 第一版不引入 ORM 作为强依赖；DAL 可以先使用 `psycopg`/SQLAlchemy Core 风格的显式 SQL，避免 schema 与业务语义漂移。
 
 ### 4.1 `resources`
 
@@ -239,6 +257,31 @@ pgvector 语义索引。
 - 第一版可以先写 chunk 记录，embedding 生成可由后续 worker 补齐。
 - `embedding vector` 维度按实际模型迁移文件固定，例如 `vector(1536)` 或 `vector(3072)`。
 
+### 4.8 `resource_outbox`
+
+异步索引、向量生成、飞书写回和图谱入图的可靠任务队列。
+
+字段:
+
+- `id uuid primary key`
+- `tenant_id text not null`
+- `resource_id uuid references resources(id)`
+- `event_id uuid references resource_events(id)`
+- `topic text not null`
+- `payload jsonb not null default '{}'`
+- `status text not null default 'pending'`
+- `attempts int not null default 0`
+- `last_error text`
+- `available_at timestamptz not null default now()`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+约束:
+
+- `status` 使用 `pending`、`processing`、`succeeded`、`failed`。
+- `topic` 使用受控枚举语义: `meili_index`、`embedding_generate`、`graph_ingest`、`feishu_writeback`。
+- worker 必须通过 `available_at`、`attempts` 和幂等键实现重试，不允许无限热循环。
+
 ## 5. Data Access Layer
 
 DAL 是所有数据访问的唯一服务层。
@@ -262,6 +305,17 @@ DAL 规则:
 - 所有写操作必须写 `resource_events`。
 - 所有外部对象写入必须 upsert `resource_mappings`。
 - 所有大结果必须分页或限制 `limit`，tools 默认不超过 10 条资源。
+
+tenant 解析:
+
+- 第一版使用部署默认 tenant: `XHS_DEFAULT_TENANT_ID`，未配置时为 `default`。
+- 用户身份来自 LangGraph auth 注入的 `server_info.user.identity`，即飞书 `open_id`。
+- 后续接入多 tenant 时，tenant 必须来自用户会话或角色表，不允许由 Agent tool 参数自由传入。
+
+事务规则:
+
+- 单个资源写入、mapping upsert、version 写入和 event 写入必须处于同一 Postgres 事务。
+- 外部系统调用不得放在数据库事务内部；需要先写 `resource_events` 和 `resource_outbox`，再由 worker 执行外部同步。
 
 ## 6. 飞书双沉淀同步
 
@@ -352,6 +406,12 @@ DAL 规则:
 - `resource_edges` 作为轻量图和 Graphiti 入图前缓冲。
 - 图谱失败不得阻断 Postgres 主写入，但必须记录同步错误事件。
 
+异步索引与 outbox:
+
+- Meilisearch 索引、pgvector embedding 生成、Graphiti 入图都通过 `resource_events` 和 `resource_outbox` 异步消费。
+- Postgres 主写入成功后，索引失败只能影响检索新鲜度，不能回滚权威业务数据。
+- worker 必须支持幂等重放，依据 `resource_id + version` 或 `event_id` 去重。
+
 ## 9. DeepAgents Tools
 
 第三阶段 tools:
@@ -423,6 +483,16 @@ DAL 规则:
 
 虽然第三阶段设计一次性完善，实施必须按可验证切片推进。
 
+第一份实施计划只覆盖 Phase 3.1 到 Phase 3.4 的可运行闭环:
+
+- Postgres schema 和 DAL。
+- 飞书 Base/Wiki/Doc 入库最小同步。
+- Postgres 全文检索和 pgvector 接口。
+- `resource_edges` 与 `graph_expand`。
+- DeepAgents tools 暴露。
+
+Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster 在同一设计中保留接口和 outbox 边界，但不作为第一份实现计划的阻塞依赖。
+
 ### Phase 3.1 Postgres 资源底座
 
 交付:
@@ -482,6 +552,7 @@ DAL 规则:
 测试:
 
 - DAL 单元测试使用测试 Postgres。
+- 测试 Postgres 必须启用 `pgcrypto` 和 `vector` 扩展。
 - schema 迁移测试必须可重复运行。
 - 权限过滤测试覆盖 owner、team、explicit permission、admin。
 - 同步测试 mock 飞书返回，验证 upsert、version、event 和 mapping。
