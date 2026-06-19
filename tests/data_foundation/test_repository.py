@@ -222,3 +222,64 @@ def test_same_external_mapping_can_exist_in_different_tenants(migrated_conn):
     )
 
     assert second.id != first.id
+
+
+def test_sync_run_lifecycle_and_status_summary(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+
+    run_id = repo.start_sync_run(
+        tenant_id="default",
+        source="feishu",
+        triggered_by="manual",
+        actor_open_id="ou_user",
+        metadata={"scope": "all"},
+    )
+    repo.finish_sync_run(
+        tenant_id="default",
+        run_id=run_id,
+        status="partial_success",
+        created_count=2,
+        updated_count=3,
+        skipped_count=4,
+        failed_count=1,
+        error="one row failed",
+    )
+
+    status = repo.data_foundation_status("default")
+
+    assert status["sync"]["running"] is False
+    assert status["sync"]["last_status"] == "partial_success"
+    assert status["sync"]["last_error"] == "one row failed"
+    assert status["sync"]["last_counts"] == {
+        "created": 2,
+        "updated": 3,
+        "skipped": 4,
+        "failed": 1,
+    }
+
+
+def test_outbox_lease_and_complete(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+    resource = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="feishu_doc",
+        title="待处理资源",
+        content_text="正文",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+        outbox_topics=["embedding_generate"],
+    )
+
+    leased = repo.lease_outbox(tenant_id="default", batch_size=10)
+
+    assert len(leased) == 1
+    assert leased[0]["resource_id"] == resource.id
+    assert leased[0]["topic"] == "embedding_generate"
+
+    repo.complete_outbox(leased[0]["id"], status="succeeded")
+    status = repo.data_foundation_status("default")
+
+    assert status["outbox"]["pending"] == 0
+    assert status["outbox"]["succeeded"] == 1

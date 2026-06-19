@@ -551,6 +551,181 @@ class ResourceRepository:
                     ),
                 )
 
+    def start_sync_run(
+        self,
+        *,
+        tenant_id: str,
+        source: str,
+        triggered_by: str,
+        actor_open_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        row = self.conn.execute(
+            """
+            insert into sync_runs (tenant_id, source, triggered_by, actor_open_id, metadata)
+            values (%s, %s, %s, %s, %s::jsonb)
+            returning id::text as id
+            """,
+            (
+                tenant_id,
+                source,
+                triggered_by,
+                actor_open_id,
+                json.dumps(metadata or {}, sort_keys=True, ensure_ascii=False),
+            ),
+        ).fetchone()
+        self.conn.commit()
+        return row["id"]
+
+    def finish_sync_run(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+        status: str,
+        created_count: int = 0,
+        updated_count: int = 0,
+        skipped_count: int = 0,
+        failed_count: int = 0,
+        error: str | None = None,
+    ) -> None:
+        self.conn.execute(
+            """
+            update sync_runs
+            set status = %s,
+                finished_at = now(),
+                created_count = %s,
+                updated_count = %s,
+                skipped_count = %s,
+                failed_count = %s,
+                error = %s,
+                updated_at = now()
+            where tenant_id = %s and id = %s
+            """,
+            (
+                status,
+                created_count,
+                updated_count,
+                skipped_count,
+                failed_count,
+                error,
+                tenant_id,
+                run_id,
+            ),
+        )
+        self.conn.commit()
+
+    def data_foundation_status(self, tenant_id: str) -> dict[str, Any]:
+        resource_rows = self.conn.execute(
+            """
+            select type, count(*) as count
+            from resources
+            where tenant_id = %s
+            group by type
+            order by type
+            """,
+            (tenant_id,),
+        ).fetchall()
+        outbox_rows = self.conn.execute(
+            """
+            select status, count(*) as count
+            from resource_outbox
+            where tenant_id = %s
+            group by status
+            """,
+            (tenant_id,),
+        ).fetchall()
+        last_sync = self.conn.execute(
+            """
+            select *
+            from sync_runs
+            where tenant_id = %s and source = 'feishu'
+            order by started_at desc, id desc
+            limit 1
+            """,
+            (tenant_id,),
+        ).fetchone()
+        running = self.conn.execute(
+            """
+            select count(*) as count
+            from sync_runs
+            where tenant_id = %s and status = 'running'
+            """,
+            (tenant_id,),
+        ).fetchone()["count"]
+        by_type = {row["type"]: row["count"] for row in resource_rows}
+        outbox = {row["status"]: row["count"] for row in outbox_rows}
+        return {
+            "tenant_id": tenant_id,
+            "resources": {"total": sum(by_type.values()), "by_type": by_type},
+            "sync": {
+                "running": running > 0,
+                "last_status": None if last_sync is None else last_sync["status"],
+                "last_success_at": None
+                if last_sync is None or last_sync["status"] not in ("success", "partial_success")
+                else last_sync["finished_at"],
+                "last_error": None if last_sync is None else last_sync["error"],
+                "last_counts": None
+                if last_sync is None
+                else {
+                    "created": last_sync["created_count"],
+                    "updated": last_sync["updated_count"],
+                    "skipped": last_sync["skipped_count"],
+                    "failed": last_sync["failed_count"],
+                },
+            },
+            "outbox": {
+                "pending": outbox.get("pending", 0),
+                "processing": outbox.get("processing", 0),
+                "succeeded": outbox.get("succeeded", 0),
+                "failed": outbox.get("failed", 0),
+            },
+        }
+
+    def lease_outbox(self, *, tenant_id: str, batch_size: int) -> list[dict[str, Any]]:
+        with transaction(self.conn):
+            rows = self.conn.execute(
+                """
+                select id::text as id
+                from resource_outbox
+                where tenant_id = %s
+                  and status = 'pending'
+                  and available_at <= now()
+                order by created_at, id
+                limit %s
+                for update skip locked
+                """,
+                (tenant_id, batch_size),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if not ids:
+                return []
+            leased = self.conn.execute(
+                """
+                update resource_outbox
+                set status = 'processing',
+                    attempts = attempts + 1,
+                    updated_at = now()
+                where id = any(%s::uuid[])
+                returning id::text, tenant_id, resource_id::text, event_id::text, topic, payload, attempts
+                """,
+                (ids,),
+            ).fetchall()
+        return [dict(row) for row in leased]
+
+    def complete_outbox(self, outbox_id: str, *, status: str = "succeeded", error: str | None = None) -> None:
+        self.conn.execute(
+            """
+            update resource_outbox
+            set status = %s,
+                last_error = %s,
+                updated_at = now()
+            where id = %s
+            """,
+            (status, error, outbox_id),
+        )
+        self.conn.commit()
+
     def _lock_mapping(self, tenant_id: str, mapping: dict[str, Any] | None) -> None:
         if mapping is None:
             return
