@@ -5,9 +5,10 @@ from unittest.mock import patch
 from tools.feishu_wiki import read_feishu_wiki
 
 
-def test_read_feishu_wiki_missing_env():
-    # Test when FEISHU_WIKI_SPACE_ID is missing
-    with patch.dict(os.environ, {}, clear=True):
+@patch("tools.lark_cli.lark_cli")
+def test_read_feishu_wiki_missing_env(mock_lark_cli):
+    # Test when FEISHU_WIKI_SPACE_ID is explicitly empty
+    with patch.dict(os.environ, {"FEISHU_WIKI_SPACE_ID": ""}, clear=True):
         res = read_feishu_wiki.func()
         assert "error" in res
         assert "FEISHU_WIKI_SPACE_ID" in res["error"]

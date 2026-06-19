@@ -24,7 +24,7 @@ def read_feishu_wiki(config: RunnableConfig = None) -> dict[str, Any]:
     """
     from tools.lark_cli import lark_cli  # 延迟 import，避免循环依赖
 
-    space_id = os.environ.get("FEISHU_WIKI_SPACE_ID", "")
+    space_id = os.environ.get("FEISHU_WIKI_SPACE_ID", "7648177996175543260")
     if not space_id:
         return {
             "error": "环境变量缺失：FEISHU_WIKI_SPACE_ID 未配置。",

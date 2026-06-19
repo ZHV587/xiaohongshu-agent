@@ -163,7 +163,6 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         clean_args.append(arg)
 
     # Resolve token injection
-
     run_env = {
         "PATH": os.environ.get("PATH", ""),
         "LARKSUITE_CLI_CONTENT_SAFETY_MODE": "warn"
@@ -185,6 +184,8 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         else:
             run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
             run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
+        if "--as" not in clean_args:
+            clean_args.extend(["--as", "user"])
     elif server_mode and not force_bot:
         return "Please authorize Feishu access first. Current server request has no Feishu user identity."
     else:
@@ -286,4 +287,3 @@ def auto_update_lark_cli():
     """启动后台守护线程自动更新 lark-cli"""
     thread = threading.Thread(target=_run_lark_cli_update, daemon=True)
     thread.start()
-

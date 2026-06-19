@@ -37,12 +37,6 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
       alert("请输入 App ID 和 App Secret");
       return;
     }
-    const hasBitable = configs.FEISHU_BITABLE_APP_TOKEN && configs.FEISHU_BITABLE_TABLE_ID;
-    const hasWiki = configs.FEISHU_WIKI_SPACE_ID;
-    if (!hasBitable && !hasWiki) {
-      alert("请至少配置【多维表格坐标（App Token + Table ID）】或【知识空间 ID】之一");
-      return;
-    }
 
     setSaving(true);
     try {
@@ -153,23 +147,6 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                 <p className="text-[10px] text-gray-400">App Token 位于表格 URL 中 `base/` 后面的一长串字符，Table ID 对应具体数据表的子 ID。</p>
               </div>
 
-              <div className="space-y-4 pt-4">
-                <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">飞书知识库 (Wiki) 坐标</h3>
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="wiki-space-id" className="text-xs font-medium text-charcoal-light">Wiki Space ID (知识空间 ID)</Label>
-                    <Input
-                      id="wiki-space-id"
-                      type="text"
-                      value={configs.FEISHU_WIKI_SPACE_ID || ""}
-                      onChange={(e) => setConfigs({ ...configs, FEISHU_WIKI_SPACE_ID: e.target.value })}
-                      placeholder="6946843325487912356"
-                      className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
-                    />
-                  </div>
-                </div>
-                <p className="text-[10px] text-gray-400">Space ID 位于知识库 URL 中 `wiki/space/` 后面的一长串数字，或使用 `my_library` 作为个人文档库。</p>
-              </div>
 
               <div className="flex items-center justify-end gap-2 border-t border-border/80 pt-4 mt-6">
                 <Button
@@ -208,15 +185,6 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                     </p>
                     <span className="text-[10px] text-gray-400 block mt-0.5 font-mono">
                       https://.../base/...?table=<span className="text-coral underline font-bold">tblXXXXXXXXX</span>&view=...
-                    </span>
-                  </div>
-                  <div>
-                    <span className="font-semibold text-charcoal block mb-0.5">3. Wiki Space ID (知识空间 ID)</span>
-                    <p className="text-[11px]">
-                      打开您的飞书知识库，在浏览器的地址栏中，URL 路径里紧随 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">/wiki/space/</code> 后面的一长串数字即为 Space ID。若要绑定个人文档库，请输入 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">my_library</code>。
-                    </p>
-                    <span className="text-[10px] text-gray-400 block mt-0.5 font-mono">
-                      https://.../wiki/space/<span className="text-coral underline font-bold">6946843325487912356</span>
                     </span>
                   </div>
                 </div>

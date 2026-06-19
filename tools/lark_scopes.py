@@ -16,5 +16,7 @@ LARK_SCOPES = [
     "calendar:calendar.event:create",
     "wiki:space:read",
     "wiki:node:read",
+    "wiki:node:retrieve",
     "docx:document:read",
 ]
+
