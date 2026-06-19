@@ -72,148 +72,6 @@ def handle_uat_status(args):
             "error": "Feishu user authorization is missing or expired.",
         }))
 
-def handle_sync(args):
-    open_id = args.open_id
-    title = args.title
-    content = args.content
-    
-    token = get_uat(open_id)
-    if not token:
-        print(json.dumps({"ok": False, "error": "Unauthorized: Feishu token invalid or expired."}))
-        sys.exit(1)
-        
-    app_token = os.environ.get("FEISHU_BITABLE_APP_TOKEN")
-    table_id = os.environ.get("FEISHU_BITABLE_TABLE_ID")
-    if not app_token or not table_id:
-        print(json.dumps({"ok": False, "error": "Bitable env vars FEISHU_BITABLE_APP_TOKEN or TABLE_ID not configured."}))
-        sys.exit(1)
-        
-    try:
-        config = identity_config(open_id)
-        title_field = os.environ.get("XHS_BITABLE_FIELD_TITLE", "标题")
-        body_field = os.environ.get("XHS_BITABLE_FIELD_BODY", "正文内容")
-        tags_field = os.environ.get("XHS_BITABLE_FIELD_TAGS", "标签")
-        author_field = os.environ.get("XHS_BITABLE_FIELD_AUTHOR", "创建人")
-        status_field = os.environ.get("XHS_BITABLE_FIELD_STATUS", "状态")
-                
-        fields_payload = {
-            title_field: title,
-            body_field: content,
-            author_field: open_id,
-            status_field: "草稿",
-        }
-        if getattr(args, "tags", None):
-            fields_payload[tags_field] = args.tags
-
-        create_payload = {"fields": fields_payload}
-
-        sync_cmd = shlex.join([
-            "base",
-            "+record-create",
-            "--base-token", app_token,
-            "--table-id", table_id,
-            "--json", json.dumps(create_payload, ensure_ascii=False)
-        ])
-        
-        sync_resp = lark_cli(sync_cmd, config=config)
-        if sync_resp.startswith("Error"):
-            print(json.dumps({"ok": False, "error": f"Lark CLI error: {sync_resp}"}))
-            sys.exit(1)
-            
-        try:
-            res_data = json.loads(sync_resp)
-            if "code" in res_data and res_data["code"] != 0:
-                print(json.dumps({"ok": False, "error": res_data.get("msg", "Failed writing to Feishu Bitable.")}))
-                sys.exit(1)
-            record_id = (
-                res_data.get("data", {}).get("record", {}).get("record_id")
-                or res_data.get("data", {}).get("record_id")
-                or ""
-            )
-        except Exception:
-            record_id = ""
-            
-        print(json.dumps({
-            "ok": True,
-            "record_id": record_id,
-            "redirect_url": f"https://feishu.cn/base/{app_token}?table={table_id}"
-        }, ensure_ascii=False))
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
-        sys.exit(1)
-
-def handle_notify(args):
-    open_id = args.open_id
-    chat_id = args.chat_id
-    title = args.title
-    content = args.content
-    
-    token = get_uat(open_id)
-    if not token:
-        print(json.dumps({"ok": False, "error": "Unauthorized: Feishu token invalid or expired."}))
-        sys.exit(1)
-        
-    try:
-        card_content = {
-            "config": {
-                "wide_screen_mode": True
-            },
-            "header": {
-                "title": {
-                    "tag": "plain_text",
-                    "content": "🍠 小红书笔记待审核"
-                },
-                "template": "red"
-            },
-            "elements": [
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": f"**选题标题**：\n{title}\n\n**笔记正文草稿**：\n{content}"
-                    }
-                },
-                {
-                    "tag": "note",
-                    "elements": [
-                        {
-                            "tag": "plain_text",
-                            "content": "请前往小红书智能体文案工作台确认发布。"
-                        }
-                    ]
-                }
-            ]
-        }
-        
-        notify_cmd = shlex.join([
-            "im",
-            "+messages-send",
-            "--chat-id", chat_id,
-            "--msg-type", "interactive",
-            "--content", json.dumps(card_content)
-        ])
-        
-        config = identity_config(open_id)
-        msg_resp = lark_cli(notify_cmd, config=config)
-        
-        if msg_resp.startswith("Error"):
-            print(json.dumps({"ok": False, "error": msg_resp}))
-            sys.exit(1)
-            
-        try:
-            res_data = json.loads(msg_resp)
-            if "code" in res_data and res_data["code"] != 0:
-                print(json.dumps({"ok": False, "error": res_data.get("msg", "Failed sending card notification.")}))
-                sys.exit(1)
-        except Exception:
-            pass
-            
-        print(json.dumps({"ok": True}))
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
-        sys.exit(1)
-
-
 def handle_config_status(args):
     center = ConfigCenter(path=args.config_path, encryption_key=args.encryption_key)
     print(json.dumps({"ok": True, "configs": center.get_redacted()}, ensure_ascii=False))
@@ -265,7 +123,7 @@ def main():
     parser = argparse.ArgumentParser(description="Feishu Web API bridge runner")
     parser.add_argument(
         "--action",
-        choices=["save-uat", "uat-status", "chats", "sync", "notify", "config-status", "config-set", "wiki-space"],
+        choices=["save-uat", "uat-status", "chats", "config-status", "config-set", "wiki-space"],
         required=True,
     )
     parser.add_argument("--open-id", required=False)
@@ -274,12 +132,6 @@ def main():
     parser.add_argument("--expires-at", type=float)
     parser.add_argument("--scopes")
     parser.add_argument("--name")
-    parser.add_argument("--record-id")
-    parser.add_argument("--chat-id")
-    parser.add_argument("--title")
-    parser.add_argument("--content")
-    parser.add_argument("--tags")
-    parser.add_argument("--thread-id")
     parser.add_argument("--config-path")
     parser.add_argument("--encryption-key")
     parser.add_argument("--configs")
@@ -292,10 +144,6 @@ def main():
         handle_uat_status(args)
     elif args.action == "chats":
         handle_chats(args)
-    elif args.action == "sync":
-        handle_sync(args)
-    elif args.action == "notify":
-        handle_notify(args)
     elif args.action == "config-status":
         handle_config_status(args)
     elif args.action == "config-set":

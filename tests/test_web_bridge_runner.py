@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
@@ -16,44 +15,6 @@ def test_handle_uat_status_reports_authorized(capsys):
 
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"ok": True, "authorized": True}
-
-
-def test_handle_sync_creates_draft_record(capsys):
-    args = argparse.Namespace(
-        open_id="ou_123",
-        title="标题",
-        content="正文",
-        tags="#露营,#户外",
-        thread_id="thread_123",
-    )
-
-    with patch.dict(
-        os.environ,
-        {
-            "FEISHU_BITABLE_APP_TOKEN": "base_token",
-            "FEISHU_BITABLE_TABLE_ID": "tbl_id",
-        },
-    ):
-        with patch("tools.web_bridge_runner.get_uat", return_value="uat_token"):
-            with patch("tools.web_bridge_runner.lark_cli") as mock_lark_cli:
-                mock_lark_cli.return_value = json.dumps(
-                    {"data": {"record": {"record_id": "rec_new"}}}
-                )
-
-                web_bridge_runner.handle_sync(args)
-
-    command = mock_lark_cli.call_args.args[0]
-    assert "+record-create" in command
-    assert "+record-batch-update" not in command
-    assert '"状态": "草稿"' in command
-    assert '"标签": "#露营,#户外"' in command
-
-    captured = capsys.readouterr()
-    assert json.loads(captured.out) == {
-        "ok": True,
-        "record_id": "rec_new",
-        "redirect_url": "https://feishu.cn/base/base_token?table=tbl_id",
-    }
 
 
 def test_config_status_reads_redacted_center(tmp_path, capsys):

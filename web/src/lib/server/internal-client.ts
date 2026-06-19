@@ -17,17 +17,7 @@ export async function forwardToInternalServer(
   let action = "";
   const runnerArgs: string[] = [scriptPath, "--open-id", openId];
   
-  if (pathName === "/_internal/sync") {
-    action = "sync";
-    const { title, content, tags, threadId } = extraBody || {};
-    runnerArgs.push("--action", "sync", "--title", String(title), "--content", String(content));
-    if (tags) runnerArgs.push("--tags", String(tags));
-    if (threadId) runnerArgs.push("--thread-id", String(threadId));
-  } else if (pathName === "/_internal/notify") {
-    action = "notify";
-    const { chatId, title, content } = extraBody || {};
-    runnerArgs.push("--action", "notify", "--chat-id", String(chatId), "--title", String(title), "--content", String(content));
-  } else if (pathName === "/_internal/chats") {
+  if (pathName === "/_internal/chats") {
     action = "chats";
     runnerArgs.push("--action", "chats");
   } else if (pathName === "/_internal/uat") {
