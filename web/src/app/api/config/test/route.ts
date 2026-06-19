@@ -7,9 +7,14 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   try {
     await requireAdmin();
+  } catch (error) {
+    return apiErrorResponse(error);
+  }
+
+  try {
     const body = await req.json();
     const { apiKey, baseUrl, model } = body;
-    
+
     if (!apiKey || !baseUrl) {
       return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
     }
@@ -27,14 +32,14 @@ export async function POST(req: NextRequest) {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
+            Authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
             model: targetModel,
             messages: [{ role: "user", content: "ping" }],
-            max_tokens: 3
+            max_tokens: 3,
           }),
-          signal: controller.signal
+          signal: controller.signal,
         });
         clearTimeout(timeoutId);
         return resp;
@@ -54,9 +59,9 @@ export async function POST(req: NextRequest) {
         const modelsResp = await fetch(modelsUrl, {
           method: "GET",
           headers: {
-            "Authorization": `Bearer ${apiKey}`
+            Authorization: `Bearer ${apiKey}`,
           },
-          signal: modelsController.signal
+          signal: modelsController.signal,
         });
         clearTimeout(modelsTimeoutId);
 
@@ -65,7 +70,10 @@ export async function POST(req: NextRequest) {
           if (modelsData && Array.isArray(modelsData.data)) {
             return modelsData.data
               .map((item: any) => item?.id)
-              .filter((id: any): id is string => typeof id === "string" && id.trim() !== "");
+              .filter(
+                (id: any): id is string =>
+                  typeof id === "string" && id.trim() !== "",
+              );
           }
         }
       } catch (err) {
@@ -114,27 +122,26 @@ export async function POST(req: NextRequest) {
     if (resp.status === 200) {
       const models = await fetchModelsList();
       return NextResponse.json({ ok: true, latency, models });
-    } else {
-      const errText = await resp.text();
-      let errorDetail = "";
-      try {
-        const parsed = JSON.parse(errText);
-        errorDetail = parsed.error?.message || parsed.msg || errText;
-      } catch {
-        errorDetail = errText;
-      }
-      return NextResponse.json({
-        ok: false,
-        status: resp.status,
-        error: `HTTP ${resp.status}: ${errorDetail.substring(0, 100)}`
-      });
     }
+
+    const errText = await resp.text();
+    let errorDetail = "";
+    try {
+      const parsed = JSON.parse(errText);
+      errorDetail = parsed.error?.message || parsed.msg || errText;
+    } catch {
+      errorDetail = errText;
+    }
+    return NextResponse.json({
+      ok: false,
+      status: resp.status,
+      error: `HTTP ${resp.status}: ${errorDetail.substring(0, 100)}`,
+    });
   } catch (e: any) {
     let errorMsg = e.message || String(e);
     if (e.name === "AbortError") {
       errorMsg = "Request timeout (6s)";
     }
-    if (e.status) return apiErrorResponse(e);
     return NextResponse.json({ ok: false, error: errorMsg });
   }
 }

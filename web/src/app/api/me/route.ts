@@ -1,5 +1,4 @@
-import { NextResponse } from "next/server";
-import { apiErrorResponse, requireUser } from "@/lib/server/authz";
+import { apiErrorResponse, jsonNoStore, requireUser } from "@/lib/server/authz";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const user = await requireUser();
-    return NextResponse.json({
+    return jsonNoStore({
       ok: true,
       user: {
         openId: user.openId,
