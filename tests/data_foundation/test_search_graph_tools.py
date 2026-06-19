@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import math
+from types import SimpleNamespace
 
 import pytest
 
 from data_foundation.graph import expand_graph
 from data_foundation.repository import ResourceRepository
-from data_foundation.search import keyword_search, semantic_search
+from data_foundation.search import _result_from_row, keyword_search, semantic_search
 
 
 class _User:
@@ -122,6 +124,24 @@ class _FakeRepository:
                 "weight": 0.8,
             }
         ]
+
+
+def test_search_result_metadata_serializes_updated_at_as_iso_8601():
+    updated_at = datetime(2026, 6, 19, 12, 30, tzinfo=timezone.utc)
+
+    result = _result_from_row(
+        {
+            "id": "resource-1",
+            "title": "露营装备",
+            "summary": None,
+            "type": "topic",
+            "visibility": "team",
+            "score": 0.75,
+            "updated_at": updated_at,
+        }
+    )
+
+    assert result.metadata["updated_at"] == updated_at.isoformat()
 
 
 def test_keyword_search_empty_query_returns_empty_without_database_call():
@@ -474,3 +494,29 @@ def test_search_tool_returns_structured_json(monkeypatch, migrated_conn):
     assert result["ok"] is True
     assert result["results"][0]["title"] == "露营装备"
     assert "content_text" not in result["results"][0]
+
+
+def test_get_resource_tool_returns_iso_updated_at(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    updated_at = datetime(2026, 6, 19, 12, 30, tzinfo=timezone.utc)
+    resource = SimpleNamespace(
+        id="resource-1",
+        type="topic",
+        title="露营装备",
+        summary=None,
+        content_text="帐篷 天幕",
+        content_json={},
+        version=1,
+        updated_at=updated_at,
+    )
+
+    @contextmanager
+    def repository():
+        yield SimpleNamespace(get_resource=lambda *_args: resource)
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+
+    result = df_tools.get_resource.func(resource.id, config=_Config())
+
+    assert result["resource"]["updated_at"] == updated_at.isoformat()

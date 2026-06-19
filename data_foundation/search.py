@@ -21,6 +21,9 @@ def validate_embedding(embedding: list[float]) -> None:
 
 def _result_from_row(row: Any) -> ResourceSearchResult:
     metadata = {"type": row["type"], "visibility": row["visibility"]}
+    updated_at = row.get("updated_at") if hasattr(row, "get") else row["updated_at"]
+    if updated_at is not None:
+        metadata["updated_at"] = updated_at.isoformat()
     if "chunk_index" in row:
         metadata.update(chunk_index=int(row["chunk_index"]), chunk_text=row["chunk_text"])
     return ResourceSearchResult(

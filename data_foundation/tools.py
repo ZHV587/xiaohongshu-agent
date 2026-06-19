@@ -104,6 +104,7 @@ def get_resource(resource_id: str, config: RunnableConfig | None = None) -> dict
             "content_text": resource.content_text,
             "content_json": resource.content_json,
             "version": resource.version,
+            "updated_at": resource.updated_at.isoformat() if resource.updated_at else None,
         },
     }
 
