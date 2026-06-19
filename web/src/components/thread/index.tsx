@@ -225,8 +225,7 @@ export function Thread() {
   // 当前动态编辑的选题和正文
   const [draftTitle, setDraftTitle] = useState("精致露营「搬家式」装备清单");
   const [draftContent, setDraftContent] = useState("夏天太适合露营啦！⛺但是作为一个精致的搬家式露营玩家，带什么装备去真的大有讲究！今天就给大家盘点一下我私藏的「搬家式」露营好物，少带一件体验感都打折！\n\n👇精致露营必带清单：\n1️⃣ 双顶充气天幕：不仅防雨防晒，最重要是拍照真的超出片！空间很大，容纳8个人也宽敞。");
-  const [recordId] = useState("rec_default_4");
-  const [rowNum] = useState("4");
+  const [syncedRecordId, setSyncedRecordId] = useState<string | null>(null);
 
   // 多图轮播状态
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -399,9 +398,9 @@ export function Thread() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              recordId,
               title: draftTitle,
-              content: draftContent
+              content: draftContent,
+              threadId,
             })
           })
             .then(res => {
@@ -414,6 +413,9 @@ export function Thread() {
                 toast.success("成功同步修改至飞书多维表格！");
                 if (data.redirect_url) {
                   setBitableUrl(data.redirect_url);
+                }
+                if (data.record_id) {
+                  setSyncedRecordId(data.record_id);
                 }
               } else {
                 throw new Error(data.error || "Sync error");
@@ -557,7 +559,7 @@ export function Thread() {
       current_draft: {
         title: draftTitle,
         content: draftContent,
-        record_id: recordId
+        record_id: syncedRecordId,
       }
     };
     
@@ -596,7 +598,7 @@ export function Thread() {
       current_draft: {
         title: draftTitle,
         content: draftContent,
-        record_id: recordId
+        record_id: syncedRecordId,
       }
     };
 
@@ -1124,7 +1126,9 @@ export function Thread() {
                           <div className="size-6 rounded-full bg-oats-dark text-charcoal font-bold text-xs flex items-center justify-center">Z</div>
                           <div>
                             <div className="text-[10px] font-bold text-charcoal">张潇潇 (运营组)</div>
-                            <div className="text-[8px] text-gray-400">当前关联多维表格第 {rowNum} 行</div>
+                            <div className="text-[8px] text-gray-400">
+                              {syncedRecordId ? `当前草稿记录 ${syncedRecordId}` : "尚未创建飞书草稿记录"}
+                            </div>
                           </div>
                         </div>
                         <button className="border border-coral text-coral px-2.5 py-0.5 rounded-full text-[9px] font-semibold">关注</button>
@@ -1409,8 +1413,10 @@ export function Thread() {
 
                   <div className="space-y-2 text-[10px]">
                     <div className="flex justify-between">
-                      <span className="text-gray-500">已绑定选题行：</span>
-                      <span className="font-semibold text-charcoal">{draftTitle} (第 {rowNum} 行)</span>
+                      <span className="text-gray-500">草稿入库状态：</span>
+                      <span className="font-semibold text-charcoal">
+                        {syncedRecordId ? `已创建草稿记录：${syncedRecordId}` : "尚未入库"}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">动态映射列：</span>
@@ -1437,7 +1443,7 @@ export function Thread() {
                       </div>
                       <div className={cn("flex items-center gap-1.5", syncStep >= 3 ? "text-green-600 font-semibold" : "text-gray-400")}>
                         {syncStep === 3 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 3 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
-                        <span>正在向多维表格行写入文案与标题...</span>
+                        <span>正在创建飞书多维表格草稿记录...</span>
                       </div>
                     </div>
                   )}

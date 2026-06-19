@@ -19,15 +19,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { recordId, title, content } = body;
-    if (!recordId || !title || !content) {
-      return NextResponse.json({ error: "Bad Request: Missing parameters" }, { status: 400 });
+    const { title, content, tags, threadId } = body;
+    if (!title || !content) {
+      return NextResponse.json({ error: "Bad Request: Missing title or content" }, { status: 400 });
     }
 
     const resp = await forwardToInternalServer("/_internal/sync", "POST", payload.sub, {
-      recordId,
       title,
-      content
+      content,
+      tags,
+      threadId,
     });
 
     if (!resp.ok) {

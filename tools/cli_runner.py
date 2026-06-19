@@ -72,9 +72,19 @@ def handle_chats(args):
         print(json.dumps({"ok": False, "error": str(e)}))
         sys.exit(1)
 
+def handle_uat_status(args):
+    token = get_uat(args.open_id)
+    if token:
+        print(json.dumps({"ok": True, "authorized": True}))
+    else:
+        print(json.dumps({
+            "ok": True,
+            "authorized": False,
+            "error": "Feishu user authorization is missing or expired.",
+        }))
+
 def handle_sync(args):
     open_id = args.open_id
-    record_id = args.record_id
     title = args.title
     content = args.content
     
@@ -90,57 +100,30 @@ def handle_sync(args):
         sys.exit(1)
         
     try:
-        # Get fields list to map title/body
-        field_cmd = shlex.join([
-            "base",
-            "+field-list",
-            "--base-token", app_token,
-            "--table-id", table_id
-        ])
         config = MockConfig(open_id)
-        cli_fields_resp = lark_cli(field_cmd, config=config)
-        
-        body_field = "正文内容"
-        title_field = "标题"
-        
-        if not cli_fields_resp.startswith("Error"):
-            try:
-                fields_data = json.loads(cli_fields_resp)
-                fields = fields_data.get("data", {}).get("fields") or []
-                
-                found_body = None
-                found_title = None
-                
-                for f in fields:
-                    fname = f.get("name", "")
-                    if any(kw in fname for kw in ["正文", "内容", "文案", "主正文", "Body", "Content"]):
-                        found_body = f.get("id", fname)
-                    if any(kw in fname for kw in ["标题", "主题", "Title", "Subject"]):
-                        found_title = f.get("id", fname)
-                        
-                if found_body:
-                    body_field = found_body
-                if found_title:
-                    title_field = found_title
-            except Exception as e:
-                pass
+        title_field = os.environ.get("XHS_BITABLE_FIELD_TITLE", "标题")
+        body_field = os.environ.get("XHS_BITABLE_FIELD_BODY", "正文内容")
+        tags_field = os.environ.get("XHS_BITABLE_FIELD_TAGS", "标签")
+        author_field = os.environ.get("XHS_BITABLE_FIELD_AUTHOR", "创建人")
+        status_field = os.environ.get("XHS_BITABLE_FIELD_STATUS", "状态")
                 
         fields_payload = {
+            title_field: title,
             body_field: content,
-            title_field: title
+            author_field: open_id,
+            status_field: "草稿",
         }
-        
-        update_payload = {
-            "record_id_list": [record_id],
-            "patch": fields_payload
-        }
-        
+        if getattr(args, "tags", None):
+            fields_payload[tags_field] = args.tags
+
+        create_payload = {"fields": fields_payload}
+
         sync_cmd = shlex.join([
             "base",
-            "+record-batch-update",
+            "+record-create",
             "--base-token", app_token,
             "--table-id", table_id,
-            "--json", json.dumps(update_payload)
+            "--json", json.dumps(create_payload, ensure_ascii=False)
         ])
         
         sync_resp = lark_cli(sync_cmd, config=config)
@@ -153,13 +136,19 @@ def handle_sync(args):
             if "code" in res_data and res_data["code"] != 0:
                 print(json.dumps({"ok": False, "error": res_data.get("msg", "Failed writing to Feishu Bitable.")}))
                 sys.exit(1)
+            record_id = (
+                res_data.get("data", {}).get("record", {}).get("record_id")
+                or res_data.get("data", {}).get("record_id")
+                or ""
+            )
         except Exception:
-            pass
+            record_id = ""
             
         print(json.dumps({
             "ok": True,
+            "record_id": record_id,
             "redirect_url": f"https://feishu.cn/base/{app_token}?table={table_id}"
-        }))
+        }, ensure_ascii=False))
     except Exception as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         sys.exit(1)
@@ -237,7 +226,7 @@ def handle_notify(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Lark CLI Bridge Runner for Web API")
-    parser.add_argument("--action", choices=["save-uat", "chats", "sync", "notify"], required=True)
+    parser.add_argument("--action", choices=["save-uat", "uat-status", "chats", "sync", "notify"], required=True)
     parser.add_argument("--open-id", required=True)
     parser.add_argument("--uat")
     parser.add_argument("--refresh-token")
@@ -248,11 +237,15 @@ def main():
     parser.add_argument("--chat-id")
     parser.add_argument("--title")
     parser.add_argument("--content")
+    parser.add_argument("--tags")
+    parser.add_argument("--thread-id")
     
     args = parser.parse_args()
     
     if args.action == "save-uat":
         handle_save_uat(args)
+    elif args.action == "uat-status":
+        handle_uat_status(args)
     elif args.action == "chats":
         handle_chats(args)
     elif args.action == "sync":

@@ -18,8 +18,10 @@ export async function forwardToInternalServer(
   
   if (pathName === "/_internal/sync") {
     action = "sync";
-    const { recordId, title, content } = extraBody || {};
-    runnerArgs.push("--action", "sync", "--record-id", String(recordId), "--title", String(title), "--content", String(content));
+    const { title, content, tags, threadId } = extraBody || {};
+    runnerArgs.push("--action", "sync", "--title", String(title), "--content", String(content));
+    if (tags) runnerArgs.push("--tags", String(tags));
+    if (threadId) runnerArgs.push("--thread-id", String(threadId));
   } else if (pathName === "/_internal/notify") {
     action = "notify";
     const { chatId, title, content } = extraBody || {};
@@ -38,6 +40,9 @@ export async function forwardToInternalServer(
       "--scopes", (scopes || []).join(","),
       "--name", String(name || "")
     );
+  } else if (pathName === "/_internal/uat-status") {
+    action = "uat-status";
+    runnerArgs.push("--action", "uat-status");
   } else {
     return new Response(JSON.stringify({ error: `Unknown internal path: ${pathName}` }), { status: 404 });
   }
