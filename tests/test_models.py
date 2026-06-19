@@ -381,3 +381,58 @@ def test_verify_gateway_false_when_none(monkeypatch):
     from models import verify_gateway
     monkeypatch.setattr(models_mod, "discover_models", lambda url, key: None)
     assert verify_gateway("https://gw/v1", "key") is False
+
+
+def test_lazy_pool_deferred_loading(monkeypatch):
+    """验证 LazyPool 确实延迟加载且线程安全。"""
+    from models import LazyPool, ModelCandidate
+
+    calls = {"n": 0}
+
+    def fake_actual_build_pool():
+        calls["n"] += 1
+        return [ModelCandidate(gateway_name="g1", model_id="m1", model=object())]
+
+    monkeypatch.setattr(models_mod, "_actual_build_pool", fake_actual_build_pool)
+
+    pool = LazyPool()
+    assert pool._loaded is False
+    assert calls["n"] == 0
+
+    assert len(pool) == 1
+    assert pool._loaded is True
+    assert calls["n"] == 1
+
+    assert pool[0].model_id == "m1"
+    assert calls["n"] == 1
+
+
+def test_build_chat_model_providers(monkeypatch):
+    from models import _build_chat_model
+    from langchain_anthropic import ChatAnthropic
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_openai import ChatOpenAI
+
+    # Ensure NO_PROXY does not cause httpx initialization failures
+    monkeypatch.delenv("NO_PROXY", raising=False)
+
+    # Test anthropic
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    model_anthropic = _build_chat_model("claude-3-5-sonnet", "https://api.anthropic.com", "fake-key")
+    assert isinstance(model_anthropic, ChatAnthropic)
+
+    # Test google_genai
+    monkeypatch.setenv("LLM_PROVIDER", "google_genai")
+    model_google = _build_chat_model("gemini-1.5-pro", "https://generativelanguage.googleapis.com", "fake-key")
+    assert isinstance(model_google, ChatGoogleGenerativeAI)
+
+    # Test default/openai fallback
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    model_openai = _build_chat_model("gpt-4o", "https://api.openai.com/v1", "fake-key")
+    assert isinstance(model_openai, ChatOpenAI)
+
+    # Test default/openai fallback when LLM_PROVIDER is unset or empty
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    model_default = _build_chat_model("gpt-4o", "https://api.openai.com/v1", "fake-key")
+    assert isinstance(model_default, ChatOpenAI)
+
