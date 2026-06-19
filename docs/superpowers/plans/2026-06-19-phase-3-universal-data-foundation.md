@@ -77,7 +77,7 @@ create extension if not exists vector;
 - Create: `tests/data_foundation/conftest.py`
 - Create: `tests/data_foundation/test_schema.py`
 
-- [ ] **Step 1: Add failing schema tests**
+- [x] **Step 1: Add failing schema tests**
 
 Create `tests/data_foundation/conftest.py`:
 
@@ -158,7 +158,7 @@ def test_schema_is_idempotent(migrated_conn):
     assert count == 8
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -168,7 +168,7 @@ uv run pytest tests/data_foundation/test_schema.py -q
 
 Expected before implementation: FAIL because `psycopg` or `data_foundation.db` is missing.
 
-- [ ] **Step 3: Add psycopg dependency**
+- [x] **Step 3: Add psycopg dependency**
 
 In `pyproject.toml`, add this dependency in `[project].dependencies`:
 
@@ -182,7 +182,7 @@ Run:
 uv sync
 ```
 
-- [ ] **Step 4: Create package and schema**
+- [x] **Step 4: Create package and schema**
 
 Create `data_foundation/__init__.py`:
 
@@ -315,7 +315,7 @@ create index if not exists idx_resource_outbox_ready
   on resource_outbox (status, available_at, topic);
 ```
 
-- [ ] **Step 5: Implement migration runner**
+- [x] **Step 5: Implement migration runner**
 
 Create `data_foundation/db.py`:
 
@@ -356,7 +356,7 @@ def transaction(conn: Connection) -> Iterator[Connection]:
         yield conn
 ```
 
-- [ ] **Step 6: Run schema tests**
+- [x] **Step 6: Run schema tests**
 
 Run:
 
@@ -366,7 +366,7 @@ uv run pytest tests/data_foundation/test_schema.py -q
 
 Expected: PASS when `TEST_XHS_DATABASE_URL` points to a Postgres database with permission to create extensions.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add pyproject.toml uv.lock data_foundation tests/data_foundation
@@ -381,7 +381,7 @@ git commit -m "feat: add phase three postgres schema"
 - Create: `data_foundation/repository.py`
 - Create: `tests/data_foundation/test_repository.py`
 
-- [ ] **Step 1: Write failing repository tests**
+- [x] **Step 1: Write failing repository tests**
 
 Create `tests/data_foundation/test_repository.py`:
 
@@ -478,7 +478,7 @@ def test_permission_filter_blocks_other_private_resource(migrated_conn):
     assert repo.get_resource("default", "ou_other", created.id) is not None
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -488,7 +488,7 @@ uv run pytest tests/data_foundation/test_repository.py -q
 
 Expected before implementation: FAIL because `ResourceRepository` is missing.
 
-- [ ] **Step 3: Create model dataclasses**
+- [x] **Step 3: Create model dataclasses**
 
 Create `data_foundation/models.py`:
 
@@ -548,7 +548,7 @@ class GraphExpansion:
     edges: list[GraphEdge]
 ```
 
-- [ ] **Step 4: Create permission SQL helper**
+- [x] **Step 4: Create permission SQL helper**
 
 Create `data_foundation/permissions.py`:
 
@@ -597,7 +597,7 @@ def readable_resource_where(alias: str = "r") -> str:
     """
 ```
 
-- [ ] **Step 5: Implement repository**
+- [x] **Step 5: Implement repository**
 
 Create `data_foundation/repository.py` with the exact public methods used by tests:
 
@@ -755,7 +755,7 @@ class ResourceRepository:
         return {name: self.conn.execute(f"select count(*) as c from {name}").fetchone()["c"] for name in names}
 ```
 
-- [ ] **Step 6: Run repository tests**
+- [x] **Step 6: Run repository tests**
 
 Run:
 
@@ -765,7 +765,7 @@ uv run pytest tests/data_foundation/test_repository.py -q
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add data_foundation tests/data_foundation
@@ -778,7 +778,7 @@ git commit -m "feat: add resource repository and permissions"
 - Create: `data_foundation/feishu_sync.py`
 - Create: `tests/data_foundation/test_feishu_sync.py`
 
-- [ ] **Step 1: Write failing sync tests**
+- [x] **Step 1: Write failing sync tests**
 
 Create `tests/data_foundation/test_feishu_sync.py`:
 
@@ -825,7 +825,7 @@ def test_sync_wiki_documents_upserts_docs_and_chunks(migrated_conn):
     assert [row["chunk_text"] for row in rows] == ["第一段", "第二段"]
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -835,7 +835,7 @@ uv run pytest tests/data_foundation/test_feishu_sync.py -q
 
 Expected before implementation: FAIL because `data_foundation.feishu_sync` is missing.
 
-- [ ] **Step 3: Add repository helper methods**
+- [x] **Step 3: Add repository helper methods**
 
 Append these methods inside `ResourceRepository`:
 
@@ -860,7 +860,7 @@ Append these methods inside `ResourceRepository`:
         return _resource_from_row(row) if row else None
 ```
 
-- [ ] **Step 4: Implement Feishu sync adapters**
+- [x] **Step 4: Implement Feishu sync adapters**
 
 Create `data_foundation/feishu_sync.py`:
 
@@ -962,7 +962,7 @@ def sync_wiki_documents(
     return SyncResult(imported=imported, errors=errors)
 ```
 
-- [ ] **Step 5: Run sync tests**
+- [x] **Step 5: Run sync tests**
 
 Run:
 
@@ -972,7 +972,7 @@ uv run pytest tests/data_foundation/test_feishu_sync.py -q
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add data_foundation tests/data_foundation
