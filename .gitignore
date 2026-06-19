@@ -37,6 +37,7 @@ tools/check_server_ports_new.py
 tools/deploy.py
 tools/fix_venv.py
 tools/run_backend.py
+!tools/run_backend.py
 
 # 模拟登录接口(本地测试用,不入生产)
 web/src/app/api/auth/feishu/simulate/
