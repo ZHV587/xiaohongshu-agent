@@ -35,6 +35,23 @@ class _MockConfigWithoutIdentity:
     server_info = _MockServerInfoWithoutIdentity()
 
 
+def test_runtime_identity_config_exposes_open_id():
+    from tools.runtime_identity import actor_open_id_from_config, identity_config
+
+    config = identity_config("ou_test_user")
+
+    assert actor_open_id_from_config(config) == "ou_test_user"
+
+
+def test_runtime_identity_missing_identity_returns_none():
+    from tools.runtime_identity import actor_open_id_from_config
+
+    class _Config:
+        server_info = object()
+
+    assert actor_open_id_from_config(_Config()) is None
+
+
 @patch("tools.lark_cli.subprocess.run")
 def test_lark_cli_server_mode_without_identity_does_not_fallback_to_bot(mock_run):
     res = lark_cli.func("im +chat-list", config=_MockConfigWithoutIdentity())
