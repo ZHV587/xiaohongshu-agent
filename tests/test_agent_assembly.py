@@ -158,3 +158,31 @@ def test_agent_registers_feishu_action_tools(monkeypatch):
     tool_names = {getattr(tool, "name", "") for tool in agent_module.feishu_action_tools}
 
     assert {"sync_copy_to_feishu", "send_review_notification"} <= tool_names
+
+
+def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
+    import importlib
+    import deepagents
+
+    captured = {}
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create_deep_agent(*args, **kwargs):
+        captured.update(kwargs)
+        return real_create(*args, **kwargs)
+
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+    deepagents.create_deep_agent = _capturing_create_deep_agent
+    try:
+        import agent as agent_module
+
+        importlib.reload(agent_module)
+    finally:
+        deepagents.create_deep_agent = real_create
+
+    interrupts = captured["interrupt_on"]
+    assert captured["checkpointer"] is True
+    assert interrupts["execute_lark_command"] is True
+    assert interrupts["sync_copy_to_feishu"] is True
+    assert interrupts["send_review_notification"] is True

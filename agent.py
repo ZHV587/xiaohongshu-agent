@@ -80,7 +80,12 @@ agent = create_deep_agent(
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[build_baokuan_analyst(model_registry, initial_model)],
     backend=backend,
-    interrupt_on={"execute_lark_command": True},
+    interrupt_on={
+        "execute_lark_command": True,
+        "sync_copy_to_feishu": True,
+        "send_review_notification": True,
+    },
+    checkpointer=True,
     middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(model_registry)],
     # 自学习记忆:团队共享(全员一份方法论)+ 用户私有(按 open_id 隔离)。
     # 团队在前、个人在后 —— sources 按序拼接注入,个人记忆覆盖团队默认。
