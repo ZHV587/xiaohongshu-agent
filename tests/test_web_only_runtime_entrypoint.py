@@ -81,3 +81,14 @@ def test_internal_client_excludes_business_write_paths():
 def test_web_api_business_write_routes_are_removed():
     assert not (ROOT / "web" / "src" / "app" / "api" / "feishu" / "sync" / "route.ts").exists()
     assert not (ROOT / "web" / "src" / "app" / "api" / "feishu" / "notify" / "route.ts").exists()
+
+
+def test_thread_ui_submits_feishu_write_intent_to_agent():
+    thread = (ROOT / "web" / "src" / "components" / "thread" / "index.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'fetch("/api/feishu/sync"' not in thread
+    assert 'fetch("/api/feishu/notify"' not in thread
+    assert "sync_copy_to_feishu" in thread
+    assert "send_review_notification" in thread

@@ -224,7 +224,6 @@ export function Thread() {
   // 当前动态编辑的选题和正文
   const [draftTitle, setDraftTitle] = useState("精致露营「搬家式」装备清单");
   const [draftContent, setDraftContent] = useState("夏天太适合露营啦！⛺但是作为一个精致的搬家式露营玩家，带什么装备去真的大有讲究！今天就给大家盘点一下我私藏的「搬家式」露营好物，少带一件体验感都打折！\n\n👇精致露营必带清单：\n1️⃣ 双顶充气天幕：不仅防雨防晒，最重要是拍照真的超出片！空间很大，容纳8个人也宽敞。");
-  const [syncedRecordId, setSyncedRecordId] = useState<string | null>(null);
 
   // 多图轮播状态
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -239,6 +238,7 @@ export function Thread() {
   const [selectedChatId, setSelectedChatId] = useState("");
   const [isFetchingChats, setIsFetchingChats] = useState(false);
   const [isSendingNotification, setIsSendingNotification] = useState(false);
+  const [isFeishuActionPending, setIsFeishuActionPending] = useState(false);
 
   // 同步校验进度条状态
   const [syncStepsVisible, setSyncStepsVisible] = useState(false);
@@ -429,105 +429,51 @@ export function Thread() {
     }
   };
 
-  // 模拟抛物线飞行动效与飞书同步
+  // 将飞书写入意图交给 Agent，由 HITL 确认后执行。
   const handleSyncToFeishu = () => {
-    if (isSyncing) return;
+    if (isSyncing || isLoading) return;
     setIsSyncing(true);
     setIsFlying(true);
 
-    // 0.8s 抛物线飞入动画后，展示步进校验器
     setTimeout(() => {
       setIsFlying(false);
-      setSyncStepsVisible(true);
-
-      // 1. 验证配置
-      setSyncStep(1);
-      setTimeout(() => {
-        // 2. 解析结构
-        setSyncStep(2);
-        setTimeout(() => {
-          // 3. 写入多维表格 (调用真实后端网关)
-          setSyncStep(3);
-
-          fetch("/api/feishu/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              title: draftTitle,
-              content: draftContent,
-              threadId,
-            })
-          })
-            .then(res => {
-              if (res.ok) return res.json();
-              throw new Error("Sync failed");
-            })
-            .then(data => {
-              if (data.ok) {
-                setSyncStep(4); // 成功
-                setLastSavedContent(draftContent);
-                setLastSavedTitle(draftTitle);
-                setIsDirty(false);
-                toast.success("成功同步修改至飞书多维表格！");
-                if (data.redirect_url) {
-                  setBitableUrl(data.redirect_url);
-                }
-                if (data.record_id) {
-                  setSyncedRecordId(data.record_id);
-                }
-              } else {
-                throw new Error(data.error || "Sync error");
-              }
-            })
-            .catch((err) => {
-              toast.error(`同步失败: ${err.message}`);
-              setSyncStep(0);
-              setSyncStepsVisible(false);
-            })
-            .finally(() => {
-              setIsSyncing(false);
-              setTimeout(() => {
-                setSyncStepsVisible(false);
-                setSyncStep(0);
-              }, 4000);
-            });
-
-        }, 1200);
-      }, 1000);
+      submitText(
+        [
+          "请调用 sync_copy_to_feishu 工具，把当前右侧文案保存为飞书多维表格草稿。",
+          "这是一个写入动作，请先向我确认写入风险和目标表，再继续。",
+          "",
+          `标题：${draftTitle}`,
+          "",
+          `正文：${draftContent}`,
+        ].join("\n")
+      );
+      setIsFeishuActionPending(true);
+      setSyncStepsVisible(false);
+      setSyncStep(0);
+      setIsSyncing(false);
+      toast.success("已交给智能体，等待确认/执行。");
     }, 800);
   };
 
-  // 一键群发通知
+  // 将群通知意图交给 Agent，由 HITL 确认后执行。
   const handleSendNotification = () => {
-    if (isSendingNotification || !selectedChatId) return;
+    if (isSendingNotification || isLoading || !selectedChatId) return;
     setIsSendingNotification(true);
 
-    fetch("/api/feishu/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chatId: selectedChatId,
-        title: draftTitle,
-        content: draftContent
-      })
-    })
-      .then(res => {
-        if (res.ok) return res.json();
-        throw new Error("Notify failed");
-      })
-      .then(data => {
-        if (data.ok) {
-          toast.success("富文本卡片已一键推送至指定飞书群聊！");
-        } else {
-          throw new Error(data.error);
-        }
-      })
-      .catch((err) => {
-        toast.error(`推送失败: ${err.message}`);
-      })
-      .finally(() => {
-        setIsSendingNotification(false);
-      });
+    submitText(
+      [
+        "请调用 send_review_notification 工具，把当前文案发送到我选择的飞书群用于审核。",
+        "这是一个外部发送动作，请先向我确认群聊、标题和正文摘要，再继续。",
+        "",
+        `chat_id：${selectedChatId}`,
+        `标题：${draftTitle}`,
+        "",
+        `正文：${draftContent}`,
+      ].join("\n")
+    );
+    setIsFeishuActionPending(true);
+    setIsSendingNotification(false);
+    toast.success("已交给智能体，等待确认/执行。");
   };
 
   // Emoji 点选插入
@@ -640,7 +586,7 @@ export function Thread() {
       current_draft: {
         title: draftTitle,
         content: draftContent,
-        record_id: syncedRecordId,
+        record_id: null,
       }
     };
 
@@ -679,7 +625,7 @@ export function Thread() {
       current_draft: {
         title: draftTitle,
         content: draftContent,
-        record_id: syncedRecordId,
+        record_id: null,
       }
     };
 
@@ -1223,7 +1169,7 @@ export function Thread() {
                                 <div>
                                   <div className="text-[10px] font-bold text-charcoal">张潇潇 (运营组)</div>
                                   <div className="text-[8px] text-gray-400">
-                                    {syncedRecordId ? `当前草稿记录 ${syncedRecordId}` : "尚未创建飞书草稿记录"}
+                                    {isFeishuActionPending ? "已交给智能体，等待确认/执行" : "尚未提交飞书操作"}
                                   </div>
                                 </div>
                               </div>
@@ -1527,7 +1473,7 @@ export function Thread() {
                           </div>
                           <div>
                             <h4 className="text-xs font-bold text-charcoal">同步到飞书多维表格</h4>
-                            <p className="text-[8px] text-gray-400">通过内网 HMAC 协议同步字段</p>
+                            <p className="text-[8px] text-gray-400">由智能体确认后调用受控工具</p>
                           </div>
                         </div>
                         <span className="bg-green-50 text-green-700 text-[9px] px-2 py-0.5 rounded-full font-semibold border border-green-200">连接可用</span>
@@ -1537,7 +1483,7 @@ export function Thread() {
                         <div className="flex justify-between">
                           <span className="text-gray-500">草稿入库状态：</span>
                           <span className="font-semibold text-charcoal">
-                            {syncedRecordId ? `已创建草稿记录：${syncedRecordId}` : "尚未入库"}
+                            {isFeishuActionPending ? "已交给智能体，等待确认/执行" : "尚未入库"}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -1573,14 +1519,14 @@ export function Thread() {
                       <div className="pt-1 flex flex-col gap-2">
                         <button
                           onClick={handleSyncToFeishu}
-                          disabled={isSyncing}
+                          disabled={isSyncing || isLoading}
                           className={cn(
                             "w-full text-white text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer",
-                            syncStep === 4 ? "bg-green-500 hover:bg-green-600" : "bg-coral hover:bg-coral-hover"
+                            "bg-coral hover:bg-coral-hover"
                           )}
                         >
                           <CloudUpload className="size-4" />
-                          <span>{syncStep === 4 ? "多维表格写入成功！" : "立即同步至飞书多维表格"}</span>
+                          <span>提交同步请求至智能体</span>
                         </button>
                         {bitableUrl && (
                           <motion.div
@@ -1666,7 +1612,7 @@ export function Thread() {
                       <div className="pt-1">
                         <button
                           onClick={handleSendNotification}
-                          disabled={isSendingNotification || feishuChats.length === 0}
+                          disabled={isSendingNotification || isLoading || feishuChats.length === 0}
                           className="w-full bg-oats hover:bg-oats-dark text-charcoal border border-coral-light/60 text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium transition-all cursor-pointer"
                         >
                           {isSendingNotification ? <Loader2 className="size-3.5 animate-spin text-coral" /> : <Send className="size-3.5" />}
