@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Sparkles, Loader2, Check, ArrowLeft, ChevronDown, ChevronRight, Play, Server, Cpu, Key, Activity, ListRestart } from "lucide-react";
+import { Sparkles, Loader2, Check, ArrowLeft, ChevronDown, ChevronRight, Play, Server, Cpu, Key, Activity, ListRestart, HelpCircle, ShieldCheck, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -122,7 +122,8 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
 
           // Infer active primary provider
           const providerEnv = (c.LLM_PROVIDER || "openai").toLowerCase();
-          const modelLower = (c.LLM_MODEL || "").toLowerCase();
+          const qualityModels = c.LLM_QUALITY_MODELS || c.LLM_MODEL || "";
+          const modelLower = qualityModels.toLowerCase();
           const urlLower = (c.LLM_BASE_URL || "").toLowerCase();
 
           let current = "deepseek";
@@ -151,42 +152,42 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
             next.deepseek = {
               apiKey: c.DEEPSEEK_API_KEY || (current === "deepseek" ? c.LLM_API_KEY : ""),
               baseUrl: current === "deepseek" ? c.LLM_BASE_URL : "https://api.deepseek.com/v1",
-              model: current === "deepseek" ? c.LLM_MODEL : "deepseek-chat",
+              model: current === "deepseek" ? qualityModels : "deepseek-chat",
             };
 
             // Kimi
             next.kimi = {
               apiKey: c.KIMI_API_KEY || (current === "kimi" ? c.LLM_API_KEY : ""),
               baseUrl: current === "kimi" ? c.LLM_BASE_URL : "https://api.moonshot.cn/v1",
-              model: current === "kimi" ? c.LLM_MODEL : "moonshot-v1-8k",
+              model: current === "kimi" ? qualityModels : "moonshot-v1-8k",
             };
 
             // OpenAI
             next.openai = {
               apiKey: c.OPENAI_API_KEY || (current === "openai" ? c.LLM_API_KEY : ""),
               baseUrl: current === "openai" ? c.LLM_BASE_URL : "https://api.openai.com/v1",
-              model: current === "openai" ? c.LLM_MODEL : "gpt-4o",
+              model: current === "openai" ? qualityModels : "gpt-4o",
             };
 
             // Anthropic
             next.anthropic = {
               apiKey: c.ANTHROPIC_API_KEY || (current === "anthropic" ? c.LLM_API_KEY : ""),
               baseUrl: current === "anthropic" ? c.LLM_BASE_URL : "https://api.anthropic.com",
-              model: current === "anthropic" ? c.LLM_MODEL : "claude-3-5-sonnet-latest",
+              model: current === "anthropic" ? qualityModels : "claude-3-5-sonnet-latest",
             };
 
             // Gemini
             next.gemini = {
               apiKey: c.GEMINI_API_KEY || (current === "gemini" ? c.LLM_API_KEY : ""),
               baseUrl: current === "gemini" ? c.LLM_BASE_URL : "https://generativelanguage.googleapis.com",
-              model: current === "gemini" ? c.LLM_MODEL : "gemini-2.5-flash",
+              model: current === "gemini" ? qualityModels : "gemini-2.5-flash",
             };
 
             // Custom
             next.custom = {
               apiKey: current === "custom" ? c.LLM_API_KEY : "",
               baseUrl: current === "custom" ? c.LLM_BASE_URL : "",
-              model: current === "custom" ? c.LLM_MODEL : "",
+              model: current === "custom" ? qualityModels : "",
             };
 
             return next;
@@ -272,14 +273,12 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
       LLM_PROVIDER: targetInfo.providerVal,
       LLM_API_KEY: activeConfig.apiKey?.trim() || "",
       LLM_BASE_URL: activeConfig.baseUrl?.trim() || "",
-      LLM_MODEL: activeConfig.model?.trim() || "",
-
-      // Back up keys for fallback and disaster recovery
-      DEEPSEEK_API_KEY: providerConfigs.deepseek.apiKey?.trim() || "",
-      KIMI_API_KEY: providerConfigs.kimi.apiKey?.trim() || "",
-      OPENAI_API_KEY: providerConfigs.openai.apiKey?.trim() || "",
-      ANTHROPIC_API_KEY: providerConfigs.anthropic.apiKey?.trim() || "",
-      GEMINI_API_KEY: providerConfigs.gemini.apiKey?.trim() || "",
+      LLM_QUALITY_MODELS:
+        activeConfig.model
+          ?.split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .join(",") || "",
     };
 
     try {
@@ -340,9 +339,12 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
           <div className="h-20 bg-oats-dark rounded animate-pulse w-full" />
         </div>
       ) : (
-        <form onSubmit={handleSave} className="space-y-6 max-w-3xl">
-          {/* LobeChat style Accordion List */}
-          <div className="space-y-3.5">
+        <form onSubmit={handleSave} className="w-full max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_400px] gap-8 items-start">
+            {/* 左侧：核心配置面板 */}
+            <div className="space-y-6 bg-white/40 p-5 rounded-2xl border border-border/30 backdrop-blur-xs">
+              {/* LobeChat style Accordion List */}
+              <div className="space-y-3.5">
             {PROVIDERS.map((provider) => {
               const isExpanded = expandedProvider === provider.id;
               const isPrimary = primaryProvider === provider.id;
@@ -459,7 +461,7 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                           <Label htmlFor={`model-${provider.id}`} className="text-xs font-semibold text-charcoal-light flex items-center justify-between">
                             <span className="flex items-center gap-1">
                               <Cpu className="size-3.5 text-coral/80" />
-                              模型名称 (Model)
+                              高质量模型池 (LLM_QUALITY_MODELS)
                             </span>
                             {isDropdownMode && (
                               <button
@@ -499,7 +501,7 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                                   type="text"
                                   value={config.model}
                                   onChange={(e) => updateProviderConfig(provider.id, { model: e.target.value })}
-                                  placeholder={provider.defaultModel || "请输入模型名称，如 gpt-4o"}
+                                  placeholder="请输入模型 ID，多个模型用英文逗号分隔，如 gpt-4o,claude-sonnet-4-6"
                                   className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs flex-1"
                                 />
                                 {modelsList.length > 0 && (
@@ -579,25 +581,86 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
             })}
           </div>
 
-          {/* Form Actions Footer */}
-          <div className="flex items-center justify-end gap-3 border-t border-border/80 pt-5 mt-8">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={saving}
-              onClick={onClose}
-              className="text-xs hover:bg-oats-dark/60 rounded-xl"
-            >
-              取消
-            </Button>
-            <Button
-              type="submit"
-              disabled={saving}
-              className="bg-coral hover:bg-coral-hover text-white active:scale-95 disabled:opacity-50 px-6 py-2.5 text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-md shadow-coral/10 transition-all cursor-pointer border-none"
-            >
-              {saving && <Loader2 className="size-4 animate-spin" />}
-              {saving ? "正在应用..." : "应用大模型配置"}
-            </Button>
+              {/* Form Actions Footer */}
+              <div className="flex items-center justify-end gap-3 border-t border-border/80 pt-5 mt-8">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={saving}
+                  onClick={onClose}
+                  className="text-xs hover:bg-oats-dark/60 rounded-xl"
+                >
+                  取消
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={saving}
+                  className="bg-coral hover:bg-coral-hover text-white active:scale-95 disabled:opacity-50 px-6 py-2.5 text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-md shadow-coral/10 transition-all cursor-pointer border-none"
+                >
+                  {saving && <Loader2 className="size-4 animate-spin" />}
+                  {saving ? "正在应用..." : "应用大模型配置"}
+                </Button>
+              </div>
+            </div>
+
+            {/* 右侧：高级面板/指南 */}
+            <div className="hidden lg:flex flex-col gap-6 sticky top-0">
+              {/* 灾备重试机制说明卡片 */}
+              <div className="bg-white border border-border/60 rounded-2xl p-5 space-y-4 shadow-sm text-xs">
+                <h3 className="font-bold text-charcoal flex items-center gap-1.5 border-b pb-2">
+                  <RefreshCw className="size-4 text-coral animate-spin animate-duration-3000" style={{ animationDuration: '6s' }} />
+                  自动灾备重试机制
+                </h3>
+                <p className="text-charcoal-light leading-relaxed">
+                  系统采用<strong>主备容灾路由</strong>设计。当您的主引擎（当前选中的主通道）在产出文案时遇到服务超限、接口报错或网络超时，系统将无缝顺延重试您已配置了密钥的备用提供商，确保生产环境的业务连续性。
+                </p>
+
+                {/* 精致的流程微图 */}
+                <div className="flex items-center justify-between bg-oats-light/40 border border-border/30 rounded-xl p-3 text-[10px] select-none">
+                  <div className="flex flex-col items-center gap-1 flex-1">
+                    <span className="bg-coral/10 text-coral font-bold size-5 flex items-center justify-center rounded-full">1</span>
+                    <span className="font-semibold text-charcoal text-center">主引擎调用</span>
+                  </div>
+                  <div className="text-coral/50 font-bold shrink-0">➔</div>
+                  <div className="flex flex-col items-center gap-1 flex-1">
+                    <span className="bg-coral/10 text-coral font-bold size-5 flex items-center justify-center rounded-full">2</span>
+                    <span className="font-semibold text-charcoal text-center">失败防灾检测</span>
+                  </div>
+                  <div className="text-coral/50 font-bold shrink-0">➔</div>
+                  <div className="flex flex-col items-center gap-1 flex-1">
+                    <span className="bg-emerald-100 text-emerald-700 font-bold size-5 flex items-center justify-center rounded-full">3</span>
+                    <span className="font-semibold text-charcoal text-center">备用重接托管</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 最佳实践说明 */}
+              <div className="bg-white border border-border/60 rounded-2xl p-5 space-y-3.5 shadow-sm text-xs">
+                <h3 className="font-bold text-charcoal flex items-center gap-1.5 border-b pb-2">
+                  <HelpCircle className="size-4 text-coral" />
+                  配置最佳实践
+                </h3>
+                <ul className="space-y-2.5 text-charcoal-light list-disc list-inside leading-relaxed">
+                  <li>
+                    <strong className="text-charcoal">多模态图片理解：</strong>
+                    为了从上传的露营、穿搭、护肤等小红书商品图里深度理解画面细节并提炼卖点，建议配置支持 Vision 的模型（如 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">claude-3-5-sonnet-latest</code> 或 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">gemini-2.5-flash</code>）。
+                  </li>
+                  <li>
+                    <strong className="text-charcoal">一键智能测速：</strong>
+                    在左侧填入密钥并点击“测试连接并拉取模型”后，系统不仅会测试网络连通时间，还会动态请求网关支持的模型列表，点击下拉菜单即可极速切换。
+                  </li>
+                </ul>
+              </div>
+
+              {/* 安全承诺 */}
+              <div className="bg-white border border-border/60 rounded-2xl p-5 space-y-2 shadow-sm text-[10px] text-charcoal-light flex items-start gap-2">
+                <ShieldCheck className="size-4 text-emerald-500 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-charcoal block mb-0.5">端到端存储隐私安全</span>
+                  所有的 API 密钥仅保存在您本地部署的专属私有服务端（系统配置环境变量），仅在向官方 API 发送文案生成请求时动态透传，绝不向任何云端汇总上传。
+                </div>
+              </div>
+            </div>
           </div>
         </form>
       )}
