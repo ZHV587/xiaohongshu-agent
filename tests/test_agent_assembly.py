@@ -126,6 +126,35 @@ def test_rubric_uses_model_instance_not_string(monkeypatch):
     assert "当前数据不足" in rubric_prompt
 
 
+def test_content_rubric_activator_registered_immediately_after_rubric(monkeypatch):
+    """after_agent 逆序执行,故 activator 必须紧跟 rubric 注册。"""
+    import importlib
+
+    import deepagents
+    from content_rubric import ContentRubricActivator
+
+    captured = {}
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create_deep_agent(*args, **kwargs):
+        captured["middleware"] = kwargs["middleware"]
+        return real_create(*args, **kwargs)
+
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+    deepagents.create_deep_agent = _capturing_create_deep_agent
+    try:
+        import agent as agent_module
+
+        importlib.reload(agent_module)
+    finally:
+        deepagents.create_deep_agent = real_create
+
+    middleware = captured["middleware"]
+    rubric_index = middleware.index(agent_module.rubric_middleware)
+    assert isinstance(middleware[rubric_index + 1], ContentRubricActivator)
+
+
 def test_agent_exposes_shared_model_registry(monkeypatch):
     _set_assembly_env(monkeypatch)
     monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")

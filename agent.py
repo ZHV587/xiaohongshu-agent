@@ -16,6 +16,7 @@ from deepagents import (
 from dotenv import load_dotenv
 
 from backends import build_backend
+from content_rubric import ContentRubricActivator
 from middlewares import build_retry_middleware
 from model_registry import ModelRegistry
 from models import build_pool, build_primary_model, build_router_middleware
@@ -78,6 +79,7 @@ rubric_middleware = RubricMiddleware(
 如果文案不满足以上标准,请给出具体修改建议。""",
     max_iterations=2,
 )
+content_rubric_activator = ContentRubricActivator()
 
 agent = create_deep_agent(
     model=initial_model,
@@ -91,7 +93,12 @@ agent = create_deep_agent(
         "send_review_notification": True,
     },
     checkpointer=True,
-    middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(model_registry)],
+    middleware=[
+        build_retry_middleware(),
+        rubric_middleware,
+        content_rubric_activator,
+        build_router_middleware(model_registry),
+    ],
     # 自学习记忆:团队共享(全员一份方法论)+ 用户私有(按 open_id 隔离)。
     # 团队在前、个人在后 —— sources 按序拼接注入,个人记忆覆盖团队默认。
     # MemoryMiddleware 用 edit_file 写回,文件不存在时首轮跳过、由 agent 创建。
