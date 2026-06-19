@@ -1,5 +1,6 @@
 node_modules/
 .env
+.uat_store.enc
 __pycache__/
 *.pyc
 .venv/
@@ -17,6 +18,7 @@ large_tool_results/
 web/node_modules/
 web/.next/
 web/.env
+web/package-lock.json
 web/out/
 web/tsconfig.tsbuildinfo
 node_modules/.cache/
