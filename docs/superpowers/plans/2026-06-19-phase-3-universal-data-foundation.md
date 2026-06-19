@@ -976,7 +976,7 @@ git commit -m "feat: ingest feishu resources into postgres"
 - Modify: `data_foundation/repository.py`
 - Create: `tests/data_foundation/test_search_graph_tools.py`
 
-- [ ] **Step 1: Write failing search and graph tests**
+- [x] **Step 1: Write failing search and graph tests**
 
 Create the first half of `tests/data_foundation/test_search_graph_tools.py`:
 
@@ -1062,7 +1062,7 @@ def test_expand_graph_returns_k_hop_nodes_with_edges(migrated_conn):
     assert graph.edges[0].edge_type == "SIMILAR_TO"
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -1072,7 +1072,7 @@ uv run pytest tests/data_foundation/test_search_graph_tools.py -q
 
 Expected before implementation: FAIL because search/graph modules and repository methods are missing.
 
-- [ ] **Step 3: Add repository search, embedding, and edge methods**
+- [x] **Step 3: Add repository search, embedding, and edge methods**
 
 Append these methods inside `ResourceRepository`:
 
@@ -1143,7 +1143,7 @@ Append these methods inside `ResourceRepository`:
         self.conn.commit()
 ```
 
-- [ ] **Step 4: Implement search functions**
+- [x] **Step 4: Implement search functions**
 
 Create `data_foundation/search.py`:
 
@@ -1191,7 +1191,7 @@ def semantic_search(
     ]
 ```
 
-- [ ] **Step 5: Implement graph expansion**
+- [x] **Step 5: Implement graph expansion**
 
 Create `data_foundation/graph.py`:
 
@@ -1275,7 +1275,7 @@ def expand_graph(
     return GraphExpansion(nodes=nodes, edges=edges)
 ```
 
-- [ ] **Step 6: Run search and graph tests**
+- [x] **Step 6: Run search and graph tests**
 
 Run:
 
@@ -1285,7 +1285,7 @@ uv run pytest tests/data_foundation/test_search_graph_tools.py -q
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add data_foundation tests/data_foundation

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from contextlib import AbstractContextManager
 from typing import Any
 
@@ -264,6 +265,228 @@ class ResourceRepository:
                     for chunk_index, chunk_text in enumerate(chunks)
                 ],
             )
+
+    def keyword_rows(self, *, tenant_id: str, actor_open_id: str, query: str, limit: int):
+        return self.conn.execute(
+            f"""
+            select r.*,
+                   greatest(
+                     ts_rank(
+                       to_tsvector('simple', coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')),
+                       plainto_tsquery('simple', %(query)s)
+                     ),
+                     case when coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')
+                               ilike '%%' || %(query)s || '%%' then 1.0 else 0.0 end
+                   ) as score
+            from resources r
+            where {readable_resource_where('r')}
+              and (
+                to_tsvector('simple', coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, ''))
+                  @@ plainto_tsquery('simple', %(query)s)
+                or coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')
+                  ilike '%%' || %(query)s || '%%'
+              )
+            order by score desc, r.updated_at desc
+            limit %(limit)s
+            """,
+            {"tenant_id": tenant_id, "actor_open_id": actor_open_id, "query": query, "limit": limit},
+        ).fetchall()
+
+    def set_embedding(
+        self,
+        *,
+        tenant_id: str,
+        resource_id: str,
+        chunk_index: int,
+        chunk_text: str,
+        embedding: list[float],
+        embedding_model: str,
+    ) -> None:
+        if chunk_index < 0:
+            raise ValueError("Chunk index must be zero or greater")
+        embedding_model = embedding_model.strip()
+        if not embedding_model:
+            raise ValueError("Embedding model is required")
+        vector_literal = self._vector_literal(embedding)
+        with transaction(self.conn):
+            resource = self.conn.execute(
+                "select id from resources where id = %s and tenant_id = %s for update",
+                (resource_id, tenant_id),
+            ).fetchone()
+            if resource is None:
+                raise PermissionError("Resource is not writable in this tenant")
+            self.conn.execute(
+                """
+                insert into resource_embeddings (resource_id, chunk_index, chunk_text, embedding, embedding_model)
+                values (%s, %s, %s, %s::vector, %s)
+                on conflict(resource_id, chunk_index, embedding_model)
+                do update set chunk_text = excluded.chunk_text, embedding = excluded.embedding
+                """,
+                (resource_id, chunk_index, chunk_text, vector_literal, embedding_model),
+            )
+
+    def semantic_rows(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        embedding: list[float],
+        embedding_model: str,
+        top_k: int,
+    ):
+        embedding_model = embedding_model.strip()
+        if not embedding_model:
+            raise ValueError("Embedding model is required")
+        vector_literal = self._vector_literal(embedding)
+        return self.conn.execute(
+            f"""
+            with candidates as (
+              select r.*, e.chunk_index, e.chunk_text,
+                     1 - (e.embedding <=> %(embedding)s::vector) as score,
+                     row_number() over (
+                       partition by r.id
+                       order by e.embedding <=> %(embedding)s::vector, e.chunk_index
+                     ) as resource_rank
+              from resource_embeddings e
+              join resources r on r.id = e.resource_id
+              where e.embedding_model = %(embedding_model)s
+                and e.embedding is not null
+                and {readable_resource_where('r')}
+            )
+            select * from candidates
+            where resource_rank = 1
+            order by score desc, updated_at desc
+            limit %(top_k)s
+            """,
+            {
+                "tenant_id": tenant_id,
+                "actor_open_id": actor_open_id,
+                "embedding": vector_literal,
+                "embedding_model": embedding_model,
+                "top_k": top_k,
+            },
+        ).fetchall()
+
+    def add_edge(
+        self,
+        *,
+        tenant_id: str,
+        source_resource_id: str,
+        target_resource_id: str,
+        edge_type: str,
+        weight: float = 1.0,
+    ) -> None:
+        edge_type = edge_type.strip()
+        if not edge_type:
+            raise ValueError("Edge type is required")
+        if not math.isfinite(float(weight)):
+            raise ValueError("Edge weight must be finite")
+        endpoint_ids = list({source_resource_id, target_resource_id})
+        with transaction(self.conn):
+            endpoints = self.conn.execute(
+                "select count(*) as count from resources where tenant_id = %s and id = any(%s::uuid[])",
+                (tenant_id, endpoint_ids),
+            ).fetchone()
+            if endpoints["count"] != len(endpoint_ids):
+                raise PermissionError("Both edge endpoints must belong to this tenant")
+            self.conn.execute(
+                """
+                insert into resource_edges (tenant_id, source_resource_id, target_resource_id, edge_type, weight)
+                values (%s, %s, %s, %s, %s)
+                on conflict(source_resource_id, target_resource_id, edge_type)
+                do update set weight = excluded.weight
+                """,
+                (tenant_id, source_resource_id, target_resource_id, edge_type, weight),
+            )
+
+    def graph_rows(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_ids: list[str],
+        hops: int,
+        edge_types: list[str] | None,
+    ):
+        return self.conn.execute(
+            f"""
+            with recursive visible as materialized (
+              select r.id, r.title, r.type
+              from resources r
+              where {readable_resource_where('r')}
+            ),
+            starts as (
+              select v.id, v.title, v.type
+              from visible v
+              where v.id = any(%(resource_ids)s::uuid[])
+            ),
+            walk(source_id, target_id, edge_type, weight, depth, path) as (
+              select e.source_resource_id, e.target_resource_id, e.edge_type, e.weight, 1,
+                     array[e.source_resource_id, e.target_resource_id]
+              from resource_edges e
+              join starts s on s.id = e.source_resource_id
+              join visible target on target.id = e.target_resource_id
+              where e.tenant_id = %(tenant_id)s
+                and (%(edge_types)s::text[] is null or e.edge_type = any(%(edge_types)s::text[]))
+              union all
+              select e.source_resource_id, e.target_resource_id, e.edge_type, e.weight, w.depth + 1,
+                     w.path || e.target_resource_id
+              from walk w
+              join resource_edges e on e.source_resource_id = w.target_id
+              join visible source on source.id = e.source_resource_id
+              join visible target on target.id = e.target_resource_id
+              where e.tenant_id = %(tenant_id)s
+                and w.depth < %(hops)s
+                and e.target_resource_id <> all(w.path)
+                and (%(edge_types)s::text[] is null or e.edge_type = any(%(edge_types)s::text[]))
+            ),
+            node_depths as (
+              select id, 0 as depth from starts
+              union all
+              select target_id, depth from walk
+            ),
+            nodes as (
+              select id, min(depth) as depth from node_depths group by id
+            ),
+            edges as (
+              select source_id, target_id, edge_type, max(weight) as weight, min(depth) as depth
+              from walk
+              group by source_id, target_id, edge_type
+            )
+            select 'node'::text as kind, v.id, v.title, v.type, n.depth,
+                   null::uuid as source_resource_id, null::uuid as target_resource_id,
+                   null::text as edge_type, null::double precision as weight
+            from nodes n
+            join visible v on v.id = n.id
+            union all
+            select 'edge'::text, null::uuid, null::text, null::text, e.depth,
+                   e.source_id, e.target_id, e.edge_type, e.weight
+            from edges e
+            order by depth, kind desc
+            """,
+            {
+                "tenant_id": tenant_id,
+                "actor_open_id": actor_open_id,
+                "resource_ids": resource_ids,
+                "hops": hops,
+                "edge_types": edge_types,
+            },
+        ).fetchall()
+
+    @staticmethod
+    def _vector_literal(embedding: list[float]) -> str:
+        if len(embedding) != 1536:
+            raise ValueError("Embedding must contain exactly 1536 finite numbers")
+        values = []
+        for value in embedding:
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Embedding must contain exactly 1536 finite numbers") from exc
+            if not math.isfinite(number):
+                raise ValueError("Embedding must contain exactly 1536 finite numbers")
+            values.append(str(number))
+        return "[" + ",".join(values) + "]"
 
     def upsert_mapping(
         self,
