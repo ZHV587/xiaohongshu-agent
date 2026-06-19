@@ -16,6 +16,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
     FEISHU_BITABLE_TABLE_ID: "",
     FEISHU_WIKI_SPACE_ID: "",
   });
+  const [wikiSpaceName, setWikiSpaceName] = useState("小红书智能体");
 
   useEffect(() => {
     setLoading(true);
@@ -29,6 +30,15 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
+
+    fetch("/api/feishu/wiki-space")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.name) {
+          setWikiSpaceName(data.name);
+        }
+      })
+      .catch(console.error);
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -147,6 +157,29 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                 <p className="text-[10px] text-gray-400">App Token 位于表格 URL 中 `base/` 后面的一长串字符，Table ID 对应具体数据表的子 ID。</p>
               </div>
 
+              <div className="space-y-4 pt-4 border-t border-border/30">
+                <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">飞书知识库 (Wiki) 绑定</h3>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium text-charcoal-light flex items-center gap-1.5">
+                      <span>知识空间 ({wikiSpaceName})</span>
+                      <span className="bg-oats text-coral text-[9px] px-1.5 py-0.5 rounded font-normal">后端写死绑定</span>
+                    </Label>
+                    <div className="bg-oats-light/20 border border-border/30 px-3 py-2 rounded-lg text-xs text-charcoal font-mono select-all flex justify-between items-center">
+                      <span>7648177996175543260</span>
+                      <a
+                        href="https://ycnaxi4z2bte.feishu.cn/wiki/settings/7648177996175543260"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] text-coral hover:underline font-semibold"
+                      >
+                        在飞书打开 ↗
+                      </a>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400">按照您的要求，该知识空间已在后端直接绑定，以确保特定操作始终引用您指定的参考资料库。</p>
+              </div>
 
               <div className="flex items-center justify-end gap-2 border-t border-border/80 pt-4 mt-6">
                 <Button

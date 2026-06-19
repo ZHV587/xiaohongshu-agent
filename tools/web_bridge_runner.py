@@ -248,11 +248,36 @@ def handle_config_set(args):
         sys.exit(1)
 
 
+def handle_wiki_space(args):
+    open_id = args.open_id
+    token = get_uat(open_id)
+    fallback_space_id = os.environ.get("FEISHU_WIKI_SPACE_ID", "7648177996175543260")
+    if not token:
+        print(json.dumps({"ok": True, "name": "小红书智能体", "space_id": fallback_space_id}, ensure_ascii=False))
+        return
+        
+    try:
+        config = MockConfig(open_id)
+        cmd = shlex.join(["wiki", "spaces", "get", "--space-id", fallback_space_id])
+        cli_resp = lark_cli(cmd, config=config)
+        
+        if cli_resp.startswith("Error") or "error" in cli_resp.lower() or cli_resp.startswith("⚠️"):
+            # Fallback if API fails or scope missing
+            print(json.dumps({"ok": True, "name": "小红书智能体", "space_id": fallback_space_id}, ensure_ascii=False))
+            return
+            
+        data = json.loads(cli_resp)
+        space_name = data.get("data", {}).get("space", {}).get("name") or "小红书智能体"
+        print(json.dumps({"ok": True, "name": space_name, "space_id": fallback_space_id}, ensure_ascii=False))
+    except Exception:
+        print(json.dumps({"ok": True, "name": "小红书智能体", "space_id": fallback_space_id}, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Feishu Web API bridge runner")
     parser.add_argument(
         "--action",
-        choices=["save-uat", "uat-status", "chats", "sync", "notify", "config-status", "config-set"],
+        choices=["save-uat", "uat-status", "chats", "sync", "notify", "config-status", "config-set", "wiki-space"],
         required=True,
     )
     parser.add_argument("--open-id", required=False)
@@ -287,6 +312,8 @@ def main():
         handle_config_status(args)
     elif args.action == "config-set":
         handle_config_set(args)
+    elif args.action == "wiki-space":
+        handle_wiki_space(args)
 
 if __name__ == "__main__":
     main()

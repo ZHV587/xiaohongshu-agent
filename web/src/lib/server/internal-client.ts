@@ -44,6 +44,9 @@ export async function forwardToInternalServer(
   } else if (pathName === "/_internal/uat-status") {
     action = "uat-status";
     runnerArgs.push("--action", "uat-status");
+  } else if (pathName === "/_internal/wiki-space") {
+    action = "wiki-space";
+    runnerArgs.push("--action", "wiki-space");
   } else if (pathName === "/_internal/config-status") {
     action = "config-status";
     runnerArgs.push(...configCenterRunnerArgs("config-status"));
