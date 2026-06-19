@@ -24,6 +24,7 @@ create index if not exists idx_resources_fts on resources using gin (
 
 create table if not exists resource_mappings (
   id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
   resource_id uuid not null references resources(id) on delete cascade,
   system text not null,
   external_type text not null,
@@ -35,7 +36,7 @@ create table if not exists resource_mappings (
   last_error text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique(system, external_type, external_id)
+  unique(tenant_id, system, external_type, external_id)
 );
 
 create table if not exists resource_versions (
