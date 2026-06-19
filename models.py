@@ -11,6 +11,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from typing import Protocol
 
 import httpx
 from langchain.agents.middleware import AgentMiddleware
@@ -29,6 +30,11 @@ class ModelCandidate:
     gateway_name: str
     model_id: str
     model: BaseChatModel
+
+
+class ModelPoolProvider(Protocol):
+    def get_pool(self) -> list[ModelCandidate]:
+        raise NotImplementedError
 
 
 # 进程内探测缓存:同 (base_url, key) 只探一次。
@@ -211,29 +217,42 @@ class ModelRouterMiddleware(AgentMiddleware):
     健康度为 best-effort 无锁状态(spec §6):_health 存网关名→冷却到期时间。
     """
 
-    def __init__(self, pool: list[ModelCandidate]) -> None:
+    def __init__(self, pool: list[ModelCandidate] | ModelPoolProvider) -> None:
         super().__init__()
         # 延迟校验非空，避免初始化时触发延迟加载
-        self._pool = pool
-        self._health: dict[str, float] = {}  # gateway_name -> 冷却到期(monotonic)
+        self._pool_provider = pool if hasattr(pool, "get_pool") else None
+        self._pool = pool if not hasattr(pool, "get_pool") else []
+        self._health: dict[tuple[str, str], float] = {}  # (gateway_name, model_id) -> 冷却到期
         self._rr = 0  # 轮询游标
 
-    def _is_cooling(self, gateway_name: str) -> bool:
-        until = self._health.get(gateway_name)
-        return until is not None and time.monotonic() < until
+    def _current_pool(self) -> list[ModelCandidate]:
+        if self._pool_provider is not None:
+            return self._pool_provider.get_pool()
+        return list(self._pool)
+
+    def _is_cooling(self, candidate: ModelCandidate | str) -> bool:
+        now = time.monotonic()
+        if isinstance(candidate, str):
+            return any(
+                gateway_name == candidate and now < until
+                for (gateway_name, _model_id), until in self._health.items()
+            )
+        until = self._health.get((candidate.gateway_name, candidate.model_id))
+        return until is not None and now < until
 
     def _mark_unhealthy(self, candidate: ModelCandidate) -> None:
-        self._health[candidate.gateway_name] = time.monotonic() + _COOLDOWN_SECONDS
+        self._health[(candidate.gateway_name, candidate.model_id)] = time.monotonic() + _COOLDOWN_SECONDS
 
     def _ordered_candidates(self) -> list[ModelCandidate]:
         """轮询起点 + 健康优先:先健康候选(从轮询游标起),冷却中的垫后(兜底)。"""
-        if not self._pool:
+        pool = self._current_pool()
+        if not pool:
             raise ValueError("ModelRouterMiddleware 需要非空候选池")
-        n = len(self._pool)
-        rotated = [self._pool[(self._rr + i) % n] for i in range(n)]
+        n = len(pool)
+        rotated = [pool[(self._rr + i) % n] for i in range(n)]
         self._rr = (self._rr + 1) % n
-        healthy = [c for c in rotated if not self._is_cooling(c.gateway_name)]
-        cooling = [c for c in rotated if self._is_cooling(c.gateway_name)]
+        healthy = [c for c in rotated if not self._is_cooling(c)]
+        cooling = [c for c in rotated if self._is_cooling(c)]
         return healthy + cooling  # 全冷却时仍尝试(自愈窗口)
 
     def wrap_model_call(self, request: ModelRequest, handler):
@@ -283,7 +302,7 @@ def build_primary_model(pool: list[ModelCandidate]) -> BaseChatModel:
     raise ValueError("候选池为空，无法构建初始模型")
 
 
-def build_router_middleware(pool: list[ModelCandidate]) -> ModelRouterMiddleware:
+def build_router_middleware(pool: list[ModelCandidate] | ModelPoolProvider) -> ModelRouterMiddleware:
     """构造调度中间件(主/子/评分各取一个,共用同一池)。"""
     return ModelRouterMiddleware(pool)
 
