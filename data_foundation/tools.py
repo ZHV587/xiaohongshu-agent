@@ -14,6 +14,7 @@ from data_foundation.graph import expand_graph as expand_graph_query
 from data_foundation.permissions import actor_from_config, default_tenant_id
 from data_foundation.repository import ResourceRepository
 from data_foundation.search import keyword_search, semantic_search
+from data_foundation.sync_service import sync_feishu_sources
 
 
 @contextmanager
@@ -132,4 +133,37 @@ def graph_expand(
     }
 
 
-phase3_tools = [search_resources, semantic_search_resources, graph_expand, get_resource]
+@tool
+def get_data_foundation_status(config: RunnableConfig | None = None) -> dict[str, Any]:
+    """Return Postgres data foundation resource, sync, and outbox status."""
+    actor_from_config(config)
+    with _repository() as repo:
+        status = repo.data_foundation_status(default_tenant_id())
+    return {"ok": True, "status": status}
+
+
+@tool
+def sync_feishu_resources(config: RunnableConfig | None = None) -> dict[str, Any]:
+    """Trigger a manual Feishu resource sync for the current user."""
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        return sync_feishu_sources(
+            repo,
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            triggered_by="manual",
+            base_rows=[],
+            wiki_documents=[],
+        )
+
+
+data_foundation_tools = [
+    search_resources,
+    semantic_search_resources,
+    graph_expand,
+    get_resource,
+    get_data_foundation_status,
+    sync_feishu_resources,
+]
+
+phase3_tools = data_foundation_tools

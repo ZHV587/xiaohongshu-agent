@@ -144,7 +144,14 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
     agent_module = importlib.reload(agent_module)
     tool_names = {getattr(tool, "name", "") for tool in agent_module.phase3_tools}
 
-    assert {"search_resources", "semantic_search_resources", "graph_expand", "get_resource"} <= tool_names
+    assert {
+        "search_resources",
+        "semantic_search_resources",
+        "graph_expand",
+        "get_resource",
+        "get_data_foundation_status",
+        "sync_feishu_resources",
+    } <= tool_names
 
 
 def test_agent_registers_feishu_action_tools(monkeypatch):
