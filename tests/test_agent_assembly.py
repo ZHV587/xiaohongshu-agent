@@ -116,3 +116,19 @@ def test_rubric_uses_model_instance_not_string(monkeypatch):
     # 必须是实例,不能是裸字符串 —— 否则会按名推断 provider 绕网关
     assert isinstance(model, BaseChatModel)
     assert not isinstance(model, str)
+
+
+def test_agent_exposes_shared_model_registry(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import agent as agent_mod
+
+    agent_mod = importlib.reload(agent_mod)
+
+    status = agent_mod.model_registry.status()
+    assert status["active_models"]
+    assert status["hot_reload_coverage"]["main_agent"] is True
+    assert status["hot_reload_coverage"]["subagents"] is True
+    assert status["hot_reload_coverage"]["rubric"] is False

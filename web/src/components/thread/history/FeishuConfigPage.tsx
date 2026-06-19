@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { SlidersHorizontal, Loader2, Check, ArrowLeft, HelpCircle, BookOpen, KeyRound, Info } from "lucide-react";
+import { SlidersHorizontal, Loader2, Check, ArrowLeft, BookOpen, KeyRound, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -14,6 +14,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
     FEISHU_APP_SECRET: "",
     FEISHU_BITABLE_APP_TOKEN: "",
     FEISHU_BITABLE_TABLE_ID: "",
+    FEISHU_WIKI_SPACE_ID: "",
   });
 
   useEffect(() => {
@@ -32,6 +33,17 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!configs.FEISHU_APP_ID || !configs.FEISHU_APP_SECRET) {
+      alert("请输入 App ID 和 App Secret");
+      return;
+    }
+    const hasBitable = configs.FEISHU_BITABLE_APP_TOKEN && configs.FEISHU_BITABLE_TABLE_ID;
+    const hasWiki = configs.FEISHU_WIKI_SPACE_ID;
+    if (!hasBitable && !hasWiki) {
+      alert("请至少配置【多维表格坐标（App Token + Table ID）】或【知识空间 ID】之一");
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await fetch("/api/config", {
@@ -109,7 +121,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                     />
                   </div>
                 </div>
-                <p className="text-[10px] text-gray-400">请确保在飞书开放平台后台授予该应用“云文档 ➔ 多维表格”的读取和写入权限。</p>
+                <p className="text-[10px] text-gray-400">请确保在飞书开放平台后台授予该应用“云文档 ➔ 多维表格”与“云文档 ➔ 知识库”的读取与写入相关权限。</p>
               </div>
 
               <div className="space-y-4 pt-4">
@@ -123,7 +135,6 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                       value={configs.FEISHU_BITABLE_APP_TOKEN || ""}
                       onChange={(e) => setConfigs({ ...configs, FEISHU_BITABLE_APP_TOKEN: e.target.value })}
                       placeholder="bascnxxxxxxxxxxxx"
-                      required
                       className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
                     />
                   </div>
@@ -135,12 +146,29 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                       value={configs.FEISHU_BITABLE_TABLE_ID || ""}
                       onChange={(e) => setConfigs({ ...configs, FEISHU_BITABLE_TABLE_ID: e.target.value })}
                       placeholder="tblxxxxxxxxx"
-                      required
                       className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
                     />
                   </div>
                 </div>
                 <p className="text-[10px] text-gray-400">App Token 位于表格 URL 中 `base/` 后面的一长串字符，Table ID 对应具体数据表的子 ID。</p>
+              </div>
+
+              <div className="space-y-4 pt-4">
+                <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">飞书知识库 (Wiki) 坐标</h3>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wiki-space-id" className="text-xs font-medium text-charcoal-light">Wiki Space ID (知识空间 ID)</Label>
+                    <Input
+                      id="wiki-space-id"
+                      type="text"
+                      value={configs.FEISHU_WIKI_SPACE_ID || ""}
+                      onChange={(e) => setConfigs({ ...configs, FEISHU_WIKI_SPACE_ID: e.target.value })}
+                      placeholder="6946843325487912356"
+                      className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400">Space ID 位于知识库 URL 中 `wiki/space/` 后面的一长串数字，或使用 `my_library` 作为个人文档库。</p>
               </div>
 
               <div className="flex items-center justify-end gap-2 border-t border-border/80 pt-4 mt-6">
@@ -157,11 +185,11 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
 
             {/* 右侧：飞书指南与向导 */}
             <div className="hidden lg:flex flex-col gap-6 sticky top-0">
-              {/* 多维表格参数寻找步骤 */}
+              {/* 参数寻找步骤 */}
               <div className="bg-white border border-border/60 rounded-2xl p-5 space-y-4 shadow-sm text-xs">
                 <h3 className="font-bold text-charcoal flex items-center gap-1.5 border-b pb-2">
                   <BookOpen className="size-4 text-coral" />
-                  如何定位表格参数？
+                  如何定位表格与知识库参数？
                 </h3>
                 <div className="space-y-3 text-charcoal-light leading-relaxed">
                   <div>
@@ -182,6 +210,15 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                       https://.../base/...?table=<span className="text-coral underline font-bold">tblXXXXXXXXX</span>&view=...
                     </span>
                   </div>
+                  <div>
+                    <span className="font-semibold text-charcoal block mb-0.5">3. Wiki Space ID (知识空间 ID)</span>
+                    <p className="text-[11px]">
+                      打开您的飞书知识库，在浏览器的地址栏中，URL 路径里紧随 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">/wiki/space/</code> 后面的一长串数字即为 Space ID。若要绑定个人文档库，请输入 <code className="bg-oats/60 px-1 py-0.5 rounded text-[10px]">my_library</code>。
+                    </p>
+                    <span className="text-[10px] text-gray-400 block mt-0.5 font-mono">
+                      https://.../wiki/space/<span className="text-coral underline font-bold">6946843325487912356</span>
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -192,7 +229,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                   飞书自建应用必要权限
                 </h3>
                 <p className="text-charcoal-light leading-relaxed">
-                  为了让机器人能够向飞书群内推送文案卡片以及将选题保存到多维表格中，请确保您的应用已申请开通以下权限：
+                  为了使智能体正常工作（同步文案、读取爆款与参考知识库等），请在飞书后台开通以下权限并发布版本：
                 </p>
                 <div className="grid grid-cols-1 gap-1.5 font-mono text-[10px]">
                   <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
@@ -201,11 +238,19 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
                     <Check className="size-3.5 text-emerald-500 shrink-0" />
-                    <span>im:chat (获取群组信息)</span>
+                    <span>wiki:space:read (知识空间只读)</span>
                   </div>
                   <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
                     <Check className="size-3.5 text-emerald-500 shrink-0" />
-                    <span>im:message (群聊消息发送)</span>
+                    <span>wiki:node:read (知识节点只读)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
+                    <Check className="size-3.5 text-emerald-500 shrink-0" />
+                    <span>docx:document:read (文档块只读)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-oats-light/40 border border-border/30 px-2.5 py-1.5 rounded-lg text-charcoal">
+                    <Check className="size-3.5 text-emerald-500 shrink-0" />
+                    <span>im:message (发送消息)</span>
                   </div>
                 </div>
               </div>

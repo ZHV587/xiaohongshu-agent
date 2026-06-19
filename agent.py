@@ -17,15 +17,17 @@ from dotenv import load_dotenv
 
 from backends import build_backend
 from middlewares import build_retry_middleware
+from model_registry import ModelRegistry
 from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
-from subagents import baokuan_analyst
+from subagents import build_baokuan_analyst
 import sys
 import threading
 import asyncio
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from tools.feishu_bitable import read_xhs_data
+from tools.feishu_wiki import read_feishu_wiki
 from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
 
 def get_lark_mcp_tools():
@@ -74,6 +76,9 @@ with open("deepagents_harness.json", "r", encoding="utf-8") as f:
 # ── 高质量模型自主调度:构造模型池 ──────────────────────────────────
 # 探测/白名单出候选模型池,主模型 + 路由中间件 + 评分模型均从此池调度。
 pool = build_pool()
+initial_model = build_primary_model(pool)
+model_registry = ModelRegistry()
+model_registry.replace(version=os.environ.get("XHS_CONFIG_VERSION", "env-bootstrap"), pool=list(pool))
 
 # 三路由 CompositeBackend:/skills/(磁盘共享只读)、/shared/(Store 共享)、
 # /drafts/ 及默认(State 随会话隔离)。详见 backends.py。
@@ -84,7 +89,7 @@ backend = build_backend()
 # 评分用主模型同档实例(质量优先不降级);传实例而非裸 id,避免 provider 推断绕网关。
 # 仅当调用方传入 rubric 时才激活,平时不增加开销。
 rubric_middleware = RubricMiddleware(
-    model=build_primary_model(pool),
+    model=initial_model,
     system_prompt="""你是小红书文案质量检查员。评估文案是否满足以下标准:
 1. 标题有钩子,不平淡,能引起点击欲望
 2. 正文像真人写的小红书笔记,无 AI 腔(不要"首先/其次/总之"、不要"在…领域"等八股)
@@ -98,13 +103,13 @@ rubric_middleware = RubricMiddleware(
 )
 
 agent = create_deep_agent(
-    model=build_primary_model(pool),
-    tools=[read_xhs_data] + get_lark_mcp_tools(),
+    model=initial_model,
+    tools=[read_xhs_data, read_feishu_wiki] + get_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
-    subagents=[baokuan_analyst],
+    subagents=[build_baokuan_analyst(model_registry, initial_model)],
     backend=backend,
     interrupt_on={"execute_lark_command": True},
-    middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(pool)],
+    middleware=[build_retry_middleware(), rubric_middleware, build_router_middleware(model_registry)],
     # 自学习记忆:团队共享(全员一份方法论)+ 用户私有(按 open_id 隔离)。
     # 团队在前、个人在后 —— sources 按序拼接注入,个人记忆覆盖团队默认。
     # MemoryMiddleware 用 edit_file 写回,文件不存在时首轮跳过、由 agent 创建。

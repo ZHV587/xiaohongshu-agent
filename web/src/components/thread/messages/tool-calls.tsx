@@ -62,8 +62,7 @@ export function ToolResult({ message }: { message: ToolMessage }) {
     parsed = message.content;
   }
 
-  const rowCount =
-    message.name === "read_xhs_data" ? extractRowCount(message.content) : undefined;
+  const rowCount = extractRowCount(message.name, message.content);
   const display = getToolDisplay(message.name, undefined, rowCount);
   if (display.hidden) return null;
 
@@ -73,6 +72,7 @@ export function ToolResult({ message }: { message: ToolMessage }) {
       : JSON.stringify(message.content, null, 2);
 
   const hasRows = isJson && Array.isArray(parsed?.rows) && Array.isArray(parsed?.columns);
+  const hasDocuments = isJson && Array.isArray(parsed?.documents);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col">
@@ -100,6 +100,8 @@ export function ToolResult({ message }: { message: ToolMessage }) {
             <div className="border-border mt-2 rounded-xl border bg-card p-3">
               {hasRows ? (
                 <RowCards columns={parsed.columns} rows={parsed.rows} />
+              ) : hasDocuments ? (
+                <DocumentCards documents={parsed.documents} />
               ) : (
                 <div className="text-foreground/80 text-sm leading-relaxed whitespace-pre-wrap">
                   {typeof parsed === "string" ? parsed : rawStr}
@@ -149,6 +151,28 @@ function RowCards({ columns, rows }: { columns: string[]; rows: Record<string, a
       {rows.length > MAX && (
         <div className="text-muted-foreground pt-1 text-center text-xs">
           还有 {rows.length - MAX} 条…
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentCards({ documents }: { documents: Record<string, unknown>[] }) {
+  const MAX = 5;
+  const shown = documents.slice(0, MAX);
+  return (
+    <div className="flex flex-col gap-2">
+      {shown.map((doc, i) => (
+        <div key={i} className="border-border/60 rounded-lg border bg-secondary/40 px-3 py-2 text-left">
+          <div className="font-semibold text-xs text-foreground mb-1 break-all">{String(doc.title ?? "")}</div>
+          <div className="text-muted-foreground text-xs line-clamp-3 whitespace-pre-wrap break-all">
+            {String(doc.content ?? "")}
+          </div>
+        </div>
+      ))}
+      {documents.length > MAX && (
+        <div className="text-muted-foreground pt-1 text-center text-xs font-medium">
+          还有 {documents.length - MAX} 篇文档…
         </div>
       )}
     </div>

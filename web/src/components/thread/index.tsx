@@ -260,13 +260,14 @@ export function Thread() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [cmdSearch, setCmdSearch] = useState("");
 
-  // 飞书多维表格跳转链接
+  // 飞书多维表格与知识库跳转链接
   const [bitableUrl, setBitableUrl] = useState<string | null>(null);
+  const [wikiUrl, setWikiUrl] = useState<string | null>(null);
 
   // 原位编辑器 Ref (用于自适应高度)
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 初始化时拉取配置中的 Bitable 链接
+  // 初始化时拉取配置中的 Bitable 与 Wiki 链接
   useEffect(() => {
     fetch("/api/config")
       .then((res) => res.json())
@@ -276,6 +277,10 @@ export function Thread() {
           const tableId = data.configs.FEISHU_BITABLE_TABLE_ID;
           if (appToken && tableId) {
             setBitableUrl(`https://feishu.cn/base/${appToken}?table=${tableId}`);
+          }
+          const wikiSpaceId = data.configs.FEISHU_WIKI_SPACE_ID;
+          if (wikiSpaceId) {
+            setWikiUrl(`https://feishu.cn/wiki/space/${wikiSpaceId}`);
           }
         }
       })
@@ -1435,7 +1440,7 @@ export function Thread() {
                     <div className="border border-coral-light/50 rounded-xl p-2.5 bg-oats-light/40 space-y-1.5 text-[10px] transition-all">
                       <div className={cn("flex items-center gap-1.5", syncStep >= 1 ? "text-green-600 font-semibold" : "text-gray-400")}>
                         {syncStep === 1 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 1 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
-                        <span>正在验证飞书 CLI 环境配置...</span>
+                        <span>正在验证飞书环境配置...</span>
                       </div>
                       <div className={cn("flex items-center gap-1.5", syncStep >= 2 ? "text-green-600 font-semibold" : "text-gray-400")}>
                         {syncStep === 2 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 2 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
@@ -1473,6 +1478,22 @@ export function Thread() {
                           className="inline-flex items-center gap-1 text-[10px] text-coral hover:underline font-bold transition-all"
                         >
                           <span>🔗 点击直接打开飞书多维表格 ↗</span>
+                        </a>
+                      </motion.div>
+                    )}
+                    {wikiUrl && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        className="text-center mt-1 overflow-hidden"
+                      >
+                        <a
+                          href={wikiUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] text-coral hover:underline font-bold transition-all"
+                        >
+                          <span>🔗 点击直接打开飞书知识空间 ↗</span>
                         </a>
                       </motion.div>
                     )}

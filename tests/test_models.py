@@ -176,7 +176,7 @@ def test_build_pool_no_intersection_falls_back(monkeypatch):
     assert pool[0].gateway_name == "gateway_1"
 
 
-from models import ModelRouterMiddleware
+from models import ModelRouterMiddleware, StaticModelPoolProvider
 
 
 def _candidate(name, mid):
@@ -195,7 +195,7 @@ def _fake_request():
 
 def test_router_first_candidate_success():
     pool = [_candidate("g1", "claude-sonnet-4-6"), _candidate("g2", "gpt-4o")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
     seen = []
 
     def handler(req):
@@ -209,7 +209,7 @@ def test_router_first_candidate_success():
 
 def test_router_switches_on_retryable():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
     seen = []
 
     def handler(req):
@@ -221,12 +221,12 @@ def test_router_switches_on_retryable():
     out = mw.wrap_model_call(_fake_request(), handler)
     assert out == "OK2"
     assert seen == [pool[0].model, pool[1].model]  # 切到了第二个
-    assert mw._is_cooling("g1") is True            # g1 被标记不健康
+    assert mw._is_cooling(pool[0]) is True            # g1 被标记不健康
 
 
 def test_router_non_retryable_raises_immediately():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
     calls = []
 
     def handler(req):
@@ -243,7 +243,7 @@ def test_router_non_retryable_raises_immediately():
 
 def test_router_all_exhausted_raises_last():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
 
     def handler(req):
         raise FakeStatusError(503)
@@ -261,22 +261,22 @@ def test_router_cooldown_expires_and_heals(monkeypatch):
     monkeypatch.setattr(models_mod.time, "monotonic", lambda: clock["t"])
 
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
 
     # 标记 g1 不健康(冷却 30s,到期时间 = 1000 + 30 = 1030)
     mw._mark_unhealthy(pool[0])
-    assert mw._is_cooling("g1") is True       # 当前 t=1000 < 1030,冷却中
+    assert mw._is_cooling(pool[0]) is True       # 当前 t=1000 < 1030,冷却中
 
     clock["t"] = 1029.0                        # 还没到期
-    assert mw._is_cooling("g1") is True
+    assert mw._is_cooling(pool[0]) is True
 
     clock["t"] = 1031.0                        # 已过 30s 冷却窗口
-    assert mw._is_cooling("g1") is False       # 自愈:重新可用
+    assert mw._is_cooling(pool[0]) is False       # 自愈:重新可用
 
 
 async def test_router_async_first_success():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
     seen = []
 
     async def handler(req):
@@ -290,7 +290,7 @@ async def test_router_async_first_success():
 
 async def test_router_async_switches_on_retryable():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
     seen = []
 
     async def handler(req):
@@ -302,12 +302,12 @@ async def test_router_async_switches_on_retryable():
     out = await mw.awrap_model_call(_fake_request(), handler)
     assert out == "OK2"
     assert seen == [pool[0].model, pool[1].model]
-    assert mw._is_cooling("g1") is True
+    assert mw._is_cooling(pool[0]) is True
 
 
 async def test_router_async_non_retryable_raises():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
     calls = []
 
     async def handler(req):
@@ -324,7 +324,7 @@ async def test_router_async_non_retryable_raises():
 
 async def test_router_async_all_exhausted_raises_last():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
 
     async def handler(req):
         raise FakeStatusError(503)
@@ -340,7 +340,7 @@ def test_router_concurrent_mark_unhealthy_consistent():
     """并发标记同一网关不健康:无异常,最终一致冷却(spec §6 best-effort 无锁)。"""
     import threading
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
-    mw = ModelRouterMiddleware(pool)
+    mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
     errors = []
 
     def worker():
@@ -353,7 +353,7 @@ def test_router_concurrent_mark_unhealthy_consistent():
     for t in threads: t.start()
     for t in threads: t.join()
     assert errors == []
-    assert mw._is_cooling("g1") is True
+    assert mw._is_cooling(pool[0]) is True
 
 
 from models import build_primary_model, build_router_middleware
@@ -366,9 +366,10 @@ def test_build_primary_model_returns_first_candidate_model():
 
 def test_build_router_middleware_wraps_pool():
     pool = [_candidate("g1", "a")]
-    mw = build_router_middleware(pool)
+    provider = StaticModelPoolProvider(pool)
+    mw = build_router_middleware(provider)
     assert isinstance(mw, ModelRouterMiddleware)
-    assert mw._pool is pool
+    assert mw._pool_provider.get_pool() == pool
 
 
 def test_verify_gateway_true_when_discoverable(monkeypatch):

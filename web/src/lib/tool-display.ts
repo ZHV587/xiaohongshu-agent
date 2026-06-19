@@ -36,6 +36,12 @@ export function getToolDisplay(
         running: "正在读取你的爆款库…",
         done: resultCount != null ? `已读取爆款库（${resultCount} 条）` : "已读取爆款库",
       };
+    case "read_feishu_wiki":
+      return {
+        hidden: false,
+        running: "正在读取你的飞书知识库…",
+        done: resultCount != null ? `已读取知识库（${resultCount} 篇文档）` : "已读取知识库",
+      };
     case "task":
       // 子 agent 委派（baokuan-analyst 等）
       return { hidden: false, running: "正在分析爆款规律…", done: "已总结这批爆款的共性" };
@@ -59,11 +65,18 @@ export function getToolDisplay(
   }
 }
 
-/** 从 read_xhs_data 的结果 content 里取 rows 行数；取不到返回 undefined */
-export function extractRowCount(content: unknown): number | undefined {
+/** 从 read_xhs_data/read_feishu_wiki 的结果 content 里取行数或篇数；取不到返回 undefined */
+export function extractRowCount(name: string | undefined, content: unknown): number | undefined {
   try {
     const obj = typeof content === "string" ? JSON.parse(content) : content;
-    if (obj && Array.isArray((obj as Record<string, unknown>).rows)) return ((obj as Record<string, unknown>).rows as unknown[]).length;
+    if (obj) {
+      if (name === "read_xhs_data" && Array.isArray((obj as Record<string, unknown>).rows)) {
+        return ((obj as Record<string, unknown>).rows as unknown[]).length;
+      }
+      if (name === "read_feishu_wiki" && Array.isArray((obj as Record<string, unknown>).documents)) {
+        return ((obj as Record<string, unknown>).documents as unknown[]).length;
+      }
+    }
   } catch {
     /* ignore */
   }

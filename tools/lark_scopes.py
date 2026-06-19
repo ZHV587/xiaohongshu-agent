@@ -14,4 +14,7 @@ LARK_SCOPES = [
     "task:task:write",
     "calendar:calendar:read",
     "calendar:calendar.event:create",
+    "wiki:space:read",
+    "wiki:node:read",
+    "docx:document:read",
 ]

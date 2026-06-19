@@ -37,6 +37,16 @@ class ModelPoolProvider(Protocol):
         raise NotImplementedError
 
 
+class StaticModelPoolProvider:
+    """把启动时构造的静态候选池显式暴露成 provider。"""
+
+    def __init__(self, pool: list[ModelCandidate]) -> None:
+        self._pool = pool
+
+    def get_pool(self) -> list[ModelCandidate]:
+        return list(self._pool)
+
+
 # 进程内探测缓存:同 (base_url, key) 只探一次。
 _DISCOVER_CACHE: dict[tuple[str, str], list[str] | None] = {}
 
@@ -217,28 +227,18 @@ class ModelRouterMiddleware(AgentMiddleware):
     健康度为 best-effort 无锁状态(spec §6):_health 存网关名→冷却到期时间。
     """
 
-    def __init__(self, pool: list[ModelCandidate] | ModelPoolProvider) -> None:
+    def __init__(self, pool_provider: ModelPoolProvider) -> None:
         super().__init__()
-        # 延迟校验非空，避免初始化时触发延迟加载
-        self._pool_provider = pool if hasattr(pool, "get_pool") else None
-        self._pool = pool if not hasattr(pool, "get_pool") else []
+        self._pool_provider = pool_provider
         self._health: dict[tuple[str, str], float] = {}  # (gateway_name, model_id) -> 冷却到期
         self._rr = 0  # 轮询游标
 
     def _current_pool(self) -> list[ModelCandidate]:
-        if self._pool_provider is not None:
-            return self._pool_provider.get_pool()
-        return list(self._pool)
+        return self._pool_provider.get_pool()
 
-    def _is_cooling(self, candidate: ModelCandidate | str) -> bool:
-        now = time.monotonic()
-        if isinstance(candidate, str):
-            return any(
-                gateway_name == candidate and now < until
-                for (gateway_name, _model_id), until in self._health.items()
-            )
+    def _is_cooling(self, candidate: ModelCandidate) -> bool:
         until = self._health.get((candidate.gateway_name, candidate.model_id))
-        return until is not None and now < until
+        return until is not None and time.monotonic() < until
 
     def _mark_unhealthy(self, candidate: ModelCandidate) -> None:
         self._health[(candidate.gateway_name, candidate.model_id)] = time.monotonic() + _COOLDOWN_SECONDS
@@ -302,9 +302,13 @@ def build_primary_model(pool: list[ModelCandidate]) -> BaseChatModel:
     raise ValueError("候选池为空，无法构建初始模型")
 
 
-def build_router_middleware(pool: list[ModelCandidate] | ModelPoolProvider) -> ModelRouterMiddleware:
+def build_static_model_provider(pool: list[ModelCandidate]) -> StaticModelPoolProvider:
+    return StaticModelPoolProvider(pool)
+
+
+def build_router_middleware(pool_provider: ModelPoolProvider) -> ModelRouterMiddleware:
     """构造调度中间件(主/子/评分各取一个,共用同一池)。"""
-    return ModelRouterMiddleware(pool)
+    return ModelRouterMiddleware(pool_provider)
 
 
 def build_pool_from_config(values: dict[str, str]) -> list[ModelCandidate]:
