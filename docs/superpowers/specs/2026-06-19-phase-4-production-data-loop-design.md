@@ -30,6 +30,7 @@
 6. 飞书 CLI 只作为内部适配器，被后端服务或工具封装调用，不暴露给用户，也不成为业务入口。
 7. 运维脚本只允许用于部署、健康检查、备份、回滚等平台操作，不允许承载业务同步或 Agent 行为。
 8. 高风险写操作继续走 DeepAgents `interrupt_on` 或明确的人类确认。
+9. 所有 Agent 侧新增能力必须映射到 DeepAgents/LangGraph 官方扩展点；如果某个能力找不到官方扩展点承载，就不能直接塞进 Agent runtime。
 
 ## 4. DeepAgents / LangGraph 原生边界
 
@@ -45,6 +46,27 @@
 8. 使用 LangGraph server + Web 前端作为运行入口。
 
 Postgres、`sync_runs`、outbox worker、定时同步、embedding worker、资源图谱、创作沉淀和效果反馈不是 DeepAgents 官方内置模块，也不需要伪装成 DeepAgents 内核能力。它们属于应用服务层。它们通过稳定的服务函数和 LangChain tools 暴露给 DeepAgents，保持在官方扩展点之内。
+
+### 4.1 官方扩展方式落位矩阵
+
+第四阶段全部按官方扩展方式落位：
+
+| 能力 | 官方扩展点 | 设计约束 |
+| --- | --- | --- |
+| 数据检索 | `create_deep_agent(tools=[...])` + LangChain tools | Agent 只调用 `search_resources`、`semantic_search_resources`、`graph_expand`、`get_resource` 等工具，不直连数据库 |
+| 手动同步 | LangChain tool + `RunnableConfig` 用户上下文 | Web 对话触发 `sync_feishu_resources`，工具内部调用应用服务层，不出现业务 CLI |
+| 数据状态查询 | LangChain tool | `get_data_foundation_status` 返回结构化状态，LLM 负责解释给用户 |
+| 文案创作 | DeepAgents 主智能体 + Skills + LLM | LLM 生成选题和文案，检索工具只提供上下文和依据 |
+| 爆款分析 | `subagents` | 继续用专用子智能体承接分析任务，主智能体只接收压缩后的结论 |
+| 质量检查 | `middleware` / rubric | 文案质量、数据依据、AI 腔检查放在 middleware 或评分子流程，不改 graph 私有结构 |
+| 人工确认 | `interrupt_on` | 发布、外部写入、批量覆盖等高风险动作必须可中断确认 |
+| 会话和长期状态 | `backend` / memory / checkpointer | 会话状态、文件状态和长期记忆走官方后端接口，不自建旁路会话机制 |
+| 权限身份 | `RunnableConfig` | 工具从配置读取当前用户、租户、飞书身份，权限在工具/服务层过滤 |
+| Web 运行入口 | LangGraph server + Web frontend | 不恢复项目业务 CLI，不新增管理后台 |
+| 后台同步 | 应用服务层，非 Agent runtime | scheduler/outbox 可以与后端进程同启，但只能调用 repository/service，不挂进 DeepAgents 内核 |
+| 图谱与 embedding | 应用服务层 + tools 查询 | 计算和索引在 worker/service，Agent 通过 tools 读取结果 |
+
+这张表是实现阶段的硬约束。任何新增代码如果不能放入上表某个位置，需要先回到设计阶段补充边界，不能为了方便直接绕过 DeepAgents/LangGraph。
 
 ## 5. LLM 在文案中的职责
 
