@@ -1,6 +1,6 @@
 // web/src/components/thread/messages/copy-card.tsx
 import { useState } from "react";
-import { Copy, CopyCheck } from "lucide-react";
+import { Copy, CopyCheck, Database } from "lucide-react";
 import type { CopySegment } from "@/lib/xhs-blocks";
 
 export function CopyCard({ data }: { data: CopySegment["data"] }) {
@@ -48,6 +48,22 @@ export function CopyCard({ data }: { data: CopySegment["data"] }) {
                 {tag}
               </span>
             ))}
+          </div>
+        )}
+        {data.evidence.length > 0 && (
+          <div className="border-border/70 mt-3 border-t pt-3">
+            <div className="text-muted-foreground mb-2 flex items-center gap-1.5 text-xs font-medium">
+              <Database className="size-3.5" />
+              <span>创作依据</span>
+            </div>
+            <div className="space-y-2">
+              {data.evidence.map((source) => (
+                <div key={source.resource_id} className="text-xs leading-relaxed">
+                  <div className="text-foreground/80 font-medium">{source.title}</div>
+                  <div className="text-muted-foreground">{source.summary}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

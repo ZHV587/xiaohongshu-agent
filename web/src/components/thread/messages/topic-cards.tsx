@@ -1,5 +1,5 @@
 // web/src/components/thread/messages/topic-cards.tsx
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Database } from "lucide-react";
 import { useThreadActions } from "@/lib/thread-actions";
 import { MarkdownText } from "../markdown-text";
 import type { TopicsSegment } from "@/lib/xhs-blocks";
@@ -39,7 +39,22 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
           </button>
         ))}
       </div>
+      {data.evidence.length > 0 && (
+        <div className="border-border/70 mt-0.5 border-t px-1 pt-3">
+          <div className="text-muted-foreground mb-2 flex items-center gap-1.5 text-xs font-medium">
+            <Database className="size-3.5" />
+            <span>创作依据</span>
+          </div>
+          <div className="space-y-2">
+            {data.evidence.map((source) => (
+              <div key={source.resource_id} className="text-xs leading-relaxed">
+                <div className="text-foreground/80 font-medium">{source.title}</div>
+                <div className="text-muted-foreground">{source.summary}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-

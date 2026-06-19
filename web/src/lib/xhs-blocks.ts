@@ -1,13 +1,19 @@
 // web/src/lib/xhs-blocks.ts
 export interface TextSegment { kind: "text"; text: string }
+export interface SourceEvidence {
+  resource_id: string;
+  title: string;
+  summary: string;
+  updated_at?: string;
+}
 export interface TopicsSegment {
   kind: "topics";
-  data: { intro?: string; topics: string[] };
+  data: { intro?: string; topics: string[]; evidence: SourceEvidence[] };
   isPending?: boolean;
 }
 export interface CopySegment {
   kind: "copy";
-  data: { title: string; body: string; tags: string[] };
+  data: { title: string; body: string; tags: string[]; evidence: SourceEvidence[] };
   isPending?: boolean;
 }
 export interface PendingSegment { kind: "pending"; lang: "xhs_topics" | "xhs_copy" }
@@ -102,15 +108,50 @@ function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | nu
   }
   if (lang === "xhs_topics") {
     if (obj && Array.isArray(obj.topics) && obj.topics.every((t: unknown) => typeof t === "string")) {
-      return { kind: "topics", data: { intro: typeof obj.intro === "string" ? obj.intro : undefined, topics: obj.topics } };
+      return {
+        kind: "topics",
+        data: {
+          intro: typeof obj.intro === "string" ? obj.intro : undefined,
+          topics: obj.topics,
+          evidence: parseEvidence(obj.evidence),
+        },
+      };
     }
     return null;
   }
   if (obj && typeof obj.title === "string" && typeof obj.body === "string") {
     const tags = Array.isArray(obj.tags) ? obj.tags.filter((t: unknown) => typeof t === "string") : [];
-    return { kind: "copy", data: { title: obj.title, body: obj.body, tags } };
+    return {
+      kind: "copy",
+      data: { title: obj.title, body: obj.body, tags, evidence: parseEvidence(obj.evidence) },
+    };
   }
   return null;
+}
+
+function parseEvidence(value: unknown): SourceEvidence[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item): SourceEvidence[] => {
+    if (!item || typeof item !== "object") return [];
+
+    const source = item as Record<string, unknown>;
+    if (
+      typeof source.resource_id !== "string" || !source.resource_id.trim() ||
+      typeof source.title !== "string" || !source.title.trim() ||
+      typeof source.summary !== "string" || !source.summary.trim()
+    ) {
+      return [];
+    }
+
+    const evidence: SourceEvidence = {
+      resource_id: source.resource_id,
+      title: source.title,
+      summary: source.summary,
+    };
+    if (typeof source.updated_at === "string") evidence.updated_at = source.updated_at;
+    return [evidence];
+  });
 }
 
 // 增量容错 JSON 字段解析器 - 提取 Copy
@@ -165,7 +206,8 @@ function parsePartialXhsCopy(inner: string) {
   return {
     title: cleanString(title),
     body: cleanString(body),
-    tags: tags.map(cleanString)
+    tags: tags.map(cleanString),
+    evidence: [],
   };
 }
 
@@ -208,6 +250,7 @@ function parsePartialXhsTopics(inner: string) {
 
   return {
     intro: cleanString(intro),
-    topics: topics.map(cleanString)
+    topics: topics.map(cleanString),
+    evidence: [],
   };
 }
