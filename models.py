@@ -307,6 +307,57 @@ def build_router_middleware(pool: list[ModelCandidate] | ModelPoolProvider) -> M
     return ModelRouterMiddleware(pool)
 
 
+def build_pool_from_config(values: dict[str, str]) -> list[ModelCandidate]:
+    """从配置中心快照构造模型候选池，不依赖进程 env 作为权威源。"""
+    gateways: list[tuple[str, str, str]] = []
+    base = values.get("LLM_BASE_URL", "").strip()
+    key = values.get("LLM_API_KEY", "").strip()
+    if base and key:
+        gateways.append(("gateway_1", base, key))
+    for n in (2, 3):
+        b = values.get(f"LLM_GATEWAY_{n}_BASE_URL", "").strip()
+        k = values.get(f"LLM_GATEWAY_{n}_API_KEY", "").strip()
+        if b and k:
+            gateways.append((f"gateway_{n}", b, k))
+
+    whitelist = [m.strip() for m in values.get("LLM_QUALITY_MODELS", "").split(",") if m.strip()]
+    whitelist_set = set(whitelist)
+    pool: list[ModelCandidate] = []
+
+    old_provider = os.environ.get("LLM_PROVIDER")
+    if values.get("LLM_PROVIDER"):
+        os.environ["LLM_PROVIDER"] = values["LLM_PROVIDER"]
+    try:
+        for gw_name, base_url, api_key in gateways:
+            available = discover_models(base_url, api_key)
+            if not available:
+                continue
+            for model_id in available:
+                if model_id in whitelist_set:
+                    pool.append(ModelCandidate(
+                        gateway_name=gw_name,
+                        model_id=model_id,
+                        model=_build_chat_model(model_id, base_url, api_key),
+                    ))
+        if not pool and gateways and whitelist:
+            gw_name, base_url, api_key = gateways[0]
+            fallback_id = whitelist[0]
+            pool.append(ModelCandidate(
+                gateway_name=gw_name,
+                model_id=fallback_id,
+                model=_build_chat_model(fallback_id, base_url, api_key),
+            ))
+    finally:
+        if old_provider is None:
+            os.environ.pop("LLM_PROVIDER", None)
+        else:
+            os.environ["LLM_PROVIDER"] = old_provider
+
+    if not pool:
+        raise RuntimeError("无法从配置中心构造模型池")
+    return pool
+
+
 def verify_gateway(base_url: str, api_key: str) -> bool:
     """配置时连通性验证:能探到非空清单即视为'配上能用'。
 

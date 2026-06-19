@@ -4,7 +4,8 @@ import threading
 import time
 from dataclasses import dataclass
 
-from models import ModelCandidate
+from config_center import ConfigSnapshot
+from models import ModelCandidate, build_pool_from_config
 
 
 @dataclass(frozen=True)
@@ -54,3 +55,11 @@ class ModelRegistry:
                     "rubric": False,
                 },
             }
+
+    def reload_from_config(self, snapshot: ConfigSnapshot) -> None:
+        try:
+            pool = build_pool_from_config(snapshot.values)
+            self.replace(version=snapshot.version, pool=pool)
+        except Exception as exc:
+            self.record_error(str(exc))
+            raise
