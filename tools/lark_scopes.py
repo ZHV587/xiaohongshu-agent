@@ -17,6 +17,6 @@ LARK_SCOPES = [
     "wiki:space:read",
     "wiki:node:read",
     "wiki:node:retrieve",
-    "docx:document:read",
+    "docx:document:readonly",
 ]
 
