@@ -35,6 +35,8 @@ import {
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import ThreadHistory from "./history";
+import { LlmConfigPage } from "./history/LlmConfigPage";
+import { FeishuConfigPage } from "./history/FeishuConfigPage";
 import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
@@ -194,6 +196,7 @@ export function Thread() {
     "chatHistoryOpen",
     parseAsBoolean.withDefault(false),
   );
+  const [view, setView] = useQueryState("view");
   const [input, setInput] = useState("");
   const {
     contentBlocks,
@@ -291,6 +294,7 @@ export function Thread() {
   const setThreadId = (id: string | null) => {
     _setThreadId(id);
     setIsEditingText(false);
+    setView(null);
   };
 
   // 监听 AI 流式更新，实时同步至右侧模拟器预览
@@ -740,7 +744,7 @@ export function Thread() {
         <div
           className={cn(
             "grid w-full transition-all duration-500",
-            chatStarted ? "grid-cols-[1fr_480px]" : "grid-cols-[1fr_0px]"
+            (chatStarted && !view) ? "grid-cols-[1fr_480px]" : "grid-cols-[1fr_0px]"
           )}
         >
           {/* 左侧：聊天面板 */}
@@ -754,9 +758,14 @@ export function Thread() {
               marginLeft: chatHistoryOpen ? (isLargeScreen ? 300 : 0) : 0,
               width: chatHistoryOpen ? (isLargeScreen ? "calc(100% - 300px)" : "100%") : "100%"
             }}
-            transition={isLargeScreen ? { type: "spring", stiffness: 300, damping: 30 } : { duration: 0 }}
           >
-            {!chatStarted && (
+            {view === "llm" ? (
+              <LlmConfigPage onClose={() => setView(null)} />
+            ) : view === "feishu" ? (
+              <FeishuConfigPage onClose={() => setView(null)} />
+            ) : (
+              <>
+                {!chatStarted && (
               <div className="absolute top-0 left-0 z-10 flex w-full items-center justify-between gap-3 p-2 pl-4">
                 <div>
                   {(!chatHistoryOpen || !isLargeScreen) && (
@@ -988,6 +997,8 @@ export function Thread() {
                 }
               />
             </StickToBottom>
+              </>
+            )}
           </motion.div>
 
           {/* 右侧：iPhone 模拟器与飞书协作工作台 */}
