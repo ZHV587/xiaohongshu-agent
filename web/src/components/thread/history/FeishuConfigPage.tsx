@@ -16,7 +16,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
     FEISHU_BITABLE_TABLE_ID: "",
     FEISHU_WIKI_SPACE_ID: "",
   });
-  const [wikiSpaceName, setWikiSpaceName] = useState("小红书智能体");
+  const [wikiSpaceName, setWikiSpaceName] = useState("小红书爆单手册");
 
   useEffect(() => {
     setLoading(true);

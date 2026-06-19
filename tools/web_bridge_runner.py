@@ -253,7 +253,7 @@ def handle_wiki_space(args):
     token = get_uat(open_id)
     fallback_space_id = os.environ.get("FEISHU_WIKI_SPACE_ID", "7648177996175543260")
     if not token:
-        print(json.dumps({"ok": True, "name": "小红书智能体", "space_id": fallback_space_id}, ensure_ascii=False))
+        print(json.dumps({"ok": True, "name": "小红书爆单手册", "space_id": fallback_space_id}, ensure_ascii=False))
         return
         
     try:
@@ -263,14 +263,14 @@ def handle_wiki_space(args):
         
         if cli_resp.startswith("Error") or "error" in cli_resp.lower() or cli_resp.startswith("⚠️"):
             # Fallback if API fails or scope missing
-            print(json.dumps({"ok": True, "name": "小红书智能体", "space_id": fallback_space_id}, ensure_ascii=False))
+            print(json.dumps({"ok": True, "name": "小红书爆单手册", "space_id": fallback_space_id}, ensure_ascii=False))
             return
             
         data = json.loads(cli_resp)
-        space_name = data.get("data", {}).get("space", {}).get("name") or "小红书智能体"
+        space_name = data.get("data", {}).get("space", {}).get("name") or "小红书爆单手册"
         print(json.dumps({"ok": True, "name": space_name, "space_id": fallback_space_id}, ensure_ascii=False))
     except Exception:
-        print(json.dumps({"ok": True, "name": "小红书智能体", "space_id": fallback_space_id}, ensure_ascii=False))
+        print(json.dumps({"ok": True, "name": "小红书爆单手册", "space_id": fallback_space_id}, ensure_ascii=False))
 
 
 def main():

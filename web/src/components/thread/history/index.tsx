@@ -24,7 +24,7 @@ function ThreadList({
   onThreadClick,
 }: {
   threads: Thread[];
-  onThreadClick?: (threadId: string) => void;
+  onThreadClick?: (threadId: string | null) => void;
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
   const [, setView] = useQueryState("view");
@@ -52,10 +52,13 @@ function ThreadList({
             type="button"
             onClick={(e) => {
               e.preventDefault();
-              onThreadClick?.(t.thread_id);
               setView(null);
               if (t.thread_id === threadId) return;
-              setThreadId(t.thread_id);
+              if (onThreadClick) {
+                onThreadClick(t.thread_id);
+              } else {
+                setThreadId(t.thread_id);
+              }
             }}
             className={cn(
               "w-full truncate rounded-lg px-3 py-2.5 text-left text-sm transition-all flex items-center justify-between",
@@ -132,9 +135,11 @@ function UserArea() {
 function SidebarBody({
   onLlmConfigOpen,
   onFeishuConfigOpen,
+  onThreadClick,
 }: {
   onLlmConfigOpen: () => void;
   onFeishuConfigOpen: () => void;
+  onThreadClick?: (threadId: string | null) => void;
 }) {
   const [, setThreadId] = useQueryState("threadId");
   const [, setView] = useQueryState("view");
@@ -198,8 +203,12 @@ function SidebarBody({
         <Button
           className="bg-primary text-primary-foreground hover:bg-primary/90 w-full justify-start gap-2"
           onClick={() => {
-            setThreadId(null);
             setView(null);
+            if (onThreadClick) {
+              onThreadClick(null);
+            } else {
+              setThreadId(null);
+            }
           }}
         >
           <SquarePen className="size-4" />
@@ -208,7 +217,11 @@ function SidebarBody({
       </div>
       <div className="text-muted-foreground px-4 pt-2 pb-1 text-xs tracking-wide text-left">最近</div>
       <div className="min-h-0 flex-1">
-        {threadsLoading ? <ThreadHistoryLoading /> : <ThreadList threads={threads} />}
+        {threadsLoading ? (
+          <ThreadHistoryLoading />
+        ) : (
+          <ThreadList threads={threads} onThreadClick={onThreadClick} />
+        )}
       </div>
       {/* 用户区:飞书登录态 */}
       <UserArea />
@@ -216,7 +229,11 @@ function SidebarBody({
   );
 }
 
-export default function ThreadHistory() {
+export default function ThreadHistory({
+  onThreadClick,
+}: {
+  onThreadClick?: (threadId: string | null) => void;
+}) {
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
     "chatHistoryOpen",
@@ -230,6 +247,7 @@ export default function ThreadHistory() {
         <SidebarBody
           onLlmConfigOpen={() => setView("llm")}
           onFeishuConfigOpen={() => setView("feishu")}
+          onThreadClick={onThreadClick}
         />
       </div>
       <div className="lg:hidden">
@@ -247,6 +265,7 @@ export default function ThreadHistory() {
             <SidebarBody
               onLlmConfigOpen={() => setView("llm")}
               onFeishuConfigOpen={() => setView("feishu")}
+              onThreadClick={onThreadClick}
             />
           </SheetContent>
         </Sheet>

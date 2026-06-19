@@ -1,9 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef, useState, FormEvent, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useStreamContext } from "@/providers/Stream";
-import { useState, FormEvent } from "react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage } from "./messages/ai";
@@ -221,7 +220,7 @@ export function Thread() {
   const [rightTab, setRightTab] = useState<"mock" | "feishu">("mock");
   const [viewMode, setViewMode] = useState<"detail" | "feed">("detail");
   const [isEditingText, setIsEditingText] = useState(false);
-  
+
   // 当前动态编辑的选题和正文
   const [draftTitle, setDraftTitle] = useState("精致露营「搬家式」装备清单");
   const [draftContent, setDraftContent] = useState("夏天太适合露营啦！⛺但是作为一个精致的搬家式露营玩家，带什么装备去真的大有讲究！今天就给大家盘点一下我私藏的「搬家式」露营好物，少带一件体验感都打折！\n\n👇精致露营必带清单：\n1️⃣ 双顶充气天幕：不仅防雨防晒，最重要是拍照真的超出片！空间很大，容纳8个人也宽敞。");
@@ -287,6 +286,52 @@ export function Thread() {
       .catch(() => {});
   }, []);
 
+  // Load autosaved draft on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("xhs_autosave_draft");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.title) setDraftTitle(parsed.title);
+        if (parsed.content) setDraftContent(parsed.content);
+      }
+    } catch (e) {
+      console.error("加载本地草稿失败", e);
+    }
+  }, []);
+
+  const [isDirty, setIsDirty] = useState(false);
+  const [lastSavedContent, setLastSavedContent] = useState("");
+  const [lastSavedTitle, setLastSavedTitle] = useState("");
+
+  // Initialize lastSaved state when AI generates new draft
+  useEffect(() => {
+    if (messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg.type === "ai" && typeof lastMsg.content === "string") {
+        setLastSavedContent(lastMsg.content);
+        const lines = lastMsg.content.trim().split("\n");
+        const firstLine = lines[0].replace(/^[#\s*✨🍠⛺☕🌿👇📝🌟🔥🚗]*/gu, "").trim();
+        if (firstLine && firstLine.length < 40) {
+          setLastSavedTitle(firstLine);
+        } else {
+          setLastSavedTitle("小红书爆款文案");
+        }
+        setIsDirty(false);
+      }
+    }
+  }, [messages]);
+
+  // Autosave to localStorage and track changes
+  useEffect(() => {
+    localStorage.setItem("xhs_autosave_draft", JSON.stringify({ title: draftTitle, content: draftContent }));
+    if (lastSavedContent && (draftContent !== lastSavedContent || draftTitle !== lastSavedTitle)) {
+      setIsDirty(true);
+    } else {
+      setIsDirty(false);
+    }
+  }, [draftTitle, draftContent, lastSavedContent, lastSavedTitle]);
+
   // 自适应高度 Editor text area auto grow
   useEffect(() => {
     if (isEditingText && textareaRef.current) {
@@ -295,11 +340,16 @@ export function Thread() {
     }
   }, [draftContent, isEditingText]);
 
-  const setThreadId = (id: string | null) => {
+  const setThreadId = useCallback((id: string | null) => {
+    if (isDirty) {
+      const ok = window.confirm("您有尚未同步至飞书的本地修改，切换或关闭对话将遗失这些改动。是否确定继续？");
+      if (!ok) return;
+    }
     _setThreadId(id);
     setIsEditingText(false);
     setView(null);
-  };
+    setIsDirty(false);
+  }, [isDirty, _setThreadId, setView]);
 
   // 监听 AI 流式更新，实时同步至右侧模拟器预览
   useEffect(() => {
@@ -347,7 +397,7 @@ export function Thread() {
           setIsFetchingChats(false);
         });
     }
-  }, [rightTab]);
+  }, [rightTab, feishuChats.length]);
 
   // 监听 Ctrl+P 热键，阻断默认打印行为
   useEffect(() => {
@@ -389,7 +439,7 @@ export function Thread() {
     setTimeout(() => {
       setIsFlying(false);
       setSyncStepsVisible(true);
-      
+
       // 1. 验证配置
       setSyncStep(1);
       setTimeout(() => {
@@ -398,7 +448,7 @@ export function Thread() {
         setTimeout(() => {
           // 3. 写入多维表格 (调用真实后端网关)
           setSyncStep(3);
-          
+
           fetch("/api/feishu/sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -415,6 +465,9 @@ export function Thread() {
             .then(data => {
               if (data.ok) {
                 setSyncStep(4); // 成功
+                setLastSavedContent(draftContent);
+                setLastSavedTitle(draftTitle);
+                setIsDirty(false);
                 toast.success("成功同步修改至飞书多维表格！");
                 if (data.redirect_url) {
                   setBitableUrl(data.redirect_url);
@@ -448,7 +501,7 @@ export function Thread() {
   const handleSendNotification = () => {
     if (isSendingNotification || !selectedChatId) return;
     setIsSendingNotification(true);
-    
+
     fetch("/api/feishu/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -486,7 +539,7 @@ export function Thread() {
     const text = textarea.value;
     const nextVal = text.substring(0, start) + emoji + text.substring(end);
     setDraftContent(nextVal);
-    
+
     // 重设焦点与光标位置
     setTimeout(() => {
       textarea.focus();
@@ -497,6 +550,29 @@ export function Thread() {
   // Tag 智能追加
   const handleAppendTag = (tag: string) => {
     setDraftContent((prev) => prev.trim() + ` #${tag}`);
+  };
+
+  // 粘贴文本净化处理器
+  const handleEditBodyPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData("text");
+    if (text) {
+      e.preventDefault();
+      const sanitized = text
+        .replace(/\r\n/g, "\n")
+        .replace(/\u00A0/g, " ")
+        .replace(/\u3000/g, " ");
+
+      const textarea = e.currentTarget;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const val = textarea.value;
+      const nextVal = val.substring(0, start) + sanitized + val.substring(end);
+      setDraftContent(nextVal);
+
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + sanitized.length;
+      }, 0);
+    }
   };
 
   // ────────────────────────────────────────────────────────────
@@ -535,7 +611,7 @@ export function Thread() {
     } catch {
       // no-op
     }
-  }, [stream.error]);
+  }, [stream.error, setThreadId]);
 
   const prevMessageLength = useRef(0);
   useEffect(() => {
@@ -558,7 +634,7 @@ export function Thread() {
       content: text as Message["content"],
     };
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
-    
+
     // 原位编辑的文案自动附带在 context 字段中，实现与 Agent 状态的无缝对齐
     const context = {
       current_draft: {
@@ -567,7 +643,7 @@ export function Thread() {
         record_id: syncedRecordId,
       }
     };
-    
+
     stream.submit(
       { messages: [...toolMessages, newHumanMessage], context },
       {
@@ -650,20 +726,25 @@ export function Thread() {
   return (
     <ThreadActionsProvider value={{ submitText }}>
       <div className="flex h-screen w-full overflow-hidden bg-oats relative">
-        
-        {/* 抛物线飞行动效元素 */}
+
+        {/* 物理抛物线飞行动效元素 */}
         <AnimatePresence>
           {isFlying && (
             <motion.div
               initial={{ left: "25%", top: "85%", scale: 1.2, opacity: 1 }}
               animate={{
-                left: ["25%", "55%", "78%"],
-                top: ["85%", "40%", "15%"],
-                scale: [1.2, 1.5, 0.3],
-                opacity: [1, 0.9, 0.2]
+                left: "78%",
+                top: "15%",
+                scale: 0.35,
+                opacity: 0.15
               }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.8, ease: "easeInOut" }}
+              transition={{
+                left: { duration: 0.8, ease: "linear" },
+                top: { duration: 0.8, ease: [0.15, 0.85, 0.45, 1.0] }, // Up first, then drop down
+                scale: { duration: 0.8, ease: "easeInOut" },
+                opacity: { duration: 0.8, ease: "easeIn" }
+              }}
               className="absolute z-50 bg-coral text-white text-[11px] px-3.5 py-2 rounded-full font-bold shadow-lg pointer-events-none"
             >
               🍠 正在同步...
@@ -742,7 +823,7 @@ export function Thread() {
             transition={isLargeScreen ? { type: "spring", stiffness: 300, damping: 30 } : { duration: 0 }}
           >
             <div className="relative h-full" style={{ width: 300 }}>
-              <ThreadHistory />
+              <ThreadHistory onThreadClick={setThreadId} />
             </div>
           </motion.div>
         </div>
@@ -958,7 +1039,7 @@ export function Thread() {
                             <kbd className="text-[8px] bg-oats-light border px-1 rounded shadow-xs font-mono">Ctrl+P</kbd>
                             <span className="text-gray-500">润色工具箱</span>
                           </button>
-                          
+
                           <Label
                             htmlFor="file-input"
                             className="flex cursor-pointer items-center gap-2"
@@ -1070,489 +1151,534 @@ export function Thread() {
               )}
             </div>
 
-            {/* Tab 1: 手机模拟器 */}
-            {rightTab === "mock" && (
-              <div className="flex-grow overflow-y-auto p-4 bg-oats/30 flex justify-center items-start custom-scrollbar">
-                
-                {/* 详情页视窗 (iPhone 模拟器壳) */}
-                {viewMode === "detail" && (
-                  <div className="w-[320px] border-[8px] border-charcoal rounded-[36px] bg-white shadow-2xl overflow-hidden relative flex flex-col shrink-0 aspect-[9/18.5] my-1">
-                    
-                    {/* 刘海 */}
-                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-5.5 bg-charcoal rounded-b-xl z-20 flex justify-center items-center">
-                      <span className="w-1.5 h-1.5 rounded-full bg-charcoal-dark border border-gray-800"></span>
-                    </div>
+            {/* Tab 视图面板，使用 AnimatePresence 进行平滑滑入淡出过渡 */}
+            <div className="flex-grow overflow-hidden relative w-full">
+              <AnimatePresence mode="wait">
+                {rightTab === "mock" ? (
+                  <motion.div
+                    key="mock-tab"
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 12 }}
+                    transition={{ duration: 0.18, ease: "easeOut" }}
+                    className="absolute inset-0 flex flex-col overflow-y-auto p-4 bg-oats/30 custom-scrollbar"
+                  >
+                    <div className="flex justify-center items-start w-full min-h-full">
 
-                    {/* 模拟器状态条 */}
-                    <div className="pt-7 pb-2 px-3 border-b border-gray-100 flex items-center justify-between bg-white/90 shrink-0 select-none">
-                      <ChevronLeft className="size-4.5 text-charcoal cursor-pointer" />
-                      <span className="text-xs font-bold">笔记详情</span>
-                      <XIcon className="size-4 text-charcoal opacity-0" />
-                    </div>
+                      {/* 详情页视窗 (iPhone 模拟器壳) */}
+                      {viewMode === "detail" && (
+                        <div className="w-[320px] border-[8px] border-charcoal rounded-[36px] bg-white shadow-2xl overflow-hidden relative flex flex-col shrink-0 aspect-[9/18.5] my-1">
 
-                    {/* 手机内容滚动区 */}
-                    <div className="flex-grow overflow-y-auto bg-white flex flex-col relative custom-scrollbar">
-                      
-                      {/* 多图轮播 */}
-                      <div className="w-full aspect-square bg-coral-light flex flex-col items-center justify-center text-center text-coral/80 relative overflow-hidden shrink-0 group">
-                        <img
-                          src={carouselImages[carouselIndex]}
-                          alt="露营"
-                          className="w-full h-full object-cover absolute inset-0 transition-all duration-300"
-                        />
-                        <button
-                          onClick={() => setCarouselIndex((prev) => (prev > 0 ? prev - 1 : carouselImages.length - 1))}
-                          className="absolute left-2.5 top-1/2 -translate-y-1/2 bg-white/70 hover:bg-white text-charcoal p-1.5 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                        >
-                          <ChevronLeft className="size-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setCarouselIndex((prev) => (prev < carouselImages.length - 1 ? prev + 1 : 0))}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 bg-white/70 hover:bg-white text-charcoal p-1.5 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                        >
-                          <ChevronRight className="size-3.5" />
-                        </button>
-                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
-                          {carouselImages.map((_, i) => (
-                            <span
-                              key={i}
-                              className={cn(
-                                "w-1.5 h-1.5 rounded-full transition-all",
-                                carouselIndex === i ? "bg-white" : "bg-white/50"
-                              )}
-                            ></span>
-                          ))}
-                        </div>
-                      </div>
+                          {/* 刘海 */}
+                          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-5.5 bg-charcoal rounded-b-xl z-20 flex justify-center items-center">
+                            <span className="w-1.5 h-1.5 rounded-full bg-charcoal-dark border border-gray-800"></span>
+                          </div>
 
-                      {/* 博主信息栏 */}
-                      <div className="px-3 py-2 border-b border-gray-50 flex items-center justify-between shrink-0 select-none">
-                        <div className="flex items-center gap-2">
-                          <div className="size-6 rounded-full bg-oats-dark text-charcoal font-bold text-xs flex items-center justify-center">Z</div>
-                          <div>
-                            <div className="text-[10px] font-bold text-charcoal">张潇潇 (运营组)</div>
-                            <div className="text-[8px] text-gray-400">
-                              {syncedRecordId ? `当前草稿记录 ${syncedRecordId}` : "尚未创建飞书草稿记录"}
+                          {/* 模拟器状态条 */}
+                          <div className="pt-7 pb-2 px-3 border-b border-gray-100 flex items-center justify-between bg-white/90 shrink-0 select-none">
+                            <ChevronLeft className="size-4.5 text-charcoal cursor-pointer" />
+                            <span className="text-xs font-bold">笔记详情</span>
+                            <XIcon className="size-4 text-charcoal opacity-0" />
+                          </div>
+
+                          {/* 手机内容滚动区 */}
+                          <div className="flex-grow overflow-y-auto bg-white flex flex-col relative custom-scrollbar">
+
+                            {/* 多图轮播 */}
+                            <div className="w-full aspect-square bg-coral-light flex flex-col items-center justify-center text-center text-coral/80 relative overflow-hidden shrink-0 group">
+                              <img
+                                src={carouselImages[carouselIndex]}
+                                alt="露营"
+                                className="w-full h-full object-cover absolute inset-0 transition-all duration-300 outline outline-1 outline-black/5 dark:outline-white/10 outline-offset-[-1px]"
+                              />
+                              <button
+                                onClick={() => setCarouselIndex((prev) => (prev > 0 ? prev - 1 : carouselImages.length - 1))}
+                                className="absolute left-2.5 top-1/2 -translate-y-1/2 bg-white/70 hover:bg-white text-charcoal p-1.5 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                              >
+                                <ChevronLeft className="size-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setCarouselIndex((prev) => (prev < carouselImages.length - 1 ? prev + 1 : 0))}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 bg-white/70 hover:bg-white text-charcoal p-1.5 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                              >
+                                <ChevronRight className="size-3.5" />
+                              </button>
+                              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
+                                {carouselImages.map((_, i) => (
+                                  <span
+                                    key={i}
+                                    className={cn(
+                                      "w-1.5 h-1.5 rounded-full transition-all",
+                                      carouselIndex === i ? "bg-white" : "bg-white/50"
+                                    )}
+                                  ></span>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                        <button className="border border-coral text-coral px-2.5 py-0.5 rounded-full text-[9px] font-semibold">关注</button>
-                      </div>
 
-                      {/* 动态文本预览区 / 编辑入口 */}
-                      {!isEditingText ? (
-                        <div
-                          onClick={() => setIsEditingText(true)}
-                          className="p-3 flex-grow cursor-pointer hover:bg-oats/10 transition-colors relative group"
-                        >
-                          <div className="absolute top-2 right-2 text-[9px] text-coral bg-coral-light border border-coral/10 px-1.5 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 select-none">
-                            <span>原位编辑 ✍️</span>
+                            {/* 博主信息栏 */}
+                            <div className="px-3 py-2 border-b border-gray-50 flex items-center justify-between shrink-0 select-none">
+                              <div className="flex items-center gap-2">
+                                <div className="size-6 rounded-full bg-oats-dark text-charcoal font-bold text-xs flex items-center justify-center">Z</div>
+                                <div>
+                                  <div className="text-[10px] font-bold text-charcoal">张潇潇 (运营组)</div>
+                                  <div className="text-[8px] text-gray-400">
+                                    {syncedRecordId ? `当前草稿记录 ${syncedRecordId}` : "尚未创建飞书草稿记录"}
+                                  </div>
+                                </div>
+                              </div>
+                              <button className="border border-coral text-coral px-2.5 py-0.5 rounded-full text-[9px] font-semibold">关注</button>
+                            </div>
+
+                            {/* 动态文本预览区 / 编辑入口 */}
+                            {!isEditingText ? (
+                              <div
+                                onClick={() => setIsEditingText(true)}
+                                className="p-3 flex-grow cursor-pointer hover:bg-oats/10 transition-colors relative group"
+                              >
+                                <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                                  {isDirty && (
+                                    <span className="relative flex h-2 w-2">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" title="本地草稿有未同步的修改"></span>
+                                    </span>
+                                  )}
+                                  <div className="text-[9px] text-coral bg-coral-light border border-coral/10 px-1.5 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 select-none">
+                                    <span>原位编辑 ✍️</span>
+                                  </div>
+                                </div>
+                                <h3 className="text-xs font-bold text-charcoal mb-2 leading-snug">{draftTitle}</h3>
+                                <p className="text-[10px] text-charcoal-light leading-relaxed whitespace-pre-wrap">{draftContent}</p>
+                              </div>
+                            ) : (
+                              /* 原位富文本编辑器表单 */
+                              <div className="p-3 flex flex-col gap-2.5 border-t border-oats-dark bg-oats-light/60 transition-all">
+                                <div className="flex justify-between items-center text-[10px]">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-gray-500">✏️ 原位修改文案</span>
+                                    {isDirty && (
+                                      <span className="relative flex h-2 w-2" title="本地草稿有未同步的修改">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div
+                                    className={cn(
+                                      "flex items-center gap-1.5 border px-2 py-0.5 rounded transition-all duration-300",
+                                      draftContent.length > 1000
+                                        ? "bg-red-50 text-red-700 border-red-200 animate-shake"
+                                        : draftContent.length >= 800
+                                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                                        : "bg-green-50 text-green-700 border-green-200"
+                                    )}
+                                  >
+                                    <svg className="size-3.5 transform -rotate-90 select-none" viewBox="0 0 20 20">
+                                      <circle
+                                        cx="10"
+                                        cy="10"
+                                        r="8"
+                                        fill="none"
+                                        stroke={
+                                          draftContent.length > 1000
+                                            ? "#FCA5A5"
+                                            : draftContent.length >= 800
+                                            ? "#FDE68A"
+                                            : "#A7F3D0"
+                                        }
+                                        strokeWidth="2.5"
+                                        className="opacity-40"
+                                      />
+                                      <motion.circle
+                                        cx="10"
+                                        cy="10"
+                                        r="8"
+                                        fill="none"
+                                        stroke={
+                                          draftContent.length > 1000
+                                            ? "#EF4444"
+                                            : draftContent.length >= 800
+                                            ? "#F59E0B"
+                                            : "#10B981"
+                                        }
+                                        strokeWidth="2.5"
+                                        strokeDasharray="50.265"
+                                        initial={{ strokeDashoffset: 50.265 }}
+                                        animate={{
+                                          strokeDashoffset: 50.265 - (Math.min(draftContent.length, 1000) / 1000) * 50.265
+                                        }}
+                                        transition={{ type: "spring", stiffness: 120, damping: 15 }}
+                                        strokeLinecap="round"
+                                      />
+                                    </svg>
+                                    <span className="text-[9px] font-semibold font-tabular">
+                                      字数：{draftContent.length} / 1000 字 {draftContent.length > 1000 && "⚠️"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <input
+                                  type="text"
+                                  value={draftTitle}
+                                  onChange={(e) => setDraftTitle(e.target.value)}
+                                  className="w-full text-[10px] font-bold border border-coral-light/60 rounded-lg p-1.5 bg-white focus:outline-none focus:border-coral"
+                                />
+                                <textarea
+                                  ref={textareaRef}
+                                  id="edit-body-input"
+                                  value={draftContent}
+                                  onChange={(e) => setDraftContent(e.target.value)}
+                                  onPaste={handleEditBodyPaste}
+                                  className="w-full text-[10px] border border-coral-light/60 rounded-lg p-2 bg-white focus:outline-none focus:border-coral resize-none custom-scrollbar transition-[height] duration-100"
+                                  style={{ minHeight: "160px" }}
+                                />
+
+                                {/* 快捷 Emoji 点击 */}
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[8px] text-gray-400 font-semibold select-none">点击快速插入高频 Emoji：</span>
+                                  <div className="flex flex-wrap gap-1 bg-white p-1.5 border border-coral-light/40 rounded-lg text-xs select-none">
+                                    {["🍠", "⛺", "☕", "✨", "🌿", "👇", "📝", "🔥", "🌟"].map((em) => (
+                                      <span
+                                        key={em}
+                                        onClick={() => handleInsertEmoji(em)}
+                                        className="cursor-pointer hover:scale-125 transition-transform p-0.5"
+                                      >
+                                        {em}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* 话题标签智能推荐 */}
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[8px] text-gray-400 font-semibold select-none">基于爆款规律推荐 Tag：</span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {["露营分享", "户外美学", "周末去哪玩", "性价比装备"].map((tag) => (
+                                      <button
+                                        key={tag}
+                                        onClick={() => handleAppendTag(tag)}
+                                        className="text-[8px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full flex items-center gap-0.5 cursor-pointer"
+                                      >
+                                        <span>#{tag}</span>
+                                        <Plus className="size-2" />
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* 按钮组 */}
+                                <div className="flex gap-2 justify-end pt-1">
+                                  <button
+                                    onClick={() => {
+                                      setDraftTitle(lastSavedTitle);
+                                      setDraftContent(lastSavedContent);
+                                      setIsEditingText(false);
+                                    }}
+                                    className="bg-gray-100 hover:bg-gray-200 text-charcoal text-[10px] px-3 py-1 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    取消
+                                  </button>
+                                  <button
+                                    onClick={() => setIsEditingText(false)}
+                                    className="bg-coral hover:bg-coral-hover text-white text-[10px] px-3.5 py-1 rounded-lg font-semibold shadow-xs transition-colors cursor-pointer"
+                                  >
+                                    保存
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
                           </div>
-                          <h3 className="text-xs font-bold text-charcoal mb-2 leading-snug">{draftTitle}</h3>
-                          <p className="text-[10px] text-charcoal-light leading-relaxed whitespace-pre-wrap">{draftContent}</p>
-                        </div>
-                      ) : (
-                        /* 原位富文本编辑器表单 */
-                        <div className="p-3 flex flex-col gap-2.5 border-t border-oats-dark bg-oats-light/60 transition-all">
-                          <div className="flex justify-between items-center text-[10px]">
-                            <span className="font-bold text-gray-500">✏️ 原位修改文案</span>
-                            <div
-                              className={cn(
-                                "flex items-center gap-1.5 border px-2 py-0.5 rounded transition-all duration-300",
-                                draftContent.length > 1000
-                                  ? "bg-red-50 text-red-700 border-red-200 animate-shake"
-                                  : draftContent.length >= 800
-                                  ? "bg-amber-50 text-amber-700 border-amber-200"
-                                  : "bg-green-50 text-green-700 border-green-200"
+
+                          {/* 模拟器底部互动栏 */}
+                          <div className="h-10 border-t border-gray-100 flex items-center justify-between px-5 bg-white shrink-0 text-gray-400 select-none relative">
+
+                            {/* Plus One floating animation */}
+                            <AnimatePresence>
+                              {showPlusOne && (
+                                <motion.span
+                                  initial={{ opacity: 0, y: 0 }}
+                                  animate={{ opacity: 1, y: -25 }}
+                                  exit={{ opacity: 0 }}
+                                  className="absolute left-6 text-[10px] font-bold text-coral"
+                                >
+                                  +1
+                                </motion.span>
                               )}
+                            </AnimatePresence>
+
+                            <button
+                              onClick={() => {
+                                if (!isLiked) {
+                                  setShowPlusOne(true);
+                                  setTimeout(() => setShowPlusOne(false), 800);
+                                }
+                                setIsLiked(!isLiked);
+                                setLikeCount((c) => isLiked ? c - 1 : c + 1);
+                              }}
+                              className="flex items-center gap-1 cursor-pointer hover:text-coral transition-colors outline-none border-none bg-transparent"
                             >
-                              <svg className="size-3.5 transform -rotate-90 select-none" viewBox="0 0 20 20">
-                                <circle
-                                  cx="10"
-                                  cy="10"
-                                  r="8"
-                                  fill="none"
-                                  stroke={
-                                    draftContent.length > 1000
-                                      ? "#FCA5A5"
-                                      : draftContent.length >= 800
-                                      ? "#FDE68A"
-                                      : "#A7F3D0"
-                                  }
-                                  strokeWidth="2.5"
-                                  className="opacity-40"
-                                />
-                                <motion.circle
-                                  cx="10"
-                                  cy="10"
-                                  r="8"
-                                  fill="none"
-                                  stroke={
-                                    draftContent.length > 1000
-                                      ? "#EF4444"
-                                      : draftContent.length >= 800
-                                      ? "#F59E0B"
-                                      : "#10B981"
-                                  }
-                                  strokeWidth="2.5"
-                                  strokeDasharray="50.265"
-                                  initial={{ strokeDashoffset: 50.265 }}
-                                  animate={{
-                                    strokeDashoffset: 50.265 - (Math.min(draftContent.length, 1000) / 1000) * 50.265
-                                  }}
-                                  transition={{ type: "spring", stiffness: 120, damping: 15 }}
-                                  strokeLinecap="round"
-                                />
-                              </svg>
-                              <span className="text-[9px] font-semibold">
-                                字数：{draftContent.length} / 1000 字 {draftContent.length > 1000 && "⚠️"}
+                              <motion.div
+                                animate={{ scale: isLiked ? [1, 1.45, 0.9, 1.1, 1] : 1 }}
+                                transition={{ duration: 0.4 }}
+                              >
+                                <Heart className={cn("size-3.5 transition-colors", isLiked ? "text-coral fill-coral" : "text-gray-400")} />
+                              </motion.div>
+                              <span className={cn("text-[8px] font-medium font-tabular", isLiked ? "text-coral" : "text-gray-400")}>
+                                {likeCount >= 1000 ? `${(likeCount / 1000).toFixed(1)}k` : likeCount}
                               </span>
-                            </div>
-                          </div>
-                          <input
-                            type="text"
-                            value={draftTitle}
-                            onChange={(e) => setDraftTitle(e.target.value)}
-                            className="w-full text-[10px] font-bold border border-coral-light/60 rounded-lg p-1.5 bg-white focus:outline-none focus:border-coral"
-                          />
-                          <textarea
-                            ref={textareaRef}
-                            id="edit-body-input"
-                            value={draftContent}
-                            onChange={(e) => setDraftContent(e.target.value)}
-                            className="w-full text-[10px] border border-coral-light/60 rounded-lg p-2 bg-white focus:outline-none focus:border-coral resize-none custom-scrollbar transition-[height] duration-100"
-                            style={{ minHeight: "160px" }}
-                          />
-
-                          {/* 快捷 Emoji 点击 */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[8px] text-gray-400 font-semibold select-none">点击快速插入高频 Emoji：</span>
-                            <div className="flex flex-wrap gap-1 bg-white p-1.5 border border-coral-light/40 rounded-lg text-xs select-none">
-                              {["🍠", "⛺", "☕", "✨", "🌿", "👇", "📝", "🔥", "🌟"].map((em) => (
-                                <span
-                                  key={em}
-                                  onClick={() => handleInsertEmoji(em)}
-                                  className="cursor-pointer hover:scale-125 transition-transform p-0.5"
-                                >
-                                  {em}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* 话题标签智能推荐 */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[8px] text-gray-400 font-semibold select-none">基于爆款规律推荐 Tag：</span>
-                            <div className="flex flex-wrap gap-1">
-                              {["露营分享", "户外美学", "周末去哪玩", "性价比装备"].map((tag) => (
-                                <button
-                                  key={tag}
-                                  onClick={() => handleAppendTag(tag)}
-                                  className="text-[8px] bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full flex items-center gap-0.5 cursor-pointer"
-                                >
-                                  <span>#{tag}</span>
-                                  <Plus className="size-2" />
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* 按钮组 */}
-                          <div className="flex gap-2 justify-end pt-1">
-                            <button
-                              onClick={() => setIsEditingText(false)}
-                              className="bg-gray-100 hover:bg-gray-200 text-charcoal text-[10px] px-3 py-1 rounded-lg transition-colors cursor-pointer"
-                            >
-                              取消
                             </button>
+
                             <button
-                              onClick={() => setIsEditingText(false)}
-                              className="bg-coral hover:bg-coral-hover text-white text-[10px] px-3.5 py-1 rounded-lg font-semibold shadow-xs transition-colors cursor-pointer"
+                              onClick={() => {
+                                setIsCollected(!isCollected);
+                                setCollectCount((c) => isCollected ? c - 1 : c + 1);
+                              }}
+                              className="flex items-center gap-1 cursor-pointer hover:text-coral transition-colors outline-none border-none bg-transparent"
                             >
-                              保存
+                              <motion.div
+                                animate={{ scale: isCollected ? [1, 1.45, 0.9, 1.1, 1] : 1 }}
+                                transition={{ duration: 0.4 }}
+                              >
+                                <Star className={cn("size-3.5 transition-colors", isCollected ? "text-coral fill-coral" : "text-gray-400")} />
+                              </motion.div>
+                              <span className={cn("text-[8px] font-medium font-tabular", isCollected ? "text-coral" : "text-gray-400")}>
+                                {collectCount}
+                              </span>
                             </button>
+
+                            <div className="flex items-center gap-1 text-gray-400 select-none">
+                              <MessageSquare className="size-3.5" />
+                              <span className="text-[8px] font-medium font-tabular">88</span>
+                            </div>
+                          </div>
+
+                        </div>
+                      )}
+
+                      {/* 瀑布流网格视图 */}
+                      {viewMode === "feed" && (
+                        <div className="w-[320px] border-[8px] border-charcoal rounded-[36px] bg-oats/60 shadow-2xl overflow-hidden relative flex flex-col shrink-0 aspect-[9/18.5] my-1">
+                          {/* 刘海 */}
+                          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-5.5 bg-charcoal rounded-b-xl z-20 flex justify-center items-center">
+                            <span className="w-1.5 h-1.5 rounded-full bg-charcoal-dark border border-gray-800"></span>
+                          </div>
+
+                          {/* 发现页头 */}
+                          <div className="pt-7 pb-2 px-4 border-b border-gray-100 flex items-center justify-center gap-4 bg-white/95 shrink-0 text-[10px] font-bold select-none">
+                            <span className="text-gray-400">关注</span>
+                            <span className="text-charcoal border-b border-coral pb-0.5">发现</span>
+                            <span className="text-gray-400">附近</span>
+                          </div>
+
+                          {/* 瀑布流双列卡片 */}
+                          <div className="flex-grow overflow-y-auto p-2 grid grid-cols-2 gap-2 bg-oats-dark/20 custom-scrollbar">
+
+                            {/* 首个卡片：展示当前笔记的高保真预览 */}
+                            <div
+                              onClick={() => setViewMode("detail")}
+                              className="bg-white rounded-lg overflow-hidden shadow-xs flex flex-col border border-gray-100 cursor-pointer hover:scale-[1.01] transition-transform"
+                            >
+                              <div className="w-full aspect-[3/4] overflow-hidden relative">
+                                <img src={carouselImages[0]} alt="露营" className="w-full h-full object-cover outline outline-1 outline-black/5 dark:outline-white/10 outline-offset-[-1px]" />
+                              </div>
+                              <div className="p-1.5 flex flex-col gap-1">
+                                <h4 className="text-[9px] font-bold leading-tight text-charcoal h-6 line-clamp-2">{draftTitle}</h4>
+                                <div className="flex justify-between items-center text-[7px] text-gray-400 select-none">
+                                  <span className="truncate max-w-[50px]">张潇潇</span>
+                                  <div className="flex items-center gap-0.5"><Heart className="size-2 text-gray-400" /><span>1.2k</span></div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 假卡片 1 */}
+                            <div className="bg-white rounded-lg overflow-hidden shadow-xs flex flex-col border border-gray-100 opacity-60">
+                              <div className="w-full aspect-[4/5] bg-gray-200"></div>
+                              <div className="p-1.5"><div className="h-2 bg-gray-200 rounded w-4/5 mb-1.5"></div><div className="h-1.5 bg-gray-200 rounded w-2/5"></div></div>
+                            </div>
+
+                            {/* 假卡片 2 */}
+                            <div className="bg-white rounded-lg overflow-hidden shadow-xs flex flex-col border border-gray-100 opacity-60">
+                              <div className="w-full aspect-square bg-gray-200"></div>
+                              <div className="p-1.5"><div className="h-2 bg-gray-200 rounded w-4/5 mb-1.5"></div><div className="h-1.5 bg-gray-200 rounded w-2/5"></div></div>
+                            </div>
+
                           </div>
                         </div>
                       )}
 
                     </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="feishu-tab"
+                    initial={{ opacity: 0, x: 12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -12 }}
+                    transition={{ duration: 0.18, ease: "easeOut" }}
+                    className="absolute inset-0 flex flex-col overflow-y-auto p-4 bg-oats/10 gap-4 custom-scrollbar"
+                  >
 
-                    {/* 模拟器底部互动栏 */}
-                    <div className="h-10 border-t border-gray-100 flex items-center justify-between px-5 bg-white shrink-0 text-gray-400 select-none relative">
-                      
-                      {/* Plus One floating animation */}
-                      <AnimatePresence>
-                        {showPlusOne && (
-                          <motion.span
-                            initial={{ opacity: 0, y: 0 }}
-                            animate={{ opacity: 1, y: -25 }}
-                            exit={{ opacity: 0 }}
-                            className="absolute left-6 text-[10px] font-bold text-coral"
+                    {/* 写入多维表格卡片 */}
+                    <div className="bg-white border border-coral-light/60 p-4 rounded-xl shadow-xs space-y-3">
+                      <div className="flex items-center justify-between border-b border-oats-dark pb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-green-50 border border-green-200 text-green-600 flex items-center justify-center">
+                            <Database className="size-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-bold text-charcoal">同步到飞书多维表格</h4>
+                            <p className="text-[8px] text-gray-400">通过内网 HMAC 协议同步字段</p>
+                          </div>
+                        </div>
+                        <span className="bg-green-50 text-green-700 text-[9px] px-2 py-0.5 rounded-full font-semibold border border-green-200">连接可用</span>
+                      </div>
+
+                      <div className="space-y-2 text-[10px]">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">草稿入库状态：</span>
+                          <span className="font-semibold text-charcoal">
+                            {syncedRecordId ? `已创建草稿记录：${syncedRecordId}` : "尚未入库"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">动态映射列：</span>
+                          <span className="font-semibold text-gray-600">模糊匹配「正文」和「标题」列</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">当前正文字数：</span>
+                          <span className={cn("font-bold font-tabular", draftContent.length > 1000 ? "text-red-600" : "text-green-600")}>
+                            {draftContent.length} 字 {draftContent.length > 1000 && "(超限)"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 步骤条 */}
+                      {syncStepsVisible && (
+                        <div className="border border-coral-light/50 rounded-xl p-2.5 bg-oats-light/40 space-y-1.5 text-[10px] transition-all">
+                          <div className={cn("flex items-center gap-1.5", syncStep >= 1 ? "text-green-600 font-semibold" : "text-gray-400")}>
+                            {syncStep === 1 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 1 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
+                            <span>正在验证飞书环境配置...</span>
+                          </div>
+                          <div className={cn("flex items-center gap-1.5", syncStep >= 2 ? "text-green-600 font-semibold" : "text-gray-400")}>
+                            {syncStep === 2 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 2 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
+                            <span>正在读取 Fields 并智能解析空字段映射...</span>
+                          </div>
+                          <div className={cn("flex items-center gap-1.5", syncStep >= 3 ? "text-green-600 font-semibold" : "text-gray-400")}>
+                            {syncStep === 3 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 3 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
+                            <span>正在创建飞书多维表格草稿记录...</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="pt-1 flex flex-col gap-2">
+                        <button
+                          onClick={handleSyncToFeishu}
+                          disabled={isSyncing}
+                          className={cn(
+                            "w-full text-white text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer",
+                            syncStep === 4 ? "bg-green-500 hover:bg-green-600" : "bg-coral hover:bg-coral-hover"
+                          )}
+                        >
+                          <CloudUpload className="size-4" />
+                          <span>{syncStep === 4 ? "多维表格写入成功！" : "立即同步至飞书多维表格"}</span>
+                        </button>
+                        {bitableUrl && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            className="text-center mt-1 overflow-hidden"
                           >
-                            +1
-                          </motion.span>
+                            <a
+                              href={bitableUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] text-coral hover:underline font-bold transition-all"
+                            >
+                              <span>🔗 点击直接打开飞书多维表格 ↗</span>
+                            </a>
+                          </motion.div>
                         )}
-                      </AnimatePresence>
-
-                      <button 
-                        onClick={() => {
-                          if (!isLiked) {
-                            setShowPlusOne(true);
-                            setTimeout(() => setShowPlusOne(false), 800);
-                          }
-                          setIsLiked(!isLiked);
-                          setLikeCount((c) => isLiked ? c - 1 : c + 1);
-                        }}
-                        className="flex items-center gap-1 cursor-pointer hover:text-coral transition-colors outline-none border-none bg-transparent"
-                      >
-                        <motion.div
-                          animate={{ scale: isLiked ? [1, 1.45, 0.9, 1.1, 1] : 1 }}
-                          transition={{ duration: 0.4 }}
-                        >
-                          <Heart className={cn("size-3.5 transition-colors", isLiked ? "text-coral fill-coral" : "text-gray-400")} />
-                        </motion.div>
-                        <span className={cn("text-[8px] font-medium", isLiked ? "text-coral" : "text-gray-400")}>
-                          {likeCount >= 1000 ? `${(likeCount / 1000).toFixed(1)}k` : likeCount}
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setIsCollected(!isCollected);
-                          setCollectCount((c) => isCollected ? c - 1 : c + 1);
-                        }}
-                        className="flex items-center gap-1 cursor-pointer hover:text-coral transition-colors outline-none border-none bg-transparent"
-                      >
-                        <motion.div
-                          animate={{ scale: isCollected ? [1, 1.45, 0.9, 1.1, 1] : 1 }}
-                          transition={{ duration: 0.4 }}
-                        >
-                          <Star className={cn("size-3.5 transition-colors", isCollected ? "text-coral fill-coral" : "text-gray-400")} />
-                        </motion.div>
-                        <span className={cn("text-[8px] font-medium", isCollected ? "text-coral" : "text-gray-400")}>
-                          {collectCount}
-                        </span>
-                      </button>
-
-                      <div className="flex items-center gap-1 text-gray-400 select-none">
-                        <MessageSquare className="size-3.5" />
-                        <span className="text-[8px] font-medium">88</span>
+                        {wikiUrl && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            className="text-center mt-1 overflow-hidden"
+                          >
+                            <a
+                              href={wikiUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] text-coral hover:underline font-bold transition-all"
+                            >
+                              <span>🔗 点击直接打开飞书知识空间 ↗</span>
+                            </a>
+                          </motion.div>
+                        )}
                       </div>
                     </div>
 
-                  </div>
-                )}
-
-                {/* 瀑布流网格视图 */}
-                {viewMode === "feed" && (
-                  <div className="w-[320px] border-[8px] border-charcoal rounded-[36px] bg-oats/60 shadow-2xl overflow-hidden relative flex flex-col shrink-0 aspect-[9/18.5] my-1">
-                    {/* 刘海 */}
-                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-5.5 bg-charcoal rounded-b-xl z-20 flex justify-center items-center">
-                      <span className="w-1.5 h-1.5 rounded-full bg-charcoal-dark border border-gray-800"></span>
-                    </div>
-
-                    {/* 发现页头 */}
-                    <div className="pt-7 pb-2 px-4 border-b border-gray-100 flex items-center justify-center gap-4 bg-white/95 shrink-0 text-[10px] font-bold select-none">
-                      <span className="text-gray-400">关注</span>
-                      <span className="text-charcoal border-b border-coral pb-0.5">发现</span>
-                      <span className="text-gray-400">附近</span>
-                    </div>
-
-                    {/* 瀑布流双列卡片 */}
-                    <div className="flex-grow overflow-y-auto p-2 grid grid-cols-2 gap-2 bg-oats-dark/20 custom-scrollbar">
-                      
-                      {/* 首个卡片：展示当前笔记的高保真预览 */}
-                      <div
-                        onClick={() => setViewMode("detail")}
-                        className="bg-white rounded-lg overflow-hidden shadow-xs flex flex-col border border-gray-100 cursor-pointer hover:scale-[1.01] transition-transform"
-                      >
-                        <div className="w-full aspect-[3/4] overflow-hidden relative">
-                          <img src={carouselImages[0]} alt="露营" className="w-full h-full object-cover" />
-                        </div>
-                        <div className="p-1.5 flex flex-col gap-1">
-                          <h4 className="text-[9px] font-bold leading-tight text-charcoal h-6 line-clamp-2">{draftTitle}</h4>
-                          <div className="flex justify-between items-center text-[7px] text-gray-400 select-none">
-                            <span className="truncate max-w-[50px]">张潇潇</span>
-                            <div className="flex items-center gap-0.5"><Heart className="size-2 text-gray-400" /><span>1.2k</span></div>
+                    {/* 团队群发通知卡片 */}
+                    <div className="bg-white border border-coral-light/60 p-4 rounded-xl shadow-xs space-y-3">
+                      <div className="flex items-center justify-between border-b border-oats-dark pb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+                            <MessageSquare className="size-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-bold text-charcoal">群发通知与审核卡片</h4>
+                            <p className="text-[8px] text-gray-400">推送卡片消息到您所在的群聊</p>
                           </div>
                         </div>
+                        <span className="bg-blue-50 text-blue-700 text-[9px] px-2 py-0.5 rounded-full font-semibold border border-blue-200">可用</span>
                       </div>
 
-                      {/* 假卡片 1 */}
-                      <div className="bg-white rounded-lg overflow-hidden shadow-xs flex flex-col border border-gray-100 opacity-60">
-                        <div className="w-full aspect-[4/5] bg-gray-200"></div>
-                        <div className="p-1.5"><div className="h-2 bg-gray-200 rounded w-4/5 mb-1.5"></div><div className="h-1.5 bg-gray-200 rounded w-2/5"></div></div>
-                      </div>
-                      
-                      {/* 假卡片 2 */}
-                      <div className="bg-white rounded-lg overflow-hidden shadow-xs flex flex-col border border-gray-100 opacity-60">
-                        <div className="w-full aspect-square bg-gray-200"></div>
-                        <div className="p-1.5"><div className="h-2 bg-gray-200 rounded w-4/5 mb-1.5"></div><div className="h-1.5 bg-gray-200 rounded w-2/5"></div></div>
-                      </div>
-
-                    </div>
-                  </div>
-                )}
-
-              </div>
-            )}
-
-            {/* Tab 2: 飞书同步协作 */}
-            {rightTab === "feishu" && (
-              <div className="flex-grow overflow-y-auto p-4 bg-oats/10 flex flex-col gap-4 custom-scrollbar">
-                
-                {/* 写入多维表格卡片 */}
-                <div className="bg-white border border-coral-light/60 p-4 rounded-xl shadow-xs space-y-3">
-                  <div className="flex items-center justify-between border-b border-oats-dark pb-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-green-50 border border-green-200 text-green-600 flex items-center justify-center">
-                        <Database className="size-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-charcoal">同步到飞书多维表格</h4>
-                        <p className="text-[8px] text-gray-400">通过内网 HMAC 协议同步字段</p>
-                      </div>
-                    </div>
-                    <span className="bg-green-50 text-green-700 text-[9px] px-2 py-0.5 rounded-full font-semibold border border-green-200">连接可用</span>
-                  </div>
-
-                  <div className="space-y-2 text-[10px]">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">草稿入库状态：</span>
-                      <span className="font-semibold text-charcoal">
-                        {syncedRecordId ? `已创建草稿记录：${syncedRecordId}` : "尚未入库"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">动态映射列：</span>
-                      <span className="font-semibold text-gray-600">模糊匹配「正文」和「标题」列</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">当前正文字数：</span>
-                      <span className={cn("font-bold", draftContent.length > 1000 ? "text-red-600" : "text-green-600")}>
-                        {draftContent.length} 字 {draftContent.length > 1000 && "(超限)"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 步骤条 */}
-                  {syncStepsVisible && (
-                    <div className="border border-coral-light/50 rounded-xl p-2.5 bg-oats-light/40 space-y-1.5 text-[10px] transition-all">
-                      <div className={cn("flex items-center gap-1.5", syncStep >= 1 ? "text-green-600 font-semibold" : "text-gray-400")}>
-                        {syncStep === 1 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 1 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
-                        <span>正在验证飞书环境配置...</span>
-                      </div>
-                      <div className={cn("flex items-center gap-1.5", syncStep >= 2 ? "text-green-600 font-semibold" : "text-gray-400")}>
-                        {syncStep === 2 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 2 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
-                        <span>正在读取 Fields 并智能解析空字段映射...</span>
-                      </div>
-                      <div className={cn("flex items-center gap-1.5", syncStep >= 3 ? "text-green-600 font-semibold" : "text-gray-400")}>
-                        {syncStep === 3 ? <Loader2 className="size-3.5 animate-spin" /> : (syncStep > 3 ? <CheckCircle2 className="size-3.5 text-green-500" /> : <Loader2 className="size-3.5 opacity-20" />)}
-                        <span>正在创建飞书多维表格草稿记录...</span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="pt-1 flex flex-col gap-2">
-                    <button
-                      onClick={handleSyncToFeishu}
-                      disabled={isSyncing}
-                      className={cn(
-                        "w-full text-white text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer",
-                        syncStep === 4 ? "bg-green-500 hover:bg-green-600" : "bg-coral hover:bg-coral-hover"
-                      )}
-                    >
-                      <CloudUpload className="size-4" />
-                      <span>{syncStep === 4 ? "多维表格写入成功！" : "立即同步至飞书多维表格"}</span>
-                    </button>
-                    {bitableUrl && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        className="text-center mt-1 overflow-hidden"
-                      >
-                        <a
-                          href={bitableUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] text-coral hover:underline font-bold transition-all"
-                        >
-                          <span>🔗 点击直接打开飞书多维表格 ↗</span>
-                        </a>
-                      </motion.div>
-                    )}
-                    {wikiUrl && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        className="text-center mt-1 overflow-hidden"
-                      >
-                        <a
-                          href={wikiUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] text-coral hover:underline font-bold transition-all"
-                        >
-                          <span>🔗 点击直接打开飞书知识空间 ↗</span>
-                        </a>
-                      </motion.div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 团队群发通知卡片 */}
-                <div className="bg-white border border-coral-light/60 p-4 rounded-xl shadow-xs space-y-3">
-                  <div className="flex items-center justify-between border-b border-oats-dark pb-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
-                        <MessageSquare className="size-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-charcoal">群发通知与审核卡片</h4>
-                        <p className="text-[8px] text-gray-400">推送卡片消息到您所在的群聊</p>
-                      </div>
-                    </div>
-                    <span className="bg-blue-50 text-blue-700 text-[9px] px-2 py-0.5 rounded-full font-semibold border border-blue-200">可用</span>
-                  </div>
-
-                  <div className="space-y-3 text-[10px]">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-gray-500 font-semibold">选择接收审核通知的飞书群聊：</label>
-                      {isFetchingChats ? (
-                        <div className="flex items-center gap-1.5 text-gray-400 py-1.5">
-                          <Loader2 className="size-3.5 animate-spin" />
-                          <span>正在获取您有权限的飞书群聊列表...</span>
+                      <div className="space-y-3 text-[10px]">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-gray-500 font-semibold">选择接收审核通知的飞书群聊：</label>
+                          {isFetchingChats ? (
+                            <div className="flex flex-col gap-2 py-1 select-none">
+                              {[1, 2, 3].map((n) => (
+                                <div key={n} className="flex items-center gap-2.5 px-3 py-2 border border-coral-light/20 rounded-xl bg-white">
+                                  <div className="size-6.5 rounded-full skeleton-shimmer shrink-0" />
+                                  <div className="flex-1 space-y-1.5">
+                                    <div className="h-2.5 bg-gray-100 rounded skeleton-shimmer w-3/4" />
+                                    <div className="h-1.5 bg-gray-100 rounded skeleton-shimmer w-1/2" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <select
+                              value={selectedChatId}
+                              onChange={(e) => setSelectedChatId(e.target.value)}
+                              className="border border-coral-light rounded-xl px-2 py-1.5 bg-white focus:outline-none focus:border-coral outline-none text-[10px] w-full cursor-pointer"
+                            >
+                              {feishuChats.map((c) => (
+                                <option key={c.chat_id} value={c.chat_id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </div>
-                      ) : (
-                        <select
-                          value={selectedChatId}
-                          onChange={(e) => setSelectedChatId(e.target.value)}
-                          className="border border-coral-light rounded-xl px-2 py-1.5 bg-white focus:outline-none focus:border-coral outline-none text-[10px] w-full"
+                      </div>
+
+                      <div className="pt-1">
+                        <button
+                          onClick={handleSendNotification}
+                          disabled={isSendingNotification || feishuChats.length === 0}
+                          className="w-full bg-oats hover:bg-oats-dark text-charcoal border border-coral-light/60 text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium transition-all cursor-pointer"
                         >
-                          {feishuChats.map((c) => (
-                            <option key={c.chat_id} value={c.chat_id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                          {isSendingNotification ? <Loader2 className="size-3.5 animate-spin text-coral" /> : <Send className="size-3.5" />}
+                          <span>一键发送通知至飞书群聊</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="pt-1">
-                    <button
-                      onClick={handleSendNotification}
-                      disabled={isSendingNotification || feishuChats.length === 0}
-                      className="w-full bg-oats hover:bg-oats-dark text-charcoal border border-coral-light/60 text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-medium transition-all cursor-pointer"
-                    >
-                      {isSendingNotification ? <Loader2 className="size-3.5 animate-spin text-coral" /> : <Send className="size-3.5" />}
-                      <span>一键发送通知至飞书群聊</span>
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-            )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
 
         </div>

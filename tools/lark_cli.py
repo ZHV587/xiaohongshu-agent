@@ -20,7 +20,7 @@ def auto_update_lark_skills():
     base_url = "https://raw.githubusercontent.com/larksuite/cli/main/skills/{}/SKILL.md"
     # tools/lark_cli.py 的父目录即项目根目录
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
+
     for skill in skills:
         target_dir = os.path.join(project_root, ".agents", "skills", skill)
         os.makedirs(target_dir, exist_ok=True)
@@ -64,7 +64,7 @@ def get_lark_brand() -> str:
     global _cached_brand
     if _cached_brand is not None:
         return _cached_brand
-    
+
     # Try reading the config file directly first
     config_paths = []
     userprofile = os.environ.get("USERPROFILE")
@@ -73,7 +73,7 @@ def get_lark_brand() -> str:
     home = os.environ.get("HOME")
     if home:
         config_paths.append(os.path.join(home, ".lark-cli", "config.json"))
-        
+
     for path in config_paths:
         if os.path.exists(path):
             try:
@@ -85,7 +85,7 @@ def get_lark_brand() -> str:
                         return _cached_brand
             except Exception:
                 pass
-                
+
     # Fallback to config show
     try:
         executable = "lark-cli.cmd" if platform.system() == "Windows" else "lark-cli"
@@ -109,7 +109,7 @@ def get_lark_brand() -> str:
                 return _cached_brand
     except Exception:
         pass
-        
+
     _cached_brand = "feishu"
     return _cached_brand
 
@@ -117,13 +117,13 @@ def get_lark_brand() -> str:
 @tool
 def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> str:
     """运行飞书官方命令行工具 (Lark Suite CLI) 的具体指令。
-    
+
     你可以通过它操作飞书日历、即时通讯(发送消息)、云文档、多维表格等业务。
     注意：
     1. 传入参数 command 中不要包含 'lark-cli' 的前缀，只写具体服务 and 子命令。
     2. 对于写操作（例如发送消息、创建会议），需要用户二次确认。如果返回“需要确认”提示，
        你必须用自然语言向用户表述风险，在用户确认同意后，传入 `yes=True` 重新运行该指令。
-       
+
     示例：
     - 发送消息: im +messages-send --chat-id "oc_xxx" --text "文案草稿已写好"
     """
@@ -131,10 +131,10 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     args = shlex.split(command.strip())
     if not args:
         return "Error: Command cannot be empty."
-        
+
     if args[0] == "lark-cli":
         args = args[1:]
-        
+
     if not args:
         return "Error: Command cannot be empty."
 
@@ -149,7 +149,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     user = getattr(server_info, "user", None) if server_info else None
     open_id = getattr(user, "identity", None) if user else None
     server_mode = server_info is not None
-    
+
     force_bot = False
     clean_args = []
     for arg in args:
@@ -171,19 +171,30 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     for k in ["SystemRoot", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "USERNAME", "HOME"]:
         if k in os.environ:
             run_env[k] = os.environ[k]
-    
+
     brand = get_lark_brand()
 
     if open_id and not force_bot:
         token = get_uat(open_id)
         if not token:
             return "Please authorize Feishu access first. Please log in again using the UI panel to grant permissions."
-        if brand == "feishu":
-            run_env["LARK_USER_ACCESS_TOKEN"] = token
-            run_env["LARK_DEFAULT_AS"] = "user"
-        else:
-            run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
-            run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
+
+        # Populate both LARK_ and LARKSUITE_CLI_ prefixed variables for user token to ensure compatibility
+        run_env["LARK_USER_ACCESS_TOKEN"] = token
+        run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
+        run_env["LARK_DEFAULT_AS"] = "user"
+        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
+
+        # App credentials must be provided for the CLI to authenticate the user token session
+        app_id = os.environ.get("FEISHU_APP_ID")
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
+        if app_id:
+            run_env["LARK_APP_ID"] = app_id
+            run_env["LARKSUITE_CLI_APP_ID"] = app_id
+        if app_secret:
+            run_env["LARK_APP_SECRET"] = app_secret
+            run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
+
         if "--as" not in clean_args:
             clean_args.extend(["--as", "user"])
     elif server_mode and not force_bot:
@@ -194,14 +205,13 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         app_secret = os.environ.get("FEISHU_APP_SECRET")
         if not app_id or not app_secret:
             return "Error: Bot credentials (FEISHU_APP_ID/SECRET) not configured."
-        if brand == "feishu":
-            run_env["LARK_APP_ID"] = app_id
-            run_env["LARK_APP_SECRET"] = app_secret
-            run_env["LARK_DEFAULT_AS"] = "bot"
-        else:
-            run_env["LARKSUITE_CLI_APP_ID"] = app_id
-            run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
-            run_env["LARKSUITE_CLI_DEFAULT_AS"] = "bot"
+
+        run_env["LARK_APP_ID"] = app_id
+        run_env["LARKSUITE_CLI_APP_ID"] = app_id
+        run_env["LARK_APP_SECRET"] = app_secret
+        run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
+        run_env["LARK_DEFAULT_AS"] = "bot"
+        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "bot"
 
 
     # Append --yes parameter if approved by human
@@ -236,7 +246,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
             return "Error: Command execution timed out after 45 seconds."
         except Exception as e:
             return f"Error executing Lark CLI command: {str(e)}"
-        
+
     # 4) Handle exit codes
     if result.returncode == 10:
         # Safety confirmation required

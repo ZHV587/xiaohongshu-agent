@@ -209,6 +209,41 @@
   .shadow-inner-left {
     box-shadow: inset 9px 0 6px -1px rgb(0 0 0 / 0.02);
   }
+
+  .font-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(229, 46, 64, 0.03) 25%,
+      rgba(229, 46, 64, 0.08) 50%,
+      rgba(229, 46, 64, 0.03) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite linear;
+  }
+
+  .dark .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 59, 84, 0.03) 25%,
+      rgba(255, 59, 84, 0.08) 50%,
+      rgba(255, 59, 84, 0.03) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite linear;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 @keyframes shake {
