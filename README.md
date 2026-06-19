@@ -10,9 +10,18 @@
    uv sync
    ```
 2. 复制 `.env.example` 为 `.env`,填入:
-   - `ANTHROPIC_API_KEY` 与(如用中转)`ANTHROPIC_BASE_URL`
+   - 模型网关:`LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_QUALITY_MODELS`
    - 飞书自建应用:`FEISHU_APP_ID` / `FEISHU_APP_SECRET`
    - 爆款表定位:`FEISHU_BITABLE_APP_TOKEN` / `FEISHU_BITABLE_TABLE_ID`
+   - 管理员白名单:`XHS_ADMIN_OPEN_IDS`
+
+## 多用户部署关键配置
+
+- `XHS_ADMIN_OPEN_IDS`: 逗号分隔的飞书 open_id,只有这些用户能访问系统配置。
+- `XHS_BACKEND_APPLY_MODE`: `manual`、`pm2` 或 `systemd`。默认 `manual`,不会自动重启后端。
+- `LLM_PROVIDER`: 第一阶段生产路径建议固定为 `openai`。
+- `LLM_QUALITY_MODELS`: 高质量模型池,逗号分隔;第一项是首选模型。
+- 飞书操作在 server 模式下默认使用当前用户 UAT,缺授权时不会静默退回 bot。
 
 ## 运行方式
 
