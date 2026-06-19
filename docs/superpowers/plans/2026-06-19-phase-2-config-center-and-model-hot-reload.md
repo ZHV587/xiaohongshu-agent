@@ -10,6 +10,19 @@
 
 ---
 
+## Implementation Status
+
+Completed on 2026-06-19.
+
+- Config center is implemented as encrypted JSON via `config_center.py`.
+- `ModelRegistry` can reload from a `ConfigSnapshot`, and router middleware reads the provider on every sync/async call.
+- Main agent and `baokuan-analyst` share the registry-backed router middleware.
+- Project-owned CLI runtime entrypoint has been removed; Web conversation + LangGraph server is the only runtime entry.
+- `tools/web_bridge_runner.py` supports `config-status` and `config-set` for out-of-process config-center access.
+- `/api/config` reads and writes the config center when `XHS_CONFIG_ENCRYPTION_KEY` and `XHS_CONFIG_CENTER_PATH` are set; otherwise it keeps the phase-1 `.env + apply` fallback.
+- Hot reload is only claimed for `ModelRouterMiddleware`-covered main-agent and subagent calls. `RubricMiddleware` remains restart-required.
+- `web_bridge_runner.py` does not reload the resident LangGraph process; in-process registry reload must be triggered by a LangGraph-process management channel or supervisor/sidecar.
+
 ## File Map
 
 - Create `config_center.py`: encrypted JSON config store, version history, audit entries, redacted reads, env bootstrap import.
@@ -20,7 +33,7 @@
 - Modify `subagents.py`: use the shared registry-backed router middleware, not a separate env-built pool.
 - Create `tests/test_model_registry.py`: registry reload, version-scoped health, sync/async router hot-switch tests.
 - Modify `web/src/app/api/config/route.ts`: read/write config through backend config command instead of direct `.env` writes when phase-2 mode is enabled.
-- Modify `tools/web_bridge_runner.py`: add `config-get`, `config-set`, `config-status` actions for out-of-process config store access only; do not claim these reload in-process registry.
+- Modify `tools/web_bridge_runner.py`: add `config-set` and `config-status` actions for out-of-process config store access only; do not claim these reload in-process registry.
 - Modify `web/src/app/api/backend/status/route.ts`: include config-center version, active registry version, active model IDs, reload coverage status.
 - Modify `README.md` and `.env.example`: document phase-2 config storage, encryption key, and exact hot-reload limits.
 

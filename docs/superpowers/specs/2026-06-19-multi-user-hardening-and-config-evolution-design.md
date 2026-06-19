@@ -367,6 +367,13 @@ web/node_modules/.bin/eslint.CMD src
 
 若任一关键路径无法通过原生扩展点证明覆盖，则该路径继续使用第一阶段受控应用/重启策略。
 
+实施备注:
+
+- 第二阶段首版只把 `ModelRouterMiddleware` 覆盖的 sync/async 主 agent 与子 agent 路径纳入热切。
+- `RubricMiddleware` 当前接收启动时静态模型实例，首版明确标记为 restart-required。
+- `web_bridge_runner.py` 是 Web API 子进程桥接工具，只负责读写配置中心，不能作为进程内 registry reload 通道。
+- phase-2 模式下 `/api/config` 读写配置中心；未启用 `XHS_CONFIG_ENCRYPTION_KEY` 与 `XHS_CONFIG_CENTER_PATH` 时继续走第一阶段 `.env + apply` 回退。
+
 ### 4.4 管理通道
 
 第二阶段需要进程内管理通道通知 LangGraph 后端 reload:

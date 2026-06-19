@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { configCenterRunnerArgs } from "@/lib/server/config-store";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,6 +44,16 @@ export async function forwardToInternalServer(
   } else if (pathName === "/_internal/uat-status") {
     action = "uat-status";
     runnerArgs.push("--action", "uat-status");
+  } else if (pathName === "/_internal/config-status") {
+    action = "config-status";
+    runnerArgs.push(...configCenterRunnerArgs("config-status"));
+  } else if (pathName === "/_internal/config-set") {
+    action = "config-set";
+    runnerArgs.push(
+      ...configCenterRunnerArgs("config-set"),
+      "--configs",
+      JSON.stringify(extraBody?.configs || {}),
+    );
   } else {
     return new Response(JSON.stringify({ error: `Unknown internal path: ${pathName}` }), { status: 404 });
   }

@@ -13,6 +13,7 @@ if project_root not in sys.path:
 
 from tools.uat_store import save_uat, get_uat
 from tools.lark_cli import lark_cli
+from config_center import ConfigCenter
 
 # Small config shims to support langgraph-style RunnableConfig for lark_cli.
 class MockUser:
@@ -224,10 +225,37 @@ def handle_notify(args):
         print(json.dumps({"ok": False, "error": str(e)}))
         sys.exit(1)
 
+
+def handle_config_status(args):
+    center = ConfigCenter(path=args.config_path, encryption_key=args.encryption_key)
+    print(json.dumps({"ok": True, "configs": center.get_redacted()}, ensure_ascii=False))
+
+
+def handle_config_set(args):
+    try:
+        updates = json.loads(args.configs or "{}")
+        if not isinstance(updates, dict):
+            raise ValueError("configs must be a JSON object")
+        center = ConfigCenter(path=args.config_path, encryption_key=args.encryption_key)
+        snapshot = center.save(actor_open_id=args.open_id or "system", updates=updates)
+        print(json.dumps({
+            "ok": True,
+            "version": snapshot.version,
+            "changed_keys": snapshot.changed_keys,
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Feishu Web API bridge runner")
-    parser.add_argument("--action", choices=["save-uat", "uat-status", "chats", "sync", "notify"], required=True)
-    parser.add_argument("--open-id", required=True)
+    parser.add_argument(
+        "--action",
+        choices=["save-uat", "uat-status", "chats", "sync", "notify", "config-status", "config-set"],
+        required=True,
+    )
+    parser.add_argument("--open-id", required=False)
     parser.add_argument("--uat")
     parser.add_argument("--refresh-token")
     parser.add_argument("--expires-at", type=float)
@@ -239,6 +267,9 @@ def main():
     parser.add_argument("--content")
     parser.add_argument("--tags")
     parser.add_argument("--thread-id")
+    parser.add_argument("--config-path")
+    parser.add_argument("--encryption-key")
+    parser.add_argument("--configs")
     
     args = parser.parse_args()
     
@@ -252,6 +283,10 @@ def main():
         handle_sync(args)
     elif args.action == "notify":
         handle_notify(args)
+    elif args.action == "config-status":
+        handle_config_status(args)
+    elif args.action == "config-set":
+        handle_config_set(args)
 
 if __name__ == "__main__":
     main()

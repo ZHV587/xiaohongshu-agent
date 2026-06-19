@@ -45,9 +45,21 @@ uv run python verify_1b1.py
 - `/shared/` → Store(跨会话/用户共享,如风格沉淀)
 - `/drafts/` 及其他 → State(随会话隔离)
 
+## 第二阶段配置中心与热切边界
+
+- 配置中心由 `XHS_CONFIG_CENTER_PATH` 指向的加密文件提供，`XHS_CONFIG_ENCRYPTION_KEY` 是启动级密钥，不能通过 UI 修改。
+- phase-2 模式开启条件：同时设置 `XHS_CONFIG_ENCRYPTION_KEY` 与 `XHS_CONFIG_CENTER_PATH`。开启后 `/api/config` 读写配置中心；未开启时保留 `.env + apply` 的 phase-1 回退。
+- 已纳入无重启热切的路径：主 agent 的 `ModelRouterMiddleware` sync/async 调用、子 agent 的 `ModelRouterMiddleware` 调用。
+- 未纳入无重启热切的路径：启动时静态构造的 rubric 评分模型。该路径仍需要受控重启，直到改为 registry-backed model factory。
+- `tools/web_bridge_runner.py` 可读写配置中心，但不能 reload 常驻 LangGraph 进程内存；进程内 registry reload 必须通过 LangGraph 后端进程内管理通道或 supervisor/sidecar 完成。
+- 不 fork DeepAgents，不 monkey-patch DeepAgents，不访问 compiled graph 私有字段。
+
 ## 测试
 ```bash
 uv run pytest
+cd web
+.\node_modules\.bin\tsc.CMD --noEmit
+.\node_modules\.bin\eslint.CMD src
 ```
 
 ## 文档

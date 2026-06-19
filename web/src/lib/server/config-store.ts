@@ -38,6 +38,8 @@ export const deployOnlyKeys = new Set([
   "XHS_ADMIN_OPEN_IDS",
   "XHS_JWT_SECRET",
   "XHS_INTERNAL_SECRET",
+  "XHS_CONFIG_ENCRYPTION_KEY",
+  "XHS_CONFIG_CENTER_PATH",
   "PATH",
   "NODE_OPTIONS",
 ]);
@@ -131,4 +133,22 @@ export function readConfigResponse(): Record<string, string> {
     "XHS_CONFIG_VERSION",
   ];
   return Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]));
+}
+
+export function isConfigCenterEnabled(): boolean {
+  return Boolean(process.env.XHS_CONFIG_ENCRYPTION_KEY && process.env.XHS_CONFIG_CENTER_PATH);
+}
+
+export function configCenterRunnerArgs(action: "config-status" | "config-set"): string[] {
+  if (!process.env.XHS_CONFIG_ENCRYPTION_KEY || !process.env.XHS_CONFIG_CENTER_PATH) {
+    throw new Error("Config center is not enabled");
+  }
+  return [
+    "--action",
+    action,
+    "--config-path",
+    process.env.XHS_CONFIG_CENTER_PATH,
+    "--encryption-key",
+    process.env.XHS_CONFIG_ENCRYPTION_KEY,
+  ];
 }
