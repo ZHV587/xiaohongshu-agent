@@ -20,12 +20,14 @@
 ## 2. 顶层约束
 
 1. 必须依托原生 DeepAgents / LangGraph 框架改造。
-2. 保留 `create_deep_agent`、LangGraph auth/thread/store、DeepAgents backend、permissions、memory 和 middleware 机制。
-3. 不 fork DeepAgents。
-4. 不 monkey-patch DeepAgents 内部模块。
-5. 不访问已编译 graph 的私有字段。
-6. 模型运行时切换只能通过原生 `AgentMiddleware.wrap_model_call` / `awrap_model_call` 和 `request.override(model=...)`。
-7. 若某项热切能力无法通过原生扩展点证明覆盖，则使用受控应用/重启兜底，而不是修改框架内部。
+2. 明确认知 DeepAgents 的底层结构: DeepAgents 是构建在 LangChain Agent 与 LangGraph `CompiledStateGraph` 之上的封装组装层。DeepAgents 提供文件工具、子智能体、backend、memory、permissions、interrupt、harness profile 等深度智能体能力；LangChain 提供 agent 与 middleware 抽象；LangGraph 提供 graph runtime、thread、store、auth 与 server 生命周期。
+3. 保留 `create_deep_agent`、LangGraph auth/thread/store、DeepAgents backend、permissions、memory 和 middleware 机制。
+4. 不 fork DeepAgents。
+5. 不 monkey-patch DeepAgents 内部模块。
+6. 不访问已编译 graph 的私有字段。
+7. 模型运行时切换只能通过原生 `AgentMiddleware.wrap_model_call` / `awrap_model_call` 和 `request.override(model=...)`。
+8. 通用数据底座、图谱、索引、同步和配置中心都必须作为外部服务或 DeepAgents tools 暴露给 agent，不得替代 LangGraph runtime 或绕过 DeepAgents 工具权限体系。
+9. 若某项热切能力无法通过原生扩展点证明覆盖，则使用受控应用/重启兜底，而不是修改框架内部。
 
 ## 3. 第一阶段: 多用户安全边界与配置应用一致性
 
