@@ -126,8 +126,9 @@ class _FakeRepository:
         ]
 
 
-def test_search_result_metadata_serializes_updated_at_as_iso_8601():
-    updated_at = datetime(2026, 6, 19, 12, 30, tzinfo=timezone.utc)
+def test_search_result_metadata_distinguishes_source_and_index_freshness():
+    source_updated_at = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)
+    indexed_at = datetime(2026, 6, 19, 12, 30, tzinfo=timezone.utc)
 
     result = _result_from_row(
         {
@@ -137,11 +138,14 @@ def test_search_result_metadata_serializes_updated_at_as_iso_8601():
             "type": "topic",
             "visibility": "team",
             "score": 0.75,
-            "updated_at": updated_at,
+            "source_updated_at": source_updated_at,
+            "updated_at": indexed_at,
         }
     )
 
-    assert result.metadata["updated_at"] == updated_at.isoformat()
+    assert result.metadata["source_updated_at"] == source_updated_at.isoformat()
+    assert result.metadata["indexed_at"] == indexed_at.isoformat()
+    assert "updated_at" not in result.metadata
 
 
 def test_keyword_search_empty_query_returns_empty_without_database_call():
@@ -496,10 +500,11 @@ def test_search_tool_returns_structured_json(monkeypatch, migrated_conn):
     assert "content_text" not in result["results"][0]
 
 
-def test_get_resource_tool_returns_iso_updated_at(monkeypatch):
+def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch):
     from data_foundation import tools as df_tools
 
-    updated_at = datetime(2026, 6, 19, 12, 30, tzinfo=timezone.utc)
+    source_updated_at = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)
+    indexed_at = datetime(2026, 6, 19, 12, 30, tzinfo=timezone.utc)
     resource = SimpleNamespace(
         id="resource-1",
         type="topic",
@@ -508,7 +513,8 @@ def test_get_resource_tool_returns_iso_updated_at(monkeypatch):
         content_text="帐篷 天幕",
         content_json={},
         version=1,
-        updated_at=updated_at,
+        source_updated_at=source_updated_at,
+        updated_at=indexed_at,
     )
 
     @contextmanager
@@ -519,4 +525,6 @@ def test_get_resource_tool_returns_iso_updated_at(monkeypatch):
 
     result = df_tools.get_resource.func(resource.id, config=_Config())
 
-    assert result["resource"]["updated_at"] == updated_at.isoformat()
+    assert result["resource"]["source_updated_at"] == source_updated_at.isoformat()
+    assert result["resource"]["indexed_at"] == indexed_at.isoformat()
+    assert "updated_at" not in result["resource"]

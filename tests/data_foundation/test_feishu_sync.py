@@ -11,11 +11,13 @@ class RecordingRepository:
     resource: Resource
     replaced_chunks: list[tuple[str, list[str]]] | None = None
     mappings: list[dict] = field(default_factory=list)
+    upserts: list[dict] = field(default_factory=list)
 
     def unit_of_work(self):
         return nullcontext()
 
-    def upsert_resource(self, **_kwargs):
+    def upsert_resource(self, **kwargs):
+        self.upserts.append(kwargs)
         return self.resource
 
     def replace_embedding_chunks(self, *, tenant_id: str, resource_id: str, chunks: list[str]):
@@ -68,6 +70,43 @@ def test_sync_wiki_documents_replaces_all_pending_chunks():
     assert repo.replaced_chunks == ("resource-1", ["第一段", "第二段"])
     assert repo.mappings[0]["external_type"] == "wiki_node"
     assert repo.mappings[0]["external_id"] == "sp1:wik1"
+
+
+def test_feishu_sync_preserves_external_source_updated_at():
+    repo = RecordingRepository(_resource())
+
+    sync_base_rows(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_sync",
+        app_token="base1",
+        table_id="tbl1",
+        rows=[
+            {
+                "record_id": "rec1",
+                "external_updated_at": "2026-05-01T08:00:00Z",
+                "fields": {"标题": "旧资料"},
+            }
+        ],
+    )
+    sync_wiki_documents(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_sync",
+        space_id="sp1",
+        documents=[
+            {
+                "obj_token": "doc1",
+                "node_token": "wik1",
+                "title": "旧文档",
+                "content": "正文",
+                "external_updated_at": "2026-04-01T08:00:00Z",
+            }
+        ],
+    )
+
+    assert repo.upserts[0]["mapping"]["external_updated_at"] == "2026-05-01T08:00:00Z"
+    assert repo.upserts[1]["mapping"]["external_updated_at"] == "2026-04-01T08:00:00Z"
 
 
 def test_sync_wiki_documents_reports_document_identity_on_invalid_input():

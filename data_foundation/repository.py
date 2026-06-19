@@ -171,7 +171,12 @@ class ResourceRepository:
                      select max(rv.version)
                      from resource_versions rv
                      where rv.resource_id = r.id
-                   ) as version
+                   ) as version,
+                   (
+                     select max(rm.external_updated_at)
+                     from resource_mappings rm
+                     where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
+                   ) as source_updated_at
             from resources r
             where r.id = %(resource_id)s
               and {readable_resource_where("r")}
@@ -270,6 +275,11 @@ class ResourceRepository:
         return self.conn.execute(
             f"""
             select r.*,
+                   (
+                     select max(rm.external_updated_at)
+                     from resource_mappings rm
+                     where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
+                   ) as source_updated_at,
                    greatest(
                      ts_rank(
                        to_tsvector('simple', coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')),
@@ -342,6 +352,11 @@ class ResourceRepository:
             f"""
             with candidates as (
               select r.*, e.chunk_index, e.chunk_text,
+                     (
+                       select max(rm.external_updated_at)
+                       from resource_mappings rm
+                       where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
+                     ) as source_updated_at,
                      1 - (e.embedding <=> %(embedding)s::vector) as score,
                      row_number() over (
                        partition by r.id
@@ -496,6 +511,7 @@ class ResourceRepository:
         system: str,
         external_type: str,
         external_id: str,
+        external_updated_at: Any | None = None,
         sync_status: str = "synced",
     ) -> None:
         with transaction(self.conn):
@@ -506,6 +522,7 @@ class ResourceRepository:
                     "system": system,
                     "external_type": external_type,
                     "external_id": external_id,
+                    "external_updated_at": external_updated_at,
                     "sync_status": sync_status,
                 },
             )
@@ -849,5 +866,6 @@ class ResourceRepository:
             owner_open_id=row["owner_open_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            source_updated_at=row.get("source_updated_at") if hasattr(row, "get") else None,
             version=None if version is None else int(version),
         )

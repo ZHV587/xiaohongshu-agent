@@ -19,6 +19,7 @@ class Resource:
     owner_open_id: str | None
     created_at: datetime
     updated_at: datetime
+    source_updated_at: datetime | None = None
     version: int | None = None
 
 

@@ -57,6 +57,7 @@ def sync_base_rows(
                     "system": "feishu",
                     "external_type": "base_record",
                     "external_id": external_id,
+                    "external_updated_at": row.get("external_updated_at"),
                     "sync_status": "synced",
                 },
                 outbox_topics=["meili_index", "embedding_generate", "graph_ingest"],
@@ -111,6 +112,7 @@ def sync_wiki_documents(
                         "system": "feishu",
                         "external_type": "docx",
                         "external_id": obj_token,
+                        "external_updated_at": doc.get("external_updated_at"),
                         "sync_status": "synced",
                     },
                     outbox_topics=["meili_index", "embedding_generate", "graph_ingest"],
@@ -121,6 +123,7 @@ def sync_wiki_documents(
                     system="feishu",
                     external_type="wiki_node",
                     external_id=f"{space_id}:{node_token}",
+                    external_updated_at=doc.get("external_updated_at"),
                     sync_status="synced",
                 )
                 chunks = [chunk.strip() for chunk in content.split("\n\n") if chunk.strip()]
