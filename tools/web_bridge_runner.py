@@ -13,20 +13,8 @@ if project_root not in sys.path:
 
 from tools.uat_store import save_uat, get_uat
 from tools.lark_cli import lark_cli
+from tools.runtime_identity import identity_config
 from config_center import ConfigCenter
-
-# Small config shims to support langgraph-style RunnableConfig for lark_cli.
-class MockUser:
-    def __init__(self, identity):
-        self.identity = identity
-
-class MockServerInfo:
-    def __init__(self, open_id):
-        self.user = MockUser(open_id)
-
-class MockConfig:
-    def __init__(self, open_id):
-        self.server_info = MockServerInfo(open_id)
 
 def handle_save_uat(args):
     try:
@@ -53,7 +41,7 @@ def handle_chats(args):
         
     try:
         command = "im +chat-list"
-        config = MockConfig(open_id)
+        config = identity_config(open_id)
         cli_resp = lark_cli(command, config=config)
         if cli_resp.startswith("Error"):
             print(json.dumps({"ok": False, "error": cli_resp}))
@@ -101,7 +89,7 @@ def handle_sync(args):
         sys.exit(1)
         
     try:
-        config = MockConfig(open_id)
+        config = identity_config(open_id)
         title_field = os.environ.get("XHS_BITABLE_FIELD_TITLE", "标题")
         body_field = os.environ.get("XHS_BITABLE_FIELD_BODY", "正文内容")
         tags_field = os.environ.get("XHS_BITABLE_FIELD_TAGS", "标签")
@@ -205,7 +193,7 @@ def handle_notify(args):
             "--content", json.dumps(card_content)
         ])
         
-        config = MockConfig(open_id)
+        config = identity_config(open_id)
         msg_resp = lark_cli(notify_cmd, config=config)
         
         if msg_resp.startswith("Error"):
@@ -257,7 +245,7 @@ def handle_wiki_space(args):
         return
         
     try:
-        config = MockConfig(open_id)
+        config = identity_config(open_id)
         cmd = shlex.join(["wiki", "spaces", "get", "--space-id", fallback_space_id])
         cli_resp = lark_cli(cmd, config=config)
         

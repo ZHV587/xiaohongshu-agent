@@ -52,6 +52,29 @@ def test_runtime_identity_missing_identity_returns_none():
     assert actor_open_id_from_config(_Config()) is None
 
 
+@patch("tools.lark_cli.get_uat")
+@patch("tools.lark_cli.subprocess.run")
+def test_lark_cli_uses_runtime_identity_for_user_token(mock_run, mock_get_uat):
+    from tools.runtime_identity import identity_config
+
+    mock_get_uat.return_value = "uat-user-token"
+    mock_resp = MagicMock()
+    mock_resp.stdout = "{\"ok\": true}"
+    mock_resp.stderr = ""
+    mock_resp.returncode = 0
+    mock_run.return_value = mock_resp
+
+    res = lark_cli.func("im +chat-list", config=identity_config("ou_user_1"))
+
+    assert "{\"ok\": true}" in res
+    mock_get_uat.assert_called_once_with("ou_user_1")
+    env = mock_run.call_args.kwargs["env"]
+    assert env["LARK_USER_ACCESS_TOKEN"] == "uat-user-token"
+    assert env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] == "uat-user-token"
+    assert env["LARK_DEFAULT_AS"] == "user"
+    assert env["LARKSUITE_CLI_DEFAULT_AS"] == "user"
+
+
 @patch("tools.lark_cli.subprocess.run")
 def test_lark_cli_server_mode_without_identity_does_not_fallback_to_bot(mock_run):
     res = lark_cli.func("im +chat-list", config=_MockConfigWithoutIdentity())

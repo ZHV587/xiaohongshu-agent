@@ -8,6 +8,7 @@ import platform
 import json
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
+from tools.runtime_identity import actor_open_id_from_config
 from tools.uat_store import get_uat
 
 logger = logging.getLogger(__name__)
@@ -146,8 +147,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     # 2) Identity resolution
     # Get user identity from runtime config
     server_info = getattr(config, "server_info", None) if config else None
-    user = getattr(server_info, "user", None) if server_info else None
-    open_id = getattr(user, "identity", None) if user else None
+    open_id = actor_open_id_from_config(config)
     server_mode = server_info is not None
 
     force_bot = False
