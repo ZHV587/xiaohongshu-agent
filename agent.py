@@ -21,42 +21,12 @@ from model_registry import ModelRegistry
 from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents import build_baokuan_analyst
-import sys
-import threading
-import asyncio
-from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from data_foundation.tools import phase3_tools
 from tools.feishu_bitable import read_xhs_data
 from tools.feishu_wiki import read_feishu_wiki
 from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
-
-def get_lark_mcp_tools():
-    """通过 stdio 传输动态连接本地的 lark-cli MCP 服务并获取工具。"""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    server_path = os.path.join(current_dir, "lark_mcp_server.py")
-    
-    client = MultiServerMCPClient({
-        "lark-cli": {
-            "transport": "stdio",
-            "command": sys.executable,
-            "args": [server_path]
-        }
-    })
-    
-    result = []
-    def run_in_thread():
-        new_loop = asyncio.new_event_loop()
-        try:
-            res = new_loop.run_until_complete(client.get_tools())
-            result.append(res)
-        finally:
-            new_loop.close()
-            
-    t = threading.Thread(target=run_in_thread)
-    t.start()
-    t.join()
-    return result[0] if result else []
+from tools.lark_mcp import load_lark_mcp_tools
 
 # 启动时自动从官方仓库同步最新的飞书技能（下载失败时自动静默降级，不影响启动）
 if os.environ.get("DISABLE_AUTO_UPDATE") != "true":
@@ -105,7 +75,7 @@ rubric_middleware = RubricMiddleware(
 
 agent = create_deep_agent(
     model=initial_model,
-    tools=[read_xhs_data, read_feishu_wiki] + phase3_tools + get_lark_mcp_tools(),
+    tools=[read_xhs_data, read_feishu_wiki] + phase3_tools + load_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[build_baokuan_analyst(model_registry, initial_model)],
     backend=backend,
