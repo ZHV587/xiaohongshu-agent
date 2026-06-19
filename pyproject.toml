@@ -31,7 +31,7 @@ dev = [
 include = ["tools", "shared"]
 
 [tool.setuptools]
-py-modules = ["agent", "auth", "backends", "cli", "middlewares", "prompts", "subagents", "verify_1b1", "verify_1b3", "verify_memory"]
+py-modules = ["agent", "auth", "backends", "middlewares", "prompts", "subagents", "verify_1b1", "verify_1b3", "verify_memory"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -3,16 +3,14 @@ import json
 import os
 from unittest.mock import patch
 
-import pytest
-
-from tools import cli_runner
+from tools import web_bridge_runner
 
 
 def test_handle_uat_status_reports_authorized(capsys):
     args = argparse.Namespace(open_id="ou_123")
 
-    with patch("tools.cli_runner.get_uat", return_value="uat_token"):
-        cli_runner.handle_uat_status(args)
+    with patch("tools.web_bridge_runner.get_uat", return_value="uat_token"):
+        web_bridge_runner.handle_uat_status(args)
 
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"ok": True, "authorized": True}
@@ -34,13 +32,13 @@ def test_handle_sync_creates_draft_record(capsys):
             "FEISHU_BITABLE_TABLE_ID": "tbl_id",
         },
     ):
-        with patch("tools.cli_runner.get_uat", return_value="uat_token"):
-            with patch("tools.cli_runner.lark_cli") as mock_lark_cli:
+        with patch("tools.web_bridge_runner.get_uat", return_value="uat_token"):
+            with patch("tools.web_bridge_runner.lark_cli") as mock_lark_cli:
                 mock_lark_cli.return_value = json.dumps(
                     {"data": {"record": {"record_id": "rec_new"}}}
                 )
 
-                cli_runner.handle_sync(args)
+                web_bridge_runner.handle_sync(args)
 
     command = mock_lark_cli.call_args.args[0]
     assert "+record-create" in command

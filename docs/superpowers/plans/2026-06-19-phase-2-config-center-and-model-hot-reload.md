@@ -20,7 +20,7 @@
 - Modify `subagents.py`: use the shared registry-backed router middleware, not a separate env-built pool.
 - Create `tests/test_model_registry.py`: registry reload, version-scoped health, sync/async router hot-switch tests.
 - Modify `web/src/app/api/config/route.ts`: read/write config through backend config command instead of direct `.env` writes when phase-2 mode is enabled.
-- Modify `tools/cli_runner.py`: add `config-get`, `config-set`, `config-status` actions for out-of-process config store access only; do not claim these reload in-process registry.
+- Modify `tools/web_bridge_runner.py`: add `config-get`, `config-set`, `config-status` actions for out-of-process config store access only; do not claim these reload in-process registry.
 - Modify `web/src/app/api/backend/status/route.ts`: include config-center version, active registry version, active model IDs, reload coverage status.
 - Modify `README.md` and `.env.example`: document phase-2 config storage, encryption key, and exact hot-reload limits.
 
@@ -811,13 +811,13 @@ git commit -m "feat: wire agents to shared model registry"
 ## Task 5: Backend Config Status Command
 
 **Files:**
-- Modify: `tools/cli_runner.py`
+- Modify: `tools/web_bridge_runner.py`
 - Modify: `web/src/app/api/backend/status/route.ts`
-- Test: `tests/test_cli_runner.py`
+- Test: `tests/test_web_bridge_runner.py`
 
 - [ ] **Step 1: Write failing status test**
 
-Append to `tests/test_cli_runner.py`:
+Append to `tests/test_web_bridge_runner.py`:
 
 ```python
 def test_config_status_reads_redacted_center(tmp_path, capsys):
@@ -834,7 +834,7 @@ def test_config_status_reads_redacted_center(tmp_path, capsys):
     })
 
     args = argparse.Namespace(config_path=str(path), encryption_key=key)
-    cli_runner.handle_config_status(args)
+    web_bridge_runner.handle_config_status(args)
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
@@ -847,14 +847,14 @@ def test_config_status_reads_redacted_center(tmp_path, capsys):
 Run:
 
 ```powershell
-uv run pytest tests/test_cli_runner.py::test_config_status_reads_redacted_center -q
+uv run pytest tests/test_web_bridge_runner.py::test_config_status_reads_redacted_center -q
 ```
 
-Expected: FAIL with `AttributeError: module 'tools.cli_runner' has no attribute 'handle_config_status'`.
+Expected: FAIL with `AttributeError: module 'tools.web_bridge_runner' has no attribute 'handle_config_status'`.
 
 - [ ] **Step 3: Add config status command**
 
-In `tools/cli_runner.py`, import:
+In `tools/web_bridge_runner.py`, import:
 
 ```python
 from config_center import ConfigCenter
@@ -910,7 +910,7 @@ hot_reload_message:
 Run:
 
 ```powershell
-uv run pytest tests/test_cli_runner.py tests/test_config_center.py -q
+uv run pytest tests/test_web_bridge_runner.py tests/test_config_center.py -q
 cd E:\小红书智能体\web
 .\node_modules\.bin\tsc.CMD --noEmit
 ```
@@ -920,7 +920,7 @@ Expected: all pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tools/cli_runner.py tests/test_cli_runner.py web/src/app/api/backend/status/route.ts
+git add tools/web_bridge_runner.py tests/test_web_bridge_runner.py web/src/app/api/backend/status/route.ts
 git commit -m "feat: expose config center status"
 ```
 
@@ -1029,7 +1029,7 @@ Append to `README.md`:
 - 配置中心由 `XHS_CONFIG_CENTER_PATH` 指向的加密文件提供，`XHS_CONFIG_ENCRYPTION_KEY` 是启动级密钥，不能通过 UI 修改。
 - 已纳入无重启热切的路径：主 agent 的 `ModelRouterMiddleware` sync/async 调用、子 agent 的 `ModelRouterMiddleware` 调用。
 - 未纳入无重启热切的路径：启动时静态构造的 rubric 评分模型。该路径仍需要受控重启，直到改为 registry-backed model factory。
-- `tools/cli_runner.py` 可读取配置中心状态，但不能 reload 常驻 LangGraph 进程内存。
+- `tools/web_bridge_runner.py` 可读取配置中心状态，但不能 reload 常驻 LangGraph 进程内存。
 - 不 fork DeepAgents，不 monkey-patch DeepAgents，不访问 compiled graph 私有字段。
 ```
 
@@ -1042,7 +1042,7 @@ In `docs/superpowers/specs/2026-06-19-multi-user-hardening-and-config-evolution-
 
 - 第二阶段首版只把 `ModelRouterMiddleware` 覆盖的 sync/async 主 agent 与子 agent 路径纳入热切。
 - `RubricMiddleware` 当前接收启动时静态模型实例，首版明确标记为 restart-required。
-- `cli_runner.py` 是子进程桥接工具，不能作为进程内 registry reload 通道。
+- `web_bridge_runner.py` 是 Web API 子进程桥接工具，不能作为进程内 registry reload 通道。
 ```
 
 - [ ] **Step 3: Run complete checks**

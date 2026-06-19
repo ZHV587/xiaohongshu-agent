@@ -28,6 +28,7 @@
 7. 模型运行时切换只能通过原生 `AgentMiddleware.wrap_model_call` / `awrap_model_call` 和 `request.override(model=...)`。
 8. 通用数据底座、图谱、索引、同步和配置中心都必须作为外部服务或 DeepAgents tools 暴露给 agent，不得替代 LangGraph runtime 或绕过 DeepAgents 工具权限体系。
 9. 若某项热切能力无法通过原生扩展点证明覆盖，则使用受控应用/重启兜底，而不是修改框架内部。
+10. 项目运行入口只保留 Web 对话 + LangGraph server；交互式 Python CLI 入口已移除，`agent.py` 是唯一 DeepAgents/LangGraph 装配入口。
 
 ## 3. 第一阶段: 多用户安全边界与配置应用一致性
 
@@ -191,13 +192,13 @@ server 模式下所有用户触发的飞书操作默认使用当前用户 UAT:
 
 bot 使用边界:
 
-- bot 只用于显式系统任务或 CLI/dev 模式。
+- bot 只用于显式系统任务或受控开发诊断模式。
 - server 用户请求不得静默退回 bot。
 
 建议拆分工具执行入口:
 
 - `lark_cli_user_required(...)`: server 默认，缺 UAT 直接失败。
-- `lark_cli_allow_bot_fallback(...)`: CLI/dev 明确调用。
+- `lark_cli_allow_bot_fallback(...)`: 仅受控开发诊断或系统任务明确调用。
 
 MCP 工具注意事项:
 
@@ -375,7 +376,7 @@ web/node_modules/.bin/eslint.CMD src
 - 后端校验 timestamp 窗口和 nonce 防重放。
 - 普通用户 JWT 不能直接调用内部 reload。
 
-如果框架不适合挂管理 route，可以由部署系统或 sidecar 通知后端，但不得通过子进程刷新另一个进程的 registry。`cli_runner.py` 子进程不能用于进程内热切，因为它无法修改常驻 LangGraph 进程内存。
+如果框架不适合挂管理 route，可以由部署系统或 sidecar 通知后端，但不得通过子进程刷新另一个进程的 registry。`web_bridge_runner.py` 子进程只能作为 Web API 到 Python 工具的临时桥接，不能用于进程内热切，因为它无法修改常驻 LangGraph 进程内存。
 
 ### 4.5 统一配置 API
 

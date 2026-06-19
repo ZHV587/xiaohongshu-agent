@@ -25,16 +25,13 @@
 
 ## 运行方式
 
-### CLI(1a,单会话)
-```bash
-uv run python cli.py
-```
-
-### LangGraph server(1b-1,多会话 + 共享/隔离)
+### LangGraph server(多会话 + 共享/隔离)
 ```bash
 uv run langgraph dev
 ```
 默认起在 `http://127.0.0.1:2024`。
+
+本项目已移除交互式 Python CLI 运行入口。生产和本地联调都以 Web 对话 + LangGraph server 为入口；`agent.py` 是唯一 DeepAgents/LangGraph 装配入口。
 
 联调验证(另开终端,server 起好后):
 ```bash

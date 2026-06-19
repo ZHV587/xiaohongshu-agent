@@ -1,7 +1,6 @@
 agent
 auth
 backends
-cli
 middlewares
 prompts
 shared

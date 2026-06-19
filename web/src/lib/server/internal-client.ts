@@ -11,7 +11,7 @@ export async function forwardToInternalServer(
   extraBody?: any,
   extraHeaders?: any
 ): Promise<Response> {
-  const scriptPath = path.resolve(process.cwd(), "../tools/cli_runner.py");
+  const scriptPath = path.resolve(process.cwd(), "../tools/web_bridge_runner.py");
   
   let action = "";
   const runnerArgs: string[] = [scriptPath, "--open-id", openId];
@@ -64,7 +64,7 @@ export async function forwardToInternalServer(
     });
     
     if (stderr && stderr.trim().toLowerCase().includes("error")) {
-      console.error(`cli_runner stderr: ${stderr}`);
+      console.error(`web_bridge_runner stderr: ${stderr}`);
     }
     
     const result = JSON.parse(stdout.trim());
@@ -76,7 +76,7 @@ export async function forwardToInternalServer(
       headers: { "Content-Type": "application/json" }
     });
   } catch (e: any) {
-    console.error(`Failed to run cli_runner for action ${action}:`, e);
+    console.error(`Failed to run web_bridge_runner for action ${action}:`, e);
     let errorMsg = e.message;
     if (e.stdout) {
       try {

@@ -2,7 +2,6 @@ README.md
 agent.py
 auth.py
 backends.py
-cli.py
 middlewares.py
 prompts.py
 pyproject.toml
@@ -14,10 +13,13 @@ tests/test_agent_assembly.py
 tests/test_backends.py
 tests/test_feishu_bitable.py
 tests/test_lark_cli.py
+tests/test_web_bridge_runner.py
+tests/test_web_only_runtime_entrypoint.py
 tools/__init__.py
 tools/feishu_bitable.py
 tools/lark_cli.py
 tools/lark_scopes.py
+tools/web_bridge_runner.py
 xhs_content_agent.egg-info/PKG-INFO
 xhs_content_agent.egg-info/SOURCES.txt
 xhs_content_agent.egg-info/dependency_links.txt

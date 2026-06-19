@@ -1,4 +1,4 @@
-# tools/cli_runner.py
+# tools/web_bridge_runner.py
 import argparse
 import sys
 import os
@@ -14,7 +14,7 @@ if project_root not in sys.path:
 from tools.uat_store import save_uat, get_uat
 from tools.lark_cli import lark_cli
 
-# Mock classes to support langgraph style RunnableConfig for lark_cli
+# Small config shims to support langgraph-style RunnableConfig for lark_cli.
 class MockUser:
     def __init__(self, identity):
         self.identity = identity
@@ -225,7 +225,7 @@ def handle_notify(args):
         sys.exit(1)
 
 def main():
-    parser = argparse.ArgumentParser(description="Lark CLI Bridge Runner for Web API")
+    parser = argparse.ArgumentParser(description="Feishu Web API bridge runner")
     parser.add_argument("--action", choices=["save-uat", "uat-status", "chats", "sync", "notify"], required=True)
     parser.add_argument("--open-id", required=True)
     parser.add_argument("--uat")

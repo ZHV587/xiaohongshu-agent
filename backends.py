@@ -34,7 +34,7 @@ def _user_memory_namespace(rt) -> tuple[str, ...]:
 
     身份取 `rt.server_info.user.identity`(auth.py 里即飞书 open_id)。
     两处 None 兜底——否则无身份请求会 AttributeError 崩在 Store 操作上:
-    - server_info 为 None:无 LangGraph server 的进程内运行(理论上 CLI 不用此路由,
+    - server_info 为 None:无 LangGraph server 的进程内运行,
       但回调仍可能被探测调用)。
     - user 为 None:server 在但请求未携带可解析身份(已被 auth 拦在 401,双保险)。
     兜底归到 "__anon__" 分区,与任何真实 open_id 不冲突。
@@ -66,13 +66,4 @@ def build_backend() -> CompositeBackend:
             "/user-memories/": user_memory,
         },
     )
-
-
-def build_cli_backend() -> FilesystemBackend:
-    """CLI/进程内模式用:全部走磁盘 FilesystemBackend(与 1a 一致)。
-
-    StoreBackend 需要 server 注入 store,进程内 agent.stream 没有 server,
-    故 CLI 不用 CompositeBackend,直接用磁盘后端(覆盖写友好、无需 store)。
-    """
-    return FilesystemBackend(root_dir=_PROJECT_ROOT, virtual_mode=True)
 
