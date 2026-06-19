@@ -145,3 +145,16 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
     tool_names = {getattr(tool, "name", "") for tool in agent_module.phase3_tools}
 
     assert {"search_resources", "semantic_search_resources", "graph_expand", "get_resource"} <= tool_names
+
+
+def test_agent_registers_feishu_action_tools(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import agent as agent_module
+
+    agent_module = importlib.reload(agent_module)
+    tool_names = {getattr(tool, "name", "") for tool in agent_module.feishu_action_tools}
+
+    assert {"sync_copy_to_feishu", "send_review_notification"} <= tool_names
