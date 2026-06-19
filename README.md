@@ -54,6 +54,16 @@ uv run python verify_1b1.py
 - `tools/web_bridge_runner.py` 可读写配置中心，但不能 reload 常驻 LangGraph 进程内存；进程内 registry reload 必须通过 LangGraph 后端进程内管理通道或 supervisor/sidecar 完成。
 - 不 fork DeepAgents，不 monkey-patch DeepAgents，不访问 compiled graph 私有字段。
 
+## 第三阶段数据底座
+
+- `XHS_DATABASE_URL` 指向 Postgres 权威业务库；底层通用数据沉淀不绑定单一飞书来源，飞书 Base/Wiki/Doc 只是 ingestion adapter。
+- 数据库必须启用 `pgcrypto` 与 `vector` 扩展；关键词检索走 Postgres full-text + `ILIKE` 中文兜底，语义检索走 pgvector。
+- `XHS_DEFAULT_TENANT_ID` 默认是 `default`；Agent tool 不接受自由 tenant 参数，tenant 和 actor 权限在服务端解析。
+- `XHS_EMBEDDING_MODEL` 默认 `text-embedding-3-small`；`XHS_EMBEDDING_BASE_URL` / `XHS_EMBEDDING_API_KEY` 未设置时回退到 `LLM_BASE_URL` / `LLM_API_KEY`。
+- DeepAgents/LangGraph 仍是唯一 agent runtime；第三阶段只新增普通 LangChain tools 并挂入 `create_deep_agent`。
+- 项目不恢复交互式 Python CLI 运行入口；飞书 `lark-cli` 只作为 server/worker 内部 adapter。
+- Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster 暂不作为第一闭环启动依赖，它们通过 `resource_outbox` 后续接入。
+
 ## 测试
 ```bash
 uv run pytest

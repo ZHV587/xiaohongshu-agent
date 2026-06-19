@@ -2,6 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Implementation Status
+
+Completed on 2026-06-19.
+
+- Postgres schema and migrations are in `data_foundation/schema.sql`.
+- Repository writes resources, versions, events, mappings, outbox rows, permissions, embeddings, and edges.
+- Feishu Base/Wiki/Doc ingestion writes through the shared data access layer.
+- Keyword search, pgvector interface, and graph expansion are available through DeepAgents-native LangChain tools.
+- Postgres is the authoritative universal data foundation; Feishu and future database-backed sources are ingestion adapters into the same resource model.
+- Meilisearch, Graphiti, Neo4j/FalkorDB, and Dagster remain outbox-backed future adapters.
+
 **Goal:** Build the first working Phase 3 loop: Postgres authoritative resource storage, Feishu ingestion, Postgres keyword/vector retrieval, graph expansion, and DeepAgents-native tools.
 
 **Architecture:** Keep DeepAgents/LangGraph as the only agent runtime and keep Web conversation as the product entrypoint. Add a focused Python `data_foundation` package that owns schema migrations, repository access, permissions, Feishu ingestion, retrieval, graph expansion, and LangChain tool wrappers. Agents never receive SQL/Cypher access; they call DeepAgents tools that resolve actor identity from `RunnableConfig.server_info.user.identity`.
@@ -1534,7 +1545,7 @@ git commit -m "feat: expose data foundation tools to deepagents"
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-06-19-phase-3-universal-data-foundation.md`
 
-- [ ] **Step 1: Document environment**
+- [x] **Step 1: Document environment**
 
 Add to `.env.example`:
 
@@ -1548,7 +1559,7 @@ XHS_EMBEDDING_MODEL=test
 TEST_XHS_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/xhs_test
 ```
 
-- [ ] **Step 2: Document setup and boundaries**
+- [x] **Step 2: Document setup and boundaries**
 
 Add to `README.md` after the Phase 2 section:
 
@@ -1563,7 +1574,7 @@ Add to `README.md` after the Phase 2 section:
 - Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster 暂不作为第一闭环启动依赖，它们通过 `resource_outbox` 后续接入。
 ```
 
-- [ ] **Step 3: Run backend tests**
+- [x] **Step 3: Run backend tests**
 
 Run:
 
@@ -1573,7 +1584,7 @@ uv run pytest -q
 
 Expected: PASS. If `TEST_XHS_DATABASE_URL` is not set, `tests/data_foundation/*` are skipped and all existing tests still pass. In CI or Phase 3 verification, `TEST_XHS_DATABASE_URL` must be set so Postgres tests run.
 
-- [ ] **Step 4: Run frontend type/lint checks**
+- [x] **Step 4: Run frontend type/lint checks**
 
 Run:
 
@@ -1585,7 +1596,7 @@ cd web
 
 Expected: TypeScript passes. ESLint may still report the existing warning count, but no new errors should appear.
 
-- [ ] **Step 5: Update implementation status in this plan**
+- [x] **Step 5: Update implementation status in this plan**
 
 At the top of this file, after the header, add:
 
@@ -1601,7 +1612,7 @@ Completed on 2026-06-19.
 - Meilisearch/Graphiti/Neo4j/Dagster remain outbox-backed future adapters.
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add .env.example README.md docs/superpowers/plans/2026-06-19-phase-3-universal-data-foundation.md
