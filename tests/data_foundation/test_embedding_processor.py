@@ -356,6 +356,8 @@ def test_embedding_config_from_env_marks_invalid_values_misconfigured(monkeypatc
     monkeypatch.setenv("XHS_EMBEDDING_MODEL", "embedding-model")
     monkeypatch.setenv("XHS_EMBEDDING_DIMENSIONS", "3072")
     monkeypatch.setenv("XHS_EMBEDDING_CONFIG_VERSION", "cfg-invalid")
+    monkeypatch.delenv("XHS_EMBEDDING_BATCH_SIZE", raising=False)
+    monkeypatch.delenv("XHS_EMBEDDING_TIMEOUT_SECONDS", raising=False)
 
     config = embedding_config_from_env()
 
