@@ -157,9 +157,9 @@ def test_model_config_versions_are_strings():
 
 def test_schema_enables_required_extensions(migrated_conn):
     rows = migrated_conn.execute(
-        "select extname from pg_extension where extname in ('pgcrypto', 'vector')"
+        "select extname from pg_extension where extname in ('pgcrypto', 'vector', 'pg_trgm')"
     ).fetchall()
-    assert {row[0] for row in rows} == {"pgcrypto", "vector"}
+    assert {row[0] for row in rows} == {"pgcrypto", "vector", "pg_trgm"}
 
 
 def test_schema_creates_operational_tables(migrated_conn):
@@ -460,9 +460,37 @@ def test_ready_and_lease_indexes_cover_operational_queues(migrated_conn):
     indexes = {row[0]: row[1].lower() for row in rows}
 
     assert "(status, next_attempt_at, topic)" in indexes["idx_resource_outbox_ready"]
+    assert "(tenant_id, status, topic, next_attempt_at, created_at, id)" in indexes[
+        "idx_resource_outbox_ready_tenant"
+    ]
+    assert "where" in indexes["idx_resource_outbox_ready_tenant"]
+    assert "pending" in indexes["idx_resource_outbox_ready_tenant"]
+    assert "retry" in indexes["idx_resource_outbox_ready_tenant"]
     assert "(lease_expires_at)" in indexes["idx_resource_outbox_lease"]
     assert "(enabled, next_run_at, last_dispatched_at)" in indexes["idx_sync_sources_ready"]
+    assert "(tenant_id, last_dispatched_at, next_run_at, id)" in indexes[
+        "idx_sync_sources_ready_tenant"
+    ]
+    assert "where enabled" in indexes["idx_sync_sources_ready_tenant"]
     assert "(lease_expires_at)" in indexes["idx_sync_sources_lease"]
+
+
+def test_resource_content_trigram_index_supports_keyword_fallback(migrated_conn):
+    rows = migrated_conn.execute(
+        """
+        select indexname, indexdef
+        from pg_indexes
+        where schemaname = current_schema()
+        """
+    ).fetchall()
+    indexes = {row[0]: row[1].lower() for row in rows}
+    indexdef = indexes["idx_resources_trgm_content"]
+
+    assert "using gin" in indexdef
+    assert "gin_trgm_ops" in indexdef
+    assert "coalesce(title" in indexdef
+    assert "coalesce(summary" in indexdef
+    assert "coalesce(content_text" in indexdef
 
 
 def test_embedding_dimension_and_source_type_constraints(migrated_conn):

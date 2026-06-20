@@ -1,5 +1,6 @@
 create extension if not exists pgcrypto;
 create extension if not exists vector;
+create extension if not exists pg_trgm;
 
 create table if not exists resources (
   id uuid primary key default gen_random_uuid(),
@@ -22,6 +23,9 @@ create index if not exists idx_resources_tenant_recent on resources (tenant_id, 
 create index if not exists idx_resources_owner on resources (tenant_id, owner_open_id);
 create index if not exists idx_resources_fts on resources using gin (
   to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content_text, ''))
+);
+create index if not exists idx_resources_trgm_content on resources using gin (
+  (coalesce(title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content_text, '')) gin_trgm_ops
 );
 
 create table if not exists resource_mappings (
@@ -200,6 +204,9 @@ create index if not exists idx_sync_sources_tenant_recent
   on sync_sources (tenant_id, updated_at desc);
 create index if not exists idx_sync_sources_ready
   on sync_sources (enabled, next_run_at, last_dispatched_at);
+create index if not exists idx_sync_sources_ready_tenant
+  on sync_sources (tenant_id, last_dispatched_at, next_run_at, id)
+  where enabled;
 create index if not exists idx_sync_sources_lease on sync_sources (lease_expires_at);
 
 create table if not exists service_instances (
@@ -305,6 +312,9 @@ create table if not exists resource_outbox (
 
 create index if not exists idx_resource_outbox_ready
   on resource_outbox (status, next_attempt_at, topic);
+create index if not exists idx_resource_outbox_ready_tenant
+  on resource_outbox (tenant_id, status, topic, next_attempt_at, created_at, id)
+  where status in ('pending', 'retry');
 create index if not exists idx_resource_outbox_lease on resource_outbox (lease_expires_at);
 create index if not exists idx_resource_outbox_tenant_recent
   on resource_outbox (tenant_id, created_at desc);
