@@ -176,3 +176,54 @@ def test_internal_wiki_space_falls_back_without_uat(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "name": "小红书爆单手册", "space_id": "space_1"}
+
+
+def test_internal_health_facts_is_admin_only(monkeypatch):
+    client = _client(monkeypatch, admins="ou_admin")
+
+    response = client.get(
+        "/internal/health/facts",
+        headers={"X-XHS-Internal-Key": "internal-secret", "X-XHS-Open-Id": "ou_user"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_internal_health_facts_returns_safe_shape(monkeypatch):
+    client = _client(monkeypatch, admins="ou_admin")
+
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setattr(
+        internal_api,
+        "runtime_facts_payload",
+        lambda: {
+            "ok": True,
+            "scheduler": {"enabled": False},
+            "outbox": {"pending": 0, "blocked": 0, "dead": 0},
+            "embedding": {"active": None, "building": None},
+            "sync": {"running": False},
+            "errors": [],
+        },
+    )
+
+    response = client.get("/internal/health/facts", headers=_admin_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["scheduler"] == {"enabled": False}
+    assert set(payload) == {"ok", "scheduler", "outbox", "embedding", "sync", "errors"}
+    assert "credentials" not in response.text
+
+
+def test_runtime_facts_payload_uses_sync_enabled_env(monkeypatch):
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setenv("XHS_SYNC_ENABLED", "true")
+    enabled_payload = internal_api.runtime_facts_payload()
+
+    monkeypatch.setenv("XHS_SYNC_ENABLED", "false")
+    disabled_payload = internal_api.runtime_facts_payload()
+
+    assert enabled_payload["scheduler"]["enabled"] is True
+    assert disabled_payload["scheduler"]["enabled"] is False

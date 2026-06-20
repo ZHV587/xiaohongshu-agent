@@ -195,6 +195,37 @@ async def internal_feishu_wiki_space(request: Request) -> JSONResponse:
         return _json_ok(fallback)
 
 
+def runtime_facts_payload() -> dict:
+    return {
+        "ok": True,
+        "scheduler": {
+            "enabled": os.environ.get("XHS_SYNC_ENABLED", "false").strip().lower() == "true",
+        },
+        "outbox": {
+            "pending": 0,
+            "retry": 0,
+            "processing": 0,
+            "blocked": 0,
+            "dead": 0,
+        },
+        "embedding": {
+            "active": None,
+            "building": None,
+        },
+        "sync": {
+            "running": False,
+        },
+        "errors": [],
+    }
+
+
+async def internal_health_facts(request: Request) -> JSONResponse:
+    actor = require_admin(request)
+    if isinstance(actor, JSONResponse):
+        return actor
+    return _json_ok(runtime_facts_payload())
+
+
 def _config_center() -> ConfigCenter:
     return ConfigCenter(
         path=os.environ["XHS_CONFIG_CENTER_PATH"],
@@ -215,4 +246,5 @@ internal_routes = [
     Route("/internal/feishu/uat", internal_feishu_uat_post, methods=["POST"]),
     Route("/internal/feishu/chats", internal_feishu_chats, methods=["GET"]),
     Route("/internal/feishu/wiki-space", internal_feishu_wiki_space, methods=["GET"]),
+    Route("/internal/health/facts", internal_health_facts, methods=["GET"]),
 ]
