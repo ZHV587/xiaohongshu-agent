@@ -9,7 +9,7 @@ SUMMARY_LIMIT = 240
 DEFAULT_WINDOW_SECONDS = 60 * 60
 
 _SECRET_PATTERNS = (
-    re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)\s*[:=]\s*\S+"),
     re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+"),
 )
 

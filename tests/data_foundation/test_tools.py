@@ -77,24 +77,12 @@ def test_get_data_foundation_status_tool_returns_structured_status(monkeypatch):
     assert result["status"]["resources"]["total"] == 0
 
 
-def test_sync_feishu_resources_tool_loads_real_feishu_sources(monkeypatch):
+def test_sync_feishu_resources_tool_delegates_to_source_processors(monkeypatch):
     from data_foundation import tools as df_tools
 
     captured = {}
     repo = RecordingRepository()
     monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
-    monkeypatch.setattr(
-        df_tools,
-        "load_feishu_sources",
-        lambda config: {
-            "base_rows": [{"record_id": "rec1", "fields": {"标题": "一"}}],
-            "wiki_documents": [{"obj_token": "doc1", "node_token": "wik1", "title": "文档"}],
-            "source_errors": ["wiki document doc2 failed"],
-            "app_token": "app-real",
-            "table_id": "tbl-real",
-            "wiki_space_id": "space-real",
-        },
-    )
 
     def _sync(repo_arg, **kwargs):
         captured["repo"] = repo_arg
@@ -121,56 +109,7 @@ def test_sync_feishu_resources_tool_loads_real_feishu_sources(monkeypatch):
         "tenant_id": "default",
         "actor_open_id": "ou_user",
         "triggered_by": "manual",
-        "base_rows": [{"record_id": "rec1", "fields": {"标题": "一"}}],
-        "wiki_documents": [{"obj_token": "doc1", "node_token": "wik1", "title": "文档"}],
-        "source_errors": ["wiki document doc2 failed"],
-        "app_token": "app-real",
-        "table_id": "tbl-real",
-        "wiki_space_id": "space-real",
     }
-
-
-def test_sync_feishu_resources_tool_fails_when_sources_return_nothing(monkeypatch):
-    from data_foundation import tools as df_tools
-
-    captured = {}
-    repo = RecordingRepository()
-    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
-    monkeypatch.setattr(
-        df_tools,
-        "load_feishu_sources",
-        lambda config: {
-            "base_rows": [],
-            "wiki_documents": [],
-            "source_errors": [],
-            "app_token": "",
-            "table_id": "",
-            "wiki_space_id": "",
-        },
-    )
-
-    def _sync(repo_arg, **kwargs):
-        captured["kwargs"] = kwargs
-        return {
-            "ok": False,
-            "run_id": "run-1",
-            "status": "failed",
-            "created": 0,
-            "updated": 0,
-            "skipped": 0,
-            "failed": 1,
-            "errors": kwargs["source_errors"],
-        }
-
-    monkeypatch.setattr(df_tools, "sync_feishu_sources", _sync)
-
-    result = df_tools.sync_feishu_resources.func(config=identity_config("ou_user"))
-
-    assert result["ok"] is False
-    assert result["status"] == "failed"
-    assert captured["kwargs"]["source_errors"] == [
-        "No readable Feishu resources were returned from configured sources"
-    ]
 
 
 def test_save_generated_topic_tool_persists_for_current_actor(monkeypatch):

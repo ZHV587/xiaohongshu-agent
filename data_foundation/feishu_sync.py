@@ -47,6 +47,14 @@ def sync_base_rows(
             fields = dict(row.get("fields") or {})
             title = _field(fields, ["标题", "title", "Title"]) or record_id
             body = _field(fields, ["正文", "正文内容", "视频文案", "content", "Content"])
+            mapping = {
+                "system": "feishu",
+                "external_type": external_type,
+                "external_id": external_id,
+                "sync_status": "synced",
+            }
+            if row.get("external_updated_at") is not None:
+                mapping["external_updated_at"] = row.get("external_updated_at")
             repo.upsert_resource(
                 tenant_id=tenant_id,
                 actor_open_id=actor_open_id,
@@ -56,13 +64,7 @@ def sync_base_rows(
                 content_json={"fields": fields, "identity_kind": identity_kind},
                 visibility="team",
                 owner_open_id=actor_open_id,
-                mapping={
-                    "system": "feishu",
-                    "external_type": external_type,
-                    "external_id": external_id,
-                    "external_updated_at": row.get("external_updated_at"),
-                    "sync_status": "synced",
-                },
+                mapping=mapping,
                 outbox_requests=default_write_requests(),
             )
             imported += 1
@@ -101,6 +103,21 @@ def sync_wiki_documents(
                 raise ValueError("node_token is required")
             title = str(doc.get("title") or obj_token)
             content = str(doc.get("content") or "")
+            doc_mapping = {
+                "system": "feishu",
+                "external_type": "docx",
+                "external_id": obj_token,
+                "sync_status": "synced",
+            }
+            wiki_mapping = {
+                "system": "feishu",
+                "external_type": "wiki_node",
+                "external_id": f"{space_id}:{node_token}",
+                "sync_status": "synced",
+            }
+            if doc.get("external_updated_at") is not None:
+                doc_mapping["external_updated_at"] = doc.get("external_updated_at")
+                wiki_mapping["external_updated_at"] = doc.get("external_updated_at")
             with repo.unit_of_work():
                 resource = repo.upsert_resource(
                     tenant_id=tenant_id,
@@ -111,23 +128,13 @@ def sync_wiki_documents(
                     content_json={"space_id": space_id, "obj_token": obj_token, "node_token": node_token},
                     visibility="team",
                     owner_open_id=actor_open_id,
-                    mapping={
-                        "system": "feishu",
-                        "external_type": "docx",
-                        "external_id": obj_token,
-                        "external_updated_at": doc.get("external_updated_at"),
-                        "sync_status": "synced",
-                    },
+                    mapping=doc_mapping,
                     outbox_requests=default_write_requests(),
                 )
                 repo.upsert_mapping(
                     tenant_id=tenant_id,
                     resource_id=resource.id,
-                    system="feishu",
-                    external_type="wiki_node",
-                    external_id=f"{space_id}:{node_token}",
-                    external_updated_at=doc.get("external_updated_at"),
-                    sync_status="synced",
+                    **wiki_mapping,
                 )
             imported += 1
         except Exception as exc:
