@@ -414,6 +414,32 @@ class ResourceRepository:
                 (tenant_id, source_resource_id, target_resource_id, edge_type, weight),
             )
 
+    def writable_resource_metadata(self, *, tenant_id: str, actor_open_id: str, resource_id: str):
+        row = self.conn.execute(
+            """
+            select id::text as id, visibility, owner_open_id
+            from resources r
+            where r.id = %(resource_id)s
+              and r.tenant_id = %(tenant_id)s
+              and (
+                r.owner_open_id = %(actor_open_id)s
+                or exists (
+                  select 1 from resource_permissions rp
+                  where rp.resource_id = r.id
+                    and rp.tenant_id = r.tenant_id
+                    and rp.subject_type = 'user'
+                    and rp.subject_id = %(actor_open_id)s
+                    and rp.permission in ('write', 'admin')
+                )
+                or %(actor_open_id)s = any(regexp_split_to_array(coalesce(current_setting('app.admin_open_ids', true), ''), '\\s*,\\s*'))
+              )
+            """,
+            {"tenant_id": tenant_id, "actor_open_id": actor_open_id, "resource_id": resource_id},
+        ).fetchone()
+        if row is None:
+            raise PermissionError("Resource not found or not writable")
+        return row
+
     def graph_rows(
         self,
         *,
@@ -486,6 +512,31 @@ class ResourceRepository:
                 "hops": hops,
                 "edge_types": edge_types,
             },
+        ).fetchall()
+
+    def performance_rows(self, *, tenant_id: str, actor_open_id: str, resource_id: str):
+        return self.conn.execute(
+            f"""
+            select metric.id::text as resource_id,
+                   metric.title,
+                   metric.content_json,
+                   e.weight,
+                   metric.updated_at
+            from resources target
+            join resource_edges e
+              on e.tenant_id = target.tenant_id
+             and e.source_resource_id = target.id
+             and e.edge_type = 'measured_by'
+            join resources metric
+              on metric.tenant_id = target.tenant_id
+             and metric.id = e.target_resource_id
+             and metric.type = 'performance_metric'
+            where target.id = %(resource_id)s
+              and {readable_resource_where('target')}
+              and {readable_resource_where('metric')}
+            order by metric.updated_at desc, metric.id desc
+            """,
+            {"tenant_id": tenant_id, "actor_open_id": actor_open_id, "resource_id": resource_id},
         ).fetchall()
 
     @staticmethod

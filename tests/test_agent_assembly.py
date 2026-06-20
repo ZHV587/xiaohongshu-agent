@@ -192,6 +192,8 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
         "save_generated_topic",
         "save_generated_copy",
         "save_user_feedback",
+        "save_performance_metric",
+        "get_resource_performance",
     } <= tool_names
 
 

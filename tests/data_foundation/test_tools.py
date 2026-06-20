@@ -38,6 +38,20 @@ class RecordingRepository:
         self.edge = kwargs
         self.edges.append(kwargs)
 
+    def writable_resource_metadata(self, **kwargs):
+        self.writable_kwargs = kwargs
+        return {"visibility": "team", "owner_open_id": kwargs["actor_open_id"]}
+
+    def performance_rows(self, **kwargs):
+        self.performance_kwargs = kwargs
+        return [{
+            "resource_id": "metric-1",
+            "title": "小红书效果 2026-06-20",
+            "content_json": {"metrics": {"likes": 10}, "score": 10, "channel": "xiaohongshu"},
+            "weight": 10,
+            "updated_at": None,
+        }]
+
 
 class _RepoContext:
     def __init__(self, repo):
@@ -219,3 +233,44 @@ def test_save_user_feedback_tool_persists_revision_request(monkeypatch):
     assert result["ok"] is True
     assert repo.upsert["resource_type"] == "revision_request"
     assert repo.edge["edge_type"] == "feedback_on"
+
+
+def test_save_performance_metric_tool_persists_for_current_actor(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_performance_metric.func(
+        target_resource_id="generated-1",
+        metrics={"likes": 10, "collects": 5, "views": 100},
+        published_at="2026-06-20T08:00:00+00:00",
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert repo.upsert["tenant_id"] == "default"
+    assert repo.upsert["actor_open_id"] == "ou_user"
+    assert repo.upsert["resource_type"] == "performance_metric"
+    assert repo.edge["source_resource_id"] == "generated-1"
+    assert repo.edge["edge_type"] == "measured_by"
+
+
+def test_get_resource_performance_tool_reads_for_current_actor(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.get_resource_performance.func(
+        resource_id="generated-1",
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert result["metrics"][0]["resource_id"] == "metric-1"
+    assert repo.performance_kwargs == {
+        "tenant_id": "default",
+        "actor_open_id": "ou_user",
+        "resource_id": "generated-1",
+    }

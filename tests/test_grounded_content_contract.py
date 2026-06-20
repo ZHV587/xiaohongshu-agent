@@ -17,6 +17,8 @@ REQUIRED_TOOLS = {
     "save_generated_topic",
     "save_generated_copy",
     "save_user_feedback",
+    "save_performance_metric",
+    "get_resource_performance",
 }
 EVIDENCE_FIELDS = {
     "resource_id",
@@ -86,3 +88,13 @@ def test_contracts_require_creation_memory_persistence():
         assert "最终回复用户前" in contract and "save_generated_copy" in contract, name
         assert "当前文案 ID" in contract and "target_resource_id" in contract, name
         assert 'feedback_type="revision_request"' in contract, name
+
+
+def test_contracts_require_performance_feedback_loop():
+    for name, contract in _contracts().items():
+        assert "`save_performance_metric`" in contract, name
+        assert "`get_resource_performance`" in contract, name
+        assert "发布后" in contract and "点赞" in contract and "收藏" in contract, name
+        assert "过去表现" in contract and "为什么推荐" in contract, name
+        assert "最终回复用户前" in contract and "save_performance_metric" in contract, name
+        assert "不得猜" in contract and "目标内容" in contract, name

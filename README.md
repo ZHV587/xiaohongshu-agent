@@ -68,7 +68,8 @@ uv run python verify_1b1.py
 - Phase 4.2 已将选题和文案改为统一资源检索优先：Agent 先检索 Postgres 数据底座，可选语义检索和图扩展，输出可见的关键来源摘要，并区分源端更新时间 `source_updated_at` 与本地索引时间 `indexed_at`；语义检索不可用时回退关键词检索，完全无可用来源时明确提示“当前数据不足”并建议同步或补充数据。
 - 内容创作不再直接调用 `read_xhs_data` 或 `read_feishu_wiki` 作为未沉淀兜底；飞书读取只由 `sync_feishu_resources` 的服务层 loader 使用，沉淀到 Postgres 后再进入证据链。
 - Phase 4.3 已加入创作记忆沉淀：`save_generated_topic`、`save_generated_copy`、`save_user_feedback` 会把选题、文案、反馈/修改意见写入 Postgres，并用 `derived_from` / `feedback_on` 关系连接来源资源。
-- Phase 4.2 仍通过 DeepAgents 官方 `tools`、`skills`、`subagents` 和 `middleware` 扩展；LLM 负责分析与创作，Postgres 只提供来源、时效和关系上下文，不新增业务 CLI 或管理后台。
+- Phase 4.4 已加入效果反馈闭环：`save_performance_metric` 会把发布后的点赞、收藏、评论、转发、浏览和转化沉淀为 `performance_metric` 资源，`get_resource_performance` 可读取历史表现；内容资源通过 `measured_by` 边连接效果资源，第一版只做可解释评分，不做预测模型。
+- Phase 4 仍通过 DeepAgents 官方 `tools`、`skills`、`subagents` 和 `middleware` 扩展；LLM 负责分析与创作，Postgres 只提供来源、时效和关系上下文，不新增业务 CLI 或管理后台。
 - Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster 暂不作为第一闭环启动依赖，它们通过 `resource_outbox` 后续接入。
 
 ## 测试

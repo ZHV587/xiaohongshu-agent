@@ -18,6 +18,10 @@ from data_foundation.db import connect
 from data_foundation.feishu_source_loader import load_feishu_sources
 from data_foundation.graph import expand_graph as expand_graph_query
 from data_foundation.permissions import actor_from_config, default_tenant_id
+from data_foundation.performance_feedback import (
+    get_resource_performance_payload,
+    save_performance_metric_resource,
+)
 from data_foundation.repository import ResourceRepository
 from data_foundation.search import keyword_search, semantic_search
 from data_foundation.sync_service import sync_feishu_sources
@@ -242,6 +246,46 @@ def save_user_feedback(
         )
 
 
+@tool
+def save_performance_metric(
+    target_resource_id: str,
+    metrics: dict[str, Any],
+    published_at: str | None = None,
+    channel: str = "xiaohongshu",
+    note_url: str | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Persist post-publish performance metrics for a generated or source content resource."""
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        return save_performance_metric_resource(
+            repo,
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            target_resource_id=target_resource_id,
+            metrics=metrics,
+            published_at=published_at,
+            channel=channel,
+            note_url=note_url,
+        )
+
+
+@tool
+def get_resource_performance(
+    resource_id: str,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Read post-publish performance metrics linked to a readable resource."""
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        return get_resource_performance_payload(
+            repo,
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            resource_id=resource_id,
+        )
+
+
 data_foundation_tools = [
     search_resources,
     semantic_search_resources,
@@ -252,6 +296,8 @@ data_foundation_tools = [
     save_generated_topic,
     save_generated_copy,
     save_user_feedback,
+    save_performance_metric,
+    get_resource_performance,
 ]
 
 phase3_tools = data_foundation_tools
