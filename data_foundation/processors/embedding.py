@@ -208,7 +208,11 @@ class EmbeddingProcessor:
                 response = await client.post(
                     url,
                     headers={"Authorization": f"Bearer {self.config.api_key}"},
-                    json={"model": self.config.model, "input": batch},
+                    json={
+                        "model": self.config.model,
+                        "input": batch,
+                        "dimensions": self.config.dimensions,
+                    },
                 )
                 if response.status_code in {401, 403}:
                     raise PermanentProcessingError(f"Embedding provider returned {response.status_code}")

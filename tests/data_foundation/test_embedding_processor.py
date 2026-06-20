@@ -107,6 +107,7 @@ async def test_embedding_processor_posts_openai_compatible_request_and_stores_ch
         body = request.read().decode("utf-8")
         assert '"model":"model-a"' in body
         assert '"input":["露营装备清单"]' in body
+        assert '"dimensions":1536' in body
         assert request.headers["authorization"] == "Bearer secret"
         return httpx.Response(200, json={"data": [{"index": 0, "embedding": _embedding(0.9)}]})
 

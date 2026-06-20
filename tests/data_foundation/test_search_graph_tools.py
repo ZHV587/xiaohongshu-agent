@@ -521,7 +521,7 @@ def test_semantic_search_tool_requires_explicit_embedding_base_url(monkeypatch):
     from data_foundation import tools as df_tools
 
     repo = _FakeRepository()
-    repo.active_index = SimpleNamespace(embedding_model="embedding-model")
+    repo.active_index = SimpleNamespace(embedding_model="embedding-model", dimensions=1536)
 
     @contextmanager
     def repository():
@@ -538,6 +538,44 @@ def test_semantic_search_tool_requires_explicit_embedding_base_url(monkeypatch):
     assert result["mode"] == "keyword_fallback"
     assert result["fallback_reason"] == "EMBEDDING_QUERY_CONFIG_MISSING"
     assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
+
+
+def test_embed_query_sends_requested_dimensions(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"embedding": [0.1] * 1536}]}
+
+    def post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setenv("XHS_EMBEDDING_BASE_URL", "https://embedding.example/v1")
+    monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "embedding-key")
+    monkeypatch.setattr(df_tools.httpx, "post", post)
+
+    vector = df_tools._embed_query(
+        "露营",
+        embedding_model="embedding-model",
+        dimensions=1536,
+    )
+
+    assert len(vector) == 1536
+    assert captured["url"] == "https://embedding.example/v1/embeddings"
+    assert captured["json"] == {
+        "model": "embedding-model",
+        "input": ["露营"],
+        "dimensions": 1536,
+    }
 
 
 def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch):

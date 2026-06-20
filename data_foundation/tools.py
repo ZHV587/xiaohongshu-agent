@@ -42,7 +42,7 @@ class EmbeddingSearchUnavailable(RuntimeError):
         self.reason_code = reason_code
 
 
-def _embed_query(query: str, *, embedding_model: str) -> list[float]:
+def _embed_query(query: str, *, embedding_model: str, dimensions: int) -> list[float]:
     api_key = os.environ.get("XHS_EMBEDDING_API_KEY")
     base_url = os.environ.get("XHS_EMBEDDING_BASE_URL", "").strip()
     if not api_key or not base_url:
@@ -50,7 +50,7 @@ def _embed_query(query: str, *, embedding_model: str) -> list[float]:
     response = httpx.post(
         base_url.rstrip("/") + "/embeddings",
         headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": embedding_model, "input": [query]},
+        json={"model": embedding_model, "input": [query], "dimensions": dimensions},
         timeout=float(os.environ.get("XHS_EMBEDDING_TIMEOUT_SECONDS", "30")),
     )
     if response.status_code in {401, 403}:
@@ -111,7 +111,11 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
                 "results": _search_payload(results),
             }
         try:
-            embedding = _embed_query(query, embedding_model=active_index.embedding_model)
+            embedding = _embed_query(
+                query,
+                embedding_model=active_index.embedding_model,
+                dimensions=active_index.dimensions,
+            )
         except EmbeddingSearchUnavailable as exc:
             results = keyword_search(
                 repo,
