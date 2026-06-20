@@ -5,7 +5,11 @@ from collections.abc import Mapping
 from psycopg import Connection
 
 from data_foundation.models import ProcessorState
-from data_foundation.processors.embedding import EmbeddingProcessor, embedding_config_from_env
+from data_foundation.processors.embedding import (
+    EmbeddingProcessor,
+    EmbeddingProviderConfig,
+    embedding_config_from_runtime,
+)
 from data_foundation.processors.base import Processor
 
 
@@ -43,12 +47,21 @@ class ProcessorRegistry:
         return state
 
 
-def default_processor_registry(conn: Connection) -> ProcessorRegistry:
+_UNSET = object()
+
+
+def default_processor_registry(
+    conn: Connection,
+    *,
+    embedding_config: EmbeddingProviderConfig | None | object = _UNSET,
+) -> ProcessorRegistry:
+    if embedding_config is _UNSET:
+        embedding_config = embedding_config_from_runtime()
     return ProcessorRegistry(
         {
             "embedding_generate": EmbeddingProcessor(
                 conn,
-                config=embedding_config_from_env(),
+                config=embedding_config,
             )
         }
     )

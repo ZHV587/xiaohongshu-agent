@@ -156,6 +156,13 @@ class FakeOutboxRegistry:
         return type("ProcessorState", (), {"status": self.status})()
 
 
+@dataclass
+class FakeEmbeddingRuntime:
+    embedding_service: object | None
+    outbox_registry: object
+    config_version: str | None
+
+
 def _source(source_id: str, tenant_id: str):
     return type(
         "Source",
@@ -306,6 +313,36 @@ async def test_cycle_does_not_reconcile_or_unblock_disabled_processors():
     assert outbox_repo.unblocked == []
 
 
+@pytest.mark.asyncio
+async def test_scheduler_refreshes_embedding_runtime_once_per_cycle():
+    first_service = FakeEmbeddingService()
+    second_service = FakeEmbeddingService()
+    runtimes = iter([
+        FakeEmbeddingRuntime(first_service, FakeOutboxRegistry(), "cfg-v1"),
+        FakeEmbeddingRuntime(second_service, FakeOutboxRegistry(), "cfg-v2"),
+    ])
+    telemetry = FakeTelemetry()
+    scheduler = Scheduler(
+        telemetry=telemetry,
+        source_repo=FakeSourceRepo(tenants=["waiting"], leased={"waiting": None}),
+        outbox_repo=FakeOutboxRepo(),
+        embedding_service=None,
+        source_registry=FakeSourceRegistry(None),
+        outbox_registry=FakeOutboxRegistry(status="disabled"),
+        embedding_runtime_factory=lambda: next(runtimes),
+        process_outbox_batch=FakeOutboxRunner(),
+        config=SchedulerConfig(component="scheduler", instance_id="i1", deployment_id="d1"),
+    )
+
+    await scheduler.run_cycle()
+    await scheduler.run_cycle()
+
+    assert first_service.calls == ["waiting"]
+    assert second_service.calls == ["waiting"]
+    cycle_starts = [item for item in telemetry.starts if item["operation"] == "cycle"]
+    assert [item["config_version"] for item in cycle_starts] == ["cfg-v1", "cfg-v2"]
+
+
 def test_scheduler_module_no_longer_exposes_daemon_entrypoints():
     import data_foundation.scheduler as scheduler
 
@@ -333,7 +370,11 @@ def test_build_scheduler_uses_explicit_embedding_env_profile(monkeypatch):
     monkeypatch.setattr(scheduler, "OutboxRepository", lambda conn: FakeOutboxRepo())
     monkeypatch.setattr(scheduler, "EmbeddingIndexService", FakeEmbeddingIndexService)
     monkeypatch.setattr(scheduler, "default_source_registry", lambda repo: FakeSourceRegistry(None))
-    monkeypatch.setattr(scheduler, "default_processor_registry", lambda conn: FakeOutboxRegistry())
+    monkeypatch.setattr(
+        scheduler,
+        "default_processor_registry",
+        lambda conn, **_kwargs: FakeOutboxRegistry(),
+    )
 
     scheduler.build_scheduler()
 
@@ -360,7 +401,11 @@ def test_build_scheduler_skips_embedding_service_for_invalid_env(monkeypatch):
     monkeypatch.setattr(scheduler, "OutboxRepository", lambda conn: FakeOutboxRepo())
     monkeypatch.setattr(scheduler, "EmbeddingIndexService", FakeEmbeddingIndexService)
     monkeypatch.setattr(scheduler, "default_source_registry", lambda repo: FakeSourceRegistry(None))
-    monkeypatch.setattr(scheduler, "default_processor_registry", lambda conn: FakeOutboxRegistry(status="disabled"))
+    monkeypatch.setattr(
+        scheduler,
+        "default_processor_registry",
+        lambda conn, **_kwargs: FakeOutboxRegistry(status="disabled"),
+    )
 
     built = scheduler.build_scheduler()
 
@@ -382,7 +427,11 @@ def test_build_scheduler_uses_disabled_embedding_service_without_explicit_env(mo
     monkeypatch.setattr(scheduler, "OutboxRepository", lambda conn: FakeOutboxRepo())
     monkeypatch.setattr(scheduler, "EmbeddingIndexService", FakeEmbeddingIndexService)
     monkeypatch.setattr(scheduler, "default_source_registry", lambda repo: FakeSourceRegistry(None))
-    monkeypatch.setattr(scheduler, "default_processor_registry", lambda conn: FakeOutboxRegistry(status="disabled"))
+    monkeypatch.setattr(
+        scheduler,
+        "default_processor_registry",
+        lambda conn, **_kwargs: FakeOutboxRegistry(status="disabled"),
+    )
 
     built = scheduler.build_scheduler()
 

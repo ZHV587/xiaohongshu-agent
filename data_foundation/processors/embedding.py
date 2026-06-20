@@ -9,7 +9,7 @@ import httpx
 from psycopg import Connection
 from psycopg.rows import dict_row
 
-from data_foundation.config import embedding_snapshot
+from data_foundation.config import EmbeddingConfigSnapshot, embedding_snapshot, runtime_embedding_snapshot
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
 from data_foundation.models import OutboxItem, ProcessorState
 from data_foundation.processors.base import LeaseGuard, PermanentProcessingError, ProcessResult
@@ -37,10 +37,17 @@ def embedding_config_from_env() -> EmbeddingProviderConfig | None:
         "XHS_EMBEDDING_BATCH_SIZE": os.environ.get("XHS_EMBEDDING_BATCH_SIZE", ""),
         "XHS_EMBEDDING_TIMEOUT_SECONDS": os.environ.get("XHS_EMBEDDING_TIMEOUT_SECONDS", ""),
     }
-    snapshot = embedding_snapshot(
+    return embedding_config_from_snapshot(embedding_snapshot(
         values,
         version=os.environ.get("XHS_EMBEDDING_CONFIG_VERSION", "env").strip() or "env",
-    )
+    ))
+
+
+def embedding_config_from_runtime() -> EmbeddingProviderConfig | None:
+    return embedding_config_from_snapshot(runtime_embedding_snapshot())
+
+
+def embedding_config_from_snapshot(snapshot: EmbeddingConfigSnapshot) -> EmbeddingProviderConfig | None:
     if snapshot.state == "disabled":
         return None
     return EmbeddingProviderConfig(
@@ -248,4 +255,6 @@ __all__ = [
     "PermanentProcessingError",
     "chunk_text",
     "embedding_config_from_env",
+    "embedding_config_from_runtime",
+    "embedding_config_from_snapshot",
 ]

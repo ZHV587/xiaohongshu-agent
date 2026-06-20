@@ -9,7 +9,8 @@ from data_foundation.embedding_service import EmbeddingIndexProfile, EmbeddingIn
 from data_foundation.errors import classify_error
 from data_foundation.outbox_repository import OutboxRepository
 from data_foundation.outbox_worker import process_outbox_batch
-from data_foundation.processors.embedding import embedding_config_from_env
+from data_foundation.config import runtime_embedding_snapshot
+from data_foundation.processors.embedding import embedding_config_from_snapshot
 from data_foundation.processors.registry import default_processor_registry
 from data_foundation.repository import ResourceRepository
 from data_foundation.source_repository import SourceRepository
@@ -44,6 +45,13 @@ class CycleStats:
     failed: int = 0
 
 
+@dataclass(frozen=True)
+class EmbeddingRuntime:
+    embedding_service: EmbeddingIndexService | None
+    outbox_registry: object
+    config_version: str | None
+
+
 class _SourceLease(SourceLease):
     def __init__(self, source_repo, *, source_id: str, tenant_id: str, lease_owner: str, lease_seconds: int):
         self.source_repo = source_repo
@@ -72,6 +80,7 @@ class Scheduler:
         embedding_service,
         source_registry,
         outbox_registry,
+        embedding_runtime_factory=None,
         process_outbox_batch=process_outbox_batch,
         config: SchedulerConfig | None = None,
     ):
@@ -81,15 +90,18 @@ class Scheduler:
         self.embedding_service = embedding_service
         self.source_registry = source_registry
         self.outbox_registry = outbox_registry
+        self.embedding_runtime_factory = embedding_runtime_factory
         self.process_outbox_batch = process_outbox_batch
         self.config = config or SchedulerConfig()
+        self._cycle_config_version = self.config.config_version
 
     async def run_cycle(self) -> CycleStats:
+        self._refresh_embedding_runtime()
         self.telemetry.register_instance(
             component=self.config.component,
             instance_id=self.config.instance_id,
             deployment_id=self.config.deployment_id,
-            config_version=self.config.config_version,
+            config_version=self._cycle_config_version,
         )
         self.telemetry.heartbeat(
             component=self.config.component,
@@ -101,7 +113,7 @@ class Scheduler:
             instance_id=self.config.instance_id,
             tenant_id=None,
             operation="cycle",
-            config_version=self.config.config_version,
+            config_version=self._cycle_config_version,
         )
         try:
             stats = await self._run_cycle_body()
@@ -125,6 +137,14 @@ class Scheduler:
             failed_count=stats.failed,
         )
         return stats
+
+    def _refresh_embedding_runtime(self) -> None:
+        if self.embedding_runtime_factory is None:
+            return
+        runtime = self.embedding_runtime_factory()
+        self.embedding_service = runtime.embedding_service
+        self.outbox_registry = runtime.outbox_registry
+        self._cycle_config_version = runtime.config_version
 
     async def _run_cycle_body(self) -> CycleStats:
         recovered_sources = self.source_repo.recover_stale_runs(
@@ -188,7 +208,7 @@ class Scheduler:
             instance_id=self.config.instance_id,
             tenant_id=tenant_id,
             operation=f"source:{source.source_type}",
-            config_version=self.config.config_version,
+            config_version=self._cycle_config_version,
         )
         run_id = self.source_repo.start_run(
             source.id,
@@ -275,7 +295,7 @@ class Scheduler:
             instance_id=self.config.instance_id,
             tenant_id=tenant_id,
             operation="outbox",
-            config_version=self.config.config_version,
+            config_version=self._cycle_config_version,
         )
         try:
             stats = await self.process_outbox_batch(
@@ -312,11 +332,9 @@ class Scheduler:
             return {"processed": 0, "failed": 1}
 
 
-def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
-    config = config or SchedulerConfig()
-    conn = connect()
-    resource_repo = ResourceRepository(conn)
-    embedding_config = embedding_config_from_env()
+def _build_embedding_runtime(conn, *, config: SchedulerConfig) -> EmbeddingRuntime:
+    snapshot = runtime_embedding_snapshot()
+    embedding_config = embedding_config_from_snapshot(snapshot)
     embedding_service = None
     if embedding_config is not None and embedding_config.state == "enabled":
         embedding_service = EmbeddingIndexService(
@@ -327,13 +345,27 @@ def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
                 chunker_version=config.chunker_version,
             ),
         )
+    return EmbeddingRuntime(
+        embedding_service=embedding_service,
+        outbox_registry=default_processor_registry(conn, embedding_config=embedding_config),
+        config_version=snapshot.version,
+    )
+
+
+def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
+    config = config or SchedulerConfig()
+    conn = connect()
+    resource_repo = ResourceRepository(conn)
+    runtime_factory = lambda: _build_embedding_runtime(conn, config=config)
+    initial_runtime = runtime_factory()
     return Scheduler(
         telemetry=TelemetryRepository(conn),
         source_repo=SourceRepository(conn),
         outbox_repo=OutboxRepository(conn),
-        embedding_service=embedding_service,
+        embedding_service=initial_runtime.embedding_service,
         source_registry=default_source_registry(resource_repo),
-        outbox_registry=default_processor_registry(conn),
+        outbox_registry=initial_runtime.outbox_registry,
+        embedding_runtime_factory=runtime_factory,
         process_outbox_batch=process_outbox_batch,
         config=config,
     )
