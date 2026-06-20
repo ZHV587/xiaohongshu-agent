@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Literal, Mapping
 
 
@@ -8,6 +9,13 @@ EMBEDDING_REQUIRED_KEYS = (
     "XHS_EMBEDDING_BASE_URL",
     "XHS_EMBEDDING_API_KEY",
     "XHS_EMBEDDING_MODEL",
+)
+
+EMBEDDING_CONFIG_KEYS = (
+    *EMBEDDING_REQUIRED_KEYS,
+    "XHS_EMBEDDING_DIMENSIONS",
+    "XHS_EMBEDDING_BATCH_SIZE",
+    "XHS_EMBEDDING_TIMEOUT_SECONDS",
 )
 
 
@@ -59,6 +67,57 @@ def embedding_snapshot(values: Mapping[str, str], *, version: str) -> EmbeddingC
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
     )
+
+
+def runtime_embedding_snapshot() -> EmbeddingConfigSnapshot:
+    center = _config_center()
+    if center is None:
+        return embedding_snapshot(
+            _embedding_values_from_environment(),
+            version=os.environ.get("XHS_EMBEDDING_CONFIG_VERSION", "env").strip() or "env",
+        )
+
+    history = center.history()
+    if not history:
+        from config_center import bootstrap_snapshot_from_env
+
+        bootstrap = bootstrap_snapshot_from_env(actor_open_id="system-bootstrap")
+        current = center.save(actor_open_id=bootstrap.actor_open_id, updates=bootstrap.values)
+    else:
+        current = history[-1]
+    return embedding_snapshot(_embedding_values(current.values), version=current.version)
+
+
+def embedding_snapshot_for_version(version: str) -> EmbeddingConfigSnapshot | None:
+    center = _config_center()
+    if center is not None:
+        try:
+            snapshot = center.get_version(version)
+        except KeyError:
+            return None
+        return embedding_snapshot(_embedding_values(snapshot.values), version=snapshot.version)
+
+    current = runtime_embedding_snapshot()
+    return current if current.version == version else None
+
+
+def _config_center():
+    if not (
+        os.environ.get("XHS_CONFIG_ENCRYPTION_KEY")
+        and os.environ.get("XHS_CONFIG_CENTER_PATH")
+    ):
+        return None
+    from config_center import default_config_center
+
+    return default_config_center()
+
+
+def _embedding_values(values: Mapping[str, str]) -> dict[str, str]:
+    return {key: str(values.get(key, "")) for key in EMBEDDING_CONFIG_KEYS}
+
+
+def _embedding_values_from_environment() -> dict[str, str]:
+    return {key: os.environ.get(key, "") for key in EMBEDDING_CONFIG_KEYS}
 
 
 def _parse_int(value: str, *, default: int) -> int:
