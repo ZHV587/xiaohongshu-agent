@@ -60,6 +60,11 @@ def _source_context(*, database_url: str, config: dict, cursor: dict | None = No
     )
 
 
+def _current_schema(conn) -> str:
+    row = conn.execute("select current_schema() as schema").fetchone()
+    return row["schema"] if isinstance(row, dict) else row[0]
+
+
 def test_postgres_source_rejects_arbitrary_sql():
     with pytest.raises(SourceConfigError, match="sql"):
         PostgresTableConfig.from_dict(_valid_mapping(sql="drop table users"))
@@ -78,7 +83,7 @@ def test_default_source_registry_includes_postgres_processor(migrated_conn):
 
 @pytest.mark.asyncio
 async def test_postgres_source_keyset_paginates_read_only_and_updates_cursor(database_url, migrated_conn):
-    schema = migrated_conn.execute("select current_schema() as schema").fetchone()["schema"]
+    schema = _current_schema(migrated_conn)
     migrated_conn.execute(
         """
         create table external_records (
@@ -138,7 +143,7 @@ async def test_postgres_source_keyset_paginates_read_only_and_updates_cursor(dat
 
 @pytest.mark.asyncio
 async def test_postgres_source_resumes_after_cursor(database_url, migrated_conn):
-    schema = migrated_conn.execute("select current_schema() as schema").fetchone()["schema"]
+    schema = _current_schema(migrated_conn)
     migrated_conn.execute("create table external_resume (id int primary key, title text, body text)")
     migrated_conn.execute(
         """
