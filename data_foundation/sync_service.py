@@ -22,13 +22,9 @@ def sync_feishu_sources(
     wiki_documents = wiki_documents or []
     run_id = repo.start_sync_run(
         tenant_id=tenant_id,
-        source="feishu",
-        triggered_by=triggered_by,
+        source_type="feishu_base",
         actor_open_id=actor_open_id,
-        metadata={
-            "base_rows": len(base_rows),
-            "wiki_documents": len(wiki_documents),
-        },
+        read_count=len(base_rows) + len(wiki_documents),
     )
 
     created = 0
@@ -78,9 +74,9 @@ def sync_feishu_sources(
 
 def _status_for_result(*, created: int, errors: list[str]) -> str:
     if not errors:
-        return "success"
+        return "succeeded"
     if created > 0:
-        return "partial_success"
+        return "partial"
     return "failed"
 
 
@@ -102,10 +98,10 @@ def _finish(
         updated_count=0,
         skipped_count=0,
         failed_count=failed,
-        error="\n".join(errors) if errors else None,
+        error_summary="\n".join(errors) if errors else None,
     )
     return {
-        "ok": status == "success",
+        "ok": status == "succeeded",
         "run_id": run_id,
         "status": status,
         "created": created,

@@ -6,6 +6,7 @@ import pytest
 
 from data_foundation.permissions import actor_from_config
 from data_foundation.repository import ResourceRepository
+from data_foundation.models import OutboxRequest
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,16 @@ def test_actor_from_config_requires_langgraph_identity():
         actor_from_config(None)
 
 
+def test_resource_repository_no_longer_exposes_legacy_outbox_runtime():
+    assert not hasattr(ResourceRepository, "lease_outbox")
+    assert not hasattr(ResourceRepository, "complete_outbox")
+
+
+def test_resource_repository_no_longer_writes_embeddings_without_an_index():
+    assert not hasattr(ResourceRepository, "replace_embedding_chunks")
+    assert not hasattr(ResourceRepository, "set_embedding")
+
+
 def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 
@@ -47,7 +58,11 @@ def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
             "external_type": "base_record",
             "external_id": "base:table:rec1",
         },
-        outbox_topics=["meili_index", "embedding_generate", "graph_ingest"],
+        outbox_requests=[
+            OutboxRequest("meili_index", ("search",), {}),
+            OutboxRequest("embedding_generate", ("embedding", "idx"), {"embedding_index_id": "idx"}),
+            OutboxRequest("graph_ingest", ("graph",), {}),
+        ],
     )
 
     assert resource.id
@@ -73,7 +88,7 @@ def test_upsert_same_mapping_creates_second_version(migrated_conn):
         visibility="team",
         owner_open_id="ou_owner",
         mapping={"system": "feishu", "external_type": "docx", "external_id": "doc1"},
-        outbox_topics=["meili_index"],
+        outbox_requests=[OutboxRequest("meili_index", ("search",), {})],
     )
     second = repo.upsert_resource(
         tenant_id="default",
@@ -85,7 +100,7 @@ def test_upsert_same_mapping_creates_second_version(migrated_conn):
         visibility="team",
         owner_open_id="ou_owner",
         mapping={"system": "feishu", "external_type": "docx", "external_id": "doc1"},
-        outbox_topics=["meili_index"],
+        outbox_requests=[OutboxRequest("meili_index", ("search",), {})],
     )
 
     assert second.id == first.id
@@ -107,7 +122,10 @@ def test_upsert_identical_mapping_is_idempotent(migrated_conn):
         "visibility": "team",
         "owner_open_id": "ou_owner",
         "mapping": {"system": "feishu", "external_type": "docx", "external_id": "doc-replay"},
-        "outbox_topics": ["meili_index", "embedding_generate"],
+        "outbox_requests": [
+            OutboxRequest("meili_index", ("search",), {}),
+            OutboxRequest("embedding_generate", ("embedding", "idx"), {"embedding_index_id": "idx"}),
+        ],
     }
 
     first = repo.upsert_resource(**kwargs)
@@ -229,26 +247,25 @@ def test_sync_run_lifecycle_and_status_summary(migrated_conn):
 
     run_id = repo.start_sync_run(
         tenant_id="default",
-        source="feishu",
-        triggered_by="manual",
+        source_type="feishu_base",
         actor_open_id="ou_user",
-        metadata={"scope": "all"},
+        read_count=10,
     )
     repo.finish_sync_run(
         tenant_id="default",
         run_id=run_id,
-        status="partial_success",
+        status="partial",
         created_count=2,
         updated_count=3,
         skipped_count=4,
         failed_count=1,
-        error="one row failed",
+        error_summary="one row failed",
     )
 
     status = repo.data_foundation_status("default")
 
     assert status["sync"]["running"] is False
-    assert status["sync"]["last_status"] == "partial_success"
+    assert status["sync"]["last_status"] == "partial"
     assert status["sync"]["last_error"] == "one row failed"
     assert status["sync"]["last_counts"] == {
         "created": 2,
@@ -256,30 +273,3 @@ def test_sync_run_lifecycle_and_status_summary(migrated_conn):
         "skipped": 4,
         "failed": 1,
     }
-
-
-def test_outbox_lease_and_complete(migrated_conn):
-    repo = ResourceRepository(migrated_conn)
-    resource = repo.upsert_resource(
-        tenant_id="default",
-        actor_open_id="ou_owner",
-        resource_type="feishu_doc",
-        title="待处理资源",
-        content_text="正文",
-        content_json={},
-        visibility="team",
-        owner_open_id="ou_owner",
-        outbox_topics=["embedding_generate"],
-    )
-
-    leased = repo.lease_outbox(tenant_id="default", batch_size=10)
-
-    assert len(leased) == 1
-    assert leased[0]["resource_id"] == resource.id
-    assert leased[0]["topic"] == "embedding_generate"
-
-    repo.complete_outbox(leased[0]["id"], status="succeeded")
-    status = repo.data_foundation_status("default")
-
-    assert status["outbox"]["pending"] == 0
-    assert status["outbox"]["succeeded"] == 1

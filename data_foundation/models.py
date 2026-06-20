@@ -52,3 +52,99 @@ class GraphEdge:
 class GraphExpansion:
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+@dataclass(frozen=True)
+class OutboxRequest:
+    topic: str
+    dedupe_parts: tuple[str, ...]
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class OutboxItem:
+    id: str
+    tenant_id: str
+    resource_id: str | None
+    resource_version: int | None
+    topic: str
+    dedupe_key: str
+    payload: dict[str, Any]
+    status: str
+    attempts: int
+    next_attempt_at: datetime
+    lease_owner: str | None
+    lease_expires_at: datetime | None
+    error_code: str | None
+    error_summary: str | None
+    dead_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class SyncSource:
+    id: str
+    tenant_id: str
+    source_type: str
+    name: str
+    external_id: str | None
+    config: dict[str, Any]
+    enabled: bool
+    schedule_seconds: int
+    next_run_at: datetime
+    last_dispatched_at: datetime | None
+    lease_owner: str | None
+    lease_expires_at: datetime | None
+    cursor: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class SourceSecrets:
+    credentials: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class EmbeddingIndex:
+    id: str
+    tenant_id: str
+    embedding_model: str
+    config_version: str
+    dimensions: int
+    chunker_version: str
+    status: str
+    expected_resources: int
+    completed_resources: int
+    failed_resources: int
+    activated_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ServiceExecution:
+    id: str
+    component: str
+    instance_id: str
+    tenant_id: str | None
+    operation: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    processed_count: int
+    succeeded_count: int
+    failed_count: int
+    duration_ms: int | None
+    error_code: str | None
+    error_summary: str | None
+    config_version: str | None
+
+
+@dataclass(frozen=True)
+class ProcessorState:
+    topic: str
+    status: str
+    config_version: str | None
+    reason_code: str | None

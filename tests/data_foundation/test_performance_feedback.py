@@ -101,7 +101,7 @@ def test_save_performance_metric_persists_metric_and_measured_by_edge():
     }
     assert repo.upserts[0]["visibility"] == "private"
     assert repo.upserts[0]["owner_open_id"] == "ou_owner"
-    assert repo.upserts[0]["outbox_topics"] == ["meili_index", "embedding_generate", "graph_ingest"]
+    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["meili_index", "graph_ingest"]
     assert repo.edges == [("generated-1", "metric-1", "measured_by", 0.112)]
 
 

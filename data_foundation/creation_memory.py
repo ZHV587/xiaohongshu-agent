@@ -3,8 +3,8 @@ from __future__ import annotations
 from contextlib import nullcontext
 from typing import Any
 
+from data_foundation.outbox_requests import default_write_requests
 
-OUTBOX_TOPICS = ["meili_index", "embedding_generate", "graph_ingest"]
 DERIVED_EDGE = "derived_from"
 FEEDBACK_EDGE = "feedback_on"
 
@@ -34,7 +34,7 @@ def save_generated_topic_resource(
             content_json={"direction": direction, "topics": topics, "evidence": cleaned_evidence},
             visibility="team",
             owner_open_id=actor_open_id,
-            outbox_topics=OUTBOX_TOPICS,
+            outbox_requests=default_write_requests(),
         )
         _link_evidence(repo, tenant_id=tenant_id, generated_id=resource.id, evidence=cleaned_evidence)
     return _payload(resource, cleaned_evidence)
@@ -80,7 +80,7 @@ def save_generated_copy_resource(
             },
             visibility="team",
             owner_open_id=actor_open_id,
-            outbox_topics=OUTBOX_TOPICS,
+            outbox_requests=default_write_requests(),
         )
         _link_evidence(repo, tenant_id=tenant_id, generated_id=resource.id, evidence=cleaned_evidence)
     return _payload(resource, cleaned_evidence)
@@ -118,7 +118,7 @@ def save_user_feedback_resource(
             content_json={"feedback": feedback, "target_resource_id": target_resource_id},
             visibility="team",
             owner_open_id=actor_open_id,
-            outbox_topics=OUTBOX_TOPICS,
+            outbox_requests=default_write_requests(),
         )
         if target_resource_id:
             repo.add_edge(

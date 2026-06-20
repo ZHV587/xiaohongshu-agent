@@ -10,6 +10,19 @@
 
 ---
 
+## Implementation Revision: Atomic Persistence Switch
+
+During implementation, PostgreSQL validation showed that Task 1 could not be committed independently: the new schema removed and renamed fields still used by `ResourceRepository`, outbox leasing, sync run tracking, and direct embedding writes. The durable boundary is therefore an atomic persistence switch:
+
+- schema, immutable models, and reset allowlist
+- `ResourceRepository` resource/version/event/mapping writes
+- structured `OutboxRequest` enqueue and leased `OutboxRepository`
+- removal of legacy `lease_outbox()`, `complete_outbox()`, `replace_embedding_chunks()`, and direct `set_embedding()`
+- sync run status fields using the new operational enum
+- semantic search filtering by active embedding index and current resource version
+
+This switch must be validated together against real PostgreSQL before commit. The first verified implementation slice ran the repository/schema/outbox/sync/search test set against the server PostgreSQL with isolated schemas: `123 passed`.
+
 ## File Map
 
 ### Create

@@ -93,7 +93,7 @@ def test_save_generated_topic_persists_resource_and_evidence_edges():
     }
     assert repo.upserts[0]["visibility"] == "team"
     assert repo.upserts[0]["owner_open_id"] == "ou_user"
-    assert repo.upserts[0]["outbox_topics"] == ["meili_index", "embedding_generate", "graph_ingest"]
+    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["meili_index", "graph_ingest"]
     assert repo.edges == [("generated-1", "source-1", "derived_from")]
 
 

@@ -4,8 +4,8 @@ from contextlib import nullcontext
 import math
 from typing import Any
 
+from data_foundation.outbox_requests import default_write_requests
 
-OUTBOX_TOPICS = ["meili_index", "embedding_generate", "graph_ingest"]
 MEASURED_BY_EDGE = "measured_by"
 ALLOWED_METRICS = {"likes", "collects", "comments", "shares", "views", "conversions"}
 
@@ -55,7 +55,7 @@ def save_performance_metric_resource(
             content_json=content_json,
             visibility=target["visibility"],
             owner_open_id=target["owner_open_id"],
-            outbox_topics=OUTBOX_TOPICS,
+            outbox_requests=default_write_requests(),
         )
         repo.add_edge(
             tenant_id=tenant_id,

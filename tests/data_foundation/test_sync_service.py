@@ -47,7 +47,7 @@ def test_sync_service_records_success(monkeypatch):
     assert result == {
         "ok": True,
         "run_id": "run-1",
-        "status": "success",
+        "status": "succeeded",
         "created": 3,
         "updated": 0,
         "skipped": 0,
@@ -55,13 +55,13 @@ def test_sync_service_records_success(monkeypatch):
         "errors": [],
     }
     assert repo.started is not None
-    assert repo.started["source"] == "feishu"
-    assert repo.started["metadata"] == {"base_rows": 1, "wiki_documents": 1}
+    assert repo.started["source_type"] == "feishu_base"
+    assert repo.started["read_count"] == 2
     assert repo.finished is not None
-    assert repo.finished["status"] == "success"
+    assert repo.finished["status"] == "succeeded"
     assert repo.finished["created_count"] == 3
     assert repo.finished["failed_count"] == 0
-    assert repo.finished["error"] is None
+    assert repo.finished["error_summary"] is None
 
 
 def test_sync_service_records_partial_success(monkeypatch):
@@ -87,13 +87,13 @@ def test_sync_service_records_partial_success(monkeypatch):
     )
 
     assert result["ok"] is False
-    assert result["status"] == "partial_success"
+    assert result["status"] == "partial"
     assert result["created"] == 1
     assert result["failed"] == 1
     assert result["errors"] == ["bad row"]
     assert repo.finished is not None
-    assert repo.finished["status"] == "partial_success"
-    assert repo.finished["error"] == "bad row"
+    assert repo.finished["status"] == "partial"
+    assert repo.finished["error_summary"] == "bad row"
 
 
 def test_sync_service_records_failed_when_everything_fails(monkeypatch):
@@ -123,7 +123,7 @@ def test_sync_service_records_failed_when_everything_fails(monkeypatch):
     assert result["errors"] == ["bad base", "bad wiki"]
     assert repo.finished is not None
     assert repo.finished["status"] == "failed"
-    assert repo.finished["error"] == "bad base\nbad wiki"
+    assert repo.finished["error_summary"] == "bad base\nbad wiki"
 
 
 def test_sync_service_includes_source_loader_errors(monkeypatch):
@@ -152,7 +152,7 @@ def test_sync_service_includes_source_loader_errors(monkeypatch):
     assert result["failed"] == 1
     assert result["errors"] == ["base: not configured"]
     assert repo.finished is not None
-    assert repo.finished["error"] == "base: not configured"
+    assert repo.finished["error_summary"] == "base: not configured"
 
 
 def test_sync_service_records_failed_when_sync_raises(monkeypatch):
@@ -182,4 +182,4 @@ def test_sync_service_records_failed_when_sync_raises(monkeypatch):
     assert result["errors"] == ["RuntimeError: feishu import crashed"]
     assert repo.finished is not None
     assert repo.finished["status"] == "failed"
-    assert repo.finished["error"] == "RuntimeError: feishu import crashed"
+    assert repo.finished["error_summary"] == "RuntimeError: feishu import crashed"

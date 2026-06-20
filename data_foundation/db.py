@@ -7,7 +7,26 @@ from typing import Iterator
 
 import psycopg
 from psycopg import Connection
+from psycopg import sql
 from psycopg.rows import dict_row
+
+
+DATA_FOUNDATION_TABLES = (
+    "service_error_aggregates",
+    "sync_runs",
+    "service_executions",
+    "service_instances",
+    "sync_sources",
+    "resource_outbox",
+    "resource_embeddings",
+    "embedding_indexes",
+    "resource_edges",
+    "resource_permissions",
+    "resource_events",
+    "resource_versions",
+    "resource_mappings",
+    "resources",
+)
 
 def database_url() -> str:
     url = os.environ.get("XHS_DATABASE_URL")
@@ -21,9 +40,20 @@ def connect(url: str | None = None) -> Connection:
 
 
 def run_migrations(conn: Connection) -> None:
+    _apply_migrations(conn)
+    conn.commit()
+
+
+def _apply_migrations(conn: Connection) -> None:
     schema_sql = resources.files("data_foundation").joinpath("schema.sql").read_text(encoding="utf-8")
     conn.execute(schema_sql)
-    conn.commit()
+
+
+def reset_data_foundation(conn: Connection) -> None:
+    with conn.transaction():
+        for name in DATA_FOUNDATION_TABLES:
+            conn.execute(sql.SQL("drop table if exists {}").format(sql.Identifier(name)))
+        _apply_migrations(conn)
 
 
 @contextmanager

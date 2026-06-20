@@ -10,7 +10,7 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 
 from data_foundation.db import transaction
-from data_foundation.models import Resource
+from data_foundation.models import OutboxRequest, Resource
 from data_foundation.permissions import readable_resource_where
 
 
@@ -35,11 +35,11 @@ class ResourceRepository:
         owner_open_id: str | None,
         summary: str | None = None,
         mapping: dict[str, Any] | None = None,
-        outbox_topics: list[str] | None = None,
+        outbox_requests: list[OutboxRequest] | None = None,
     ) -> Resource:
         payload_json = json.dumps(content_json, sort_keys=True, ensure_ascii=False)
         content_hash = hashlib.sha256(f"{content_text or ''}\n{payload_json}".encode("utf-8")).hexdigest()
-        topics = outbox_topics or []
+        requests = outbox_requests or []
 
         with transaction(self.conn):
             self._lock_mapping(tenant_id, mapping)
@@ -121,11 +121,11 @@ class ResourceRepository:
             self.conn.execute(
                 """
                 insert into resource_versions (
-                  resource_id, version, content_hash, content_text, content_json, changed_by
+                  tenant_id, resource_id, version, content_hash, content_text, content_json, changed_by
                 )
-                values (%s, %s, %s, %s, %s::jsonb, %s)
+                values (%s, %s, %s, %s, %s, %s::jsonb, %s)
                 """,
-                (row["id"], version, content_hash, content_text, payload_json, actor_open_id),
+                (tenant_id, row["id"], version, content_hash, content_text, payload_json, actor_open_id),
             )
 
             event = self.conn.execute(
@@ -146,18 +146,40 @@ class ResourceRepository:
             if mapping is not None:
                 self._upsert_mapping(tenant_id=tenant_id, resource_id=row["id"], mapping=mapping)
 
-            for topic in topics:
+            for request in requests:
+                request_payload = {
+                    **request.payload,
+                    "resource_id": str(row["id"]),
+                    "version": version,
+                }
+                dedupe_key = hashlib.sha256(
+                    json.dumps(
+                        [
+                            tenant_id,
+                            str(row["id"]),
+                            version,
+                            request.topic,
+                            *request.dedupe_parts,
+                        ],
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                ).hexdigest()
                 self.conn.execute(
                     """
-                    insert into resource_outbox (tenant_id, resource_id, event_id, topic, payload)
-                    values (%s, %s, %s, %s, %s::jsonb)
+                    insert into resource_outbox (
+                      tenant_id, resource_id, resource_version, event_id, topic, dedupe_key, payload
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s::jsonb)
                     """,
                     (
                         tenant_id,
                         row["id"],
+                        version,
                         event["id"],
-                        topic,
-                        json.dumps({"resource_id": str(row["id"]), "version": version}, sort_keys=True),
+                        request.topic,
+                        dedupe_key,
+                        json.dumps(request_payload, sort_keys=True, ensure_ascii=False),
                     ),
                 )
 
@@ -200,7 +222,7 @@ class ResourceRepository:
             """
             insert into resource_permissions (tenant_id, resource_id, subject_type, subject_id, permission)
             values (%s, %s, %s, %s, %s)
-            on conflict(resource_id, subject_type, subject_id, permission) do nothing
+            on conflict(tenant_id, resource_id, subject_type, subject_id, permission) do nothing
             """,
             (tenant_id, resource_id, subject_type, subject_id, permission),
         )
@@ -219,57 +241,6 @@ class ResourceRepository:
             table: self.conn.execute(f"select count(*) as count from {table}").fetchone()["count"]
             for table in tables
         }
-
-    def replace_embedding_chunks(
-        self,
-        *,
-        tenant_id: str,
-        resource_id: str,
-        chunks: list[str],
-        embedding_model: str = "pending",
-    ) -> None:
-        with transaction(self.conn):
-            resource = self.conn.execute(
-                "select id from resources where id = %s and tenant_id = %s for update",
-                (resource_id, tenant_id),
-            ).fetchone()
-            if resource is None:
-                raise PermissionError("Resource is not writable in this tenant")
-            current_model = self.conn.execute(
-                """
-                select embedding_model
-                from resource_embeddings
-                where resource_id = %s
-                order by (embedding_model = 'pending') desc, created_at desc
-                limit 1
-                """,
-                (resource_id,),
-            ).fetchone()
-            if current_model is not None:
-                current_chunks = self.conn.execute(
-                    """
-                    select chunk_text
-                    from resource_embeddings
-                    where resource_id = %s and embedding_model = %s
-                    order by chunk_index
-                    """,
-                    (resource_id, current_model["embedding_model"]),
-                ).fetchall()
-                if [row["chunk_text"] for row in current_chunks] == chunks:
-                    return
-            elif not chunks:
-                return
-            self.conn.execute("delete from resource_embeddings where resource_id = %s", (resource_id,))
-            self.conn.executemany(
-                """
-                insert into resource_embeddings (resource_id, chunk_index, chunk_text, embedding_model)
-                values (%s, %s, %s, %s)
-                """,
-                [
-                    (resource_id, chunk_index, chunk_text, embedding_model)
-                    for chunk_index, chunk_text in enumerate(chunks)
-                ],
-            )
 
     def keyword_rows(self, *, tenant_id: str, actor_open_id: str, query: str, limit: int):
         return self.conn.execute(
@@ -302,39 +273,6 @@ class ResourceRepository:
             {"tenant_id": tenant_id, "actor_open_id": actor_open_id, "query": query, "limit": limit},
         ).fetchall()
 
-    def set_embedding(
-        self,
-        *,
-        tenant_id: str,
-        resource_id: str,
-        chunk_index: int,
-        chunk_text: str,
-        embedding: list[float],
-        embedding_model: str,
-    ) -> None:
-        if chunk_index < 0:
-            raise ValueError("Chunk index must be zero or greater")
-        embedding_model = embedding_model.strip()
-        if not embedding_model:
-            raise ValueError("Embedding model is required")
-        vector_literal = self._vector_literal(embedding)
-        with transaction(self.conn):
-            resource = self.conn.execute(
-                "select id from resources where id = %s and tenant_id = %s for update",
-                (resource_id, tenant_id),
-            ).fetchone()
-            if resource is None:
-                raise PermissionError("Resource is not writable in this tenant")
-            self.conn.execute(
-                """
-                insert into resource_embeddings (resource_id, chunk_index, chunk_text, embedding, embedding_model)
-                values (%s, %s, %s, %s::vector, %s)
-                on conflict(resource_id, chunk_index, embedding_model)
-                do update set chunk_text = excluded.chunk_text, embedding = excluded.embedding
-                """,
-                (resource_id, chunk_index, chunk_text, vector_literal, embedding_model),
-            )
-
     def semantic_rows(
         self,
         *,
@@ -363,10 +301,27 @@ class ResourceRepository:
                        order by e.embedding <=> %(embedding)s::vector, e.chunk_index
                      ) as resource_rank
               from resource_embeddings e
-              join resources r on r.id = e.resource_id
+              join embedding_indexes idx
+                on idx.tenant_id = e.tenant_id
+               and idx.id = e.embedding_index_id
+               and idx.embedding_model = e.embedding_model
+               and idx.chunker_version = e.chunker_version
+               and idx.status = 'active'
+              join resources r
+                on r.tenant_id = e.tenant_id
+               and r.id = e.resource_id
+              join resource_versions rv
+                on rv.tenant_id = e.tenant_id
+               and rv.resource_id = e.resource_id
+               and rv.version = e.resource_version
               where e.embedding_model = %(embedding_model)s
-                and e.embedding is not null
                 and {readable_resource_where('r')}
+                and rv.version = (
+                  select max(latest.version)
+                  from resource_versions latest
+                  where latest.tenant_id = r.tenant_id
+                    and latest.resource_id = r.id
+                )
             )
             select * from candidates
             where resource_rank = 1
@@ -408,7 +363,7 @@ class ResourceRepository:
                 """
                 insert into resource_edges (tenant_id, source_resource_id, target_resource_id, edge_type, weight)
                 values (%s, %s, %s, %s, %s)
-                on conflict(source_resource_id, target_resource_id, edge_type)
+                on conflict(tenant_id, source_resource_id, target_resource_id, edge_type)
                 do update set weight = excluded.weight
                 """,
                 (tenant_id, source_resource_id, target_resource_id, edge_type, weight),
@@ -592,7 +547,7 @@ class ResourceRepository:
             cursor = self.conn.execute(
                 """
                 update resource_mappings
-                set sync_status = 'failed', last_error = %s, updated_at = now()
+                set sync_status = 'failed', error_code = 'sync_failed', error_summary = %s, updated_at = now()
                 where tenant_id = %s and system = %s and external_type = %s and external_id = %s
                 """,
                 (error, tenant_id, system, external_type, external_id),
@@ -623,23 +578,20 @@ class ResourceRepository:
         self,
         *,
         tenant_id: str,
-        source: str,
-        triggered_by: str,
+        source_type: str,
         actor_open_id: str,
-        metadata: dict[str, Any] | None = None,
+        read_count: int = 0,
     ) -> str:
         row = self.conn.execute(
             """
-            insert into sync_runs (tenant_id, source, triggered_by, actor_open_id, metadata)
-            values (%s, %s, %s, %s, %s::jsonb)
+            insert into sync_runs (tenant_id, source_type, read_count)
+            values (%s, %s, %s)
             returning id::text as id
             """,
             (
                 tenant_id,
-                source,
-                triggered_by,
-                actor_open_id,
-                json.dumps(metadata or {}, sort_keys=True, ensure_ascii=False),
+                source_type,
+                read_count,
             ),
         ).fetchone()
         self.conn.commit()
@@ -655,7 +607,7 @@ class ResourceRepository:
         updated_count: int = 0,
         skipped_count: int = 0,
         failed_count: int = 0,
-        error: str | None = None,
+        error_summary: str | None = None,
     ) -> None:
         self.conn.execute(
             """
@@ -666,8 +618,7 @@ class ResourceRepository:
                 updated_count = %s,
                 skipped_count = %s,
                 failed_count = %s,
-                error = %s,
-                updated_at = now()
+                error_summary = %s
             where tenant_id = %s and id = %s
             """,
             (
@@ -676,7 +627,7 @@ class ResourceRepository:
                 updated_count,
                 skipped_count,
                 failed_count,
-                error,
+                error_summary,
                 tenant_id,
                 run_id,
             ),
@@ -707,7 +658,7 @@ class ResourceRepository:
             """
             select *
             from sync_runs
-            where tenant_id = %s and source = 'feishu'
+            where tenant_id = %s and source_type in ('feishu_base', 'feishu_wiki')
             order by started_at desc, id desc
             limit 1
             """,
@@ -730,9 +681,9 @@ class ResourceRepository:
                 "running": running > 0,
                 "last_status": None if last_sync is None else last_sync["status"],
                 "last_success_at": None
-                if last_sync is None or last_sync["status"] not in ("success", "partial_success")
+                if last_sync is None or last_sync["status"] not in ("succeeded", "partial")
                 else last_sync["finished_at"],
-                "last_error": None if last_sync is None else last_sync["error"],
+                "last_error": None if last_sync is None else last_sync["error_summary"],
                 "last_counts": None
                 if last_sync is None
                 else {
@@ -744,55 +695,14 @@ class ResourceRepository:
             },
             "outbox": {
                 "pending": outbox.get("pending", 0),
+                "retry": outbox.get("retry", 0),
                 "processing": outbox.get("processing", 0),
+                "blocked": outbox.get("blocked", 0),
                 "succeeded": outbox.get("succeeded", 0),
-                "failed": outbox.get("failed", 0),
+                "superseded": outbox.get("superseded", 0),
+                "dead": outbox.get("dead", 0),
             },
         }
-
-    def lease_outbox(self, *, tenant_id: str, batch_size: int) -> list[dict[str, Any]]:
-        with transaction(self.conn):
-            rows = self.conn.execute(
-                """
-                select id::text as id
-                from resource_outbox
-                where tenant_id = %s
-                  and status = 'pending'
-                  and available_at <= now()
-                order by created_at, id
-                limit %s
-                for update skip locked
-                """,
-                (tenant_id, batch_size),
-            ).fetchall()
-            ids = [row["id"] for row in rows]
-            if not ids:
-                return []
-            leased = self.conn.execute(
-                """
-                update resource_outbox
-                set status = 'processing',
-                    attempts = attempts + 1,
-                    updated_at = now()
-                where id = any(%s::uuid[])
-                returning id::text, tenant_id, resource_id::text, event_id::text, topic, payload, attempts
-                """,
-                (ids,),
-            ).fetchall()
-        return [dict(row) for row in leased]
-
-    def complete_outbox(self, outbox_id: str, *, status: str = "succeeded", error: str | None = None) -> None:
-        self.conn.execute(
-            """
-            update resource_outbox
-            set status = %s,
-                last_error = %s,
-                updated_at = now()
-            where id = %s
-            """,
-            (status, error, outbox_id),
-        )
-        self.conn.commit()
 
     def _lock_mapping(self, tenant_id: str, mapping: dict[str, Any] | None) -> None:
         if mapping is None:
@@ -831,16 +741,17 @@ class ResourceRepository:
             """
             insert into resource_mappings (
               tenant_id, resource_id, system, external_type, external_id, external_url,
-              external_updated_at, sync_cursor, sync_status, last_error, updated_at
+              external_updated_at, sync_cursor, sync_status, error_code, error_summary, updated_at
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, coalesce(%s, 'pending'), null, now())
+            values (%s, %s, %s, %s, %s, %s, %s, %s, coalesce(%s, 'pending'), null, null, now())
             on conflict(tenant_id, system, external_type, external_id)
             do update set resource_id = excluded.resource_id,
                           external_url = excluded.external_url,
                           external_updated_at = excluded.external_updated_at,
                           sync_cursor = excluded.sync_cursor,
                           sync_status = excluded.sync_status,
-                          last_error = null,
+                          error_code = null,
+                          error_summary = null,
                           updated_at = now()
             """,
             (

@@ -286,6 +286,42 @@ def _create_resource(
     )
 
 
+def _create_embedding_index(conn, *, tenant_id: str = "default", model: str = "test") -> str:
+    return str(
+        conn.execute(
+            """
+            insert into embedding_indexes
+              (tenant_id, embedding_model, config_version, dimensions, chunker_version, status, activated_at)
+            values (%s, %s, '2026-06-20T10:00:00Z-test', 1536, 'text-v1', 'active', now())
+            returning id
+            """,
+            (tenant_id, model),
+        ).fetchone()["id"]
+    )
+
+
+def _insert_embedding(
+    conn,
+    *,
+    resource,
+    index_id: str,
+    chunk_index: int,
+    chunk_text: str,
+    embedding: list[float],
+    model: str = "test",
+) -> None:
+    vector = "[" + ",".join(str(float(value)) for value in embedding) + "]"
+    conn.execute(
+        """
+        insert into resource_embeddings
+          (tenant_id, resource_id, resource_version, embedding_index_id,
+           chunk_index, chunk_text, chunker_version, embedding_model, embedding)
+        values (%s, %s, %s, %s, %s, %s, 'text-v1', %s, %s::vector)
+        """,
+        (resource.tenant_id, resource.id, resource.version, index_id, chunk_index, chunk_text, model, vector),
+    )
+
+
 def test_keyword_search_filters_by_query_tenant_and_permission(migrated_conn):
     repo = ResourceRepository(migrated_conn)
     _create_resource(repo, title="露营装备", content="帐篷 天幕 炉具")
@@ -298,65 +334,15 @@ def test_keyword_search_filters_by_query_tenant_and_permission(migrated_conn):
     assert results[0].score > 0
 
 
-def test_set_embedding_validates_tenant_and_vector(migrated_conn):
-    repo = ResourceRepository(migrated_conn)
-    resource = _create_resource(repo, title="露营装备")
-
-    with pytest.raises(PermissionError):
-        repo.set_embedding(
-            tenant_id="other",
-            resource_id=resource.id,
-            chunk_index=0,
-            chunk_text="帐篷",
-            embedding=[0.1] * 1536,
-            embedding_model="test",
-        )
-    with pytest.raises(ValueError, match="1536 finite"):
-        repo.set_embedding(
-            tenant_id="default",
-            resource_id=resource.id,
-            chunk_index=0,
-            chunk_text="帐篷",
-            embedding=[math.nan] * 1536,
-            embedding_model="test",
-        )
-    with pytest.raises(ValueError, match="Embedding model"):
-        repo.set_embedding(
-            tenant_id="default",
-            resource_id=resource.id,
-            chunk_index=0,
-            chunk_text="帐篷",
-            embedding=[0.1] * 1536,
-            embedding_model=" ",
-        )
-    with pytest.raises(ValueError, match="Chunk index"):
-        repo.set_embedding(
-            tenant_id="default",
-            resource_id=resource.id,
-            chunk_index=-1,
-            chunk_text="帐篷",
-            embedding=[0.1] * 1536,
-            embedding_model="test",
-        )
-
-
 def test_semantic_search_returns_best_chunk_once_per_resource(migrated_conn):
     repo = ResourceRepository(migrated_conn)
     first = _create_resource(repo, title="露营装备")
     second = _create_resource(repo, title="厨房收纳")
     query = [1.0] + [0.0] * 1535
-    repo.set_embedding(
-        tenant_id="default", resource_id=first.id, chunk_index=0, chunk_text="差匹配",
-        embedding=[0.0, 1.0] + [0.0] * 1534, embedding_model="test",
-    )
-    repo.set_embedding(
-        tenant_id="default", resource_id=first.id, chunk_index=1, chunk_text="最佳匹配",
-        embedding=query, embedding_model="test",
-    )
-    repo.set_embedding(
-        tenant_id="default", resource_id=second.id, chunk_index=0, chunk_text="次佳匹配",
-        embedding=[0.8, 0.2] + [0.0] * 1534, embedding_model="test",
-    )
+    index_id = _create_embedding_index(migrated_conn)
+    _insert_embedding(migrated_conn, resource=first, index_id=index_id, chunk_index=0, chunk_text="差匹配", embedding=[0.0, 1.0] + [0.0] * 1534)
+    _insert_embedding(migrated_conn, resource=first, index_id=index_id, chunk_index=1, chunk_text="最佳匹配", embedding=query)
+    _insert_embedding(migrated_conn, resource=second, index_id=index_id, chunk_index=0, chunk_text="次佳匹配", embedding=[0.8, 0.2] + [0.0] * 1534)
 
     results = semantic_search(
         repo,

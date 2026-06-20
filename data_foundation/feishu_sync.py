@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from data_foundation.outbox_requests import default_write_requests
 from data_foundation.repository import ResourceRepository
 
 
@@ -62,7 +63,7 @@ def sync_base_rows(
                     "external_updated_at": row.get("external_updated_at"),
                     "sync_status": "synced",
                 },
-                outbox_topics=["meili_index", "embedding_generate", "graph_ingest"],
+                outbox_requests=default_write_requests(),
             )
             imported += 1
         except Exception as exc:
@@ -117,7 +118,7 @@ def sync_wiki_documents(
                         "external_updated_at": doc.get("external_updated_at"),
                         "sync_status": "synced",
                     },
-                    outbox_topics=["meili_index", "embedding_generate", "graph_ingest"],
+                    outbox_requests=default_write_requests(),
                 )
                 repo.upsert_mapping(
                     tenant_id=tenant_id,
@@ -128,8 +129,6 @@ def sync_wiki_documents(
                     external_updated_at=doc.get("external_updated_at"),
                     sync_status="synced",
                 )
-                chunks = [chunk.strip() for chunk in content.split("\n\n") if chunk.strip()]
-                repo.replace_embedding_chunks(tenant_id=tenant_id, resource_id=resource.id, chunks=chunks)
             imported += 1
         except Exception as exc:
             message = f"wiki_doc {obj_token}: {type(exc).__name__}: {exc}"

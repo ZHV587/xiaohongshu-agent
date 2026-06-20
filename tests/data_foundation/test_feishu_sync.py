@@ -9,7 +9,6 @@ from data_foundation.repository import ResourceRepository
 @dataclass
 class RecordingRepository:
     resource: Resource
-    replaced_chunks: list[tuple[str, list[str]]] | None = None
     mappings: list[dict] = field(default_factory=list)
     upserts: list[dict] = field(default_factory=list)
 
@@ -19,9 +18,6 @@ class RecordingRepository:
     def upsert_resource(self, **kwargs):
         self.upserts.append(kwargs)
         return self.resource
-
-    def replace_embedding_chunks(self, *, tenant_id: str, resource_id: str, chunks: list[str]):
-        self.replaced_chunks = (resource_id, chunks)
 
     def upsert_mapping(self, **mapping):
         self.mappings.append(mapping)
@@ -48,7 +44,7 @@ def _resource(resource_id: str = "resource-1") -> Resource:
     )
 
 
-def test_sync_wiki_documents_replaces_all_pending_chunks():
+def test_sync_wiki_documents_upserts_resource_and_wiki_mapping():
     repo = RecordingRepository(_resource())
 
     result = sync_wiki_documents(
@@ -67,7 +63,7 @@ def test_sync_wiki_documents_replaces_all_pending_chunks():
     )
 
     assert result == SyncResult(imported=1, errors=[])
-    assert repo.replaced_chunks == ("resource-1", ["第一段", "第二段"])
+    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["meili_index", "graph_ingest"]
     assert repo.mappings[0]["external_type"] == "wiki_node"
     assert repo.mappings[0]["external_id"] == "sp1:wik1"
 
@@ -161,7 +157,7 @@ def test_sync_base_rows_upserts_records(migrated_conn):
     assert result == SyncResult(imported=2, errors=[])
     assert repo.debug_counts()["resources"] == 2
     assert repo.debug_counts()["resource_mappings"] == 2
-    assert repo.debug_counts()["resource_outbox"] == 6
+    assert repo.debug_counts()["resource_outbox"] == 4
 
     resource_id = migrated_conn.execute(
         """
@@ -174,7 +170,10 @@ def test_sync_base_rows_upserts_records(migrated_conn):
     assert resource is not None
     assert resource.type == "feishu_base_record"
     assert resource.content_text == "露营正文"
-    assert resource.content_json == {"fields": {"标题": "露营标题", "正文": "露营正文", "点赞": 88}}
+    assert resource.content_json == {
+        "fields": {"标题": "露营标题", "正文": "露营正文", "点赞": 88},
+        "identity_kind": "feishu_record_id",
+    }
 
     mapping = migrated_conn.execute(
         """
@@ -188,7 +187,7 @@ def test_sync_base_rows_upserts_records(migrated_conn):
     assert mapping["sync_status"] == "synced"
 
 
-def test_sync_wiki_documents_upserts_docs_and_chunks(migrated_conn):
+def test_sync_wiki_documents_upserts_docs_without_direct_embedding_writes(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 
     result = sync_wiki_documents(
@@ -219,25 +218,8 @@ def test_sync_wiki_documents_upserts_docs_and_chunks(migrated_conn):
     assert resource.type == "feishu_doc"
     assert resource.content_json == {"space_id": "sp1", "obj_token": "doc1", "node_token": "wik1"}
 
-    rows = migrated_conn.execute(
-        """
-        select chunk_index, chunk_text, embedding_model, embedding is null as pending
-        from resource_embeddings
-        order by chunk_index
-        """
-    ).fetchall()
-    assert [row["chunk_text"] for row in rows] == ["第一段", "第二段"]
-    assert [row["embedding_model"] for row in rows] == ["pending", "pending"]
-    assert [row["pending"] for row in rows] == [True, True]
-
-    migrated_conn.execute(
-        """
-        insert into resource_embeddings (resource_id, chunk_index, chunk_text, embedding_model)
-        values (%s, 0, '过期向量文本', 'old-model')
-        """,
-        (resource.id,),
-    )
-    migrated_conn.commit()
+    assert migrated_conn.execute("select count(*) as count from resource_embeddings").fetchone()["count"] == 0
+    assert migrated_conn.execute("select count(*) as count from resource_outbox").fetchone()["count"] == 2
 
     sync_wiki_documents(
         repo,
@@ -253,16 +235,7 @@ def test_sync_wiki_documents_upserts_docs_and_chunks(migrated_conn):
             }
         ],
     )
-    rows = migrated_conn.execute(
-        """
-        select chunk_index, chunk_text
-        from resource_embeddings
-        where resource_id = %s
-        order by chunk_index
-        """,
-        (resource.id,),
-    ).fetchall()
-    assert [(row["chunk_index"], row["chunk_text"]) for row in rows] == [(0, "新的一段")]
+    assert migrated_conn.execute("select count(*) as count from resource_embeddings").fetchone()["count"] == 0
 
     mappings = migrated_conn.execute(
         """
@@ -295,25 +268,3 @@ def test_sync_wiki_documents_upserts_docs_and_chunks(migrated_conn):
     )
     assert replay == SyncResult(imported=1, errors=[])
     assert repo.debug_counts() == counts_after_change
-
-
-def test_sync_wiki_document_rolls_back_resource_when_chunking_fails(migrated_conn):
-    class FailingChunkRepository(ResourceRepository):
-        def replace_embedding_chunks(self, **_kwargs):
-            raise RuntimeError("chunk write failed")
-
-    repo = FailingChunkRepository(migrated_conn)
-    result = sync_wiki_documents(
-        repo,
-        tenant_id="default",
-        actor_open_id="ou_sync",
-        space_id="sp1",
-        documents=[
-            {"obj_token": "doc-fail", "node_token": "wik-fail", "title": "失败文档", "content": "正文"}
-        ],
-    )
-
-    assert result.imported == 0
-    assert "doc-fail" in result.errors[0]
-    assert repo.debug_counts()["resources"] == 0
-    assert repo.debug_counts()["resource_outbox"] == 0
