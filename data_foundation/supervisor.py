@@ -3,8 +3,17 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Callable
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from data_foundation.scheduler import SchedulerConfig, build_scheduler
+
+
+SCHEDULER_CYCLE_FAILED = "SCHEDULER_CYCLE_FAILED"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class BackgroundServiceSupervisor:
@@ -20,9 +29,13 @@ class BackgroundServiceSupervisor:
         self.config = config or SchedulerConfig()
         self.enabled = enabled
         self.interval_seconds = max(0.01, float(interval_seconds))
+        self.instance_id = uuid4().hex
         self.accepting_work = False
         self.start_count = 0
-        self.last_cycle_error: BaseException | None = None
+        self.last_cycle_started_at: str | None = None
+        self.last_cycle_finished_at: str | None = None
+        self.last_cycle_status: str | None = None
+        self.last_cycle_error_code: str | None = None
         self._scheduler = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
@@ -56,11 +69,16 @@ class BackgroundServiceSupervisor:
         while self.accepting_work:
             scheduler = self._scheduler
             if scheduler is not None:
+                self.last_cycle_started_at = _utc_now()
                 try:
                     await asyncio.to_thread(lambda: asyncio.run(scheduler.run_cycle()))
-                    self.last_cycle_error = None
-                except Exception as exc:
-                    self.last_cycle_error = exc
+                    self.last_cycle_status = "succeeded"
+                    self.last_cycle_error_code = None
+                except Exception:
+                    self.last_cycle_status = "failed"
+                    self.last_cycle_error_code = SCHEDULER_CYCLE_FAILED
+                finally:
+                    self.last_cycle_finished_at = _utc_now()
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
             except TimeoutError:

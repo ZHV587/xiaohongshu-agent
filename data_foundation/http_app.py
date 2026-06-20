@@ -8,6 +8,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from data_foundation.internal_api import internal_routes
+from data_foundation.runtime_facts import create_runtime_snapshot, utc_now
 from data_foundation.supervisor import build_supervisor
 
 
@@ -23,10 +24,12 @@ async def ok(_request):
 async def lifespan(_app: Starlette):
     supervisor = build_supervisor()
     await supervisor.start()
+    runtime_snapshot = create_runtime_snapshot(supervisor)
     try:
-        yield {"supervisor": supervisor}
+        yield {"supervisor": supervisor, "runtime_snapshot": runtime_snapshot}
     finally:
         await supervisor.stop(grace_seconds=shutdown_grace_seconds())
+        runtime_snapshot.stop(observed_at=utc_now())
 
 
 app = Starlette(routes=[Route("/ok", ok), *internal_routes], lifespan=lifespan)

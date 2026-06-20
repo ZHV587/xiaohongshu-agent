@@ -23,6 +23,15 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
     events = []
 
     class FakeSupervisor:
+        enabled = False
+        interval_seconds = 30
+        instance_id = "instance-1"
+        accepting_work = False
+        last_cycle_started_at = None
+        last_cycle_finished_at = None
+        last_cycle_status = None
+        last_cycle_error_code = None
+
         async def start(self):
             events.append("start")
 
@@ -32,7 +41,10 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
     monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
     monkeypatch.setattr(http_app, "shutdown_grace_seconds", lambda: 7)
 
-    async with http_app.lifespan(http_app.app):
+    async with http_app.lifespan(http_app.app) as state:
         assert events == ["start"]
+        assert state["supervisor"] is not None
+        assert state["runtime_snapshot"].status == "running"
 
     assert events == ["start", ("stop", 7)]
+    assert state["runtime_snapshot"].status == "stopped"
