@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from data_foundation.sources.base import SourceProcessor
 from data_foundation.sources.feishu import FeishuBaseSourceProcessor, FeishuWikiSourceProcessor
+from data_foundation.sources.postgres import PostgresTableSourceProcessor
 
 
 class SourceProcessorRegistry:
@@ -23,5 +24,15 @@ def default_feishu_source_registry(resource_repo) -> SourceProcessorRegistry:
         {
             "feishu_base": FeishuBaseSourceProcessor(resource_repo=resource_repo),
             "feishu_wiki": FeishuWikiSourceProcessor(resource_repo=resource_repo),
+        }
+    )
+
+
+def default_source_registry(resource_repo) -> SourceProcessorRegistry:
+    registry = default_feishu_source_registry(resource_repo)
+    return SourceProcessorRegistry(
+        {
+            **{source_type: registry.processor_for(source_type) for source_type in registry.source_types},
+            "postgres_table": PostgresTableSourceProcessor(resource_repo=resource_repo),
         }
     )

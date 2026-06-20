@@ -9,6 +9,7 @@ SUMMARY_LIMIT = 240
 DEFAULT_WINDOW_SECONDS = 60 * 60
 
 _SECRET_PATTERNS = (
+    re.compile(r"(?i)\b(?:postgresql|postgres)://\S+"),
     re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)\s*[:=]\s*\S+"),
     re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+"),
 )
@@ -144,6 +145,8 @@ def _redact_secrets(value: str) -> str:
 def _redact_match(match: re.Match[str]) -> str:
     if match.lastindex:
         return f"{match.group(1)}=<redacted>"
+    if "://" in match.group(0):
+        return "<redacted-dsn>"
     return "Bearer <redacted>"
 
 

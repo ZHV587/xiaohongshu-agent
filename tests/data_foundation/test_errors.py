@@ -45,6 +45,18 @@ def test_classify_error_uses_message_without_exception_and_normalizes_unknowns()
     assert fallback.error_summary == "Unspecified error"
 
 
+def test_classify_error_redacts_postgres_dsn():
+    classification = classify_error(
+        message="connect failed postgresql://user:secret@db.example:5432/app",
+        component="postgres_source",
+        operation="sync",
+    )
+
+    assert "secret" not in classification.error_summary
+    assert "postgresql://user" not in classification.error_summary
+    assert "<redacted-dsn>" in classification.error_summary
+
+
 def test_build_error_aggregate_key_uses_schema_dimensions_and_hour_window():
     occurred_at = datetime(2026, 6, 20, 10, 37, 42, tzinfo=UTC)
     classification = classify_error(ValueError("bad chunk"), component="search", operation="embed")
