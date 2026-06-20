@@ -76,7 +76,7 @@ def handle_config_status(args):
     center = ConfigCenter(path=args.config_path, encryption_key=args.encryption_key)
     history = center.history()
     version = history[-1].version if history else ""
-    print(json.dumps({"ok": True, "configs": center.get_redacted(), "version": version}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "configs": center.get_plain(), "version": version}, ensure_ascii=False))
 
 
 def handle_config_set(args):

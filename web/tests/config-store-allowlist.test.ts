@@ -49,8 +49,8 @@ try {
 
   const configs = readConfigResponse();
 
-  assert.equal(configs.XHS_EMBEDDING_API_KEY, "********");
-  assert.equal(configs.LLM_API_KEY, "********");
+  assert.equal(configs.XHS_EMBEDDING_API_KEY, "embedding-secret");
+  assert.equal(configs.LLM_API_KEY, "llm-secret");
 } finally {
   if (originalEmbeddingKey === undefined) {
     delete process.env.XHS_EMBEDDING_API_KEY;

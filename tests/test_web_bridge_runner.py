@@ -17,7 +17,7 @@ def test_handle_uat_status_reports_authorized(capsys):
     assert json.loads(captured.out) == {"ok": True, "authorized": True}
 
 
-def test_config_status_reads_redacted_center(tmp_path, capsys):
+def test_config_status_reads_plain_center_for_admin_config_page(tmp_path, capsys):
     from config_center import ConfigCenter
 
     key = Fernet.generate_key().decode()
@@ -35,7 +35,7 @@ def test_config_status_reads_redacted_center(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["version"]
-    assert payload["configs"]["LLM_API_KEY"] == "********"
+    assert payload["configs"]["LLM_API_KEY"] == "sk-secret"
     assert payload["configs"]["LLM_QUALITY_MODELS"] == "gpt-4o"
 
 

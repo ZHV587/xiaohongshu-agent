@@ -154,7 +154,7 @@ export function readConfigResponse(): Record<string, string> {
   return Object.fromEntries(
     keys.map((key) => {
       const value = process.env[key] || "";
-      return [key, secretConfigKeys.has(key) && value ? "********" : value];
+      return [key, value];
     }),
   );
 }
