@@ -9,6 +9,11 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import OpenAIEmbeddings
 
+from data_foundation.creation_memory import (
+    save_generated_copy_resource,
+    save_generated_topic_resource,
+    save_user_feedback_resource,
+)
 from data_foundation.db import connect
 from data_foundation.feishu_source_loader import load_feishu_sources
 from data_foundation.graph import expand_graph as expand_graph_query
@@ -173,6 +178,70 @@ def sync_feishu_resources(config: RunnableConfig | None = None) -> dict[str, Any
         )
 
 
+@tool
+def save_generated_topic(
+    direction: str,
+    topics: list[str],
+    evidence: list[dict[str, Any]] | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Persist generated topic choices into the shared Postgres data foundation."""
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        return save_generated_topic_resource(
+            repo,
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            direction=direction,
+            topics=topics,
+            evidence=evidence,
+        )
+
+
+@tool
+def save_generated_copy(
+    title: str,
+    body: str,
+    tags: list[str],
+    source_topic: str | None = None,
+    evidence: list[dict[str, Any]] | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation."""
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        return save_generated_copy_resource(
+            repo,
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            title=title,
+            body=body,
+            tags=tags,
+            source_topic=source_topic,
+            evidence=evidence,
+        )
+
+
+@tool
+def save_user_feedback(
+    feedback: str,
+    target_resource_id: str | None = None,
+    feedback_type: str = "user_feedback",
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Persist user feedback or a revision request into the shared Postgres data foundation."""
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        return save_user_feedback_resource(
+            repo,
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            feedback=feedback,
+            target_resource_id=target_resource_id,
+            feedback_type=feedback_type,
+        )
+
+
 data_foundation_tools = [
     search_resources,
     semantic_search_resources,
@@ -180,6 +249,9 @@ data_foundation_tools = [
     get_resource,
     get_data_foundation_status,
     sync_feishu_resources,
+    save_generated_topic,
+    save_generated_copy,
+    save_user_feedback,
 ]
 
 phase3_tools = data_foundation_tools

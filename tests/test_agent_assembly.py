@@ -189,6 +189,9 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
         "get_resource",
         "get_data_foundation_status",
         "sync_feishu_resources",
+        "save_generated_topic",
+        "save_generated_copy",
+        "save_user_feedback",
     } <= tool_names
 
 

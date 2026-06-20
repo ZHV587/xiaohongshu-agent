@@ -14,6 +14,9 @@ REQUIRED_TOOLS = {
     "graph_expand",
     "get_resource",
     "sync_feishu_resources",
+    "save_generated_topic",
+    "save_generated_copy",
+    "save_user_feedback",
 }
 EVIDENCE_FIELDS = {
     "resource_id",
@@ -72,3 +75,14 @@ def test_contracts_include_evidence_schema_in_topics_and_copy():
             assert '"evidence"' in block, f"{name} {block_name}"
             for field in EVIDENCE_FIELDS:
                 assert f'"{field}"' in block, f"{name} {block_name}: {field}"
+
+
+def test_contracts_require_creation_memory_persistence():
+    for name, contract in _contracts().items():
+        assert "`save_generated_topic`" in contract, name
+        assert "`save_generated_copy`" in contract, name
+        assert "`save_user_feedback`" in contract, name
+        assert "最终回复用户前" in contract and "save_generated_topic" in contract, name
+        assert "最终回复用户前" in contract and "save_generated_copy" in contract, name
+        assert "当前文案 ID" in contract and "target_resource_id" in contract, name
+        assert 'feedback_type="revision_request"' in contract, name

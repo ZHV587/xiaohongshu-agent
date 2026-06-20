@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from tools.runtime_identity import identity_config
 
 
 class RecordingRepository:
+    def __init__(self):
+        self.edges = []
+
+    def unit_of_work(self):
+        return nullcontext()
+
     def data_foundation_status(self, tenant_id):
         return {
             "tenant_id": tenant_id,
@@ -17,6 +25,18 @@ class RecordingRepository:
             },
             "outbox": {"pending": 0, "processing": 0, "succeeded": 0, "failed": 0},
         }
+
+    def upsert_resource(self, **kwargs):
+        self.upsert = kwargs
+        return type(
+            "Resource",
+            (),
+            {"id": "generated-1", "type": kwargs["resource_type"], "title": kwargs["title"], "version": 1},
+        )()
+
+    def add_edge(self, **kwargs):
+        self.edge = kwargs
+        self.edges.append(kwargs)
 
 
 class _RepoContext:
@@ -137,3 +157,65 @@ def test_sync_feishu_resources_tool_fails_when_sources_return_nothing(monkeypatc
     assert captured["kwargs"]["source_errors"] == [
         "No readable Feishu resources were returned from configured sources"
     ]
+
+
+def test_save_generated_topic_tool_persists_for_current_actor(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_generated_topic.func(
+        direction="露营装备",
+        topics=["轻量露营（收藏点强）"],
+        evidence=[
+            {"resource_id": "source-1", "summary": "依据"},
+            {"resource_id": "source-2", "summary": "另一个依据"},
+        ],
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert repo.upsert["tenant_id"] == "default"
+    assert repo.upsert["actor_open_id"] == "ou_user"
+    assert repo.upsert["resource_type"] == "generated_topic"
+    assert [edge["target_resource_id"] for edge in repo.edges] == ["source-1", "source-2"]
+
+
+def test_save_generated_copy_tool_persists_for_current_actor(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_generated_copy.func(
+        title="露营别乱买",
+        body="这份清单够了",
+        tags=["#露营"],
+        source_topic="轻量露营",
+        evidence=[],
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert repo.upsert["actor_open_id"] == "ou_user"
+    assert repo.upsert["resource_type"] == "generated_copy"
+    assert repo.upsert["content_json"]["source_topic"] == "轻量露营"
+
+
+def test_save_user_feedback_tool_persists_revision_request(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_user_feedback.func(
+        feedback="标题再狠一点",
+        target_resource_id="generated-0",
+        feedback_type="revision_request",
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert repo.upsert["resource_type"] == "revision_request"
+    assert repo.edge["edge_type"] == "feedback_on"
