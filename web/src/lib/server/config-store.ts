@@ -163,6 +163,48 @@ export function isConfigCenterEnabled(): boolean {
   return Boolean(process.env.XHS_CONFIG_ENCRYPTION_KEY && process.env.XHS_CONFIG_CENTER_PATH);
 }
 
+export function configCenterSaveApplyStatus() {
+  return {
+    mode: "config-center",
+    applied: true,
+    message:
+      "配置已保存到配置中心；embedding 会在下一轮 scheduler 自动创建新索引，回填完成后切换为 active。",
+  };
+}
+
+export function buildBackendStatusPayload({
+  applyMode,
+  configCenterEnabled,
+  configVersion,
+}: {
+  applyMode: string;
+  configCenterEnabled: boolean;
+  configVersion: string;
+}) {
+  return {
+    ok: true,
+    config_version: configVersion,
+    apply_mode: applyMode,
+    config_center_enabled: configCenterEnabled,
+    hot_apply_supported: configCenterEnabled,
+    hot_reload_supported_paths: {
+      main_agent: true,
+      server_async: true,
+      subagents: true,
+      embedding_index_profiles: configCenterEnabled,
+      rubric: false,
+    },
+    hot_reload_message: configCenterEnabled
+      ? "ModelRouterMiddleware 路径可热切；embedding profile 保存后由 scheduler 新建索引并在完成后切换；rubric 仍是重启边界。"
+      : "ModelRouterMiddleware 路径可热切；embedding profile 在环境变量模式下仍需后端应用新环境；rubric 仍是重启边界。",
+    status_message: configCenterEnabled
+      ? "配置中心已启用；保存 embedding 配置后会自动创建 building 索引，并在回填完成后切换为 active。"
+      : applyMode === "manual"
+        ? "配置已保存到环境文件；Python 后端需要手动重启后才会加载新版本。"
+        : "配置保存后会通过固定 apply mode 触发后端重启。",
+  };
+}
+
 export function configCenterRunnerArgs(action: "config-status" | "config-set"): string[] {
   if (!process.env.XHS_CONFIG_ENCRYPTION_KEY || !process.env.XHS_CONFIG_CENTER_PATH) {
     throw new Error("Config center is not enabled");

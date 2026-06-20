@@ -34,6 +34,7 @@ def test_config_status_reads_redacted_center(tmp_path, capsys):
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
+    assert payload["version"]
     assert payload["configs"]["LLM_API_KEY"] == "********"
     assert payload["configs"]["LLM_QUALITY_MODELS"] == "gpt-4o"
 

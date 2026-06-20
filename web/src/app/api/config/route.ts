@@ -3,6 +3,7 @@ import { apiErrorResponse, jsonNoStore, requireAdmin } from "@/lib/server/authz"
 import { applyBackendConfig } from "@/lib/server/backend-apply";
 import {
   assertAllowedConfigKeys,
+  configCenterSaveApplyStatus,
   envPaths,
   generateConfigVersion,
   isConfigCenterEnabled,
@@ -26,7 +27,12 @@ export async function GET() {
           { status: resp.status || 500 },
         );
       }
-      return jsonNoStore({ ok: true, configs: data.configs, source: "config-center" });
+      return jsonNoStore({
+        ok: true,
+        configs: data.configs,
+        version: data.version || "",
+        source: "config-center",
+      });
     }
     return jsonNoStore({ ok: true, configs: readConfigResponse() });
   } catch (error) {
@@ -55,11 +61,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         version: data.version,
-        apply: {
-          mode: "config-center",
-          applied: false,
-          message: "配置已保存到配置中心；registry 覆盖路径将在进程内 reload 通道触发后热切。",
-        },
+        apply: configCenterSaveApplyStatus(),
       });
     }
 

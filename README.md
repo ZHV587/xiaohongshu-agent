@@ -18,7 +18,7 @@
 ## 多用户部署关键配置
 
 - `XHS_ADMIN_OPEN_IDS`: 逗号分隔的飞书 open_id,只有这些用户能访问系统配置。
-- `XHS_BACKEND_APPLY_MODE`: `manual`、`pm2` 或 `systemd`。默认 `manual`,不会自动重启后端。
+- `XHS_BACKEND_APPLY_MODE`: `.env` 回退模式下使用 `manual`、`pm2` 或 `systemd`。配置中心开启后，embedding 配置不走重启生效，而是由 scheduler 新建索引后切换。
 - `LLM_PROVIDER`: 第一阶段生产路径建议固定为 `openai`。
 - `LLM_QUALITY_MODELS`: 高质量模型池,逗号分隔;第一项是首选模型。
 - 飞书操作在 server 模式下默认使用当前用户 UAT,缺授权时不会静默退回 bot。
@@ -48,10 +48,13 @@ uv run python verify_1b1.py
 ## 第二阶段配置中心与热切边界
 
 - 配置中心由 `XHS_CONFIG_CENTER_PATH` 指向的加密文件提供，`XHS_CONFIG_ENCRYPTION_KEY` 是启动级密钥，不能通过 UI 修改。
-- phase-2 模式开启条件：同时设置 `XHS_CONFIG_ENCRYPTION_KEY` 与 `XHS_CONFIG_CENTER_PATH`。开启后 `/api/config` 读写配置中心；未开启时保留 `.env + apply` 的 phase-1 回退。
+- phase-2 模式开启条件：同时设置 `XHS_CONFIG_ENCRYPTION_KEY` 与 `XHS_CONFIG_CENTER_PATH`。开启后 `/api/config` 读写配置中心并返回当前配置版本；未开启时保留 `.env + apply` 的 phase-1 回退。
 - 已纳入无重启热切的路径：主 agent 的 `ModelRouterMiddleware` sync/async 调用、子 agent 的 `ModelRouterMiddleware` 调用。
 - 未纳入无重启热切的路径：启动时静态构造的 rubric 评分模型。该路径仍需要受控重启，直到改为 registry-backed model factory。
 - `tools/web_bridge_runner.py` 可读写配置中心，但不能 reload 常驻 LangGraph 进程内存；进程内 registry reload 必须通过 LangGraph 后端进程内管理通道或 supervisor/sidecar 完成。
+- Embedding 热生效以配置中心为版本权威：保存 `XHS_EMBEDDING_*` 后配置立即持久化，下一轮 `XHS_SCHEDULER_INTERVAL_SECONDS` scheduler cycle 会用该版本创建或续建 `building` index，回填完成后原子切换为 `active`。
+- 旧 `active` index 在新 index 完成前继续服务语义搜索；查询会按 index 记录的 `config_version` 回放历史 embedding profile，不会误用刚保存的新模型或新密钥。
+- 仅环境变量模式无法查询历史配置版本，因此 embedding profile 变化仍属于后端应用/重启边界；生产部署应开启配置中心。
 - 不 fork DeepAgents，不 monkey-patch DeepAgents，不访问 compiled graph 私有字段。
 
 ## 第三阶段数据底座
@@ -59,7 +62,7 @@ uv run python verify_1b1.py
 - `XHS_DATABASE_URL` 指向 Postgres 权威业务库；底层通用数据沉淀不绑定单一飞书来源，飞书 Base/Wiki/Doc 只是 ingestion adapter。
 - 数据库必须启用 `pgcrypto` 与 `vector` 扩展；关键词检索走 Postgres full-text + `ILIKE` 中文兜底，语义检索走 pgvector。
 - `XHS_DEFAULT_TENANT_ID` 默认是 `default`；Agent tool 不接受自由 tenant 参数，tenant 和 actor 权限在服务端解析。
-- Embedding 只使用显式 `XHS_EMBEDDING_*` 配置；未配置 `XHS_EMBEDDING_API_KEY` 或没有 active embedding index 时，语义搜索结构化降级为关键词搜索，不回退到 `LLM_*` 文案模型配置。
+- Embedding 只使用显式 `XHS_EMBEDDING_*` 配置；未配置 `XHS_EMBEDDING_API_KEY`、没有 active embedding index，或 active index 的历史 profile 不可用时，语义搜索结构化降级为关键词搜索，不回退到 `LLM_*` 文案模型配置。
 - DeepAgents/LangGraph 仍是唯一 agent runtime；第三阶段只新增普通 LangChain tools 并挂入 `create_deep_agent`。
 - 项目不恢复交互式 Python CLI 运行入口；飞书 `lark-cli` 只作为 server/worker 内部 adapter。
 - 飞书写操作不再经过 frontend business API，而是由 Agent tools 发起，并通过 HITL 完成人工确认。
