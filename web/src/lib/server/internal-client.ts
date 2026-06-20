@@ -18,6 +18,7 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/config-status": { path: "/internal/config", method: "GET" },
   "/_internal/config-set": { path: "/internal/config", method: "POST" },
   "/_internal/data-foundation-status": { path: "/internal/data-foundation/status", method: "GET" },
+  "/_internal/runtime-facts": { path: "/internal/health/facts", method: "GET" },
 };
 
 function jsonResponse(payload: Record<string, unknown>, status: number): Response {

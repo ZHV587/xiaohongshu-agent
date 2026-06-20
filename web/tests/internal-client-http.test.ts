@@ -39,6 +39,11 @@ test("forwards internal request over HTTP with internal headers", async () => {
       isAdmin: true,
     });
     assert.equal(calls[1].url, "http://127.0.0.1:2024/internal/data-foundation/status");
+
+    await forwardToInternalServer("/_internal/runtime-facts", "GET", "ou_admin", undefined, {
+      isAdmin: true,
+    });
+    assert.equal(calls[2].url, "http://127.0.0.1:2024/internal/health/facts");
   } finally {
     globalThis.fetch = originalFetch;
     if (originalBaseUrl === undefined) delete process.env.XHS_INTERNAL_BASE_URL;
