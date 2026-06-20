@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ApiError } from "../src/lib/server/authz";
-import { createRuntimeFactsGet } from "../src/app/api/backend/runtime-facts/route";
+import { createRuntimeFactsGet } from "../src/app/api/backend/runtime-facts/handler";
 
 test("runtime facts route forwards admin requests to internal health facts", async () => {
   const calls: Array<{ pathName: string; method: string; openId: string; extraHeaders: any }> = [];
