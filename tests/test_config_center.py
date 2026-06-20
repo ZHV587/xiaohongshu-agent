@@ -36,6 +36,12 @@ def test_config_center_rejects_deploy_only_keys(tmp_path):
         center.save(actor_open_id="ou_admin", updates={"XHS_JWT_SECRET": "do-not-edit"})
 
 
+def test_config_center_rejects_internal_base_url(tmp_path):
+    center = ConfigCenter(path=tmp_path / "config.enc", encryption_key=Fernet.generate_key().decode())
+    with pytest.raises(ConfigValidationError, match="XHS_INTERNAL_BASE_URL"):
+        center.save(actor_open_id="ou_admin", updates={"XHS_INTERNAL_BASE_URL": "http://127.0.0.1:2024"})
+
+
 def test_config_center_records_audit_history(tmp_path):
     center = ConfigCenter(path=tmp_path / "config.enc", encryption_key=Fernet.generate_key().decode())
     first = center.save(actor_open_id="ou_admin", updates={"LLM_PROVIDER": "openai"})

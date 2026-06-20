@@ -8,6 +8,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from config_center import ConfigCenter, ConfigValidationError
+
 
 @dataclass(frozen=True)
 class InternalActor:
@@ -89,10 +91,44 @@ async def internal_config_get(request: Request) -> JSONResponse:
     actor = require_admin(request)
     if isinstance(actor, JSONResponse):
         return actor
-    return _json_ok({"ok": True, "configs": {}, "version": ""})
+    try:
+        center = _config_center()
+        return _json_ok({"ok": True, "configs": center.get_plain(), "version": _config_version(center)})
+    except KeyError as exc:
+        return _json_error(500, f"Config center missing required environment: {exc.args[0]}")
+
+
+async def internal_config_post(request: Request) -> JSONResponse:
+    actor = require_admin(request)
+    if isinstance(actor, JSONResponse):
+        return actor
+    try:
+        body = await request.json()
+        configs = body.get("configs")
+        if not isinstance(configs, dict):
+            return _json_error(400, "Bad Request: Missing configs object")
+        snapshot = _config_center().save(actor_open_id=actor.open_id, updates=configs)
+        return _json_ok({"ok": True, "version": snapshot.version, "changed_keys": snapshot.changed_keys})
+    except ConfigValidationError as exc:
+        return _json_error(400, str(exc))
+    except KeyError as exc:
+        return _json_error(500, f"Config center missing required environment: {exc.args[0]}")
+
+
+def _config_center() -> ConfigCenter:
+    return ConfigCenter(
+        path=os.environ["XHS_CONFIG_CENTER_PATH"],
+        encryption_key=os.environ["XHS_CONFIG_ENCRYPTION_KEY"],
+    )
+
+
+def _config_version(center: ConfigCenter) -> str:
+    history = center.history()
+    return history[-1].version if history else ""
 
 
 internal_routes = [
     Route("/internal/ok", internal_ok, methods=["GET"]),
     Route("/internal/config", internal_config_get, methods=["GET"]),
+    Route("/internal/config", internal_config_post, methods=["POST"]),
 ]
