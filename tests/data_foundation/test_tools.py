@@ -8,6 +8,7 @@ from tools.runtime_identity import identity_config
 class RecordingRepository:
     def __init__(self):
         self.edges = []
+        self.conn = object()
 
     def unit_of_work(self):
         return nullcontext()
@@ -20,7 +21,7 @@ class RecordingRepository:
                 "running": False,
                 "last_status": None,
                 "last_success_at": None,
-                "last_error": None,
+                "last_error_summary": None,
                 "last_counts": None,
             },
             "outbox": {"pending": 0, "processing": 0, "succeeded": 0, "failed": 0},
@@ -51,6 +52,11 @@ class RecordingRepository:
             "weight": 10,
             "updated_at": None,
         }]
+
+
+class RecordingSourceRepository:
+    def __init__(self, conn):
+        self.conn = conn
 
 
 class _RepoContext:
@@ -99,17 +105,15 @@ def test_sync_feishu_resources_tool_delegates_to_source_processors(monkeypatch):
         }
 
     monkeypatch.setattr(df_tools, "sync_feishu_sources", _sync)
+    monkeypatch.setattr(df_tools, "SourceRepository", RecordingSourceRepository)
 
     result = df_tools.sync_feishu_resources.func(config=identity_config("ou_user"))
 
     assert result["ok"] is True
     assert result["run_id"] == "run-1"
     assert captured["repo"] is repo
-    assert captured["kwargs"] == {
-        "tenant_id": "default",
-        "actor_open_id": "ou_user",
-        "triggered_by": "manual",
-    }
+    assert isinstance(captured["kwargs"].pop("source_repo"), RecordingSourceRepository)
+    assert captured["kwargs"] == {"tenant_id": "default", "actor_open_id": "ou_user", "triggered_by": "manual"}
 
 
 def test_save_generated_topic_tool_persists_for_current_actor(monkeypatch):

@@ -180,7 +180,8 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
     import agent as agent_module
 
     agent_module = importlib.reload(agent_module)
-    tool_names = {getattr(tool, "name", "") for tool in agent_module.phase3_tools}
+    assert not hasattr(agent_module, "phase3_tools")
+    tool_names = {getattr(tool, "name", "") for tool in agent_module.data_foundation_tools}
 
     assert {
         "search_resources",

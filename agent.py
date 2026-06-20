@@ -23,7 +23,7 @@ from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents import build_baokuan_analyst
 
-from data_foundation.tools import phase3_tools
+from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
 from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
 from tools.lark_mcp import load_lark_mcp_tools
@@ -79,7 +79,7 @@ content_rubric_activator = ContentRubricActivator()
 
 agent = create_deep_agent(
     model=initial_model,
-    tools=phase3_tools + feishu_action_tools + load_lark_mcp_tools(),
+    tools=data_foundation_tools + feishu_action_tools + load_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
     subagents=[build_baokuan_analyst(model_registry, initial_model)],
     backend=backend,

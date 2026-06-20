@@ -579,66 +579,6 @@ class ResourceRepository:
                     ),
                 )
 
-    def start_sync_run(
-        self,
-        *,
-        tenant_id: str,
-        source_type: str,
-        actor_open_id: str,
-        read_count: int = 0,
-    ) -> str:
-        row = self.conn.execute(
-            """
-            insert into sync_runs (tenant_id, source_type, read_count)
-            values (%s, %s, %s)
-            returning id::text as id
-            """,
-            (
-                tenant_id,
-                source_type,
-                read_count,
-            ),
-        ).fetchone()
-        self.conn.commit()
-        return row["id"]
-
-    def finish_sync_run(
-        self,
-        *,
-        tenant_id: str,
-        run_id: str,
-        status: str,
-        created_count: int = 0,
-        updated_count: int = 0,
-        skipped_count: int = 0,
-        failed_count: int = 0,
-        error_summary: str | None = None,
-    ) -> None:
-        self.conn.execute(
-            """
-            update sync_runs
-            set status = %s,
-                finished_at = now(),
-                created_count = %s,
-                updated_count = %s,
-                skipped_count = %s,
-                failed_count = %s,
-                error_summary = %s
-            where tenant_id = %s and id = %s
-            """,
-            (
-                status,
-                created_count,
-                updated_count,
-                skipped_count,
-                failed_count,
-                error_summary,
-                tenant_id,
-                run_id,
-            ),
-        )
-        self.conn.commit()
-
     def data_foundation_status(self, tenant_id: str) -> dict[str, Any]:
         resource_rows = self.conn.execute(
             """
@@ -688,7 +628,7 @@ class ResourceRepository:
                 "last_success_at": None
                 if last_sync is None or last_sync["status"] not in ("succeeded", "partial")
                 else last_sync["finished_at"],
-                "last_error": None if last_sync is None else last_sync["error_summary"],
+                "last_error_summary": None if last_sync is None else last_sync["error_summary"],
                 "last_counts": None
                 if last_sync is None
                 else {

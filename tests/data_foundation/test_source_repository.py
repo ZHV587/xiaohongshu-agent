@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 
 from data_foundation.source_repository import SourceRepository
+from data_foundation.repository import ResourceRepository
 
 
 def _register(
@@ -229,6 +230,45 @@ def test_sync_run_lifecycle_and_stale_recovery(migrated_conn):
     ).fetchone()
     assert still_recovered["status"] == "stopped"
     assert still_recovered["error_code"] == "STALE_SYNC_RUN"
+
+
+def test_sync_run_status_summary_uses_source_repository_lifecycle(migrated_conn):
+    source_repo = SourceRepository(migrated_conn)
+    resource_repo = ResourceRepository(migrated_conn)
+    source = source_repo.register_source(
+        tenant_id="default",
+        source_type="feishu_base",
+        name="manual-feishu-base",
+        config={"app_token": "app", "table_id": "tbl"},
+        schedule_seconds=0,
+    )
+
+    run_id = source_repo.start_run(source.id, tenant_id="default", instance_id="manual")
+    source_repo.finish_run(
+        run_id,
+        tenant_id="default",
+        status="partial",
+        cursor_after={},
+        read_count=10,
+        created_count=2,
+        updated_count=3,
+        skipped_count=4,
+        failed_count=1,
+        error_code=None,
+        error_summary="one row failed",
+    )
+
+    status = resource_repo.data_foundation_status("default")
+
+    assert status["sync"]["running"] is False
+    assert status["sync"]["last_status"] == "partial"
+    assert status["sync"]["last_error_summary"] == "one row failed"
+    assert status["sync"]["last_counts"] == {
+        "created": 2,
+        "updated": 3,
+        "skipped": 4,
+        "failed": 1,
+    }
 
 
 def test_recover_stale_runs_does_not_clear_new_valid_source_lease(migrated_conn):

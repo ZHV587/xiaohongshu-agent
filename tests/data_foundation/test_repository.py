@@ -41,6 +41,11 @@ def test_resource_repository_no_longer_writes_embeddings_without_an_index():
     assert not hasattr(ResourceRepository, "set_embedding")
 
 
+def test_resource_repository_no_longer_owns_sync_run_lifecycle():
+    assert not hasattr(ResourceRepository, "start_sync_run")
+    assert not hasattr(ResourceRepository, "finish_sync_run")
+
+
 def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 
@@ -240,36 +245,3 @@ def test_same_external_mapping_can_exist_in_different_tenants(migrated_conn):
     )
 
     assert second.id != first.id
-
-
-def test_sync_run_lifecycle_and_status_summary(migrated_conn):
-    repo = ResourceRepository(migrated_conn)
-
-    run_id = repo.start_sync_run(
-        tenant_id="default",
-        source_type="feishu_base",
-        actor_open_id="ou_user",
-        read_count=10,
-    )
-    repo.finish_sync_run(
-        tenant_id="default",
-        run_id=run_id,
-        status="partial",
-        created_count=2,
-        updated_count=3,
-        skipped_count=4,
-        failed_count=1,
-        error_summary="one row failed",
-    )
-
-    status = repo.data_foundation_status("default")
-
-    assert status["sync"]["running"] is False
-    assert status["sync"]["last_status"] == "partial"
-    assert status["sync"]["last_error"] == "one row failed"
-    assert status["sync"]["last_counts"] == {
-        "created": 2,
-        "updated": 3,
-        "skipped": 4,
-        "failed": 1,
-    }

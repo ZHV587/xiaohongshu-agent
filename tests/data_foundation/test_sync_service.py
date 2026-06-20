@@ -9,17 +9,74 @@ from data_foundation.sources.base import SourceSyncResult
 @dataclass
 class RecordingRepository:
     run_id: str = "run-1"
+    registered: list[dict[str, Any]] = field(default_factory=list)
     started: dict[str, Any] | None = None
     finished: dict[str, Any] | None = None
+    source_finished: list[dict[str, Any]] = field(default_factory=list)
     finish_calls: list[dict[str, Any]] = field(default_factory=list)
 
-    def start_sync_run(self, **kwargs):
-        self.started = kwargs
+    def register_source(self, **kwargs):
+        self.registered.append(kwargs)
+        return type(
+            "Source",
+            (),
+            {
+                "id": f"source-{len(self.registered)}",
+                "tenant_id": kwargs["tenant_id"],
+                "source_type": kwargs["source_type"],
+                "name": kwargs["name"],
+                "config": kwargs.get("config") or {},
+                "schedule_seconds": kwargs.get("schedule_seconds", 0),
+            },
+        )()
+
+    def start_run(self, source_id, **kwargs):
+        self.started = {"source_id": source_id, **kwargs}
         return self.run_id
+
+    def finish_run(self, run_id, **kwargs):
+        self.finished = {"run_id": run_id, **kwargs}
+        self.finish_calls.append({"run_id": run_id, **kwargs})
+        return True
+
+    def finish_source(self, source_id, **kwargs):
+        self.source_finished.append({"source_id": source_id, **kwargs})
+        return True
+
+
+@dataclass
+class RecordingSourceRepository:
+    resource_repo: RecordingRepository
+
+    def register_source(self, **kwargs):
+        return self.resource_repo.register_source(**kwargs)
+
+    def start_run(self, source_id, **kwargs):
+        return self.resource_repo.start_run(source_id, **kwargs)
+
+    def finish_run(self, run_id, **kwargs):
+        return self.resource_repo.finish_run(run_id, **kwargs)
+
+    def finish_source(self, source_id, **kwargs):
+        return self.resource_repo.finish_source(source_id, **kwargs)
+
+
+def _sync_with_source_repo(func, repo: RecordingRepository, **kwargs):
+    return func(
+        repo,
+        source_repo=RecordingSourceRepository(repo),
+        **kwargs,
+    )
+
+
+@dataclass
+class LegacyRecordingRepository:
+    def start_sync_run(self, **kwargs):
+        raise AssertionError("sync_feishu_sources must not use ResourceRepository.start_sync_run")
 
     def finish_sync_run(self, **kwargs):
         self.finished = kwargs
-        self.finish_calls.append(kwargs)
+        raise AssertionError("sync_feishu_sources must not use ResourceRepository.finish_sync_run")
 
 
 def _install_processors(
@@ -66,7 +123,8 @@ def test_sync_service_records_success(monkeypatch):
         wiki_result=SourceSyncResult("succeeded", 1, 1, 0, 0, 0, [], {}),
     )
 
-    result = sync_feishu_sources(
+    result = _sync_with_source_repo(
+        sync_feishu_sources,
         repo,
         tenant_id="default",
         actor_open_id="ou_user",
@@ -86,8 +144,9 @@ def test_sync_service_records_success(monkeypatch):
         "errors": [],
     }
     assert repo.started is not None
-    assert repo.started["source_type"] == "feishu_base"
-    assert repo.started["read_count"] == 2
+    assert repo.registered[0]["source_type"] == "feishu_base"
+    assert repo.registered[1]["source_type"] == "feishu_wiki"
+    assert repo.started["source_id"] == "source-1"
     assert repo.finished is not None
     assert repo.finished["status"] == "succeeded"
     assert repo.finished["created_count"] == 3
@@ -124,7 +183,8 @@ def test_sync_service_invokes_feishu_source_processors(monkeypatch):
     monkeypatch.setattr(sync_service, "FeishuBaseSourceProcessor", FakeBaseProcessor)
     monkeypatch.setattr(sync_service, "FeishuWikiSourceProcessor", FakeWikiProcessor)
 
-    result = sync_service.sync_feishu_sources(
+    result = _sync_with_source_repo(
+        sync_service.sync_feishu_sources,
         repo,
         tenant_id="default",
         actor_open_id="ou_user",
@@ -156,7 +216,8 @@ def test_sync_service_records_partial_success(monkeypatch):
         wiki_result=SourceSyncResult("succeeded", 0, 0, 0, 0, 0, [], {}),
     )
 
-    result = sync_feishu_sources(
+    result = _sync_with_source_repo(
+        sync_feishu_sources,
         repo,
         tenant_id="default",
         actor_open_id="ou_user",
@@ -185,7 +246,8 @@ def test_sync_service_records_failed_when_everything_fails(monkeypatch):
         wiki_result=SourceSyncResult("failed", 0, 0, 0, 0, 1, ["bad wiki"], {}),
     )
 
-    result = sync_feishu_sources(
+    result = _sync_with_source_repo(
+        sync_feishu_sources,
         repo,
         tenant_id="default",
         actor_open_id="ou_user",
@@ -212,7 +274,8 @@ def test_sync_service_includes_source_loader_errors(monkeypatch):
         wiki_result=SourceSyncResult("succeeded", 0, 0, 0, 0, 0, [], {}),
     )
 
-    result = sync_feishu_sources(
+    result = _sync_with_source_repo(
+        sync_feishu_sources,
         repo,
         tenant_id="default",
         actor_open_id="ou_user",
@@ -238,7 +301,8 @@ def test_sync_service_records_failed_when_sync_raises(monkeypatch):
         wiki_result=RuntimeError("feishu import crashed"),
     )
 
-    result = sync_feishu_sources(
+    result = _sync_with_source_repo(
+        sync_feishu_sources,
         repo,
         tenant_id="default",
         actor_open_id="ou_user",
@@ -253,3 +317,26 @@ def test_sync_service_records_failed_when_sync_raises(monkeypatch):
     assert repo.finished is not None
     assert repo.finished["status"] == "failed"
     assert repo.finished["error_summary"] == "RuntimeError: feishu import crashed"
+
+
+def test_sync_service_rejects_legacy_sync_run_repository(monkeypatch):
+    from data_foundation.sync_service import sync_feishu_sources
+
+    repo = LegacyRecordingRepository()
+    source_repo = RecordingRepository()
+    _install_processors(
+        monkeypatch,
+        base_result=SourceSyncResult("succeeded", 0, 0, 0, 0, 0, [], {}),
+        wiki_result=SourceSyncResult("succeeded", 0, 0, 0, 0, 0, [], {}),
+    )
+
+    result = sync_feishu_sources(
+        repo,
+        source_repo=RecordingSourceRepository(source_repo),
+        tenant_id="default",
+        actor_open_id="ou_user",
+        triggered_by="manual",
+    )
+
+    assert result["status"] == "succeeded"
+    assert source_repo.started is not None

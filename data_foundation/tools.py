@@ -23,6 +23,7 @@ from data_foundation.performance_feedback import (
 )
 from data_foundation.repository import ResourceRepository
 from data_foundation.search import keyword_search, semantic_search
+from data_foundation.source_repository import SourceRepository
 from data_foundation.sync_service import sync_feishu_sources
 
 
@@ -202,6 +203,7 @@ def sync_feishu_resources(config: RunnableConfig | None = None) -> dict[str, Any
     with _repository() as repo:
         return sync_feishu_sources(
             repo,
+            source_repo=SourceRepository(repo.conn),
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
             triggered_by="manual",
@@ -325,5 +327,3 @@ data_foundation_tools = [
     save_performance_metric,
     get_resource_performance,
 ]
-
-phase3_tools = data_foundation_tools

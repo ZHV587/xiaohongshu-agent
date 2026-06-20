@@ -283,7 +283,7 @@ Phase 4.5A 详细设计见 `docs/superpowers/specs/2026-06-20-phase-4-5a-operati
 2. 手动同步遇到锁冲突时，返回“已有同步正在运行”。
 3. 定时同步遇到锁冲突时跳过本轮，并记录 skipped。
 4. outbox worker 使用 `FOR UPDATE SKIP LOCKED` 领取任务。
-5. outbox 失败按 `attempts`、`available_at`、`last_error` 做重试和退避。
+5. outbox 失败按 `attempts`、`next_attempt_at`、`error_code`、`error_summary`、租约字段和 dead/blocked 终态做重试、退避和恢复。
 
 ## 11. 配置
 

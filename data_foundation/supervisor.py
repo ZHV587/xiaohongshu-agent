@@ -22,7 +22,7 @@ class BackgroundServiceSupervisor:
         self.interval_seconds = max(0.01, float(interval_seconds))
         self.accepting_work = False
         self.start_count = 0
-        self.last_error: BaseException | None = None
+        self.last_cycle_error: BaseException | None = None
         self._scheduler = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
@@ -58,9 +58,9 @@ class BackgroundServiceSupervisor:
             if scheduler is not None:
                 try:
                     await asyncio.to_thread(lambda: asyncio.run(scheduler.run_cycle()))
-                    self.last_error = None
+                    self.last_cycle_error = None
                 except Exception as exc:
-                    self.last_error = exc
+                    self.last_cycle_error = exc
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
             except TimeoutError:
