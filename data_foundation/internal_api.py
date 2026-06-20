@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import shlex
 from dataclasses import dataclass
@@ -11,9 +12,15 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from config_center import ConfigCenter, ConfigValidationError
+from data_foundation.db import connect
+from data_foundation.permissions import default_tenant_id
+from data_foundation.repository import ResourceRepository
 from tools.lark_cli import lark_cli
 from tools.runtime_identity import identity_config
 from tools.uat_store import get_uat, save_uat
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -54,8 +61,11 @@ def _actor_from_request(request: Request) -> InternalActor:
     open_id = request.headers.get("X-XHS-Open-Id", "").strip()
     is_admin = bool(open_id and open_id in _admin_open_ids())
     claimed = request.headers.get("X-XHS-Is-Admin")
-    if claimed is not None and claimed.strip().lower() in {"true", "1", "yes"} and not is_admin:
-        raise PermissionError("Forbidden")
+    if claimed is not None:
+        claimed_is_admin = claimed.strip().lower() in {"true", "1", "yes"}
+        if claimed_is_admin != is_admin:
+            logger.warning("internal_admin_claim_mismatch")
+            raise PermissionError("Forbidden")
     return InternalActor(open_id=open_id, is_admin=is_admin)
 
 
@@ -226,6 +236,25 @@ async def internal_health_facts(request: Request) -> JSONResponse:
     return _json_ok(runtime_facts_payload())
 
 
+def data_foundation_status_payload() -> dict:
+    conn = connect()
+    try:
+        return ResourceRepository(conn).data_foundation_status(default_tenant_id())
+    finally:
+        conn.close()
+
+
+async def internal_data_foundation_status(request: Request) -> JSONResponse:
+    actor = require_admin(request)
+    if isinstance(actor, JSONResponse):
+        return actor
+    try:
+        return _json_ok({"ok": True, "status": data_foundation_status_payload()})
+    except Exception:
+        logger.warning("internal_data_foundation_status_failed")
+        return _json_error(503, "Data foundation status unavailable")
+
+
 def _config_center() -> ConfigCenter:
     return ConfigCenter(
         path=os.environ["XHS_CONFIG_CENTER_PATH"],
@@ -246,5 +275,6 @@ internal_routes = [
     Route("/internal/feishu/uat", internal_feishu_uat_post, methods=["POST"]),
     Route("/internal/feishu/chats", internal_feishu_chats, methods=["GET"]),
     Route("/internal/feishu/wiki-space", internal_feishu_wiki_space, methods=["GET"]),
+    Route("/internal/data-foundation/status", internal_data_foundation_status, methods=["GET"]),
     Route("/internal/health/facts", internal_health_facts, methods=["GET"]),
 ]

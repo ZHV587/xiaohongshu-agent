@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 
 import {
   buildBackendStatusPayload,
-  configCenterRunnerArgs,
   configCenterSaveApplyStatus,
   isConfigCenterEnabled,
 } from "../src/lib/server/config-store";
@@ -18,23 +17,6 @@ try {
   process.env.XHS_CONFIG_CENTER_PATH = ".xhs-config/config-center.enc";
   process.env.XHS_CONFIG_ENCRYPTION_KEY = "fernet-key";
   assert.equal(isConfigCenterEnabled(), true);
-  assert.deepEqual(configCenterRunnerArgs("config-status"), [
-    "--action",
-    "config-status",
-    "--config-path",
-    ".xhs-config/config-center.enc",
-    "--encryption-key",
-    "fernet-key",
-  ]);
-  assert.deepEqual(configCenterRunnerArgs("config-set"), [
-    "--action",
-    "config-set",
-    "--config-path",
-    ".xhs-config/config-center.enc",
-    "--encryption-key",
-    "fernet-key",
-  ]);
-
   const apply = configCenterSaveApplyStatus();
   assert.equal(apply.mode, "config-center");
   assert.equal(apply.applied, true);

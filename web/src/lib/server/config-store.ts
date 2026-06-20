@@ -64,12 +64,13 @@ export const secretConfigKeys = new Set([
 
 export function assertAllowedConfigKeys(
   configs: Record<string, unknown>,
+  options: { configCenterEnabled?: boolean } = {},
 ): Record<string, string> {
   const allowed = new Set([
     ...llmConfigKeys,
     ...feishuConfigKeys,
     ...embeddingConfigKeys,
-    ...runtimeApplyKeys,
+    ...(options.configCenterEnabled ? [] : runtimeApplyKeys),
   ]);
   const sanitized: Record<string, string> = {};
 
@@ -204,18 +205,4 @@ export function buildBackendStatusPayload({
         ? "配置已保存到环境文件；Python 后端需要手动重启后才会加载新版本。"
         : "配置保存后会通过固定 apply mode 触发后端重启。",
   };
-}
-
-export function configCenterRunnerArgs(action: "config-status" | "config-set"): string[] {
-  if (!process.env.XHS_CONFIG_ENCRYPTION_KEY || !process.env.XHS_CONFIG_CENTER_PATH) {
-    throw new Error("Config center is not enabled");
-  }
-  return [
-    "--action",
-    action,
-    "--config-path",
-    process.env.XHS_CONFIG_CENTER_PATH,
-    "--encryption-key",
-    process.env.XHS_CONFIG_ENCRYPTION_KEY,
-  ];
 }

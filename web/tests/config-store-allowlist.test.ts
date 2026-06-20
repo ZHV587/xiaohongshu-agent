@@ -34,6 +34,14 @@ assert.throws(
 
 assert.equal(embeddingConfigKeys.has("XHS_EMBEDDING_API_KEY"), true);
 assert.deepEqual(
+  assertAllowedConfigKeys({ XHS_BACKEND_APPLY_MODE: "manual" }),
+  { XHS_BACKEND_APPLY_MODE: "manual" },
+);
+assert.throws(
+  () => assertAllowedConfigKeys({ XHS_BACKEND_APPLY_MODE: "manual" }, { configCenterEnabled: true }),
+  /not editable/,
+);
+assert.deepEqual(
   assertAllowedConfigKeys({
     XHS_EMBEDDING_BASE_URL: "https://embedding.example/v1",
     XHS_EMBEDDING_API_KEY: "embedding-key",

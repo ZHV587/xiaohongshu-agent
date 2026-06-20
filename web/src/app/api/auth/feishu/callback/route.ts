@@ -10,6 +10,7 @@ import {
 } from "@/lib/server/feishu";
 import { signJwt } from "@/lib/server/jwt";
 import { forwardToInternalServer } from "@/lib/server/internal-client";
+import { isAdminOpenId } from "@/lib/server/authz";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -116,7 +117,7 @@ export async function GET(req: NextRequest) {
     };
     
     const syncResp = await forwardToInternalServer("/_internal/uat", "POST", openId, bodyObj, {
-      isAdmin: false,
+      isAdmin: isAdminOpenId(openId),
     });
     
     if (!syncResp.ok) {

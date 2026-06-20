@@ -56,9 +56,10 @@ export async function POST(req: NextRequest) {
     if (!body.configs || typeof body.configs !== "object") {
       return NextResponse.json({ error: "Bad Request: Missing configs object" }, { status: 400 });
     }
-    const configs = assertAllowedConfigKeys(body.configs);
+    const configCenterEnabled = isConfigCenterEnabled();
+    const configs = assertAllowedConfigKeys(body.configs, { configCenterEnabled });
 
-    if (isConfigCenterEnabled()) {
+    if (configCenterEnabled) {
       const resp = await forwardToInternalServer("/_internal/config-set", "POST", user.openId, { configs }, {
         isAdmin: true,
         allowConfigFallback: true,

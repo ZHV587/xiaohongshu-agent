@@ -34,6 +34,11 @@ test("forwards internal request over HTTP with internal headers", async () => {
     assert.equal((calls[0].init.headers as Record<string, string>)["X-XHS-Internal-Key"], "internal-secret");
     assert.equal((calls[0].init.headers as Record<string, string>)["X-XHS-Open-Id"], "ou_admin");
     assert.equal((calls[0].init.headers as Record<string, string>)["X-XHS-Is-Admin"], "true");
+
+    await forwardToInternalServer("/_internal/data-foundation-status", "GET", "ou_admin", undefined, {
+      isAdmin: true,
+    });
+    assert.equal(calls[1].url, "http://127.0.0.1:2024/internal/data-foundation/status");
   } finally {
     globalThis.fetch = originalFetch;
     if (originalBaseUrl === undefined) delete process.env.XHS_INTERNAL_BASE_URL;
@@ -66,6 +71,32 @@ test("returns degraded config fallback only for config status when internal http
     assert.equal(chatsResponse.status, 503);
     assert.equal(chatsPayload.degraded, undefined);
   } finally {
+    if (originalBaseUrl === undefined) delete process.env.XHS_INTERNAL_BASE_URL;
+    else process.env.XHS_INTERNAL_BASE_URL = originalBaseUrl;
+    if (originalSecret === undefined) delete process.env.XHS_INTERNAL_SECRET;
+    else process.env.XHS_INTERNAL_SECRET = originalSecret;
+  }
+});
+
+test("normalizes non-json internal upstream errors and disables caching", async () => {
+  const originalBaseUrl = process.env.XHS_INTERNAL_BASE_URL;
+  const originalSecret = process.env.XHS_INTERNAL_SECRET;
+  const originalFetch = globalThis.fetch;
+  process.env.XHS_INTERNAL_BASE_URL = "http://127.0.0.1:2024";
+  process.env.XHS_INTERNAL_SECRET = "internal-secret";
+  globalThis.fetch = (async () => new Response("proxy failure", { status: 502 })) as typeof fetch;
+
+  try {
+    const response = await forwardToInternalServer("/_internal/chats", "GET", "ou_user", undefined, {
+      isAdmin: false,
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 502);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    assert.equal(payload.error, "Internal HTTP returned a non-JSON response");
+  } finally {
+    globalThis.fetch = originalFetch;
     if (originalBaseUrl === undefined) delete process.env.XHS_INTERNAL_BASE_URL;
     else process.env.XHS_INTERNAL_BASE_URL = originalBaseUrl;
     if (originalSecret === undefined) delete process.env.XHS_INTERNAL_SECRET;

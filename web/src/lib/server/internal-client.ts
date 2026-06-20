@@ -17,6 +17,7 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/wiki-space": { path: "/internal/feishu/wiki-space", method: "GET" },
   "/_internal/config-status": { path: "/internal/config", method: "GET" },
   "/_internal/config-set": { path: "/internal/config", method: "POST" },
+  "/_internal/data-foundation-status": { path: "/internal/data-foundation/status", method: "GET" },
 };
 
 function jsonResponse(payload: Record<string, unknown>, status: number): Response {
@@ -138,13 +139,26 @@ export async function forwardToInternalServer(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    return await fetch(new URL(route.path, baseUrl).toString(), {
+    const upstream = await fetch(new URL(route.path, baseUrl).toString(), {
       method: route.method,
       headers,
       body: route.method === "POST" ? JSON.stringify(extraBody || {}) : undefined,
       cache: "no-store",
       signal: controller.signal,
     });
+    const raw = await upstream.text();
+    try {
+      const payload = JSON.parse(raw);
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return jsonResponse({ error: "Internal HTTP returned an invalid JSON payload" }, 502);
+      }
+      return jsonResponse(payload, upstream.status);
+    } catch {
+      if (allowsConfigFallback(pathName, extraHeaders)) {
+        return recoverConfigLocally(pathName, openId, extraBody);
+      }
+      return jsonResponse({ error: "Internal HTTP returned a non-JSON response" }, 502);
+    }
   } catch (error) {
     if (allowsConfigFallback(pathName, extraHeaders)) {
       return recoverConfigLocally(pathName, openId, extraBody);

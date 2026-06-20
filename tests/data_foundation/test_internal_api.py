@@ -46,6 +46,23 @@ def test_admin_route_rejects_non_admin_even_if_header_claims_admin(monkeypatch):
     assert response.json()["error"] == "Forbidden"
 
 
+def test_admin_claim_mismatch_rejects_admin_claimed_as_non_admin(monkeypatch, caplog):
+    client = _client(monkeypatch, admins="ou_real_admin")
+
+    response = client.get(
+        "/internal/config",
+        headers={
+            "X-XHS-Internal-Key": "internal-secret",
+            "X-XHS-Open-Id": "ou_real_admin",
+            "X-XHS-Is-Admin": "false",
+        },
+    )
+
+    assert response.status_code == 403
+    assert "internal_admin_claim_mismatch" in caplog.text
+    assert "ou_real_admin" not in caplog.text
+
+
 def _admin_headers(secret: str = "internal-secret", open_id: str = "ou_admin") -> dict[str, str]:
     return {
         "X-XHS-Internal-Key": secret,
@@ -187,6 +204,59 @@ def test_internal_health_facts_is_admin_only(monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+def test_internal_data_foundation_status_is_admin_only(monkeypatch):
+    client = _client(monkeypatch, admins="ou_admin")
+
+    response = client.get(
+        "/internal/data-foundation/status",
+        headers={
+            "X-XHS-Internal-Key": "internal-secret",
+            "X-XHS-Open-Id": "ou_user",
+            "X-XHS-Is-Admin": "false",
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_internal_data_foundation_status_returns_repository_summary(monkeypatch):
+    client = _client(monkeypatch, admins="ou_admin")
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setattr(
+        internal_api,
+        "data_foundation_status_payload",
+        lambda: {
+            "tenant_id": "default",
+            "resources": {"total": 2, "by_type": {"document": 2}},
+            "sync": {"running": False},
+            "outbox": {"pending": 0},
+        },
+    )
+
+    response = client.get("/internal/data-foundation/status", headers=_admin_headers())
+
+    assert response.status_code == 200
+    assert response.json()["status"]["resources"]["total"] == 2
+    assert "credentials" not in response.text
+
+
+def test_internal_data_foundation_status_error_does_not_log_exception_details(monkeypatch, caplog):
+    client = _client(monkeypatch, admins="ou_admin")
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setattr(
+        internal_api,
+        "data_foundation_status_payload",
+        lambda: (_ for _ in ()).throw(RuntimeError("postgresql://user:db-secret@example/db")),
+    )
+
+    response = client.get("/internal/data-foundation/status", headers=_admin_headers())
+
+    assert response.status_code == 503
+    assert "db-secret" not in caplog.text
 
 
 def test_internal_health_facts_returns_safe_shape(monkeypatch):
