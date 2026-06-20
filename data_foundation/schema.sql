@@ -1,6 +1,6 @@
 create extension if not exists pgcrypto;
 create extension if not exists vector;
-create extension if not exists pg_trgm;
+create extension if not exists pg_trgm with schema public;
 
 create table if not exists resources (
   id uuid primary key default gen_random_uuid(),
@@ -25,7 +25,7 @@ create index if not exists idx_resources_fts on resources using gin (
   to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content_text, ''))
 );
 create index if not exists idx_resources_trgm_content on resources using gin (
-  (coalesce(title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content_text, '')) gin_trgm_ops
+  (coalesce(title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content_text, '')) public.gin_trgm_ops
 );
 
 create table if not exists resource_mappings (

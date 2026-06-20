@@ -128,6 +128,13 @@ def test_schema_source_uses_tenant_recent_resource_version_index_and_safe_reset(
     assert "cascade" not in reset_source
 
 
+def test_schema_source_qualifies_trigram_operator_class_for_custom_search_paths():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "create extension if not exists pg_trgm with schema public" in schema
+    assert "public.gin_trgm_ops" in schema
+
+
 def test_reset_allowlist_contains_only_all_operational_tables():
     assert set(db.DATA_FOUNDATION_TABLES) == EXPECTED_TABLES
 
