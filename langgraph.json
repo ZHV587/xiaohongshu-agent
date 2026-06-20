@@ -6,5 +6,9 @@
   "auth": {
     "path": "./auth.py:auth"
   },
+  "http": {
+    "app": "./data_foundation/http_app.py:app",
+    "enable_custom_route_auth": false
+  },
   "env": ".env"
 }

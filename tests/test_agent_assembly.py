@@ -271,7 +271,12 @@ def test_agent_does_not_import_scheduler_daemon_entrypoint(monkeypatch):
 
     import importlib
     import data_foundation.scheduler as scheduler
+    from data_foundation.supervisor import BackgroundServiceSupervisor
 
+    async def forbidden_start(self):
+        raise AssertionError("agent import must not start background services")
+
+    monkeypatch.setattr(BackgroundServiceSupervisor, "start", forbidden_start)
     import agent as agent_module
     importlib.reload(agent_module)
 
