@@ -283,6 +283,16 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
         visibility="team",
         owner_open_id="ou_owner",
     )
+    repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="external_note",
+        title="External",
+        content_text="external-secret",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+    )
 
     expired_source = migrated_conn.execute(
         """
@@ -303,10 +313,24 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
     )
     migrated_conn.execute(
         """
+        insert into sync_sources (
+          tenant_id, source_type, name, credentials, schedule_seconds, next_run_at, lease_expires_at
+        )
+        values ('other-tenant', 'feishu_wiki', 'other-running', '{"token":"other-credentials-secret"}', 60, now() - interval '1 minute', now() + interval '1 minute')
+        """
+    )
+    migrated_conn.execute(
+        """
         insert into sync_runs (tenant_id, sync_source_id, source_type, status, started_at)
         values ('default', %s, 'feishu_base', 'succeeded', now())
         """,
         (expired_source,),
+    )
+    migrated_conn.execute(
+        """
+        insert into sync_runs (tenant_id, source_type, status, started_at)
+        values ('other-tenant', 'feishu_base', 'failed', now() + interval '1 second')
+        """
     )
 
     for status in ("pending", "retry", "processing", "blocked", "dead", "succeeded", "superseded"):
@@ -316,6 +340,13 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
             values ('default', 'embedding_generate', %s, '{"token":"outbox-payload-secret"}', %s)
             """,
             (f"runtime-facts-{status}", status),
+        )
+        migrated_conn.execute(
+            """
+            insert into resource_outbox (tenant_id, topic, dedupe_key, payload, status)
+            values ('other-tenant', 'embedding_generate', %s, '{"token":"other-outbox-payload-secret"}', %s)
+            """,
+            (f"other-runtime-facts-{status}", status),
         )
 
     active_index = migrated_conn.execute(
@@ -335,6 +366,15 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
           expected_resources, completed_resources, failed_resources
         )
         values ('default', 'model-b', 'cfg-2', 1536, 'building', 2, 0, 1)
+        """
+    )
+    migrated_conn.execute(
+        """
+        insert into embedding_indexes (
+          tenant_id, embedding_model, config_version, dimensions, status,
+          expected_resources, completed_resources, failed_resources
+        )
+        values ('other-tenant', 'model-other', 'cfg-other', 1536, 'building', 99, 98, 1)
         """
     )
     migrated_conn.execute(
@@ -379,8 +419,19 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
     }
     assert facts["embedding"]["active"]["config_version"] == "cfg-1"
     assert facts["embedding"]["building"]["config_version"] == "cfg-2"
-    assert facts["resources"]["total"] == 2
-    assert facts["resources"]["by_type"] == {"feishu_base_record": 1, "feishu_doc": 1}
+    assert facts["resources"]["total"] == 3
+    assert facts["resources"]["by_type"] == {
+        "feishu_base_record": 1,
+        "feishu_doc": 1,
+        "generated_topic": 0,
+        "generated_copy": 0,
+        "revision_request": 0,
+        "performance_metric": 0,
+        "draft": 0,
+        "topic": 0,
+        "doc": 0,
+        "other": 1,
+    }
     assert facts["resources"]["last_indexed_at"] is not None
     assert facts["errors"][0]["error_code"] == "SYNC_FAILED"
     assert facts["errors"][0]["count"] == 3
@@ -399,3 +450,5 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
     assert "resource-json-secret" not in rendered
     assert "indexed-body-secret" not in rendered
     assert "OTHER_TENANT" not in rendered
+    assert "cfg-other" not in rendered
+    assert "other-outbox-payload-secret" not in rendered

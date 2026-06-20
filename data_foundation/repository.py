@@ -16,6 +16,17 @@ from data_foundation.permissions import readable_resource_where
 
 OUTBOX_STATUSES = ("pending", "retry", "processing", "blocked", "dead", "succeeded", "superseded")
 EMBEDDING_RUNTIME_STATUSES = ("active", "building")
+RUNTIME_RESOURCE_TYPES = (
+    "feishu_base_record",
+    "feishu_doc",
+    "generated_topic",
+    "generated_copy",
+    "revision_request",
+    "performance_metric",
+    "draft",
+    "topic",
+    "doc",
+)
 
 
 class ResourceRepository:
@@ -746,7 +757,14 @@ class ResourceRepository:
             (tenant_id,),
         ).fetchall()
 
-        by_type = {row["type"]: row["count"] for row in resource_rows}
+        by_type = {resource_type: 0 for resource_type in RUNTIME_RESOURCE_TYPES}
+        by_type["other"] = 0
+        for row in resource_rows:
+            resource_type = row["type"]
+            if resource_type in by_type:
+                by_type[resource_type] = row["count"]
+            else:
+                by_type["other"] += row["count"]
         outbox = {row["status"]: row["count"] for row in outbox_rows}
         embedding_by_status = {row["status"]: row for row in embedding_rows}
 
