@@ -1,0 +1,250 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+from typing import Any, Literal
+
+from psycopg import Connection
+from psycopg.rows import dict_row
+
+from data_foundation.db import transaction
+from data_foundation.models import EmbeddingIndex
+
+
+@dataclass(frozen=True)
+class VectorChunk:
+    chunk_index: int
+    chunk_text: str
+    embedding: list[float]
+
+
+class EmbeddingRepository:
+    def __init__(self, conn: Connection):
+        self.conn = conn
+        self.conn.row_factory = dict_row
+
+    def create_index(
+        self,
+        *,
+        tenant_id: str,
+        embedding_model: str,
+        config_version: str,
+        chunker_version: str,
+        expected_resources: int,
+    ) -> EmbeddingIndex:
+        row = self.conn.execute(
+            """
+            insert into embedding_indexes (
+              tenant_id, embedding_model, config_version, dimensions,
+              chunker_version, expected_resources
+            )
+            values (%s, %s, %s, 1536, %s, %s)
+            on conflict(tenant_id, embedding_model, config_version, chunker_version)
+            do update set expected_resources = excluded.expected_resources,
+                          updated_at = now()
+            returning *
+            """,
+            (tenant_id, embedding_model, config_version, chunker_version, expected_resources),
+        ).fetchone()
+        self.conn.commit()
+        return self._index_from_row(row)
+
+    def active_index(self, tenant_id: str) -> EmbeddingIndex | None:
+        row = self.conn.execute(
+            """
+            select *
+            from embedding_indexes
+            where tenant_id = %s and status = 'active'
+            order by activated_at desc, created_at desc
+            limit 1
+            """,
+            (tenant_id,),
+        ).fetchone()
+        return None if row is None else self._index_from_row(row)
+
+    def store_batch(
+        self,
+        *,
+        tenant_id: str,
+        embedding_index_id: str,
+        resource_id: str,
+        resource_version: int,
+        chunks: list[VectorChunk],
+    ) -> Literal["stored", "superseded"]:
+        prepared = [
+            (
+                chunk.chunk_index,
+                chunk.chunk_text,
+                self._vector_literal(chunk.embedding),
+            )
+            for chunk in chunks
+        ]
+        if any(chunk_index < 0 for chunk_index, _, _ in prepared):
+            raise ValueError("Chunk index must be zero or greater")
+
+        with transaction(self.conn):
+            index = self.conn.execute(
+                """
+                select *
+                from embedding_indexes
+                where tenant_id = %s and id = %s
+                for update
+                """,
+                (tenant_id, embedding_index_id),
+            ).fetchone()
+            if index is None:
+                raise PermissionError("Embedding index not found for tenant")
+
+            latest = self.conn.execute(
+                """
+                select max(version) as version
+                from resource_versions
+                where tenant_id = %s and resource_id = %s
+                """,
+                (tenant_id, resource_id),
+            ).fetchone()
+            if latest is None or latest["version"] is None:
+                raise PermissionError("Resource version not found for tenant")
+            if int(latest["version"]) != int(resource_version):
+                return "superseded"
+
+            already_completed = self.conn.execute(
+                """
+                select 1
+                from resource_embeddings
+                where tenant_id = %s
+                  and embedding_index_id = %s
+                  and resource_id = %s
+                  and resource_version = %s
+                limit 1
+                """,
+                (tenant_id, embedding_index_id, resource_id, resource_version),
+            ).fetchone()
+            self.conn.execute(
+                """
+                delete from resource_embeddings
+                where tenant_id = %s
+                  and embedding_index_id = %s
+                  and resource_id = %s
+                  and resource_version = %s
+                """,
+                (tenant_id, embedding_index_id, resource_id, resource_version),
+            )
+            if prepared:
+                with self.conn.cursor() as cursor:
+                    cursor.executemany(
+                        """
+                        insert into resource_embeddings (
+                          tenant_id, resource_id, resource_version, embedding_index_id,
+                          chunk_index, chunk_text, chunker_version, embedding_model, embedding
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector)
+                        """,
+                        [
+                            (
+                                tenant_id,
+                                resource_id,
+                                resource_version,
+                                embedding_index_id,
+                                chunk_index,
+                                chunk_text,
+                                index["chunker_version"],
+                                index["embedding_model"],
+                                vector_literal,
+                            )
+                            for chunk_index, chunk_text, vector_literal in prepared
+                        ],
+                    )
+            if prepared and already_completed is None:
+                self.conn.execute(
+                    """
+                    update embedding_indexes
+                    set completed_resources = completed_resources + 1,
+                        updated_at = now()
+                    where tenant_id = %s and id = %s
+                    """,
+                    (tenant_id, embedding_index_id),
+                )
+        return "stored"
+
+    def activate_if_complete(self, index_id: str, *, tenant_id: str) -> bool:
+        with transaction(self.conn):
+            self.conn.execute(
+                """
+                select id
+                from embedding_indexes
+                where tenant_id = %s
+                order by created_at, id
+                for update
+                """,
+                (tenant_id,),
+            ).fetchall()
+            index = self.conn.execute(
+                """
+                select *
+                from embedding_indexes
+                where tenant_id = %s and id = %s
+                for update
+                """,
+                (tenant_id, index_id),
+            ).fetchone()
+            if index is None:
+                raise PermissionError("Embedding index not found for tenant")
+            if (
+                index["failed_resources"] != 0
+                or index["completed_resources"] != index["expected_resources"]
+            ):
+                return False
+
+            self.conn.execute(
+                """
+                update embedding_indexes
+                set status = 'retired', updated_at = now()
+                where tenant_id = %s and status = 'active' and id <> %s
+                """,
+                (tenant_id, index_id),
+            )
+            self.conn.execute(
+                """
+                update embedding_indexes
+                set status = 'active',
+                    activated_at = coalesce(activated_at, now()),
+                    updated_at = now()
+                where tenant_id = %s and id = %s
+                """,
+                (tenant_id, index_id),
+            )
+        return True
+
+    @staticmethod
+    def _vector_literal(embedding: list[float]) -> str:
+        if len(embedding) != 1536:
+            raise ValueError("Embedding must contain exactly 1536 finite numbers")
+        values = []
+        for value in embedding:
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Embedding must contain exactly 1536 finite numbers") from exc
+            if not math.isfinite(number):
+                raise ValueError("Embedding must contain exactly 1536 finite numbers")
+            values.append(str(number))
+        return "[" + ",".join(values) + "]"
+
+    @staticmethod
+    def _index_from_row(row: Any) -> EmbeddingIndex:
+        return EmbeddingIndex(
+            id=str(row["id"]),
+            tenant_id=row["tenant_id"],
+            embedding_model=row["embedding_model"],
+            config_version=row["config_version"],
+            dimensions=row["dimensions"],
+            chunker_version=row["chunker_version"],
+            status=row["status"],
+            expected_resources=row["expected_resources"],
+            completed_resources=row["completed_resources"],
+            failed_resources=row["failed_resources"],
+            activated_at=row["activated_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
