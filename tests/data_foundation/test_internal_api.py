@@ -335,3 +335,40 @@ def test_internal_health_facts_keeps_partial_result_when_database_fails(monkeypa
     assert payload["modules"]["database"]["status"] == "unavailable"
     assert payload["modules"]["database"]["error"]["code"] == "RUNTIME_FACTS_DATABASE_UNAVAILABLE"
     assert "db-secret" not in response.text
+
+
+def test_internal_health_facts_security_regression_redacts_secret_markers(monkeypatch, caplog):
+    client = _client(monkeypatch, admins="ou_admin")
+
+    import data_foundation.internal_api as internal_api
+
+    secret_markers = [
+        "sk-runtime-secret",
+        "postgresql://user:db-secret@host/db",
+        "Authorization: Bearer token",
+    ]
+    monkeypatch.setattr(
+        internal_api,
+        "database_runtime_fact",
+        lambda observed_at: (_ for _ in ()).throw(RuntimeError(" ".join(secret_markers))),
+    )
+
+    response = client.get("/internal/health/facts", headers=_admin_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["modules"]["database"]["status"] == "unavailable"
+    rendered = response.text + caplog.text
+    for marker in secret_markers:
+        assert marker not in rendered
+
+
+def test_internal_health_facts_rejects_non_admin_user(monkeypatch):
+    client = _client(monkeypatch, admins="ou_admin")
+
+    response = client.get(
+        "/internal/health/facts",
+        headers=_admin_headers(open_id="ou_user"),
+    )
+
+    assert response.status_code == 403

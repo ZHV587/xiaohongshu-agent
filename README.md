@@ -32,6 +32,11 @@ uv run langgraph dev
 默认起在 `http://127.0.0.1:2024`。
 
 本项目已移除交互式 Python CLI 运行入口。生产和本地联调都以 Web 对话 + LangGraph server 为入口；`agent.py` 是唯一 DeepAgents/LangGraph 装配入口。
+导入 `agent.py` 不会触发飞书 adapter 更新、网络请求或子进程启动；后台 scheduler/outbox/embedding 服务只通过 LangGraph `http.app` ASGI lifespan 启停。
+
+`/internal/ok` 只用于内部 HTTP 活性探针，不代表数据底座、调度器或 embedding 队列健康。
+真实运行事实走管理员限定的 `/internal/health/facts`：响应按 `startup`、`scheduler`、`database` 模块返回，支持局部 degraded/unavailable，且只暴露固定聚合指标、安全错误码和摘要。
+管理员在现有 Web 对话应用侧栏的“运行事实”入口查看该只读面板；项目不新增独立管理后台。
 
 联调验证(另开终端,server 起好后):
 ```bash
@@ -67,6 +72,7 @@ uv run python verify_1b1.py
 - Embedding 只使用显式 `XHS_EMBEDDING_*` 配置；未配置 `XHS_EMBEDDING_API_KEY`、没有 active embedding index，或 active index 的历史 profile 不可用时，语义搜索结构化降级为关键词搜索，不回退到 `LLM_*` 文案模型配置。
 - DeepAgents/LangGraph 仍是唯一 agent runtime；第三阶段只新增普通 LangChain tools 并挂入 `create_deep_agent`。
 - Web 内部请求通过 LangGraph `http.app` 的 `/internal/*` routes 访问 Python 能力；Next 负责用户/管理员 cookie 鉴权，并用 `XHS_INTERNAL_SECRET` 调用内部 route。
+- `/internal/health/facts` 由内部密钥和管理员 open_id 双重校验；数据库不可用时接口仍返回 200 的局部模块事实，但不会把 DSN、API key、Authorization header、credentials、outbox payload、正文 chunk 或异常详情写入响应/日志。
 - 项目不恢复交互式 Python CLI 运行入口；飞书 `lark-cli` 只作为 server/worker 内部 adapter。
 - 飞书写操作不再经过 frontend business API，而是由 Agent tools 发起，并通过 HITL 完成人工确认。
 - MCP 是官方工具路径；MCP tools 必须经 interceptor 或等价 adapter 传递受控身份上下文。
