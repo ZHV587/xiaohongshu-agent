@@ -13,7 +13,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SquarePen, LogIn, LogOut, Sparkles, SlidersHorizontal } from "lucide-react";
+import { Activity, SquarePen, LogIn, LogOut, Sparkles, SlidersHorizontal } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { BRAND } from "@/lib/brand";
@@ -135,10 +135,12 @@ function UserArea() {
 function SidebarBody({
   onLlmConfigOpen,
   onFeishuConfigOpen,
+  onRuntimeFactsOpen,
   onThreadClick,
 }: {
   onLlmConfigOpen: () => void;
   onFeishuConfigOpen: () => void;
+  onRuntimeFactsOpen: () => void;
   onThreadClick?: (threadId: string | null) => void;
 }) {
   const [, setThreadId] = useQueryState("threadId");
@@ -194,6 +196,15 @@ function SidebarBody({
               >
                 <SlidersHorizontal className="size-4" />
               </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="运行事实"
+                onClick={onRuntimeFactsOpen}
+                className="size-8 text-gray-400 hover:text-coral transition-colors"
+              >
+                <Activity className="size-4" />
+              </Button>
             </>
           )}
         </div>
@@ -247,6 +258,7 @@ export default function ThreadHistory({
         <SidebarBody
           onLlmConfigOpen={() => setView("llm")}
           onFeishuConfigOpen={() => setView("feishu")}
+          onRuntimeFactsOpen={() => setView("runtime-facts")}
           onThreadClick={onThreadClick}
         />
       </div>
@@ -265,6 +277,7 @@ export default function ThreadHistory({
             <SidebarBody
               onLlmConfigOpen={() => setView("llm")}
               onFeishuConfigOpen={() => setView("feishu")}
+              onRuntimeFactsOpen={() => setView("runtime-facts")}
               onThreadClick={onThreadClick}
             />
           </SheetContent>

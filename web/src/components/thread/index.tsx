@@ -36,6 +36,7 @@ import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import ThreadHistory from "./history";
 import { LlmConfigPage } from "./history/LlmConfigPage";
 import { FeishuConfigPage } from "./history/FeishuConfigPage";
+import { RuntimeFactsPage } from "./history/RuntimeFactsPage";
 import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
@@ -797,6 +798,8 @@ export function Thread() {
               <LlmConfigPage onClose={() => setView(null)} />
             ) : view === "feishu" ? (
               <FeishuConfigPage onClose={() => setView(null)} />
+            ) : view === "runtime-facts" ? (
+              <RuntimeFactsPage onClose={() => setView(null)} />
             ) : (
               <>
                 {!chatStarted && (
