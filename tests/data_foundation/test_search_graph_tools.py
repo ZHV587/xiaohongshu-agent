@@ -27,6 +27,11 @@ class _Config:
 class _FakeRepository:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
+        self.active_index = None
+
+    def active_embedding_index(self, tenant_id: str):
+        self.calls.append(("active_index", {"tenant_id": tenant_id}))
+        return self.active_index
 
     def keyword_rows(self, **kwargs):
         self.calls.append(("keyword", kwargs))
@@ -484,6 +489,32 @@ def test_search_tool_returns_structured_json(monkeypatch, migrated_conn):
     assert result["ok"] is True
     assert result["results"][0]["title"] == "露营装备"
     assert "content_text" not in result["results"][0]
+
+
+def test_semantic_search_tool_falls_back_to_keyword_when_no_active_index(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = _FakeRepository()
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setenv("LLM_API_KEY", "must-not-be-used")
+    monkeypatch.setattr(
+        df_tools,
+        "_embed_query",
+        lambda *_args, **_kwargs: pytest.fail("semantic fallback must not call embedding provider"),
+        raising=False,
+    )
+
+    result = df_tools.semantic_search_resources.func("露营", top_k=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["mode"] == "keyword_fallback"
+    assert result["fallback_reason"] == "NO_ACTIVE_EMBEDDING_INDEX"
+    assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
 
 
 def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch):

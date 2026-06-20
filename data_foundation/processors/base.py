@@ -20,6 +20,10 @@ class ItemProcessResult:
     error_summary: str | None = None
 
 
+class PermanentProcessingError(RuntimeError):
+    """Raised when retrying the same outbox item cannot succeed without config/data changes."""
+
+
 class LeaseGuard:
     def __init__(
         self,

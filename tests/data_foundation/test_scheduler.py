@@ -96,7 +96,7 @@ def test_run_loop_processes_outbox_and_survives_batch_errors(monkeypatch):
     monkeypatch.setenv("XHS_OUTBOX_BATCH_SIZE", "7")
     monkeypatch.setattr(scheduler, "connect", lambda: FakeConnectContext())
     monkeypatch.setattr(scheduler, "OutboxRepository", FakeOutboxRepository)
-    monkeypatch.setattr(scheduler, "ProcessorRegistry", FakeRegistry)
+    monkeypatch.setattr(scheduler, "default_processor_registry", lambda _conn: FakeRegistry())
     monkeypatch.setattr(scheduler, "default_tenant_id", lambda: "tenant-test")
     monkeypatch.setattr(scheduler, "process_outbox_batch", fake_process_outbox_batch)
     monkeypatch.setattr(scheduler.time, "sleep", fake_sleep)

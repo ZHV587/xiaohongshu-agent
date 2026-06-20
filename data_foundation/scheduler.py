@@ -9,7 +9,7 @@ from data_foundation.db import connect
 from data_foundation.outbox_repository import OutboxRepository
 from data_foundation.outbox_worker import process_outbox_batch
 from data_foundation.permissions import default_tenant_id
-from data_foundation.processors.registry import ProcessorRegistry
+from data_foundation.processors.registry import default_processor_registry
 
 
 _started = False
@@ -44,7 +44,7 @@ def _run_loop() -> None:
                     process_outbox_batch(
                         repo,
                         tenant_id=default_tenant_id(),
-                        registry=ProcessorRegistry(),
+                        registry=default_processor_registry(conn),
                         batch_size=batch_size,
                     )
                 )

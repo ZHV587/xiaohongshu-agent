@@ -4,7 +4,7 @@ import pytest
 
 from data_foundation.models import OutboxItem
 from data_foundation.outbox_worker import process_outbox_batch, process_outbox_item
-from data_foundation.processors.base import LeaseGuard, ProcessResult
+from data_foundation.processors.base import LeaseGuard, PermanentProcessingError, ProcessResult
 from data_foundation.processors.registry import ProcessorRegistry
 
 
@@ -93,6 +93,17 @@ class FailingProcessor:
         raise ValueError("bad processor")
 
 
+class PermanentlyFailingProcessor:
+    topic = "embedding_generate"
+
+    def state(self):
+        return None
+
+    async def process(self, item, lease: LeaseGuard):
+        await lease.assert_owned()
+        raise PermanentProcessingError("bad config")
+
+
 @pytest.mark.asyncio
 async def test_unregistered_topic_is_blocked():
     repo = RecordingRepo([_item(topic="meili_index")])
@@ -170,6 +181,31 @@ async def test_lost_lease_prevents_terminal_success():
         "lease_owner": "worker-a",
         "error_code": "LEASE_LOST",
         "error_summary": "RuntimeError: LEASE_LOST",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_permanent_processor_error_blocks_item():
+    repo = RecordingRepo([_item(topic="embedding_generate")])
+    registry = ProcessorRegistry({"embedding_generate": PermanentlyFailingProcessor()})
+
+    result = await process_outbox_item(
+        _item(topic="embedding_generate"),
+        repo=repo,
+        registry=registry,
+        tenant_id="default",
+        lease_owner="worker-a",
+        lease_seconds=60,
+    )
+
+    assert result.status == "blocked"
+    assert result.error_code == "PermanentProcessingError"
+    assert repo.failed == []
+    assert repo.blocked == [{
+        "item_id": "1",
+        "tenant_id": "default",
+        "lease_owner": "worker-a",
+        "reason_code": "PermanentProcessingError",
     }]
 
 

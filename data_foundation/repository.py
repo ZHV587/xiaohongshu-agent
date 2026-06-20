@@ -337,6 +337,11 @@ class ResourceRepository:
             },
         ).fetchall()
 
+    def active_embedding_index(self, tenant_id: str):
+        from data_foundation.embedding_repository import EmbeddingRepository
+
+        return EmbeddingRepository(self.conn).active_index(tenant_id)
+
     def add_edge(
         self,
         *,

@@ -59,7 +59,7 @@ uv run python verify_1b1.py
 - `XHS_DATABASE_URL` 指向 Postgres 权威业务库；底层通用数据沉淀不绑定单一飞书来源，飞书 Base/Wiki/Doc 只是 ingestion adapter。
 - 数据库必须启用 `pgcrypto` 与 `vector` 扩展；关键词检索走 Postgres full-text + `ILIKE` 中文兜底，语义检索走 pgvector。
 - `XHS_DEFAULT_TENANT_ID` 默认是 `default`；Agent tool 不接受自由 tenant 参数，tenant 和 actor 权限在服务端解析。
-- `XHS_EMBEDDING_MODEL` 默认 `text-embedding-3-small`；`XHS_EMBEDDING_BASE_URL` / `XHS_EMBEDDING_API_KEY` 未设置时回退到 `LLM_BASE_URL` / `LLM_API_KEY`。
+- Embedding 只使用显式 `XHS_EMBEDDING_*` 配置；未配置 `XHS_EMBEDDING_API_KEY` 或没有 active embedding index 时，语义搜索结构化降级为关键词搜索，不回退到 `LLM_*` 文案模型配置。
 - DeepAgents/LangGraph 仍是唯一 agent runtime；第三阶段只新增普通 LangChain tools 并挂入 `create_deep_agent`。
 - 项目不恢复交互式 Python CLI 运行入口；飞书 `lark-cli` 只作为 server/worker 内部 adapter。
 - 飞书写操作不再经过 frontend business API，而是由 Agent tools 发起，并通过 HITL 完成人工确认。

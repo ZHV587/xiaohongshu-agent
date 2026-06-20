@@ -5,9 +5,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+import httpx
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
-from langchain_openai import OpenAIEmbeddings
 
 from data_foundation.creation_memory import (
     save_generated_copy_resource,
@@ -36,20 +36,29 @@ def _repository() -> Iterator[ResourceRepository]:
         conn.close()
 
 
-def _embedding_model_name() -> str:
-    return os.environ.get("XHS_EMBEDDING_MODEL", "text-embedding-3-small").strip()
+class EmbeddingSearchUnavailable(RuntimeError):
+    def __init__(self, reason_code: str):
+        super().__init__(reason_code)
+        self.reason_code = reason_code
 
 
-def _embed_query(query: str) -> list[float]:
-    api_key = os.environ.get("XHS_EMBEDDING_API_KEY") or os.environ.get("LLM_API_KEY")
+def _embed_query(query: str, *, embedding_model: str) -> list[float]:
+    api_key = os.environ.get("XHS_EMBEDDING_API_KEY")
     if not api_key:
-        raise RuntimeError("XHS_EMBEDDING_API_KEY or LLM_API_KEY is required for semantic search")
-    embeddings = OpenAIEmbeddings(
-        model=_embedding_model_name(),
-        api_key=api_key,
-        base_url=os.environ.get("XHS_EMBEDDING_BASE_URL") or os.environ.get("LLM_BASE_URL"),
+        raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_CONFIG_MISSING")
+    response = httpx.post(
+        os.environ.get("XHS_EMBEDDING_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/embeddings",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={"model": embedding_model, "input": [query]},
+        timeout=float(os.environ.get("XHS_EMBEDDING_TIMEOUT_SECONDS", "30")),
     )
-    return [float(value) for value in embeddings.embed_query(query)]
+    if response.status_code in {401, 403}:
+        raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_UNAUTHORIZED")
+    response.raise_for_status()
+    data = response.json().get("data", [])
+    if len(data) != 1:
+        raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_BAD_RESPONSE")
+    return [float(value) for value in data[0]["embedding"]]
 
 
 def _search_payload(results: list[Any]) -> list[dict[str, Any]]:
@@ -85,15 +94,46 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
     """Search readable resources by configured embedding provider and pgvector."""
     actor = actor_from_config(config)
     with _repository() as repo:
+        active_index = repo.active_embedding_index(default_tenant_id())
+        if active_index is None:
+            results = keyword_search(
+                repo,
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                query=query,
+                limit=top_k,
+            )
+            return {
+                "ok": True,
+                "mode": "keyword_fallback",
+                "fallback_reason": "NO_ACTIVE_EMBEDDING_INDEX",
+                "results": _search_payload(results),
+            }
+        try:
+            embedding = _embed_query(query, embedding_model=active_index.embedding_model)
+        except EmbeddingSearchUnavailable as exc:
+            results = keyword_search(
+                repo,
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                query=query,
+                limit=top_k,
+            )
+            return {
+                "ok": True,
+                "mode": "keyword_fallback",
+                "fallback_reason": exc.reason_code,
+                "results": _search_payload(results),
+            }
         results = semantic_search(
             repo,
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
-            embedding=_embed_query(query),
-            embedding_model=_embedding_model_name(),
+            embedding=embedding,
+            embedding_model=active_index.embedding_model,
             top_k=top_k,
         )
-    return {"ok": True, "results": _search_payload(results)}
+    return {"ok": True, "mode": "semantic", "results": _search_payload(results)}
 
 
 @tool

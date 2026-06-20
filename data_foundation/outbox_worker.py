@@ -4,7 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 from data_foundation.models import OutboxItem
-from data_foundation.processors.base import ItemProcessResult, LeaseGuard
+from data_foundation.processors.base import ItemProcessResult, LeaseGuard, PermanentProcessingError
 
 
 async def process_outbox_item(
@@ -37,6 +37,15 @@ async def process_outbox_item(
     )
     try:
         result = await processor.process(item, lease)
+    except PermanentProcessingError as exc:
+        error_code = type(exc).__name__
+        repo.block_item(
+            item_id=item.id,
+            tenant_id=tenant_id,
+            lease_owner=lease_owner,
+            reason_code=error_code,
+        )
+        return ItemProcessResult(status="blocked", error_code=error_code, error_summary=str(exc))
     except Exception as exc:
         error_code = "LEASE_LOST" if str(exc) == "LEASE_LOST" else type(exc).__name__
         error_summary = f"{type(exc).__name__}: {exc}"
