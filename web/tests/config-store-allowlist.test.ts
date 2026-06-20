@@ -9,6 +9,8 @@ import {
 
 assert.equal(deployOnlyKeys.has("XHS_CONFIG_ENCRYPTION_KEY"), true);
 assert.equal(deployOnlyKeys.has("XHS_CONFIG_CENTER_PATH"), true);
+assert.equal(deployOnlyKeys.has("XHS_INTERNAL_SECRET"), true);
+assert.equal(deployOnlyKeys.has("XHS_INTERNAL_BASE_URL"), true);
 
 assert.throws(
   () => assertAllowedConfigKeys({ XHS_CONFIG_ENCRYPTION_KEY: "secret" }),
@@ -17,6 +19,16 @@ assert.throws(
 
 assert.throws(
   () => assertAllowedConfigKeys({ XHS_CONFIG_CENTER_PATH: ".xhs-config/config-center.enc" }),
+  /not editable/,
+);
+
+assert.throws(
+  () => assertAllowedConfigKeys({ XHS_INTERNAL_SECRET: "secret" }),
+  /not editable/,
+);
+
+assert.throws(
+  () => assertAllowedConfigKeys({ XHS_INTERNAL_BASE_URL: "http://127.0.0.1:2024" }),
   /not editable/,
 );
 
