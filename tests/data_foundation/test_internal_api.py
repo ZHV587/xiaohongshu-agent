@@ -105,3 +105,74 @@ def test_internal_config_missing_config_center_env_returns_500(monkeypatch):
 
     assert response.status_code == 500
     assert "Config center missing required environment" in response.json()["error"]
+
+
+def test_internal_uat_status_uses_current_open_id(monkeypatch):
+    client = _client(monkeypatch)
+
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setattr(internal_api, "get_uat", lambda open_id: "token" if open_id == "ou_user" else None)
+
+    response = client.get(
+        "/internal/feishu/status",
+        headers={
+            "X-XHS-Internal-Key": "internal-secret",
+            "X-XHS-Open-Id": "ou_user",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "authorized": True}
+
+
+def test_internal_uat_save_requires_user_identity(monkeypatch):
+    client = _client(monkeypatch)
+
+    response = client.post(
+        "/internal/feishu/uat",
+        headers={"X-XHS-Internal-Key": "internal-secret"},
+        json={"uat": "token", "refresh_token": "", "expires_at": 123, "scopes": [], "name": "User"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "Missing internal user"
+
+
+def test_internal_chats_filters_group_chats(monkeypatch):
+    client = _client(monkeypatch)
+
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setattr(internal_api, "get_uat", lambda open_id: "token")
+    monkeypatch.setattr(internal_api, "identity_config", lambda open_id: {"user": open_id})
+    monkeypatch.setattr(
+        internal_api,
+        "lark_cli",
+        lambda command, config=None: '{"data":{"chats":[{"chat_mode":"group","chat_id":"oc_1","name":"群"},{"chat_mode":"p2p","chat_id":"ou_1","name":"人"}]}}',
+    )
+
+    response = client.get(
+        "/internal/feishu/chats",
+        headers={"X-XHS-Internal-Key": "internal-secret", "X-XHS-Open-Id": "ou_user"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "chats": [{"chat_id": "oc_1", "name": "群"}]}
+
+
+def test_internal_wiki_space_falls_back_without_uat(monkeypatch):
+    monkeypatch.setenv("FEISHU_WIKI_SPACE_ID", "space_1")
+    client = _client(monkeypatch)
+
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setattr(internal_api, "get_uat", lambda open_id: None)
+
+    response = client.get(
+        "/internal/feishu/wiki-space",
+        headers={"X-XHS-Internal-Key": "internal-secret", "X-XHS-Open-Id": "ou_user"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "name": "小红书爆单手册", "space_id": "space_1"}
