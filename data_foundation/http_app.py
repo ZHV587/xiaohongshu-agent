@@ -7,6 +7,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from data_foundation.internal_api import internal_routes
 from data_foundation.supervisor import build_supervisor
 
 
@@ -28,4 +29,4 @@ async def lifespan(_app: Starlette):
         await supervisor.stop(grace_seconds=shutdown_grace_seconds())
 
 
-app = Starlette(routes=[Route("/ok", ok)], lifespan=lifespan)
+app = Starlette(routes=[Route("/ok", ok), *internal_routes], lifespan=lifespan)
