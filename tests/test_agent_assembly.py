@@ -282,3 +282,31 @@ def test_agent_does_not_import_scheduler_daemon_entrypoint(monkeypatch):
     importlib.reload(agent_module)
 
     assert not hasattr(scheduler, "start_background_services")
+
+
+def test_agent_import_does_not_update_lark_adapters(monkeypatch):
+    """导入 agent 不应触发飞书适配器的自更新。"""
+    import importlib
+    import sys
+
+    import tools.lark_cli as lark_cli
+
+    update_calls = []
+
+    def _record_update(name):
+        def _update():
+            update_calls.append(name)
+
+        return _update
+
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "false")
+    monkeypatch.setattr(lark_cli, "auto_update_lark_skills", _record_update("skills"))
+    monkeypatch.setattr(lark_cli, "auto_update_lark_cli", _record_update("cli"))
+    monkeypatch.delitem(sys.modules, "agent", raising=False)
+
+    import agent as agent_module
+
+    importlib.reload(agent_module)
+
+    assert update_calls == []

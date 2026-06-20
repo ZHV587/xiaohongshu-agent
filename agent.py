@@ -25,13 +25,7 @@ from subagents import build_baokuan_analyst
 
 from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
-from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
 from tools.lark_mcp import load_lark_mcp_tools
-
-# 启动时自动从官方仓库同步最新的飞书技能（下载失败时自动静默降级，不影响启动）
-if os.environ.get("DISABLE_AUTO_UPDATE") != "true":
-    auto_update_lark_skills()
-    auto_update_lark_cli()
 
 
 load_dotenv()
