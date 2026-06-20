@@ -14,6 +14,10 @@ from data_foundation.models import OutboxRequest, Resource
 from data_foundation.permissions import readable_resource_where
 
 
+OUTBOX_STATUSES = ("pending", "retry", "processing", "blocked", "dead", "succeeded", "superseded")
+EMBEDDING_RUNTIME_STATUSES = ("active", "building")
+
+
 class ResourceRepository:
     def __init__(self, conn: Connection):
         self.conn = conn
@@ -647,6 +651,149 @@ class ResourceRepository:
                 "superseded": outbox.get("superseded", 0),
                 "dead": outbox.get("dead", 0),
             },
+        }
+
+    def runtime_fact_aggregates(self, tenant_id: str) -> dict[str, Any]:
+        source_counts = self.conn.execute(
+            """
+            select
+              count(*) filter (where enabled) as enabled,
+              count(*) filter (
+                where enabled
+                  and next_run_at <= now()
+                  and (lease_expires_at is null or lease_expires_at <= now())
+              ) as expired,
+              count(*) filter (
+                where enabled
+                  and lease_expires_at is not null
+                  and lease_expires_at > now()
+              ) as running
+            from sync_sources
+            where tenant_id = %s
+            """,
+            (tenant_id,),
+        ).fetchone()
+        last_sync = self.conn.execute(
+            """
+            select status
+            from sync_runs
+            where tenant_id = %s
+            order by started_at desc, id desc
+            limit 1
+            """,
+            (tenant_id,),
+        ).fetchone()
+        outbox_rows = self.conn.execute(
+            """
+            select status, count(*) as count
+            from resource_outbox
+            where tenant_id = %s
+            group by status
+            """,
+            (tenant_id,),
+        ).fetchall()
+        embedding_rows = self.conn.execute(
+            """
+            select distinct on (status)
+              status,
+              embedding_model,
+              config_version,
+              dimensions,
+              expected_resources,
+              completed_resources,
+              failed_resources,
+              activated_at,
+              created_at,
+              updated_at
+            from embedding_indexes
+            where tenant_id = %s and status in ('active', 'building')
+            order by status, created_at desc, id desc
+            """,
+            (tenant_id,),
+        ).fetchall()
+        resource_rows = self.conn.execute(
+            """
+            select type, count(*) as count
+            from resources
+            where tenant_id = %s
+            group by type
+            order by type
+            """,
+            (tenant_id,),
+        ).fetchall()
+        indexed_row = self.conn.execute(
+            """
+            select max(created_at) as last_indexed_at
+            from resource_embeddings
+            where tenant_id = %s
+            """,
+            (tenant_id,),
+        ).fetchone()
+        error_rows = self.conn.execute(
+            """
+            select
+              component,
+              operation,
+              error_code,
+              error_count as count,
+              window_started_at,
+              window_ended_at
+            from service_error_aggregates
+            where tenant_id = %s
+            order by window_started_at desc, window_ended_at desc, id desc
+            limit 10
+            """,
+            (tenant_id,),
+        ).fetchall()
+
+        by_type = {row["type"]: row["count"] for row in resource_rows}
+        outbox = {row["status"]: row["count"] for row in outbox_rows}
+        embedding_by_status = {row["status"]: row for row in embedding_rows}
+
+        return {
+            "sources": {
+                "enabled": source_counts["enabled"],
+                "expired": source_counts["expired"],
+                "running": source_counts["running"],
+                "last_status": None if last_sync is None else last_sync["status"],
+            },
+            "outbox": {status: outbox.get(status, 0) for status in OUTBOX_STATUSES},
+            "embedding": {
+                status: self._runtime_embedding_fact(embedding_by_status.get(status))
+                for status in EMBEDDING_RUNTIME_STATUSES
+            },
+            "resources": {
+                "total": sum(by_type.values()),
+                "by_type": by_type,
+                "last_indexed_at": indexed_row["last_indexed_at"],
+            },
+            "errors": [
+                {
+                    "component": row["component"],
+                    "operation": row["operation"],
+                    "error_code": row["error_code"],
+                    "count": row["count"],
+                    "window_started_at": row["window_started_at"],
+                    "window_ended_at": row["window_ended_at"],
+                }
+                for row in error_rows
+            ],
+        }
+
+    def _runtime_embedding_fact(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "status": row["status"],
+            "embedding_model": row["embedding_model"],
+            "config_version": row["config_version"],
+            "dimensions": row["dimensions"],
+            "expected_resources": row["expected_resources"],
+            "completed_resources": row["completed_resources"],
+            "failed_resources": row["failed_resources"],
+            "activated_at": row["activated_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }
 
     def _lock_mapping(self, tenant_id: str, mapping: dict[str, Any] | None) -> None:

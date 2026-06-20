@@ -46,6 +46,10 @@ def test_resource_repository_no_longer_owns_sync_run_lifecycle():
     assert not hasattr(ResourceRepository, "finish_sync_run")
 
 
+def test_resource_repository_exposes_runtime_fact_aggregates():
+    assert callable(getattr(ResourceRepository, "runtime_fact_aggregates"))
+
+
 def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 
@@ -245,3 +249,153 @@ def test_same_external_mapping_can_exist_in_different_tenants(migrated_conn):
     )
 
     assert second.id != first.id
+
+
+def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+    first = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="feishu_doc",
+        title="First",
+        content_text="resource-body-secret",
+        content_json={"private": "resource-json-secret"},
+        visibility="team",
+        owner_open_id="ou_owner",
+    )
+    repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="feishu_base_record",
+        title="Second",
+        content_text="another-resource-body-secret",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+    )
+    repo.upsert_resource(
+        tenant_id="other-tenant",
+        actor_open_id="ou_owner",
+        resource_type="feishu_doc",
+        title="Other tenant",
+        content_text="other-tenant-secret",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+    )
+
+    expired_source = migrated_conn.execute(
+        """
+        insert into sync_sources (
+          tenant_id, source_type, name, credentials, schedule_seconds, next_run_at
+        )
+        values ('default', 'feishu_base', 'expired', '{"token":"credentials-secret"}', 60, now() - interval '1 minute')
+        returning id
+        """
+    ).fetchone()["id"]
+    migrated_conn.execute(
+        """
+        insert into sync_sources (
+          tenant_id, source_type, name, credentials, schedule_seconds, next_run_at, lease_expires_at
+        )
+        values ('default', 'feishu_wiki', 'running', '{"token":"credentials-secret"}', 60, now() + interval '1 minute', now() + interval '1 minute')
+        """
+    )
+    migrated_conn.execute(
+        """
+        insert into sync_runs (tenant_id, sync_source_id, source_type, status, started_at)
+        values ('default', %s, 'feishu_base', 'succeeded', now())
+        """,
+        (expired_source,),
+    )
+
+    for status in ("pending", "retry", "processing", "blocked", "dead", "succeeded", "superseded"):
+        migrated_conn.execute(
+            """
+            insert into resource_outbox (tenant_id, topic, dedupe_key, payload, status)
+            values ('default', 'embedding_generate', %s, '{"token":"outbox-payload-secret"}', %s)
+            """,
+            (f"runtime-facts-{status}", status),
+        )
+
+    active_index = migrated_conn.execute(
+        """
+        insert into embedding_indexes (
+          tenant_id, embedding_model, config_version, dimensions, status,
+          expected_resources, completed_resources, failed_resources, activated_at
+        )
+        values ('default', 'model-a', 'cfg-1', 1536, 'active', 2, 1, 0, now())
+        returning id
+        """
+    ).fetchone()["id"]
+    migrated_conn.execute(
+        """
+        insert into embedding_indexes (
+          tenant_id, embedding_model, config_version, dimensions, status,
+          expected_resources, completed_resources, failed_resources
+        )
+        values ('default', 'model-b', 'cfg-2', 1536, 'building', 2, 0, 1)
+        """
+    )
+    migrated_conn.execute(
+        """
+        insert into resource_embeddings (
+          tenant_id, resource_id, resource_version, embedding_index_id,
+          chunk_index, chunk_text, chunker_version, embedding_model, embedding
+        )
+        values ('default', %s, 1, %s, 0, 'indexed-body-secret', 'v1', 'model-a', %s::vector)
+        """,
+        (first.id, active_index, "[" + ",".join(["0"] * 1536) + "]"),
+    )
+    migrated_conn.execute(
+        """
+        insert into service_error_aggregates (
+          window_started_at, window_ended_at, tenant_id, component, operation, error_code, error_count
+        )
+        values (now() - interval '1 minute', now(), 'default', 'sync', 'import', 'SYNC_FAILED', 3)
+        """
+    )
+    migrated_conn.execute(
+        """
+        insert into service_error_aggregates (
+          window_started_at, window_ended_at, tenant_id, component, operation, error_code, error_count
+        )
+        values (now() - interval '1 minute', now(), 'other-tenant', 'sync', 'import', 'OTHER_TENANT', 9)
+        """
+    )
+    migrated_conn.commit()
+
+    facts = repo.runtime_fact_aggregates("default")
+
+    assert facts["sources"] == {"enabled": 2, "expired": 1, "running": 1, "last_status": "succeeded"}
+    assert facts["outbox"] == {
+        "pending": 1,
+        "retry": 1,
+        "processing": 1,
+        "blocked": 1,
+        "dead": 1,
+        "succeeded": 1,
+        "superseded": 1,
+    }
+    assert facts["embedding"]["active"]["config_version"] == "cfg-1"
+    assert facts["embedding"]["building"]["config_version"] == "cfg-2"
+    assert facts["resources"]["total"] == 2
+    assert facts["resources"]["by_type"] == {"feishu_base_record": 1, "feishu_doc": 1}
+    assert facts["resources"]["last_indexed_at"] is not None
+    assert facts["errors"][0]["error_code"] == "SYNC_FAILED"
+    assert facts["errors"][0]["count"] == 3
+    assert set(facts["errors"][0]) == {
+        "component",
+        "operation",
+        "error_code",
+        "count",
+        "window_started_at",
+        "window_ended_at",
+    }
+    rendered = str(facts)
+    assert "credentials-secret" not in rendered
+    assert "outbox-payload-secret" not in rendered
+    assert "resource-body-secret" not in rendered
+    assert "resource-json-secret" not in rendered
+    assert "indexed-body-secret" not in rendered
+    assert "OTHER_TENANT" not in rendered
