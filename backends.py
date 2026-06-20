@@ -14,10 +14,15 @@ CompositeBackend 按路径前缀路由(已实测:路由会剥掉前缀):
 """
 import os
 
-from deepagents.backends.composite import CompositeBackend
-from deepagents.backends.filesystem import FilesystemBackend
-from deepagents.backends.state import StateBackend
-from deepagents.backends.store import StoreBackend
+# 从 deepagents.backends 包级稳定入口导入(该子包 __all__ 显式导出这四个类),
+# 而非各自的实现子模块(composite/filesystem/state/store)——后者是内部文件布局,
+# deepagents 1.0 前可能重构;包级入口是官方对外契约,升级更稳。
+from deepagents.backends import (
+    CompositeBackend,
+    FilesystemBackend,
+    StateBackend,
+    StoreBackend,
+)
 
 # __file__ 是 backends.py 的绝对路径,其所在目录即项目根——
 # 不随调用时的工作目录漂移,比 os.getcwd() 健壮。

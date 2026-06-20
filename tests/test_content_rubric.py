@@ -2,7 +2,6 @@
 
 import pytest
 from deepagents import RubricMiddleware
-from deepagents.middleware.rubric import GraderResponse
 from langchain_core.messages import AIMessage
 
 from content_rubric import ContentRubricActivator, DEFAULT_CONTENT_RUBRIC
@@ -65,14 +64,16 @@ def test_activator_handoff_causes_real_rubric_evaluation():
     activator = ContentRubricActivator()
     rubric = RubricMiddleware(model="openai:test-model", max_iterations=1)
 
+    # 桩 grader 返回普通 dict —— 框架 _extract_graded 的官方前向兼容路径会
+    # 自行 GraderResponse.model_validate(),故测试无需 import 私有的 GraderResponse。
     class _Grader:
         def invoke(self, _input):
             return {
-                "structured_response": GraderResponse(
-                    result="satisfied",
-                    explanation="依据完整",
-                    criteria=[],
-                )
+                "structured_response": {
+                    "result": "satisfied",
+                    "explanation": "依据完整",
+                    "criteria": [],
+                }
             }
 
     rubric._grader = _Grader()

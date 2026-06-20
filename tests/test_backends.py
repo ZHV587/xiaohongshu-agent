@@ -1,45 +1,49 @@
-import os
+from deepagents.backends import StateBackend, StoreBackend
 
 from backends import build_backend
 
 
 def test_build_backend_loads_skills_via_composite():
-    """三路由 CompositeBackend 应能经 /skills/ 路由读到 topic-content skill。"""
-    import deepagents.middleware.skills as sk
+    """三路由 CompositeBackend 应能经 /skills/ 路由读到 topic-content skill。
 
+    用公开的 backend.ls() 契约验证(BackendProtocol),不依赖框架私有
+    helper(skills._list_skills)——后者是内部 API,升级 deepagents 易碎。
+    """
     backend = build_backend()
-    skills = sk._list_skills(backend, "/skills/")
-    names = [s["name"] for s in skills]
-    assert "topic-content" in names
+    entries = backend.ls("/skills/").entries or []
+    paths = [entry["path"] for entry in entries]
+    assert any("topic-content" in path for path in paths)
 
 
 def test_build_backend_skills_path_is_virtual():
     """skill 路径应是虚拟路径(以 / 开头),非 Windows 绝对路径。"""
-    import deepagents.middleware.skills as sk
-
     backend = build_backend()
-    skills = sk._list_skills(backend, "/skills/")
-    assert skills, "应至少加载到一个 skill"
-    assert skills[0]["path"].startswith("/skills/")
+    entries = backend.ls("/skills/").entries or []
+    assert entries, "应至少加载到一个 skill"
+    assert all(entry["path"].startswith("/") for entry in entries)
+
+
+def test_build_backend_skills_content_readable():
+    """经 /skills/ 路由应能读到 SKILL.md 正文(端到端验证路由 + 前缀剥离正确)。"""
+    backend = build_backend()
+    result = backend.read("/skills/topic-content/SKILL.md")
+    assert result.error is None
+    assert result.file_data is not None
+    assert result.file_data["content"].strip()
 
 
 def test_build_backend_routes_shared_to_store():
-    """/shared/ 前缀应路由到 StoreBackend,而非默认 StateBackend。"""
-    from deepagents.backends.store import StoreBackend
+    """/shared/ 前缀应路由到 StoreBackend,而非默认 StateBackend。
 
+    用公开属性 backend.routes(CompositeBackend 文档化的 Attributes)验证路由表,
+    不调用私有的 _get_backend_and_key。
+    """
     backend = build_backend()
-    # 白盒测试:直接验证路由决策;_get_backend_and_key 是框架内部 API
-    target, _key = backend._get_backend_and_key("/shared/xhs-style.md")
-    assert isinstance(target, StoreBackend)
+    assert isinstance(backend.routes["/shared/"], StoreBackend)
 
 
 def test_build_backend_routes_drafts_to_default_state():
     """/drafts/ 未单独路由,应落到默认 StateBackend。"""
-    from deepagents.backends.state import StateBackend
-
     backend = build_backend()
-    # 白盒测试:直接验证路由决策;_get_backend_and_key 是框架内部 API
-    target, _key = backend._get_backend_and_key("/drafts/x.md")
-    assert isinstance(target, StateBackend)
-
-
+    assert "/drafts/" not in backend.routes
+    assert isinstance(backend.default, StateBackend)

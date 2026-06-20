@@ -14,8 +14,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
-from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelRequest
+from langchain.agents.middleware import AgentMiddleware, ModelRequest
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 

@@ -3,13 +3,16 @@
 除验证 agent 可装配外,钉死两个收敛期修过的 Critical 安全回归:
 - 安全点A:register_harness_profile 的 key 必须 "openai"。铁律一钉死
   provider=openai,key 若误写 "anthropic" 则 profile 失配 →
-  excluded_tools={execute,write_todos} 失效 → execute(shell)暴露。
+  excluded_tools={execute} 失效 → execute(shell)暴露。
+  拦截方式:patch 公开的 register_harness_profile 捕获本次装配传参,
+  不读框架私有的 _HARNESS_PROFILES 全局表。
 - 安全点B:RubricMiddleware 必须收 BaseChatModel 实例(非裸 id 字符串)。
   收字符串会按名推断 provider(claude-*→anthropic)拿真实 ANTHROPIC_API_KEY
   绕网关泄漏。
 
 所有用例先把禁探测 + 设池 env 写好再 reload agent,避免装配阶段真实
-打网关 / 真实初始化外部模型。
+打网关 / 真实初始化外部模型。框架公开扩展面契约(导入路径稳定性)另见
+test_public_api_contract.py。
 """
 
 
@@ -39,37 +42,44 @@ def test_harness_profile_excludes_execute(monkeypatch):
 
     机制:agent.py 装配时调 register_harness_profile("openai", ...)。
     deepagents 用 model 的 provider(铁律一钉死 openai)拼 "openai:<model>"
-    去 _get_harness_profile 查 profile,profile 的 excluded_tools 驱动
-    _ToolExclusionMiddleware 在模型调用时把工具从 request.tools 抹掉。
-    若 key 误写 "anthropic",查 "openai:claude-sonnet-4-6" 命中不到本次注册,
-    excluded_tools 退回空集 → execute 暴露。
+    去查 profile,profile 的 excluded_tools 驱动 _ToolExclusionMiddleware
+    在模型调用时把工具从 request.tools 抹掉。若 key 误写 "anthropic",
+    查 "openai:claude-sonnet-4-6" 命中不到本次注册,excluded_tools 退回空集
+    → execute 暴露。
 
     注:write_todos 已重新启用(长任务规划需要),故不在排除集;真正的危险
     工具是 execute(shell 命令执行),它必须始终被排除。
 
-    注意:_HARNESS_PROFILES 是进程级全局,跨 reload 累积(additive merge)。
-    为让本用例只观测「本次 agent 装配注册了什么」、不被同会话其它用例污染,
-    reload 前先清掉相关 key,这样若 key 写错本次就查不到 → 断言变红。
+    拦截方式:patch 公开的 register_harness_profile(agent.py 的调用入口),
+    直接捕获本次装配传入的 (key, profile),而非读框架私有的 _HARNESS_PROFILES
+    全局表(后者跨 reload 累积、需手工清污染,且依赖内部实现)。直接看调用
+    参数语义更强:本次装配到底用什么 key、排除了哪些工具。
     """
     import importlib
 
-    from deepagents.profiles.harness import harness_profiles as hp
+    import deepagents
 
-    # 清掉可能由同会话其它用例 / 历史 reload 残留的注册,确保只观测本次装配
-    for key in ("openai", "openai:claude-sonnet-4-6"):
-        hp._HARNESS_PROFILES.pop(key, None)
+    captured = {}
+    real_register = deepagents.register_harness_profile
+
+    def _capturing_register(key, profile):
+        # 只记录本次 agent 装配关心的那次注册(provider key "openai")
+        if key == "openai":
+            captured["key"] = key
+            captured["profile"] = profile
+        return real_register(key, profile)
 
     _set_assembly_env(monkeypatch)
+    monkeypatch.setattr(deepagents, "register_harness_profile", _capturing_register)
     import agent as agent_module
     importlib.reload(agent_module)  # 触发 register_harness_profile("openai", ...)
 
-    profile = hp._get_harness_profile("openai:claude-sonnet-4-6")
-    # key 必须是 "openai":查 openai:<model> 才能命中本次注册;
-    # 若误写 "anthropic",这里拿到 None,下面断言全红。
-    assert profile is not None, (
-        "查不到 openai:claude-sonnet-4-6 的 harness profile —— "
-        "register_harness_profile 的 key 可能不是 'openai'"
+    # key 必须是 "openai":铁律一钉死 provider=openai,查 openai:<model> 才命中。
+    assert captured.get("key") == "openai", (
+        "register_harness_profile 未以 key='openai' 调用 —— "
+        "key 写错会导致 harness profile 失配,execute 暴露"
     )
+    profile = captured["profile"]
     assert "execute" in profile.excluded_tools
     assert "write_todos" not in profile.excluded_tools  # write_todos 已启用(长任务规划)
 
