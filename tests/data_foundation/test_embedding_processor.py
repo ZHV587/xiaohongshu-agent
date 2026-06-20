@@ -134,6 +134,10 @@ async def test_embedding_processor_posts_openai_compatible_request_and_stores_ch
     ).fetchone()
     assert row["chunk_text"] == "露营装备清单"
     assert row["embedding_model"] == "model-a"
+    assert migrated_conn.execute(
+        "select status from embedding_indexes where id = %s",
+        (index.id,),
+    ).fetchone()["status"] == "active"
 
 
 @pytest.mark.asyncio

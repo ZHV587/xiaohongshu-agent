@@ -160,6 +160,11 @@ class EmbeddingProcessor:
                 for index, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=True))
             ],
         )
+        if status == "stored":
+            self.embedding_repo.activate_if_complete(
+                embedding_index_id,
+                tenant_id=item.tenant_id,
+            )
         return ProcessResult(status="superseded" if status == "superseded" else "succeeded")
 
     def _load_current_job(
