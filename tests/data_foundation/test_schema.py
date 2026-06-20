@@ -91,7 +91,7 @@ def test_schema_source_declares_clean_operational_contract():
         assert f"create table if not exists {table}" in schema
     assert "available_at" not in schema
     assert "last_error " not in schema
-    assert "vector(1536)" in schema
+    assert "public.vector(1536)" in schema
     assert "next_attempt_at" in schema
     assert "lease_expires_at" in schema
     assert "dedupe_key text not null" in schema
@@ -131,7 +131,10 @@ def test_schema_source_uses_tenant_recent_resource_version_index_and_safe_reset(
 def test_schema_source_qualifies_trigram_operator_class_for_custom_search_paths():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
 
+    assert "create extension if not exists vector with schema public" in schema
     assert "create extension if not exists pg_trgm with schema public" in schema
+    assert "public.vector(1536)" in schema
+    assert "public.vector_cosine_ops" in schema
     assert "public.gin_trgm_ops" in schema
 
 

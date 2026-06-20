@@ -138,7 +138,7 @@ class EmbeddingRepository:
                           tenant_id, resource_id, resource_version, embedding_index_id,
                           chunk_index, chunk_text, chunker_version, embedding_model, embedding
                         )
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector)
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s::public.vector)
                         """,
                         [
                             (

@@ -323,7 +323,7 @@ def _insert_embedding(
         insert into resource_embeddings
           (tenant_id, resource_id, resource_version, embedding_index_id,
            chunk_index, chunk_text, chunker_version, embedding_model, embedding)
-        values (%s, %s, %s, %s, %s, %s, 'text-v1', %s, %s::vector)
+        values (%s, %s, %s, %s, %s, %s, 'text-v1', %s, %s::public.vector)
         """,
         (resource.tenant_id, resource.id, resource.version, index_id, chunk_index, chunk_text, model, vector),
     )

@@ -90,6 +90,35 @@ def test_keyword_rows_splits_fts_and_trigram_candidates_for_index_usage():
     }
 
 
+def test_semantic_rows_uses_schema_qualified_vector_cast_for_custom_search_paths():
+    class _CapturingConnection:
+        row_factory = None
+
+        def __init__(self):
+            self.sql = ""
+
+        def execute(self, sql, params=None):
+            self.sql = sql.lower()
+            return self
+
+        def fetchall(self):
+            return []
+
+    conn = _CapturingConnection()
+    repo = ResourceRepository(conn)  # type: ignore[arg-type]
+
+    assert repo.semantic_rows(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        embedding=[0.0] * 1536,
+        embedding_model="model-a",
+        top_k=5,
+    ) == []
+
+    assert "::public.vector" in conn.sql
+    assert "::vector" not in conn.sql
+
+
 def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 
@@ -423,7 +452,7 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
           tenant_id, resource_id, resource_version, embedding_index_id,
           chunk_index, chunk_text, chunker_version, embedding_model, embedding
         )
-        values ('default', %s, 1, %s, 0, 'indexed-body-secret', 'v1', 'model-a', %s::vector)
+        values ('default', %s, 1, %s, 0, 'indexed-body-secret', 'v1', 'model-a', %s::public.vector)
         """,
         (first.id, active_index, "[" + ",".join(["0"] * 1536) + "]"),
     )

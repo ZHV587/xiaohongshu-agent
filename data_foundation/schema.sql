@@ -1,5 +1,5 @@
 create extension if not exists pgcrypto;
-create extension if not exists vector;
+create extension if not exists vector with schema public;
 create extension if not exists pg_trgm with schema public;
 
 create table if not exists resources (
@@ -159,7 +159,7 @@ create table if not exists resource_embeddings (
   chunk_text text not null,
   chunker_version text not null,
   embedding_model text not null,
-  embedding vector(1536) not null,
+  embedding public.vector(1536) not null,
   created_at timestamptz not null default now(),
   foreign key (tenant_id, resource_id, resource_version)
     references resource_versions(tenant_id, resource_id, version) on delete cascade,
@@ -176,7 +176,7 @@ create index if not exists idx_resource_embeddings_tenant_recent
 create index if not exists idx_resource_embeddings_index
   on resource_embeddings (embedding_index_id, resource_id, resource_version);
 create index if not exists idx_resource_embeddings_vector
-  on resource_embeddings using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+  on resource_embeddings using ivfflat (embedding public.vector_cosine_ops) with (lists = 100);
 
 create table if not exists sync_sources (
   id uuid primary key default gen_random_uuid(),

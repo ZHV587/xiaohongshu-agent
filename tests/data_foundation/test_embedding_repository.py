@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
@@ -42,6 +43,13 @@ def _update_resource(conn, resource):
             "external_id": f"{resource.tenant_id}:{resource.title}",
         },
     )
+
+
+def test_embedding_repository_uses_schema_qualified_vector_cast_for_custom_search_paths():
+    source = Path("data_foundation/embedding_repository.py").read_text(encoding="utf-8").lower()
+
+    assert "::public.vector" in source
+    assert "::vector" not in source
 
 
 def test_building_index_does_not_replace_active_until_complete(migrated_conn):

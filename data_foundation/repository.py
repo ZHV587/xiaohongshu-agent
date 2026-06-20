@@ -329,10 +329,10 @@ class ResourceRepository:
                        from resource_mappings rm
                        where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
                      ) as source_updated_at,
-                     1 - (e.embedding <=> %(embedding)s::vector) as score,
+                     1 - (e.embedding <=> %(embedding)s::public.vector) as score,
                      row_number() over (
                        partition by r.id
-                       order by e.embedding <=> %(embedding)s::vector, e.chunk_index
+                       order by e.embedding <=> %(embedding)s::public.vector, e.chunk_index
                      ) as resource_rank
               from resource_embeddings e
               join embedding_indexes idx
