@@ -6,8 +6,10 @@ import math
 from types import SimpleNamespace
 
 import pytest
+from cryptography.fernet import Fernet
 
 from data_foundation.graph import expand_graph
+from data_foundation.processors.embedding import EmbeddingProviderConfig
 from data_foundation.repository import ResourceRepository
 from data_foundation.search import _result_from_row, keyword_search, semantic_search
 
@@ -521,14 +523,16 @@ def test_semantic_search_tool_requires_explicit_embedding_base_url(monkeypatch):
     from data_foundation import tools as df_tools
 
     repo = _FakeRepository()
-    repo.active_index = SimpleNamespace(embedding_model="embedding-model", dimensions=1536)
+    repo.active_index = SimpleNamespace(embedding_model="embedding-model", dimensions=1536, config_version="cfg-active")
 
     @contextmanager
     def repository():
         yield repo
 
     monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setenv("XHS_EMBEDDING_CONFIG_VERSION", "cfg-active")
     monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "embedding-key")
+    monkeypatch.setenv("XHS_EMBEDDING_MODEL", "embedding-model")
     monkeypatch.delenv("XHS_EMBEDDING_BASE_URL", raising=False)
     monkeypatch.setenv("LLM_BASE_URL", "https://chat.example/v1")
 
@@ -537,6 +541,100 @@ def test_semantic_search_tool_requires_explicit_embedding_base_url(monkeypatch):
     assert result["ok"] is True
     assert result["mode"] == "keyword_fallback"
     assert result["fallback_reason"] == "EMBEDDING_QUERY_CONFIG_MISSING"
+    assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
+
+
+def test_semantic_search_tool_uses_active_index_historical_profile(monkeypatch, tmp_path):
+    from config_center import ConfigCenter
+    from data_foundation import tools as df_tools
+
+    path = tmp_path / "config-center.enc"
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv("XHS_CONFIG_CENTER_PATH", str(path))
+    monkeypatch.setenv("XHS_CONFIG_ENCRYPTION_KEY", key)
+    center = ConfigCenter(path=path, encryption_key=key)
+    first = center.save(
+        actor_open_id="ou_admin",
+        updates={
+            "XHS_EMBEDDING_BASE_URL": "https://old.example/v1",
+            "XHS_EMBEDDING_API_KEY": "old-key",
+            "XHS_EMBEDDING_MODEL": "model-a",
+            "XHS_EMBEDDING_DIMENSIONS": "1536",
+            "XHS_EMBEDDING_BATCH_SIZE": "32",
+            "XHS_EMBEDDING_TIMEOUT_SECONDS": "11",
+        },
+    )
+    center.save(
+        actor_open_id="ou_admin",
+        updates={
+            "XHS_EMBEDDING_BASE_URL": "https://new.example/v1",
+            "XHS_EMBEDDING_API_KEY": "new-key",
+            "XHS_EMBEDDING_MODEL": "model-b",
+        },
+    )
+    repo = _FakeRepository()
+    repo.active_index = SimpleNamespace(
+        embedding_model="model-a",
+        dimensions=1536,
+        config_version=first.version,
+    )
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    captured = {}
+
+    def embed(query, *, config):
+        captured["query"] = query
+        captured["config"] = config
+        return [0.1] * 1536
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setattr(df_tools, "_embed_query", embed)
+
+    result = df_tools.semantic_search_resources.func("露营", top_k=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["mode"] == "semantic"
+    assert captured["query"] == "露营"
+    assert captured["config"].model == "model-a"
+    assert captured["config"].base_url == "https://old.example/v1"
+    assert captured["config"].api_key == "old-key"
+    assert captured["config"].timeout_seconds == 11.0
+    assert [call[0] for call in repo.calls] == ["active_index", "semantic"]
+
+
+def test_semantic_search_tool_falls_back_when_active_profile_is_missing(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = _FakeRepository()
+    repo.active_index = SimpleNamespace(
+        embedding_model="old-model",
+        dimensions=1536,
+        config_version="retired-version",
+    )
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setenv("XHS_EMBEDDING_CONFIG_VERSION", "current-version")
+    monkeypatch.setenv("XHS_EMBEDDING_BASE_URL", "https://current.example/v1")
+    monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "current-key")
+    monkeypatch.setenv("XHS_EMBEDDING_MODEL", "current-model")
+    monkeypatch.setattr(
+        df_tools,
+        "_embed_query",
+        lambda *_args, **_kwargs: pytest.fail("missing historical profile must not call provider"),
+    )
+
+    result = df_tools.semantic_search_resources.func("露营", top_k=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["mode"] == "keyword_fallback"
+    assert result["fallback_reason"] == "EMBEDDING_QUERY_PROFILE_UNAVAILABLE"
     assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
 
 
@@ -565,8 +663,14 @@ def test_embed_query_sends_requested_dimensions(monkeypatch):
 
     vector = df_tools._embed_query(
         "露营",
-        embedding_model="embedding-model",
-        dimensions=1536,
+        config=EmbeddingProviderConfig(
+            base_url="https://embedding.example/v1",
+            api_key="embedding-key",
+            model="embedding-model",
+            config_version="cfg-active",
+            dimensions=1536,
+            timeout_seconds=13.0,
+        ),
     )
 
     assert len(vector) == 1536
@@ -576,6 +680,7 @@ def test_embed_query_sends_requested_dimensions(monkeypatch):
         "input": ["露营"],
         "dimensions": 1536,
     }
+    assert captured["timeout"] == 13.0
 
 
 def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch):

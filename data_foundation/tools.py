@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -14,6 +13,7 @@ from data_foundation.creation_memory import (
     save_generated_topic_resource,
     save_user_feedback_resource,
 )
+from data_foundation.config import embedding_snapshot_for_version
 from data_foundation.db import connect
 from data_foundation.graph import expand_graph as expand_graph_query
 from data_foundation.permissions import actor_from_config, default_tenant_id
@@ -21,6 +21,7 @@ from data_foundation.performance_feedback import (
     get_resource_performance_payload,
     save_performance_metric_resource,
 )
+from data_foundation.processors.embedding import EmbeddingProviderConfig, embedding_config_from_snapshot
 from data_foundation.repository import ResourceRepository
 from data_foundation.search import keyword_search, semantic_search
 from data_foundation.source_repository import SourceRepository
@@ -42,16 +43,32 @@ class EmbeddingSearchUnavailable(RuntimeError):
         self.reason_code = reason_code
 
 
-def _embed_query(query: str, *, embedding_model: str, dimensions: int) -> list[float]:
-    api_key = os.environ.get("XHS_EMBEDDING_API_KEY")
-    base_url = os.environ.get("XHS_EMBEDDING_BASE_URL", "").strip()
-    if not api_key or not base_url:
+def _embedding_query_config_for_index(active_index: Any) -> EmbeddingProviderConfig:
+    config_version = str(getattr(active_index, "config_version", "") or "").strip()
+    if not config_version:
+        raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_PROFILE_UNAVAILABLE")
+    snapshot = embedding_snapshot_for_version(config_version)
+    if snapshot is None:
+        raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_PROFILE_UNAVAILABLE")
+    provider_config = embedding_config_from_snapshot(snapshot)
+    if provider_config is None:
         raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_CONFIG_MISSING")
+    if provider_config.state != "enabled":
+        raise EmbeddingSearchUnavailable(provider_config.reason_code or "EMBEDDING_QUERY_CONFIG_INVALID")
+    if (
+        provider_config.model != active_index.embedding_model
+        or provider_config.dimensions != active_index.dimensions
+    ):
+        raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_PROFILE_MISMATCH")
+    return provider_config
+
+
+def _embed_query(query: str, *, config: EmbeddingProviderConfig) -> list[float]:
     response = httpx.post(
-        base_url.rstrip("/") + "/embeddings",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": embedding_model, "input": [query], "dimensions": dimensions},
-        timeout=float(os.environ.get("XHS_EMBEDDING_TIMEOUT_SECONDS", "30")),
+        config.base_url.rstrip("/") + "/embeddings",
+        headers={"Authorization": f"Bearer {config.api_key}"},
+        json={"model": config.model, "input": [query], "dimensions": config.dimensions},
+        timeout=config.timeout_seconds,
     )
     if response.status_code in {401, 403}:
         raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_UNAUTHORIZED")
@@ -111,11 +128,8 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
                 "results": _search_payload(results),
             }
         try:
-            embedding = _embed_query(
-                query,
-                embedding_model=active_index.embedding_model,
-                dimensions=active_index.dimensions,
-            )
+            query_config = _embedding_query_config_for_index(active_index)
+            embedding = _embed_query(query, config=query_config)
         except EmbeddingSearchUnavailable as exc:
             results = keyword_search(
                 repo,
