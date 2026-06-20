@@ -50,6 +50,46 @@ def test_resource_repository_exposes_runtime_fact_aggregates():
     assert callable(getattr(ResourceRepository, "runtime_fact_aggregates"))
 
 
+def test_keyword_rows_splits_fts_and_trigram_candidates_for_index_usage():
+    class _CapturingConnection:
+        row_factory = None
+
+        def __init__(self):
+            self.sql = ""
+            self.params = {}
+
+        def execute(self, sql, params=None):
+            self.sql = sql.lower()
+            self.params = params or {}
+            return self
+
+        def fetchall(self):
+            return []
+
+    conn = _CapturingConnection()
+    repo = ResourceRepository(conn)  # type: ignore[arg-type]
+
+    assert repo.keyword_rows(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        query="露营",
+        limit=10,
+    ) == []
+
+    assert "fts_matches as" in conn.sql
+    assert "trigram_matches as" in conn.sql
+    assert "union all" in conn.sql
+    assert "@@ plainto_tsquery" in conn.sql
+    assert " ilike " in conn.sql
+    assert "\n                or " not in conn.sql
+    assert conn.params == {
+        "tenant_id": "default",
+        "actor_open_id": "ou_owner",
+        "query": "露营",
+        "limit": 10,
+    }
+
+
 def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 

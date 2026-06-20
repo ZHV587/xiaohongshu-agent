@@ -260,29 +260,48 @@ class ResourceRepository:
     def keyword_rows(self, *, tenant_id: str, actor_open_id: str, query: str, limit: int):
         return self.conn.execute(
             f"""
+            with fts_matches as (
+              select r.tenant_id,
+                     r.id,
+                     ts_rank(
+                       to_tsvector('simple', coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')),
+                       plainto_tsquery('simple', %(query)s)
+                     ) as score
+              from resources r
+              where {readable_resource_where('r')}
+                and to_tsvector('simple', coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, ''))
+                  @@ plainto_tsquery('simple', %(query)s)
+            ),
+            trigram_matches as (
+              select r.tenant_id,
+                     r.id,
+                     1.0::real as score
+              from resources r
+              where {readable_resource_where('r')}
+                and coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')
+                  ilike '%%' || %(query)s || '%%'
+            ),
+            ranked_matches as (
+              select tenant_id, id, max(score) as score
+              from (
+                select * from fts_matches
+                union all
+                select * from trigram_matches
+              ) matches
+              group by tenant_id, id
+            )
             select r.*,
                    (
                      select max(rm.external_updated_at)
                      from resource_mappings rm
                      where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
                    ) as source_updated_at,
-                   greatest(
-                     ts_rank(
-                       to_tsvector('simple', coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')),
-                       plainto_tsquery('simple', %(query)s)
-                     ),
-                     case when coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')
-                               ilike '%%' || %(query)s || '%%' then 1.0 else 0.0 end
-                   ) as score
-            from resources r
-            where {readable_resource_where('r')}
-              and (
-                to_tsvector('simple', coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, ''))
-                  @@ plainto_tsquery('simple', %(query)s)
-                or coalesce(r.title, '') || ' ' || coalesce(r.summary, '') || ' ' || coalesce(r.content_text, '')
-                  ilike '%%' || %(query)s || '%%'
-              )
-            order by score desc, r.updated_at desc
+                   ranked_matches.score
+            from ranked_matches
+            join resources r
+              on r.tenant_id = ranked_matches.tenant_id
+             and r.id = ranked_matches.id
+            order by ranked_matches.score desc, r.updated_at desc
             limit %(limit)s
             """,
             {"tenant_id": tenant_id, "actor_open_id": actor_open_id, "query": query, "limit": limit},
