@@ -170,6 +170,40 @@ def _source(source_id: str, tenant_id: str):
 
 
 @pytest.mark.asyncio
+async def test_empty_cycle_records_successful_execution():
+    telemetry = FakeTelemetry()
+    scheduler = Scheduler(
+        telemetry=telemetry,
+        source_repo=FakeSourceRepo(tenants=[]),
+        outbox_repo=FakeOutboxRepo(),
+        embedding_service=None,
+        source_registry=FakeSourceRegistry(None),
+        outbox_registry=FakeOutboxRegistry(status="disabled"),
+        process_outbox_batch=FakeOutboxRunner(),
+        config=SchedulerConfig(component="scheduler", instance_id="i1", deployment_id="d1"),
+    )
+
+    stats = await scheduler.run_cycle()
+
+    assert stats.tenants_visited == 0
+    assert telemetry.starts == [{
+        "component": "scheduler",
+        "instance_id": "i1",
+        "tenant_id": None,
+        "operation": "cycle",
+        "config_version": None,
+    }]
+    assert telemetry.finishes == [{
+        "execution_id": "exec-1",
+        "tenant_id": None,
+        "status": "succeeded",
+        "processed_count": 0,
+        "succeeded_count": 0,
+        "failed_count": 0,
+    }]
+
+
+@pytest.mark.asyncio
 async def test_cycle_dispatches_one_batch_per_tenant_in_fair_order():
     telemetry = FakeTelemetry()
     outbox_repo = FakeOutboxRepo()
@@ -210,7 +244,16 @@ async def test_cycle_dispatches_one_batch_per_tenant_in_fair_order():
         {"tenant_id": "busy", "topic": "embedding_generate"},
     ]
     assert telemetry.heartbeats == [{"component": "scheduler", "instance_id": "i1", "deployment_id": "d1"}]
-    assert [start["tenant_id"] for start in telemetry.starts] == ["waiting", "waiting", "busy"]
+    assert [start["tenant_id"] for start in telemetry.starts] == [None, "waiting", "waiting", "busy"]
+    cycle_finish = next(item for item in telemetry.finishes if item["execution_id"] == "exec-1")
+    assert cycle_finish == {
+        "execution_id": "exec-1",
+        "tenant_id": None,
+        "status": "failed",
+        "processed_count": 5,
+        "succeeded_count": 3,
+        "failed_count": 2,
+    }
 
 
 @pytest.mark.asyncio
@@ -234,9 +277,12 @@ async def test_cycle_records_exception_instead_of_swallowing():
     stats = await scheduler.run_cycle()
 
     assert stats.failed == 1
-    assert telemetry.finishes[-1]["status"] == "failed"
-    assert "secret" not in telemetry.finishes[-1]["error_summary"]
-    assert "token=<redacted>" in telemetry.finishes[-1]["error_summary"]
+    outbox_finish = next(item for item in telemetry.finishes if item["tenant_id"] == "waiting")
+    assert outbox_finish["status"] == "failed"
+    assert "secret" not in outbox_finish["error_summary"]
+    assert "token=<redacted>" in outbox_finish["error_summary"]
+    cycle_finish = next(item for item in telemetry.finishes if item["tenant_id"] is None)
+    assert cycle_finish["status"] == "failed"
 
 
 @pytest.mark.asyncio

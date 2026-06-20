@@ -96,6 +96,37 @@ class Scheduler:
             instance_id=self.config.instance_id,
             deployment_id=self.config.deployment_id,
         )
+        execution_id = self.telemetry.start_execution(
+            component=self.config.component,
+            instance_id=self.config.instance_id,
+            tenant_id=None,
+            operation="cycle",
+            config_version=self.config.config_version,
+        )
+        try:
+            stats = await self._run_cycle_body()
+        except Exception as exc:
+            self.telemetry.finish_execution(
+                execution_id,
+                tenant_id=None,
+                status="failed",
+                failed_count=1,
+                error=exc,
+            )
+            raise
+
+        processed = stats.sources_processed + stats.outbox_processed
+        self.telemetry.finish_execution(
+            execution_id,
+            tenant_id=None,
+            status="succeeded" if stats.failed == 0 else "failed",
+            processed_count=processed,
+            succeeded_count=max(0, processed - stats.failed),
+            failed_count=stats.failed,
+        )
+        return stats
+
+    async def _run_cycle_body(self) -> CycleStats:
         recovered_sources = self.source_repo.recover_stale_runs(
             older_than_seconds=self.config.stale_run_seconds,
             limit=self.config.tenant_limit,
