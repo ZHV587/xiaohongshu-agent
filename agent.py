@@ -23,7 +23,6 @@ from models import build_pool, build_primary_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents import build_baokuan_analyst
 
-from data_foundation.scheduler import start_background_services
 from data_foundation.tools import phase3_tools
 from tools.feishu_actions import feishu_action_tools
 from tools.lark_cli import auto_update_lark_skills, auto_update_lark_cli
@@ -36,7 +35,6 @@ if os.environ.get("DISABLE_AUTO_UPDATE") != "true":
 
 
 load_dotenv()
-start_background_services()
 
 # ── 安全加固:关掉本场景不需要的内置工具和默认子智能体 ──────────────────
 # - execute: Shell 命令执行,文案场景不需要,留着是安全隐患

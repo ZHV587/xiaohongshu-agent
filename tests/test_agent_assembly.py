@@ -265,18 +265,14 @@ def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
     assert interrupts["send_review_notification"] is True
 
 
-def test_agent_does_not_start_scheduler_unless_enabled(monkeypatch):
+def test_agent_does_not_import_scheduler_daemon_entrypoint(monkeypatch):
     _set_assembly_env(monkeypatch)
     monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
-    monkeypatch.delenv("XHS_SYNC_ENABLED", raising=False)
 
     import importlib
-    import dotenv
     import data_foundation.scheduler as scheduler
 
-    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: False)
-    scheduler._started = False
     import agent as agent_module
     importlib.reload(agent_module)
 
-    assert scheduler._started is False
+    assert not hasattr(scheduler, "start_background_services")
