@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import time
 
 from data_foundation.db import connect
+from data_foundation.outbox_repository import OutboxRepository
 from data_foundation.outbox_worker import process_outbox_batch
 from data_foundation.permissions import default_tenant_id
-from data_foundation.repository import ResourceRepository
+from data_foundation.processors.registry import ProcessorRegistry
 
 
 _started = False
@@ -37,8 +39,15 @@ def _run_loop() -> None:
     while True:
         try:
             with connect() as conn:
-                repo = ResourceRepository(conn)
-                process_outbox_batch(repo, tenant_id=default_tenant_id(), batch_size=batch_size)
+                repo = OutboxRepository(conn)
+                asyncio.run(
+                    process_outbox_batch(
+                        repo,
+                        tenant_id=default_tenant_id(),
+                        registry=ProcessorRegistry(),
+                        batch_size=batch_size,
+                    )
+                )
         except Exception:
             pass
         time.sleep(max(30, interval))

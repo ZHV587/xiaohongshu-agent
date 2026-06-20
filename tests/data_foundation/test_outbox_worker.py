@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
+import pytest
 
-from data_foundation.models import OutboxItem, ProcessorState
-from data_foundation.outbox_worker import process_outbox_batch
+from data_foundation.models import OutboxItem
+from data_foundation.outbox_worker import process_outbox_batch, process_outbox_item
+from data_foundation.processors.base import LeaseGuard, ProcessResult
+from data_foundation.processors.registry import ProcessorRegistry
 
 
 def _item(item_id: str = "1", topic: str = "meili_index") -> OutboxItem:
@@ -29,12 +31,14 @@ def _item(item_id: str = "1", topic: str = "meili_index") -> OutboxItem:
 
 
 class RecordingRepo:
-    def __init__(self, rows):
+    def __init__(self, rows, *, renew_results: list[bool] | None = None):
         self.rows = rows
+        self.renew_results = list(renew_results or [True])
         self.leases = []
         self.completed = []
         self.failed = []
         self.blocked = []
+        self.renewed = []
 
     def lease_ready(self, *, tenant_id, topics, lease_owner, batch_size, lease_seconds):
         self.leases.append({
@@ -45,6 +49,10 @@ class RecordingRepo:
             "lease_seconds": lease_seconds,
         })
         return self.rows[:batch_size]
+
+    def renew(self, **kwargs):
+        self.renewed.append(kwargs)
+        return self.renew_results.pop(0) if self.renew_results else True
 
     def complete(self, **kwargs):
         self.completed.append(kwargs)
@@ -59,85 +67,141 @@ class RecordingRepo:
         return True
 
 
-class DisabledRegistry:
-    topics = ["meili_index"]
+class SucceedingProcessor:
+    topic = "embedding_generate"
 
-    def state_for(self, topic):
-        return ProcessorState(topic=topic, status="disabled", config_version=None, reason_code="PROCESSOR_DISABLED")
+    def __init__(self):
+        self.guards = []
 
-    def processor_for(self, topic):
+    def state(self):
         return None
 
-
-class SucceedingProcessor:
-    async def process(self, item):
-        return replace(item, status="succeeded")
-
-
-class EnabledRegistry:
-    topics = ["meili_index"]
-
-    def state_for(self, topic):
-        return ProcessorState(topic=topic, status="active", config_version="v1", reason_code=None)
-
-    def processor_for(self, topic):
-        return SucceedingProcessor()
+    async def process(self, item, lease: LeaseGuard):
+        await lease.assert_owned()
+        self.guards.append(lease)
+        return ProcessResult(status="succeeded", processed_count=1)
 
 
-def test_process_outbox_batch_returns_empty_stats_when_nothing_leased():
-    repo = RecordingRepo([])
+class FailingProcessor:
+    topic = "embedding_generate"
 
-    result = process_outbox_batch(
-        repo,
+    def state(self):
+        return None
+
+    async def process(self, item, lease: LeaseGuard):
+        await lease.assert_owned()
+        raise ValueError("bad processor")
+
+
+@pytest.mark.asyncio
+async def test_unregistered_topic_is_blocked():
+    repo = RecordingRepo([_item(topic="meili_index")])
+    registry = ProcessorRegistry()
+
+    result = await process_outbox_item(
+        _item(topic="meili_index"),
+        repo=repo,
+        registry=registry,
         tenant_id="default",
-        registry=EnabledRegistry(),
-        lease_owner="outbox-worker",
+        lease_owner="worker-a",
+        lease_seconds=60,
     )
 
-    assert result == {"leased": 0, "processed": 0, "succeeded": 0, "failed": 0, "blocked": 0, "errors": []}
-    assert repo.leases == [{
+    assert result.status == "blocked"
+    assert result.error_code == "PROCESSOR_DISABLED"
+    assert repo.blocked == [{
+        "item_id": "1",
         "tenant_id": "default",
-        "topics": ["meili_index"],
-        "lease_owner": "outbox-worker",
-        "batch_size": 20,
+        "lease_owner": "worker-a",
+        "reason_code": "PROCESSOR_DISABLED",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_processor_result_controls_terminal_state():
+    repo = RecordingRepo([_item(topic="embedding_generate")])
+    processor = SucceedingProcessor()
+    registry = ProcessorRegistry({"embedding_generate": processor})
+
+    result = await process_outbox_item(
+        _item(topic="embedding_generate"),
+        repo=repo,
+        registry=registry,
+        tenant_id="default",
+        lease_owner="worker-a",
+        lease_seconds=60,
+    )
+
+    assert result.status == "succeeded"
+    assert repo.completed == [{
+        "item_id": "1",
+        "tenant_id": "default",
+        "lease_owner": "worker-a",
+        "status": "succeeded",
+    }]
+    assert repo.renewed == [{
+        "item_id": "1",
+        "tenant_id": "default",
+        "lease_owner": "worker-a",
         "lease_seconds": 60,
     }]
 
 
-def test_process_outbox_batch_blocks_disabled_processor_topic():
-    repo = RecordingRepo([_item()])
+@pytest.mark.asyncio
+async def test_lost_lease_prevents_terminal_success():
+    repo = RecordingRepo([_item(topic="embedding_generate")], renew_results=[False])
+    registry = ProcessorRegistry({"embedding_generate": SucceedingProcessor()})
 
-    result = process_outbox_batch(
-        repo,
+    result = await process_outbox_item(
+        _item(topic="embedding_generate"),
+        repo=repo,
+        registry=registry,
         tenant_id="default",
-        registry=DisabledRegistry(),
-        lease_owner="outbox-worker",
+        lease_owner="worker-a",
+        lease_seconds=60,
     )
 
+    assert result.status == "failed"
+    assert result.error_code == "LEASE_LOST"
+    assert repo.completed == []
+    assert repo.failed == [{
+        "item_id": "1",
+        "tenant_id": "default",
+        "lease_owner": "worker-a",
+        "error_code": "LEASE_LOST",
+        "error_summary": "RuntimeError: LEASE_LOST",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_process_outbox_batch_uses_registry_topics_and_continues_after_error():
+    rows = [_item("1", "embedding_generate"), _item("2", "missing")]
+    repo = RecordingRepo(rows)
+    registry = ProcessorRegistry({"embedding_generate": FailingProcessor()})
+
+    result = await process_outbox_batch(
+        repo,
+        tenant_id="default",
+        registry=registry,
+        lease_owner="worker-a",
+        batch_size=10,
+        lease_seconds=60,
+    )
+
+    assert repo.leases == [{
+        "tenant_id": "default",
+        "topics": ["embedding_generate", "graph_ingest", "meili_index"],
+        "lease_owner": "worker-a",
+        "batch_size": 10,
+        "lease_seconds": 60,
+    }]
+    assert result["leased"] == 2
+    assert result["processed"] == 2
+    assert result["failed"] == 1
     assert result["blocked"] == 1
     assert repo.blocked == [{
-        "item_id": "1",
+        "item_id": "2",
         "tenant_id": "default",
-        "lease_owner": "outbox-worker",
+        "lease_owner": "worker-a",
         "reason_code": "PROCESSOR_DISABLED",
-    }]
-    assert repo.completed == []
-
-
-def test_process_outbox_batch_completes_processor_success():
-    repo = RecordingRepo([_item()])
-
-    result = process_outbox_batch(
-        repo,
-        tenant_id="default",
-        registry=EnabledRegistry(),
-        lease_owner="outbox-worker",
-    )
-
-    assert result["succeeded"] == 1
-    assert repo.completed == [{
-        "item_id": "1",
-        "tenant_id": "default",
-        "lease_owner": "outbox-worker",
-        "status": "succeeded",
     }]

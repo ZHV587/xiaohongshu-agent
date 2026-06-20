@@ -1,11 +1,64 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from uuid import uuid4
 
+from data_foundation.models import OutboxItem
+from data_foundation.processors.base import ItemProcessResult, LeaseGuard
 
-def process_outbox_batch(
+
+async def process_outbox_item(
+    item: OutboxItem,
+    *,
+    repo,
+    registry,
+    tenant_id: str,
+    lease_owner: str,
+    lease_seconds: int,
+) -> ItemProcessResult:
+    state = registry.state_for(item.topic)
+    processor = registry.processor_for(item.topic)
+    if state.status != "active" or state.reason_code or processor is None:
+        reason_code = state.reason_code or "PROCESSOR_DISABLED"
+        repo.block_item(
+            item_id=item.id,
+            tenant_id=tenant_id,
+            lease_owner=lease_owner,
+            reason_code=reason_code,
+        )
+        return ItemProcessResult(status="blocked", error_code=reason_code, error_summary=reason_code)
+
+    lease = LeaseGuard(
+        repo,
+        item_id=item.id,
+        tenant_id=tenant_id,
+        lease_owner=lease_owner,
+        lease_seconds=lease_seconds,
+    )
+    try:
+        result = await processor.process(item, lease)
+    except Exception as exc:
+        error_code = "LEASE_LOST" if str(exc) == "LEASE_LOST" else type(exc).__name__
+        error_summary = f"{type(exc).__name__}: {exc}"
+        repo.fail(
+            item_id=item.id,
+            tenant_id=tenant_id,
+            lease_owner=lease_owner,
+            error_code=error_code,
+            error_summary=error_summary,
+        )
+        return ItemProcessResult(status="failed", error_code=error_code, error_summary=error_summary)
+
+    repo.complete(
+        item_id=item.id,
+        tenant_id=tenant_id,
+        lease_owner=lease_owner,
+        status=result.status,
+    )
+    return ItemProcessResult(status=result.status)
+
+
+async def process_outbox_batch(
     repo,
     tenant_id: str,
     *,
@@ -15,10 +68,9 @@ def process_outbox_batch(
     lease_seconds: int = 60,
 ) -> dict[str, Any]:
     lease_owner = lease_owner or f"outbox-worker:{uuid4()}"
-    topics = list(registry.topics)
     leased = repo.lease_ready(
         tenant_id=tenant_id,
-        topics=topics,
+        topics=list(registry.topics),
         lease_owner=lease_owner,
         batch_size=batch_size,
         lease_seconds=lease_seconds,
@@ -33,43 +85,25 @@ def process_outbox_batch(
     }
 
     for item in leased:
-        state = registry.state_for(item.topic)
-        processor = registry.processor_for(item.topic)
-        if state.status != "active" or state.reason_code or processor is None:
-            reason_code = state.reason_code or "PROCESSOR_DISABLED"
-            repo.block_item(
-                item_id=item.id,
-                tenant_id=tenant_id,
-                lease_owner=lease_owner,
-                reason_code=reason_code,
-            )
-            stats["processed"] += 1
-            stats["blocked"] += 1
-            continue
-
-        try:
-            result = processor.process(item)
-            if hasattr(result, "__await__"):
-                result = asyncio.run(result)
-            repo.complete(
-                item_id=item.id,
-                tenant_id=tenant_id,
-                lease_owner=lease_owner,
-                status=result.status,
-            )
-            stats["processed"] += 1
+        result = await process_outbox_item(
+            item,
+            repo=repo,
+            registry=registry,
+            tenant_id=tenant_id,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+        )
+        stats["processed"] += 1
+        if result.status in {"succeeded", "superseded"}:
             stats["succeeded"] += 1
-        except Exception as exc:
-            error_summary = f"{type(exc).__name__}: {exc}"
-            repo.fail(
-                item_id=item.id,
-                tenant_id=tenant_id,
-                lease_owner=lease_owner,
-                error_code=type(exc).__name__,
-                error_summary=error_summary,
-            )
-            stats["processed"] += 1
+        elif result.status == "blocked":
+            stats["blocked"] += 1
+        else:
             stats["failed"] += 1
-            stats["errors"].append({"id": item.id, "topic": item.topic, "error": error_summary})
+            stats["errors"].append({
+                "id": item.id,
+                "topic": item.topic,
+                "error": result.error_summary,
+            })
 
     return stats

@@ -68,7 +68,7 @@ def test_run_loop_processes_outbox_and_survives_batch_errors(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    class FakeRepository:
+    class FakeOutboxRepository:
         def __init__(self, conn):
             self.conn = conn
 
@@ -80,8 +80,12 @@ def test_run_loop_processes_outbox_and_survives_batch_errors(monkeypatch):
         if len(sleeps) == 3:
             raise StopLoop
 
-    def fake_process_outbox_batch(repo, *, tenant_id, batch_size):
-        assert isinstance(repo, FakeRepository)
+    class FakeRegistry:
+        pass
+
+    async def fake_process_outbox_batch(repo, *, tenant_id, registry, batch_size):
+        assert isinstance(repo, FakeOutboxRepository)
+        assert isinstance(registry, FakeRegistry)
         calls.append((tenant_id, batch_size))
         if len(calls) == 1:
             raise RuntimeError("temporary failure")
@@ -91,7 +95,8 @@ def test_run_loop_processes_outbox_and_survives_batch_errors(monkeypatch):
     monkeypatch.setenv("XHS_OUTBOX_INTERVAL_SECONDS", "1")
     monkeypatch.setenv("XHS_OUTBOX_BATCH_SIZE", "7")
     monkeypatch.setattr(scheduler, "connect", lambda: FakeConnectContext())
-    monkeypatch.setattr(scheduler, "ResourceRepository", FakeRepository)
+    monkeypatch.setattr(scheduler, "OutboxRepository", FakeOutboxRepository)
+    monkeypatch.setattr(scheduler, "ProcessorRegistry", FakeRegistry)
     monkeypatch.setattr(scheduler, "default_tenant_id", lambda: "tenant-test")
     monkeypatch.setattr(scheduler, "process_outbox_batch", fake_process_outbox_batch)
     monkeypatch.setattr(scheduler.time, "sleep", fake_sleep)
