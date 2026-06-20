@@ -7,6 +7,7 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 
 from data_foundation.db import transaction
+from data_foundation.errors import classify_error
 from data_foundation.models import SourceSecrets, SyncSource
 
 
@@ -253,6 +254,13 @@ class SourceRepository:
         error_code: str | None,
         error_summary: str | None,
     ) -> bool:
+        classification = None
+        if error_summary or error_code:
+            classification = classify_error(
+                message=error_summary or error_code,
+                component="source_repository",
+                operation="finish_run",
+            )
         cursor = self.conn.execute(
             """
             update sync_runs
@@ -266,7 +274,10 @@ class SourceRepository:
                 error_code = %s,
                 error_summary = left(%s, 1000),
                 finished_at = now()
-            where tenant_id = %s and id = %s
+            where tenant_id = %s
+              and id = %s
+              and status = 'running'
+              and finished_at is null
             """,
             (
                 status,
@@ -276,8 +287,8 @@ class SourceRepository:
                 updated_count,
                 skipped_count,
                 failed_count,
-                error_code,
-                error_summary,
+                error_code or (classification.error_code if classification else None),
+                classification.error_summary if classification else None,
                 tenant_id,
                 run_id,
             ),
@@ -321,7 +332,9 @@ class SourceRepository:
                     set lease_owner = null,
                         lease_expires_at = null,
                         updated_at = now()
-                    where tenant_id = %s and id = %s
+                    where tenant_id = %s
+                      and id = %s
+                      and (lease_expires_at is null or lease_expires_at <= now())
                     """,
                     (tenant_id, source_id),
                 )

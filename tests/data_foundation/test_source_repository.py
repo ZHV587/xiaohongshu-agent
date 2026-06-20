@@ -209,3 +209,73 @@ def test_sync_run_lifecycle_and_stale_recovery(migrated_conn):
     ).fetchone()
     assert recovered["status"] == "stopped"
     assert recovered["error_code"] == "STALE_SYNC_RUN"
+
+    assert repo.finish_run(
+        stale_run_id,
+        tenant_id="tenant-a",
+        status="succeeded",
+        cursor_after={},
+        read_count=1,
+        created_count=1,
+        updated_count=0,
+        skipped_count=0,
+        failed_count=0,
+        error_code=None,
+        error_summary=None,
+    ) is False
+    still_recovered = migrated_conn.execute(
+        "select status, error_code from sync_runs where id = %s",
+        (stale_run_id,),
+    ).fetchone()
+    assert still_recovered["status"] == "stopped"
+    assert still_recovered["error_code"] == "STALE_SYNC_RUN"
+
+
+def test_recover_stale_runs_does_not_clear_new_valid_source_lease(migrated_conn):
+    repo = SourceRepository(migrated_conn)
+    source = _register(repo, tenant_id="tenant-a")
+    stale_run_id = repo.start_run(source.id, tenant_id="tenant-a")
+    migrated_conn.execute(
+        """
+        update sync_runs
+        set started_at = %s
+        where id = %s
+        """,
+        (datetime.now(timezone.utc) - timedelta(hours=2), stale_run_id),
+    )
+    migrated_conn.commit()
+    leased = repo.lease_due_source(tenant_id="tenant-a", lease_owner="worker-new", lease_seconds=600)
+
+    assert leased.lease_owner == "worker-new"
+    assert repo.recover_stale_runs(older_than_seconds=300, limit=10) == 1
+    current = repo.get_source(tenant_id="tenant-a", source_id=source.id)
+    assert current.lease_owner == "worker-new"
+
+
+def test_finish_run_redacts_error_summary_before_persisting(migrated_conn):
+    repo = SourceRepository(migrated_conn)
+    source = _register(repo, tenant_id="tenant-a")
+    run_id = repo.start_run(source.id, tenant_id="tenant-a")
+
+    assert repo.finish_run(
+        run_id,
+        tenant_id="tenant-a",
+        status="failed",
+        cursor_after=None,
+        read_count=0,
+        created_count=0,
+        updated_count=0,
+        skipped_count=0,
+        failed_count=1,
+        error_code=None,
+        error_summary="request failed api_key=super-secret token=also-secret",
+    ) is True
+    row = migrated_conn.execute(
+        "select error_code, error_summary from sync_runs where id = %s",
+        (run_id,),
+    ).fetchone()
+
+    assert row["error_code"] == "internal_error"
+    assert "super-secret" not in row["error_summary"]
+    assert "also-secret" not in row["error_summary"]
+    assert "api_key=<redacted>" in row["error_summary"]
