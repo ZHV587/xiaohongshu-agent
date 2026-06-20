@@ -243,7 +243,7 @@ def test_sync_run_status_summary_uses_source_repository_lifecycle(migrated_conn)
         schedule_seconds=60,
     )
 
-    run_id = source_repo.start_run(source.id, tenant_id="default", instance_id="manual")
+    run_id = source_repo.start_run(source.id, tenant_id="default", instance_id=None)
     source_repo.finish_run(
         run_id,
         tenant_id="default",

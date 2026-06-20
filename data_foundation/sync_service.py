@@ -54,7 +54,7 @@ def sync_feishu_sources(
     run_id = source_repo.start_run(
         base_source.id,
         tenant_id=tenant_id,
-        instance_id=f"manual:{actor_open_id}",
+        instance_id=None,
         execution_id=None,
     )
 
