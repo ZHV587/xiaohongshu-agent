@@ -240,7 +240,7 @@ def test_sync_run_status_summary_uses_source_repository_lifecycle(migrated_conn)
         source_type="feishu_base",
         name="manual-feishu-base",
         config={"app_token": "app", "table_id": "tbl"},
-        schedule_seconds=0,
+        schedule_seconds=60,
     )
 
     run_id = source_repo.start_run(source.id, tenant_id="default", instance_id="manual")

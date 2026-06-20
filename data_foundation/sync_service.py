@@ -38,7 +38,7 @@ def sync_feishu_sources(
         external_id=app_token or "configured-base",
         credentials={},
         config={"app_token": app_token or "configured-base", "table_id": table_id or "configured-table"},
-        schedule_seconds=0,
+        schedule_seconds=60,
         enabled=False,
     )
     wiki_source = source_repo.register_source(
@@ -48,7 +48,7 @@ def sync_feishu_sources(
         external_id=wiki_space_id or "configured-space",
         credentials={},
         config={"wiki_space_id": wiki_space_id or "configured-space"},
-        schedule_seconds=0,
+        schedule_seconds=60,
         enabled=False,
     )
     run_id = source_repo.start_run(
@@ -191,14 +191,14 @@ def _finish(
         tenant_id=tenant_id,
         lease_owner=None,
         cursor=cursor.get("feishu_base", {}),
-        next_run_after_seconds=0,
+        next_run_after_seconds=60,
     )
     source_repo.finish_source(
         wiki_source_id,
         tenant_id=tenant_id,
         lease_owner=None,
         cursor=cursor.get("feishu_wiki", {}),
-        next_run_after_seconds=0,
+        next_run_after_seconds=60,
     )
     return {
         "ok": status == "succeeded",
