@@ -50,9 +50,10 @@ uv run python verify_1b1.py
 - 配置中心由 `XHS_CONFIG_CENTER_PATH` 指向的加密文件提供，`XHS_CONFIG_ENCRYPTION_KEY` 是启动级密钥，不能通过 UI 修改。
 - phase-2 模式开启条件：同时设置 `XHS_CONFIG_ENCRYPTION_KEY` 与 `XHS_CONFIG_CENTER_PATH`。开启后 `/api/config` 读写配置中心并返回当前配置版本；未开启时保留 `.env + apply` 的 phase-1 回退。
 - 管理员配置页和 `/api/config` 管理员接口按当前私人项目决策返回明文配置，便于直接检查和修改；日志、错误摘要、outbox payload、telemetry 和普通状态接口仍不得输出密钥。
+- `XHS_INTERNAL_BASE_URL` 与 `XHS_INTERNAL_SECRET` 是 deploy-only 配置，不进入管理员配置中心历史版本或状态 API。
 - 已纳入无重启热切的路径：主 agent 的 `ModelRouterMiddleware` sync/async 调用、子 agent 的 `ModelRouterMiddleware` 调用。
 - 未纳入无重启热切的路径：启动时静态构造的 rubric 评分模型。该路径仍需要受控重启，直到改为 registry-backed model factory。
-- `tools/web_bridge_runner.py` 可读写配置中心，但不能 reload 常驻 LangGraph 进程内存；进程内 registry reload 必须通过 LangGraph 后端进程内管理通道或 supervisor/sidecar 完成。
+- `tools/web_bridge_runner.py` 不再是 Web 生产请求主路径；仅允许作为配置恢复或维护工具使用，且 degraded fallback 必须明确返回降级状态。进程内 registry reload 必须通过 LangGraph 后端进程内管理通道或 supervisor/sidecar 完成。
 - Embedding 热生效以配置中心为版本权威：保存 `XHS_EMBEDDING_*` 后配置立即持久化，下一轮 `XHS_SCHEDULER_INTERVAL_SECONDS` scheduler cycle 会用该版本创建或续建 `building` index，回填完成后原子切换为 `active`。
 - 旧 `active` index 在新 index 完成前继续服务语义搜索；查询会按 index 记录的 `config_version` 回放历史 embedding profile，不会误用刚保存的新模型或新密钥。
 - 仅环境变量模式无法查询历史配置版本，因此 embedding profile 变化仍属于后端应用/重启边界；生产部署应开启配置中心。
@@ -65,6 +66,7 @@ uv run python verify_1b1.py
 - `XHS_DEFAULT_TENANT_ID` 默认是 `default`；Agent tool 不接受自由 tenant 参数，tenant 和 actor 权限在服务端解析。
 - Embedding 只使用显式 `XHS_EMBEDDING_*` 配置；未配置 `XHS_EMBEDDING_API_KEY`、没有 active embedding index，或 active index 的历史 profile 不可用时，语义搜索结构化降级为关键词搜索，不回退到 `LLM_*` 文案模型配置。
 - DeepAgents/LangGraph 仍是唯一 agent runtime；第三阶段只新增普通 LangChain tools 并挂入 `create_deep_agent`。
+- Web 内部请求通过 LangGraph `http.app` 的 `/internal/*` routes 访问 Python 能力；Next 负责用户/管理员 cookie 鉴权，并用 `XHS_INTERNAL_SECRET` 调用内部 route。
 - 项目不恢复交互式 Python CLI 运行入口；飞书 `lark-cli` 只作为 server/worker 内部 adapter。
 - 飞书写操作不再经过 frontend business API，而是由 Agent tools 发起，并通过 HITL 完成人工确认。
 - MCP 是官方工具路径；MCP tools 必须经 interceptor 或等价 adapter 传递受控身份上下文。
