@@ -277,6 +277,7 @@ def test_build_scheduler_uses_explicit_embedding_env_profile(monkeypatch):
             captured["profile"] = profile
 
     monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "key")
+    monkeypatch.setenv("XHS_EMBEDDING_BASE_URL", "https://embedding.example/v1")
     monkeypatch.setenv("XHS_EMBEDDING_MODEL", "model-from-env")
     monkeypatch.setenv("XHS_EMBEDDING_CONFIG_VERSION", "cfg-from-env")
     monkeypatch.setattr(scheduler, "connect", lambda: object())
@@ -293,6 +294,31 @@ def test_build_scheduler_uses_explicit_embedding_env_profile(monkeypatch):
     assert captured["profile"].embedding_model == "model-from-env"
     assert captured["profile"].config_version == "cfg-from-env"
     assert captured["profile"].chunker_version == "v1"
+
+
+def test_build_scheduler_skips_embedding_service_for_invalid_env(monkeypatch):
+    import data_foundation.scheduler as scheduler
+
+    class FakeEmbeddingIndexService:
+        def __init__(self, conn, *, profile):
+            raise AssertionError("Embedding index service should not be built for invalid embedding config")
+
+    monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "key")
+    monkeypatch.setenv("XHS_EMBEDDING_BASE_URL", "https://embedding.example/v1")
+    monkeypatch.setenv("XHS_EMBEDDING_MODEL", "model-from-env")
+    monkeypatch.setenv("XHS_EMBEDDING_DIMENSIONS", "3072")
+    monkeypatch.setattr(scheduler, "connect", lambda: object())
+    monkeypatch.setattr(scheduler, "ResourceRepository", lambda conn: object())
+    monkeypatch.setattr(scheduler, "TelemetryRepository", lambda conn: FakeTelemetry())
+    monkeypatch.setattr(scheduler, "SourceRepository", lambda conn: FakeSourceRepo(tenants=[]))
+    monkeypatch.setattr(scheduler, "OutboxRepository", lambda conn: FakeOutboxRepo())
+    monkeypatch.setattr(scheduler, "EmbeddingIndexService", FakeEmbeddingIndexService)
+    monkeypatch.setattr(scheduler, "default_source_registry", lambda repo: FakeSourceRegistry(None))
+    monkeypatch.setattr(scheduler, "default_processor_registry", lambda conn: FakeOutboxRegistry(status="disabled"))
+
+    built = scheduler.build_scheduler()
+
+    assert built.embedding_service is None
 
 
 def test_build_scheduler_uses_disabled_embedding_service_without_explicit_env(monkeypatch):

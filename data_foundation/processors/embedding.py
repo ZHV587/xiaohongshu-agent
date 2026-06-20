@@ -9,6 +9,7 @@ import httpx
 from psycopg import Connection
 from psycopg.rows import dict_row
 
+from data_foundation.config import embedding_snapshot
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
 from data_foundation.models import OutboxItem, ProcessorState
 from data_foundation.processors.base import LeaseGuard, PermanentProcessingError, ProcessResult
@@ -23,20 +24,35 @@ class EmbeddingProviderConfig:
     dimensions: int = 1536
     timeout_seconds: float = 30.0
     batch_size: int = 64
+    state: str = "enabled"
+    reason_code: str | None = None
 
 
 def embedding_config_from_env() -> EmbeddingProviderConfig | None:
-    api_key = os.environ.get("XHS_EMBEDDING_API_KEY", "").strip()
-    if not api_key:
+    values = {
+        "XHS_EMBEDDING_BASE_URL": os.environ.get("XHS_EMBEDDING_BASE_URL", ""),
+        "XHS_EMBEDDING_API_KEY": os.environ.get("XHS_EMBEDDING_API_KEY", ""),
+        "XHS_EMBEDDING_MODEL": os.environ.get("XHS_EMBEDDING_MODEL", ""),
+        "XHS_EMBEDDING_DIMENSIONS": os.environ.get("XHS_EMBEDDING_DIMENSIONS", ""),
+        "XHS_EMBEDDING_BATCH_SIZE": os.environ.get("XHS_EMBEDDING_BATCH_SIZE", ""),
+        "XHS_EMBEDDING_TIMEOUT_SECONDS": os.environ.get("XHS_EMBEDDING_TIMEOUT_SECONDS", ""),
+    }
+    snapshot = embedding_snapshot(
+        values,
+        version=os.environ.get("XHS_EMBEDDING_CONFIG_VERSION", "env").strip() or "env",
+    )
+    if snapshot.state == "disabled":
         return None
     return EmbeddingProviderConfig(
-        base_url=os.environ.get("XHS_EMBEDDING_BASE_URL", "https://api.openai.com/v1").strip(),
-        api_key=api_key,
-        model=os.environ.get("XHS_EMBEDDING_MODEL", "text-embedding-3-small").strip(),
-        config_version=os.environ.get("XHS_EMBEDDING_CONFIG_VERSION", "env").strip(),
-        dimensions=int(os.environ.get("XHS_EMBEDDING_DIMENSIONS", "1536")),
-        timeout_seconds=float(os.environ.get("XHS_EMBEDDING_TIMEOUT_SECONDS", "30")),
-        batch_size=int(os.environ.get("XHS_EMBEDDING_BATCH_SIZE", "64")),
+        base_url=snapshot.base_url,
+        api_key=snapshot.api_key,
+        model=snapshot.model,
+        config_version=snapshot.version,
+        dimensions=snapshot.dimensions,
+        timeout_seconds=snapshot.timeout_seconds,
+        batch_size=snapshot.batch_size,
+        state=snapshot.state,
+        reason_code="EMBEDDING_CONFIG_INVALID" if snapshot.state == "misconfigured" else None,
     )
 
 
@@ -92,9 +108,9 @@ class EmbeddingProcessor:
             )
         return ProcessorState(
             topic=self.topic,
-            status="active",
+            status="active" if self.config.state == "enabled" else self.config.state,
             config_version=self.config.config_version,
-            reason_code=None,
+            reason_code=self.config.reason_code,
         )
 
     async def process(self, item: OutboxItem, lease: LeaseGuard) -> ProcessResult:

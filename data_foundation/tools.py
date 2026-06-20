@@ -44,10 +44,11 @@ class EmbeddingSearchUnavailable(RuntimeError):
 
 def _embed_query(query: str, *, embedding_model: str) -> list[float]:
     api_key = os.environ.get("XHS_EMBEDDING_API_KEY")
-    if not api_key:
+    base_url = os.environ.get("XHS_EMBEDDING_BASE_URL", "").strip()
+    if not api_key or not base_url:
         raise EmbeddingSearchUnavailable("EMBEDDING_QUERY_CONFIG_MISSING")
     response = httpx.post(
-        os.environ.get("XHS_EMBEDDING_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/embeddings",
+        base_url.rstrip("/") + "/embeddings",
         headers={"Authorization": f"Bearer {api_key}"},
         json={"model": embedding_model, "input": [query]},
         timeout=float(os.environ.get("XHS_EMBEDDING_TIMEOUT_SECONDS", "30")),

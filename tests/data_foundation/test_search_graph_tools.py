@@ -517,6 +517,29 @@ def test_semantic_search_tool_falls_back_to_keyword_when_no_active_index(monkeyp
     assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
 
 
+def test_semantic_search_tool_requires_explicit_embedding_base_url(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = _FakeRepository()
+    repo.active_index = SimpleNamespace(embedding_model="embedding-model")
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "embedding-key")
+    monkeypatch.delenv("XHS_EMBEDDING_BASE_URL", raising=False)
+    monkeypatch.setenv("LLM_BASE_URL", "https://chat.example/v1")
+
+    result = df_tools.semantic_search_resources.func("露营", top_k=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["mode"] == "keyword_fallback"
+    assert result["fallback_reason"] == "EMBEDDING_QUERY_CONFIG_MISSING"
+    assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
+
+
 def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch):
     from data_foundation import tools as df_tools
 

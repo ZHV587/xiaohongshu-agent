@@ -29,6 +29,12 @@ EDITABLE_KEYS = {
     "XHS_BITABLE_FIELD_TAGS",
     "XHS_BITABLE_FIELD_AUTHOR",
     "XHS_BITABLE_FIELD_STATUS",
+    "XHS_EMBEDDING_BASE_URL",
+    "XHS_EMBEDDING_API_KEY",
+    "XHS_EMBEDDING_MODEL",
+    "XHS_EMBEDDING_DIMENSIONS",
+    "XHS_EMBEDDING_BATCH_SIZE",
+    "XHS_EMBEDDING_TIMEOUT_SECONDS",
 }
 
 SECRET_KEYS = {
@@ -36,6 +42,7 @@ SECRET_KEYS = {
     "LLM_GATEWAY_2_API_KEY",
     "LLM_GATEWAY_3_API_KEY",
     "FEISHU_APP_SECRET",
+    "XHS_EMBEDDING_API_KEY",
 }
 
 DEPLOY_ONLY_KEYS = {
@@ -137,6 +144,12 @@ class ConfigCenter:
             )
             for item in items
         ]
+
+    def get_version(self, version: str) -> ConfigSnapshot:
+        for snapshot in self.history():
+            if snapshot.version == version:
+                return snapshot
+        raise KeyError(version)
 
 
 def bootstrap_snapshot_from_env(actor_open_id: str) -> ConfigSnapshot:

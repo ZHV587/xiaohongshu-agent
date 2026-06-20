@@ -26,6 +26,15 @@ export const feishuConfigKeys = new Set([
   "XHS_BITABLE_FIELD_STATUS",
 ]);
 
+export const embeddingConfigKeys = new Set([
+  "XHS_EMBEDDING_BASE_URL",
+  "XHS_EMBEDDING_API_KEY",
+  "XHS_EMBEDDING_MODEL",
+  "XHS_EMBEDDING_DIMENSIONS",
+  "XHS_EMBEDDING_BATCH_SIZE",
+  "XHS_EMBEDDING_TIMEOUT_SECONDS",
+]);
+
 export const runtimeApplyKeys = new Set([
   "XHS_BACKEND_APPLY_MODE",
   "XHS_BACKEND_PM2_NAME",
@@ -44,12 +53,21 @@ export const deployOnlyKeys = new Set([
   "NODE_OPTIONS",
 ]);
 
+export const secretConfigKeys = new Set([
+  "LLM_API_KEY",
+  "LLM_GATEWAY_2_API_KEY",
+  "LLM_GATEWAY_3_API_KEY",
+  "FEISHU_APP_SECRET",
+  "XHS_EMBEDDING_API_KEY",
+]);
+
 export function assertAllowedConfigKeys(
   configs: Record<string, unknown>,
 ): Record<string, string> {
   const allowed = new Set([
     ...llmConfigKeys,
     ...feishuConfigKeys,
+    ...embeddingConfigKeys,
     ...runtimeApplyKeys,
   ]);
   const sanitized: Record<string, string> = {};
@@ -129,10 +147,16 @@ export function readConfigResponse(): Record<string, string> {
   const keys = [
     ...llmConfigKeys,
     ...feishuConfigKeys,
+    ...embeddingConfigKeys,
     ...runtimeApplyKeys,
     "XHS_CONFIG_VERSION",
   ];
-  return Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]));
+  return Object.fromEntries(
+    keys.map((key) => {
+      const value = process.env[key] || "";
+      return [key, secretConfigKeys.has(key) && value ? "********" : value];
+    }),
+  );
 }
 
 export function isConfigCenterEnabled(): boolean {

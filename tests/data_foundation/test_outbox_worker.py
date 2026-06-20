@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from data_foundation.models import OutboxItem
+from data_foundation.models import ProcessorState
 from data_foundation.outbox_worker import process_outbox_batch, process_outbox_item
 from data_foundation.processors.base import LeaseGuard, PermanentProcessingError, ProcessResult
 from data_foundation.processors.registry import ProcessorRegistry
@@ -104,6 +105,25 @@ class PermanentlyFailingProcessor:
         raise PermanentProcessingError("bad config")
 
 
+class MisconfiguredProcessor:
+    topic = "embedding_generate"
+
+    def __init__(self):
+        self.called = False
+
+    def state(self):
+        return ProcessorState(
+            topic=self.topic,
+            status="misconfigured",
+            config_version="cfg-invalid",
+            reason_code="EMBEDDING_CONFIG_INVALID",
+        )
+
+    async def process(self, item, lease: LeaseGuard):
+        self.called = True
+        return ProcessResult(status="succeeded")
+
+
 @pytest.mark.asyncio
 async def test_unregistered_topic_is_blocked():
     repo = RecordingRepo([_item(topic="meili_index")])
@@ -125,6 +145,32 @@ async def test_unregistered_topic_is_blocked():
         "tenant_id": "default",
         "lease_owner": "worker-a",
         "reason_code": "PROCESSOR_DISABLED",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_misconfigured_processor_blocks_without_running():
+    repo = RecordingRepo([_item(topic="embedding_generate")])
+    processor = MisconfiguredProcessor()
+    registry = ProcessorRegistry({"embedding_generate": processor})
+
+    result = await process_outbox_item(
+        _item(topic="embedding_generate"),
+        repo=repo,
+        registry=registry,
+        tenant_id="default",
+        lease_owner="worker-a",
+        lease_seconds=60,
+    )
+
+    assert result.status == "blocked"
+    assert result.error_code == "EMBEDDING_CONFIG_INVALID"
+    assert processor.called is False
+    assert repo.blocked == [{
+        "item_id": "1",
+        "tenant_id": "default",
+        "lease_owner": "worker-a",
+        "reason_code": "EMBEDDING_CONFIG_INVALID",
     }]
 
 

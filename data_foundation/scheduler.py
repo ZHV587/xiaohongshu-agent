@@ -287,7 +287,7 @@ def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
     resource_repo = ResourceRepository(conn)
     embedding_config = embedding_config_from_env()
     embedding_service = None
-    if embedding_config is not None:
+    if embedding_config is not None and embedding_config.state == "enabled":
         embedding_service = EmbeddingIndexService(
             conn,
             profile=EmbeddingIndexProfile(

@@ -47,6 +47,43 @@ def test_config_center_records_audit_history(tmp_path):
     assert history[1].changed_keys == ["LLM_QUALITY_MODELS"]
 
 
+def test_config_center_gets_historical_profile(tmp_path):
+    center = ConfigCenter(path=tmp_path / "config.enc", encryption_key=Fernet.generate_key().decode())
+    first = center.save(
+        actor_open_id="ou_admin",
+        updates={
+            "XHS_EMBEDDING_BASE_URL": "https://embedding.example/v1",
+            "XHS_EMBEDDING_API_KEY": "embedding-key",
+            "XHS_EMBEDDING_MODEL": "model-a",
+            "XHS_EMBEDDING_DIMENSIONS": "1536",
+            "XHS_EMBEDDING_BATCH_SIZE": "64",
+            "XHS_EMBEDDING_TIMEOUT_SECONDS": "30",
+        },
+    )
+    center.save(actor_open_id="ou_admin", updates={"XHS_EMBEDDING_MODEL": "model-b"})
+
+    assert center.get_version(first.version).values["XHS_EMBEDDING_MODEL"] == "model-a"
+    with pytest.raises(KeyError):
+        center.get_version("missing-version")
+
+
+def test_config_center_redacts_embedding_api_key(tmp_path):
+    center = ConfigCenter(path=tmp_path / "config.enc", encryption_key=Fernet.generate_key().decode())
+    center.save(
+        actor_open_id="ou_admin",
+        updates={
+            "XHS_EMBEDDING_BASE_URL": "https://embedding.example/v1",
+            "XHS_EMBEDDING_API_KEY": "embedding-secret",
+            "XHS_EMBEDDING_MODEL": "text-embedding-3-small",
+        },
+    )
+
+    redacted = center.get_redacted()
+
+    assert redacted["XHS_EMBEDDING_API_KEY"] == "********"
+    assert redacted["XHS_EMBEDDING_BASE_URL"] == "https://embedding.example/v1"
+
+
 def test_bootstrap_snapshot_from_env_imports_allowed_keys(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("LLM_BASE_URL", "https://gateway.example/v1")

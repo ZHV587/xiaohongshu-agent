@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,18 +8,27 @@ import { build } from "esbuild";
 
 const webRoot = fileURLToPath(new URL("..", import.meta.url));
 const outputDir = await mkdtemp(join(tmpdir(), "xhs-web-unit-"));
-const outputFile = join(outputDir, "xhs-blocks.test.cjs");
+const testEntries = [
+  join(webRoot, "src/lib/xhs-blocks.test.ts"),
+  ...(await readdir(join(webRoot, "tests")))
+    .filter((name) => name.endsWith(".test.ts"))
+    .sort()
+    .map((name) => join(webRoot, "tests", name)),
+];
+const outputFiles = testEntries.map((_, index) => join(outputDir, `unit-${index}.test.cjs`));
 
 try {
-  await build({
-    entryPoints: [join(webRoot, "src/lib/xhs-blocks.test.ts")],
-    outfile: outputFile,
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-  });
+  for (const [index, entry] of testEntries.entries()) {
+    await build({
+      entryPoints: [entry],
+      outfile: outputFiles[index],
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+    });
+  }
 
-  const result = spawnSync(process.execPath, ["--test", outputFile], {
+  const result = spawnSync(process.execPath, ["--test", ...outputFiles], {
     cwd: webRoot,
     stdio: "inherit",
   });

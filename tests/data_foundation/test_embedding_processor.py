@@ -291,6 +291,33 @@ def test_embedding_processor_state_is_disabled_without_config(migrated_conn):
     assert state.reason_code == "EMBEDDING_CONFIG_MISSING"
 
 
+def test_embedding_processor_state_is_active_for_enabled_config(migrated_conn):
+    state = EmbeddingProcessor(migrated_conn, config=_config()).state()
+
+    assert state.status == "active"
+    assert state.config_version == "cfg-a"
+    assert state.reason_code is None
+
+
+def test_embedding_processor_state_is_misconfigured_for_invalid_config(migrated_conn):
+    state = EmbeddingProcessor(
+        migrated_conn,
+        config=EmbeddingProviderConfig(
+            base_url="https://embedding.example/v1",
+            api_key="embedding-key",
+            model="embedding-model",
+            config_version="cfg-invalid",
+            dimensions=3072,
+            state="misconfigured",
+            reason_code="EMBEDDING_CONFIG_INVALID",
+        ),
+    ).state()
+
+    assert state.status == "misconfigured"
+    assert state.config_version == "cfg-invalid"
+    assert state.reason_code == "EMBEDDING_CONFIG_INVALID"
+
+
 def test_embedding_config_from_env_uses_only_explicit_embedding_values(monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "must-not-be-used")
     monkeypatch.setenv("LLM_BASE_URL", "https://chat.example/v1")
@@ -315,4 +342,24 @@ def test_embedding_config_from_env_uses_only_explicit_embedding_values(monkeypat
         dimensions=1536,
         timeout_seconds=7.0,
         batch_size=3,
+    )
+
+
+def test_embedding_config_from_env_marks_invalid_values_misconfigured(monkeypatch):
+    monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "embedding-key")
+    monkeypatch.setenv("XHS_EMBEDDING_BASE_URL", "https://embedding.example/v1")
+    monkeypatch.setenv("XHS_EMBEDDING_MODEL", "embedding-model")
+    monkeypatch.setenv("XHS_EMBEDDING_DIMENSIONS", "3072")
+    monkeypatch.setenv("XHS_EMBEDDING_CONFIG_VERSION", "cfg-invalid")
+
+    config = embedding_config_from_env()
+
+    assert config == EmbeddingProviderConfig(
+        base_url="https://embedding.example/v1",
+        api_key="embedding-key",
+        model="embedding-model",
+        config_version="cfg-invalid",
+        dimensions=3072,
+        state="misconfigured",
+        reason_code="EMBEDDING_CONFIG_INVALID",
     )
