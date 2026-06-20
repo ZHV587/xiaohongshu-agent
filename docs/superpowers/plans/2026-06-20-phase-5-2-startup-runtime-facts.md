@@ -27,7 +27,7 @@
 - Modify: \`agent.py\`
 - Modify: \`tests/test_agent_assembly.py\`
 
-- [ ] **Step 1: Write the failing regression test**
+- [x] **Step 1: Write the failing regression test**
 
 \`\`\`python
 def test_agent_import_does_not_update_lark_adapters(monkeypatch):
@@ -45,13 +45,13 @@ def test_agent_import_does_not_update_lark_adapters(monkeypatch):
     assert calls == []
 \`\`\`
 
-- [ ] **Step 2: Verify the test is red**
+- [x] **Step 2: Verify the test is red**
 
 Run: \`uv run pytest tests/test_agent_assembly.py::test_agent_import_does_not_update_lark_adapters -q\`
 
 Expected: FAIL because import currently calls both updater functions.
 
-- [ ] **Step 3: Remove the import side effect**
+- [x] **Step 3: Remove the import side effect**
 
 Delete this import and conditional execution from \`agent.py\`:
 
@@ -65,13 +65,13 @@ if os.environ.get("DISABLE_AUTO_UPDATE") != "true":
 
 Keep \`load_lark_mcp_tools\`, all DeepAgents assembly, and explicit maintenance adapters unchanged.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: \`uv run pytest tests/test_agent_assembly.py -q\`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 \`\`\`bash
 git add agent.py tests/test_agent_assembly.py
@@ -87,7 +87,7 @@ git commit -m "fix: make agent import side-effect free"
 - Create: \`tests/data_foundation/test_runtime_facts.py\`
 - Modify: \`tests/data_foundation/test_http_app.py\`
 
-- [ ] **Step 1: Write failing snapshot tests**
+- [x] **Step 1: Write failing snapshot tests**
 
 \`\`\`python
 def test_supervisor_fact_reports_safe_cycle_state():
@@ -108,13 +108,13 @@ def test_supervisor_fact_reports_safe_cycle_state():
 
 Extend lifespan test to assert yielded state has \`supervisor\` and \`runtime_snapshot\`, and shutdown marks the latter stopped.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: \`uv run pytest tests/data_foundation/test_runtime_facts.py tests/data_foundation/test_http_app.py -q\`
 
 Expected: FAIL because snapshot helpers and lifecycle state do not exist.
 
-- [ ] **Step 3: Implement minimal safe state**
+- [x] **Step 3: Implement minimal safe state**
 
 Create helpers:
 
@@ -145,13 +145,13 @@ def supervisor_runtime_fact(supervisor, *, observed_at):
 
 In \`BackgroundServiceSupervisor\`, use \`uuid4().hex\` for \`instance_id\`; record ISO-UTC start/finish/status and only fixed error code. Never retain exception text. Lifespan creates a snapshot, records safe startup state, yields it, then marks it stopped after supervisor shutdown.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: \`uv run pytest tests/data_foundation/test_runtime_facts.py tests/data_foundation/test_http_app.py -q\`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 \`\`\`bash
 git add data_foundation/runtime_facts.py data_foundation/supervisor.py data_foundation/http_app.py tests/data_foundation/test_runtime_facts.py tests/data_foundation/test_http_app.py
@@ -164,7 +164,7 @@ git commit -m "feat: capture safe supervisor runtime facts"
 - Modify: \`data_foundation/repository.py\`
 - Modify: \`tests/data_foundation/test_repository.py\`
 
-- [ ] **Step 1: Write failing aggregate test**
+- [x] **Step 1: Write failing aggregate test**
 
 \`\`\`python
 def test_runtime_fact_aggregates_are_bounded_and_redacted(repo, tenant_id):
@@ -181,13 +181,13 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(repo, tenant_id):
 
 Set up fixture rows for every outbox status, enabled/expired sources, active/building indexes, indexed resources, and an error aggregate.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: \`uv run pytest tests/data_foundation/test_repository.py::test_runtime_fact_aggregates_are_bounded_and_redacted -q\`
 
 Expected: FAIL because \`runtime_fact_aggregates\` does not exist.
 
-- [ ] **Step 3: Implement fixed, safe queries**
+- [x] **Step 3: Implement fixed, safe queries**
 
 Add \`OUTBOX_STATUSES = ("pending", "retry", "processing", "blocked", "dead", "succeeded", "superseded")\` and \`ResourceRepository.runtime_fact_aggregates(tenant_id)\`.
 
@@ -205,13 +205,13 @@ It must use only count/group-by or bounded most-recent queries and return:
 
 Select neither \`resource_outbox.payload\` nor \`sync_sources.credentials\`. Error rows expose only component, operation, error code, count, and window bounds. Embedding rows expose only model, config version, status, progress counts, and timestamps.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: \`uv run pytest tests/data_foundation/test_repository.py -q\`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 \`\`\`bash
 git add data_foundation/repository.py tests/data_foundation/test_repository.py
@@ -225,7 +225,7 @@ git commit -m "feat: aggregate database runtime facts"
 - Modify: \`data_foundation/http_app.py\`
 - Modify: \`tests/data_foundation/test_internal_api.py\`
 
-- [ ] **Step 1: Write failing internal health tests**
+- [x] **Step 1: Write failing internal health tests**
 
 \`\`\`python
 def test_internal_health_facts_combines_instance_and_database_modules(monkeypatch):
@@ -254,13 +254,13 @@ def test_internal_health_facts_keeps_partial_result_when_database_fails(monkeypa
     assert "db-secret" not in response.text
 \`\`\`
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: \`uv run pytest tests/data_foundation/test_internal_api.py -q\`
 
 Expected: FAIL because current health facts are static zero values.
 
-- [ ] **Step 3: Implement module-isolated collector**
+- [x] **Step 3: Implement module-isolated collector**
 
 Replace \`runtime_facts_payload\` with an async collector which reads lifespan snapshot and creates three modules: \`startup\`, \`scheduler\`, and \`database\`. Use \`connect()\`, \`ResourceRepository\`, and \`default_tenant_id()\` only inside the database helper. On database failure return:
 
@@ -275,13 +275,13 @@ module_fact(
 
 Return \`{"ok": True, "observed_at": utc_now(), "modules": modules}\`. Preserve \`require_admin\` and \`Cache-Control: no-store\`.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: \`uv run pytest tests/data_foundation/test_internal_api.py tests/data_foundation/test_http_app.py -q\`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 \`\`\`bash
 git add data_foundation/internal_api.py data_foundation/http_app.py tests/data_foundation/test_internal_api.py
@@ -296,7 +296,7 @@ git commit -m "feat: expose truthful internal runtime facts"
 - Modify: \`web/tests/internal-client-http.test.ts\`
 - Create: \`web/tests/runtime-facts-route.test.ts\`
 
-- [ ] **Step 1: Write failing HTTP map and route tests**
+- [x] **Step 1: Write failing HTTP map and route tests**
 
 \`\`\`typescript
 test("maps runtime facts to internal health facts", async () => {
@@ -307,13 +307,13 @@ test("maps runtime facts to internal health facts", async () => {
 
 Mock \`requireAdmin\` and forwarding in the new route test. Assert a 200 module payload for an administrator and a 403 path when \`requireAdmin\` rejects.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: \`cd web && corepack pnpm test:unit\`
 
 Expected: FAIL because no map key or route exists.
 
-- [ ] **Step 3: Implement no-store forwarding**
+- [x] **Step 3: Implement no-store forwarding**
 
 Add:
 
@@ -339,13 +339,13 @@ export async function GET() {
 
 Do not add config fallback.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: \`cd web && corepack pnpm test:unit && corepack pnpm exec tsc --noEmit\`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 \`\`\`bash
 git add web/src/lib/server/internal-client.ts web/src/app/api/backend/runtime-facts/route.ts web/tests/internal-client-http.test.ts web/tests/runtime-facts-route.test.ts
@@ -359,7 +359,7 @@ git commit -m "feat: add administrator runtime facts api"
 - Modify: \`web/src/components/thread/index.tsx\`
 - Create: \`web/tests/runtime-facts-page.test.ts\`
 
-- [ ] **Step 1: Write failing safe-render helper test**
+- [x] **Step 1: Write failing safe-render helper test**
 
 \`\`\`typescript
 test("formats runtime data without arbitrary backend fields", () => {
@@ -373,25 +373,25 @@ test("formats runtime data without arbitrary backend fields", () => {
 });
 \`\`\`
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: \`cd web && corepack pnpm test:unit\`
 
 Expected: FAIL because view and helper do not exist.
 
-- [ ] **Step 3: Implement the scoped panel**
+- [x] **Step 3: Implement the scoped panel**
 
 Create a client component that fetches \`/api/backend/runtime-facts\`, polls every 15 seconds, cleans up the interval, and exposes an icon-only refresh button with tooltip. Render stable ordered sections \`startup\`, \`scheduler\`, \`database\`. Render only explicitly allowed fields, source, observed time, stale threshold, safe error code, and safe summary.
 
 In \`index.tsx\`, add \`"runtime-facts"\` to the local view union, render \`RuntimeFactsPage\` next to existing LLM/Feishu panels, and add the entry only after \`/api/me\` reports administrator status. Do not derive permissions from browser-controlled input.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: \`cd web && corepack pnpm test:unit && corepack pnpm exec tsc --noEmit && corepack pnpm lint && corepack pnpm build\`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 \`\`\`bash
 git add web/src/components/thread/history/RuntimeFactsPage.tsx web/src/components/thread/index.tsx web/tests/runtime-facts-page.test.ts
@@ -405,11 +405,11 @@ git commit -m "feat: show administrator runtime facts"
 - Modify: \`tests/test_agent_assembly.py\`
 - Modify: \`tests/data_foundation/test_internal_api.py\`
 
-- [ ] **Step 1: Add final security regressions**
+- [x] **Step 1: Add final security regressions**
 
 Use representative strings \`sk-runtime-secret\`, \`postgresql://user:db-secret@host/db\`, and \`Authorization: Bearer token\`. Assert no health response or captured health log includes them. Assert a non-admin internal health request receives 403.
 
-- [ ] **Step 2: Verify focused behavior**
+- [x] **Step 2: Verify focused behavior**
 
 Run:
 
@@ -420,17 +420,17 @@ cd web && corepack pnpm test:unit && corepack pnpm exec tsc --noEmit && corepack
 
 Expected: PASS.
 
-- [ ] **Step 3: Document operational truth**
+- [x] **Step 3: Document operational truth**
 
 Update README: graph import has no external update side effect; \`/internal/ok\` is liveness only; \`/internal/health/facts\` is administrator-only, redacted, and module-degraded; administrators use the existing Web app surface.
 
-- [ ] **Step 4: Run final local suite**
+- [x] **Step 4: Run final local suite**
 
 Run: \`uv run pytest -q && git diff --check\`
 
 Expected: PASS with only existing framework deprecation warnings.
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
 
 \`\`\`bash
 git add README.md tests/test_agent_assembly.py tests/data_foundation/test_internal_api.py
@@ -438,7 +438,7 @@ git commit -m "docs: document runtime facts operations"
 git push origin master
 \`\`\`
 
-- [ ] **Step 6: Deploy and verify server**
+- [x] **Step 6: Deploy and verify server**
 
 On \`/home/ubuntu/xiaohongshu-agent\`, without printing secrets:
 
