@@ -522,6 +522,8 @@ def test_semantic_search_tool_falls_back_to_keyword_when_no_active_index(monkeyp
 def test_semantic_search_tool_requires_explicit_embedding_base_url(monkeypatch):
     from data_foundation import tools as df_tools
 
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
     repo = _FakeRepository()
     repo.active_index = SimpleNamespace(embedding_model="embedding-model", dimensions=1536, config_version="cfg-active")
 

@@ -353,6 +353,8 @@ def test_scheduler_module_no_longer_exposes_daemon_entrypoints():
 def test_build_scheduler_uses_explicit_embedding_env_profile(monkeypatch):
     import data_foundation.scheduler as scheduler
 
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
     captured = {}
 
     class FakeEmbeddingIndexService:
@@ -386,6 +388,8 @@ def test_build_scheduler_uses_explicit_embedding_env_profile(monkeypatch):
 def test_build_scheduler_skips_embedding_service_for_invalid_env(monkeypatch):
     import data_foundation.scheduler as scheduler
 
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
     class FakeEmbeddingIndexService:
         def __init__(self, conn, *, profile):
             raise AssertionError("Embedding index service should not be built for invalid embedding config")
@@ -415,6 +419,8 @@ def test_build_scheduler_skips_embedding_service_for_invalid_env(monkeypatch):
 def test_build_scheduler_uses_disabled_embedding_service_without_explicit_env(monkeypatch):
     import data_foundation.scheduler as scheduler
 
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
     class FakeEmbeddingIndexService:
         def __init__(self, conn, *, profile):
             raise AssertionError("Embedding index service should not be built without explicit embedding config")
