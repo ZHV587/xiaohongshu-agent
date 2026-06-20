@@ -22,6 +22,24 @@ function jsonResponse(payload: Record<string, unknown>, status: number): Respons
   });
 }
 
+function allowsConfigFallback(pathName: string, extraHeaders?: any): boolean {
+  return (
+    extraHeaders?.allowConfigFallback === true &&
+    (pathName === "/_internal/config-status" || pathName === "/_internal/config-set")
+  );
+}
+
+function degradedConfigResponse(): Response {
+  return jsonResponse(
+    {
+      ok: false,
+      degraded: true,
+      error: "Internal HTTP unavailable; config fallback is required",
+    },
+    503
+  );
+}
+
 export async function forwardToInternalServer(
   pathName: string,
   method: "GET" | "POST",
@@ -39,6 +57,9 @@ export async function forwardToInternalServer(
 
   const baseUrl = process.env.XHS_INTERNAL_BASE_URL;
   const secret = process.env.XHS_INTERNAL_SECRET;
+  if (!baseUrl && allowsConfigFallback(pathName, extraHeaders)) {
+    return degradedConfigResponse();
+  }
   if (!baseUrl || !secret) {
     return jsonResponse({ error: "Internal HTTP is not configured" }, 503);
   }
@@ -61,6 +82,9 @@ export async function forwardToInternalServer(
       signal: controller.signal,
     });
   } catch (error) {
+    if (allowsConfigFallback(pathName, extraHeaders)) {
+      return degradedConfigResponse();
+    }
     return jsonResponse({ error: (error as Error).message || "Internal HTTP request failed" }, 503);
   } finally {
     clearTimeout(timeout);

@@ -17,10 +17,19 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    await requireAdmin();
+    const user = await requireAdmin();
     if (isConfigCenterEnabled()) {
-      const resp = await forwardToInternalServer("/_internal/config-status", "GET", "system");
+      const resp = await forwardToInternalServer("/_internal/config-status", "GET", user.openId, undefined, {
+        isAdmin: true,
+        allowConfigFallback: true,
+      });
       const data = await resp.json();
+      if (data.degraded === true) {
+        return NextResponse.json(data, {
+          status: resp.status || 503,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
       if (!resp.ok || data.ok === false) {
         return NextResponse.json(
           { error: data.error || "Failed to read config center" },
@@ -50,8 +59,17 @@ export async function POST(req: NextRequest) {
     const configs = assertAllowedConfigKeys(body.configs);
 
     if (isConfigCenterEnabled()) {
-      const resp = await forwardToInternalServer("/_internal/config-set", "POST", user.openId, { configs });
+      const resp = await forwardToInternalServer("/_internal/config-set", "POST", user.openId, { configs }, {
+        isAdmin: true,
+        allowConfigFallback: true,
+      });
       const data = await resp.json();
+      if (data.degraded === true) {
+        return NextResponse.json(data, {
+          status: resp.status || 503,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
       if (!resp.ok || data.ok === false) {
         return NextResponse.json(
           { error: data.error || "Failed to save config center" },

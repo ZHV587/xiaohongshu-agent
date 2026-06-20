@@ -39,3 +39,33 @@ test("forwards internal request over HTTP with internal headers", async () => {
     else process.env.XHS_INTERNAL_SECRET = originalSecret;
   }
 });
+
+test("returns degraded config fallback only for config status when internal http is unavailable", async () => {
+  const originalBaseUrl = process.env.XHS_INTERNAL_BASE_URL;
+  const originalSecret = process.env.XHS_INTERNAL_SECRET;
+
+  delete process.env.XHS_INTERNAL_BASE_URL;
+  process.env.XHS_INTERNAL_SECRET = "internal-secret";
+
+  try {
+    const configResponse = await forwardToInternalServer("/_internal/config-status", "GET", "ou_admin", undefined, {
+      isAdmin: true,
+      allowConfigFallback: true,
+    });
+    const configPayload = await configResponse.json();
+    assert.equal(configResponse.status, 503);
+    assert.equal(configPayload.degraded, true);
+
+    const chatsResponse = await forwardToInternalServer("/_internal/chats", "GET", "ou_user", undefined, {
+      allowConfigFallback: true,
+    });
+    const chatsPayload = await chatsResponse.json();
+    assert.equal(chatsResponse.status, 503);
+    assert.equal(chatsPayload.degraded, undefined);
+  } finally {
+    if (originalBaseUrl === undefined) delete process.env.XHS_INTERNAL_BASE_URL;
+    else process.env.XHS_INTERNAL_BASE_URL = originalBaseUrl;
+    if (originalSecret === undefined) delete process.env.XHS_INTERNAL_SECRET;
+    else process.env.XHS_INTERNAL_SECRET = originalSecret;
+  }
+});
