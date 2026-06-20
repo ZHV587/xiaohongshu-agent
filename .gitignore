@@ -1,5 +1,6 @@
 node_modules/
 .env
+.xhs-config/
 .uat_store.enc
 __pycache__/
 *.pyc
