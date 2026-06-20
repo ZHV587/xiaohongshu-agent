@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { forwardToInternalServer } from "../src/lib/server/internal-client";
@@ -67,5 +70,48 @@ test("returns degraded config fallback only for config status when internal http
     else process.env.XHS_INTERNAL_BASE_URL = originalBaseUrl;
     if (originalSecret === undefined) delete process.env.XHS_INTERNAL_SECRET;
     else process.env.XHS_INTERNAL_SECRET = originalSecret;
+  }
+});
+
+test("uses the local config recovery runner when internal http is unavailable", async () => {
+  const originalEnv = { ...process.env };
+  const tempDir = await mkdtemp(path.join(tmpdir(), "xhs-config-recovery-"));
+
+  delete process.env.XHS_INTERNAL_BASE_URL;
+  process.env.XHS_CONFIG_CENTER_PATH = path.join(tempDir, "config-center.enc");
+  process.env.XHS_CONFIG_ENCRYPTION_KEY = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=";
+
+  try {
+    const saveResponse = await forwardToInternalServer(
+      "/_internal/config-set",
+      "POST",
+      "ou_admin",
+      { configs: { LLM_PROVIDER: "openai", LLM_API_KEY: "sk-recovery" } },
+      { isAdmin: true, allowConfigFallback: true },
+    );
+    const savePayload = await saveResponse.json();
+
+    assert.equal(saveResponse.status, 200);
+    assert.equal(savePayload.ok, true);
+    assert.equal(savePayload.degraded, true);
+    assert.equal(savePayload.recovery, "local-config-center");
+    assert.equal(savePayload.degraded_reason, "Internal HTTP unavailable");
+
+    const readResponse = await forwardToInternalServer(
+      "/_internal/config-status",
+      "GET",
+      "ou_admin",
+      undefined,
+      { isAdmin: true, allowConfigFallback: true },
+    );
+    const readPayload = await readResponse.json();
+
+    assert.equal(readResponse.status, 200);
+    assert.equal(readPayload.ok, true);
+    assert.equal(readPayload.degraded, true);
+    assert.equal(readPayload.configs.LLM_API_KEY, "sk-recovery");
+  } finally {
+    process.env = originalEnv;
+    await rm(tempDir, { recursive: true, force: true });
   }
 });

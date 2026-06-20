@@ -73,7 +73,11 @@ def handle_uat_status(args):
         }))
 
 def handle_config_status(args):
-    center = ConfigCenter(path=args.config_path, encryption_key=args.encryption_key)
+    config_path = args.config_path or os.environ.get("XHS_CONFIG_CENTER_PATH")
+    encryption_key = args.encryption_key or os.environ.get("XHS_CONFIG_ENCRYPTION_KEY")
+    if not config_path or not encryption_key:
+        raise ValueError("config recovery requires config center path and encryption key")
+    center = ConfigCenter(path=config_path, encryption_key=encryption_key)
     history = center.history()
     version = history[-1].version if history else ""
     print(json.dumps({"ok": True, "configs": center.get_plain(), "version": version}, ensure_ascii=False))
@@ -81,10 +85,14 @@ def handle_config_status(args):
 
 def handle_config_set(args):
     try:
-        updates = json.loads(args.configs or "{}")
+        updates = json.loads(args.configs or os.environ.get("XHS_RECOVERY_CONFIGS_JSON") or "{}")
         if not isinstance(updates, dict):
             raise ValueError("configs must be a JSON object")
-        center = ConfigCenter(path=args.config_path, encryption_key=args.encryption_key)
+        config_path = args.config_path or os.environ.get("XHS_CONFIG_CENTER_PATH")
+        encryption_key = args.encryption_key or os.environ.get("XHS_CONFIG_ENCRYPTION_KEY")
+        if not config_path or not encryption_key:
+            raise ValueError("config recovery requires config center path and encryption key")
+        center = ConfigCenter(path=config_path, encryption_key=encryption_key)
         snapshot = center.save(actor_open_id=args.open_id or "system", updates=updates)
         print(json.dumps({
             "ok": True,
