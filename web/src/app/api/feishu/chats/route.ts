@@ -18,7 +18,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const resp = await forwardToInternalServer("/_internal/chats", "GET", payload.sub);
+    const resp = await forwardToInternalServer("/_internal/chats", "GET", payload.sub, undefined, {
+      isAdmin: false,
+    });
     if (!resp.ok) {
       const errText = await resp.text();
       return NextResponse.json({ error: errText }, { status: resp.status });

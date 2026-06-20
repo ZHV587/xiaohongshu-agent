@@ -21,7 +21,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const resp = await forwardToInternalServer("/_internal/wiki-space", "GET", payload.sub);
+    const resp = await forwardToInternalServer("/_internal/wiki-space", "GET", payload.sub, undefined, {
+      isAdmin: false,
+    });
 
     if (!resp.ok) {
       const errText = await resp.text();

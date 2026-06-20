@@ -115,7 +115,9 @@ export async function GET(req: NextRequest) {
       name: name || openId
     };
     
-    const syncResp = await forwardToInternalServer("/_internal/uat", "POST", openId, bodyObj);
+    const syncResp = await forwardToInternalServer("/_internal/uat", "POST", openId, bodyObj, {
+      isAdmin: false,
+    });
     
     if (!syncResp.ok) {
       const errMsg = await syncResp.text();

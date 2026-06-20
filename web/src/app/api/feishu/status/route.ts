@@ -15,7 +15,9 @@ export async function GET() {
 
     let uat: { ok?: boolean; authorized?: boolean; error?: string } = {};
     try {
-      const resp = await forwardToInternalServer("/_internal/uat-status", "GET", user.openId);
+      const resp = await forwardToInternalServer("/_internal/uat-status", "GET", user.openId, undefined, {
+        isAdmin: user.isAdmin,
+      });
       uat = await resp.json();
     } catch (error) {
       uat = { ok: false, authorized: false, error: (error as Error).message };
