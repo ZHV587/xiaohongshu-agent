@@ -9,7 +9,7 @@ from tools.uat_store import save_uat, get_uat, _DEFAULT_STORE_PATH
 @pytest.fixture(autouse=True)
 def setup_temp_store(tmp_path):
     temp_file = tmp_path / ".test_uat_store.enc"
-    with patch.dict(os.environ, {"XHS_UAT_STORE_PATH": str(temp_file)}):
+    with patch.dict(os.environ, {"XHS_UAT_STORE_PATH": str(temp_file), "POSTGRES_URI": ""}):
         yield temp_file
     if temp_file.exists():
         temp_file.unlink()
