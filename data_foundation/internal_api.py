@@ -15,6 +15,7 @@ from config_center import ConfigCenter, ConfigValidationError
 from data_foundation.db import connect
 from data_foundation.permissions import default_tenant_id
 from data_foundation.repository import ResourceRepository
+from data_foundation.runtime_facts import module_fact, supervisor_runtime_fact, utc_now
 from tools.lark_cli import lark_cli
 from tools.runtime_identity import identity_config
 from tools.uat_store import get_uat, save_uat
@@ -205,35 +206,119 @@ async def internal_feishu_wiki_space(request: Request) -> JSONResponse:
         return _json_ok(fallback)
 
 
-def runtime_facts_payload() -> dict:
-    return {
-        "ok": True,
-        "scheduler": {
-            "enabled": os.environ.get("XHS_SYNC_ENABLED", "false").strip().lower() == "true",
-        },
-        "outbox": {
-            "pending": 0,
-            "retry": 0,
-            "processing": 0,
-            "blocked": 0,
-            "dead": 0,
-        },
-        "embedding": {
-            "active": None,
-            "building": None,
-        },
-        "sync": {
-            "running": False,
-        },
-        "errors": [],
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def startup_runtime_fact(snapshot, *, observed_at: str) -> dict:
+    data = {
+        "instance_id": None,
+        "started_at": None,
+        "stopped_at": None,
     }
+    status = "unavailable"
+    if snapshot is not None:
+        status = snapshot.status
+        data = {
+            "instance_id": snapshot.instance_id,
+            "started_at": snapshot.started_at,
+            "stopped_at": snapshot.stopped_at,
+        }
+    return module_fact(
+        status=status,
+        source="process",
+        observed_at=observed_at,
+        stale_after_seconds=30,
+        data=data,
+    )
+
+
+def scheduler_runtime_fact(supervisor, *, observed_at: str) -> dict:
+    if supervisor is None:
+        return module_fact(
+            status="unavailable",
+            source="instance",
+            observed_at=observed_at,
+            stale_after_seconds=30,
+            data={
+                "instance_id": None,
+                "accepting_work": False,
+                "last_cycle_started_at": None,
+                "last_cycle_finished_at": None,
+                "last_cycle_status": "unavailable",
+            },
+            error={
+                "code": "RUNTIME_FACTS_SUPERVISOR_UNAVAILABLE",
+                "summary": "Supervisor runtime facts unavailable",
+            },
+        )
+    return supervisor_runtime_fact(supervisor, observed_at=observed_at)
+
+
+def database_runtime_fact(observed_at: str) -> dict:
+    conn = connect()
+    try:
+        data = ResourceRepository(conn).runtime_fact_aggregates(default_tenant_id())
+    finally:
+        conn.close()
+    return module_fact(
+        status="healthy",
+        source="database",
+        observed_at=observed_at,
+        stale_after_seconds=30,
+        data=_json_safe(data),
+    )
+
+
+def unavailable_database_runtime_fact(*, observed_at: str) -> dict:
+    return module_fact(
+        status="unavailable",
+        source="database",
+        observed_at=observed_at,
+        stale_after_seconds=30,
+        data={},
+        error={
+            "code": "RUNTIME_FACTS_DATABASE_UNAVAILABLE",
+            "summary": "Database runtime facts unavailable",
+        },
+    )
+
+
+def runtime_facts_payload(request: Request) -> dict:
+    observed_at = utc_now()
+    try:
+        database = database_runtime_fact(observed_at)
+    except Exception:
+        logger.warning("database_runtime_facts_failed")
+        database = unavailable_database_runtime_fact(observed_at=observed_at)
+
+    modules = {
+        "startup": startup_runtime_fact(
+            getattr(request.state, "runtime_snapshot", None),
+            observed_at=observed_at,
+        ),
+        "scheduler": scheduler_runtime_fact(
+            getattr(request.state, "supervisor", None),
+            observed_at=observed_at,
+        ),
+        "database": database,
+    }
+    return {"ok": True, "observed_at": observed_at, "modules": modules}
 
 
 async def internal_health_facts(request: Request) -> JSONResponse:
     actor = require_admin(request)
     if isinstance(actor, JSONResponse):
         return actor
-    return _json_ok(runtime_facts_payload())
+    return _json_ok(runtime_facts_payload(request))
 
 
 def data_foundation_status_payload() -> dict:

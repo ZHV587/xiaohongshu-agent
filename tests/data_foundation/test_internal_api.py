@@ -266,14 +266,17 @@ def test_internal_health_facts_returns_safe_shape(monkeypatch):
 
     monkeypatch.setattr(
         internal_api,
-        "runtime_facts_payload",
-        lambda: {
-            "ok": True,
-            "scheduler": {"enabled": False},
-            "outbox": {"pending": 0, "blocked": 0, "dead": 0},
-            "embedding": {"active": None, "building": None},
-            "sync": {"running": False},
-            "errors": [],
+        "database_runtime_fact",
+        lambda observed_at: {
+            "status": "healthy",
+            "source": "database",
+            "observed_at": observed_at,
+            "stale_after_seconds": 30,
+            "data": {
+                "outbox": {"pending": 0, "blocked": 0, "dead": 0},
+                "embedding": {"active": None, "building": None},
+                "errors": [],
+            },
         },
     )
 
@@ -281,19 +284,54 @@ def test_internal_health_facts_returns_safe_shape(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["scheduler"] == {"enabled": False}
-    assert set(payload) == {"ok", "scheduler", "outbox", "embedding", "sync", "errors"}
+    assert set(payload) == {"ok", "observed_at", "modules"}
+    assert set(payload["modules"]) == {"startup", "scheduler", "database"}
+    assert payload["modules"]["database"]["data"]["outbox"]["dead"] == 0
     assert "credentials" not in response.text
 
 
-def test_runtime_facts_payload_uses_sync_enabled_env(monkeypatch):
+def test_internal_health_facts_combines_instance_and_database_modules(monkeypatch):
+    client = _client(monkeypatch, admins="ou_admin")
+
     import data_foundation.internal_api as internal_api
 
-    monkeypatch.setenv("XHS_SYNC_ENABLED", "true")
-    enabled_payload = internal_api.runtime_facts_payload()
+    monkeypatch.setattr(
+        internal_api,
+        "database_runtime_fact",
+        lambda observed_at: {
+            "status": "healthy",
+            "source": "database",
+            "observed_at": observed_at,
+            "stale_after_seconds": 30,
+            "data": {"outbox": {"dead": 1}},
+        },
+    )
 
-    monkeypatch.setenv("XHS_SYNC_ENABLED", "false")
-    disabled_payload = internal_api.runtime_facts_payload()
+    response = client.get("/internal/health/facts", headers=_admin_headers())
 
-    assert enabled_payload["scheduler"]["enabled"] is True
-    assert disabled_payload["scheduler"]["enabled"] is False
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["modules"]["startup"]["source"] == "process"
+    assert payload["modules"]["scheduler"]["source"] == "instance"
+    assert payload["modules"]["database"]["data"]["outbox"]["dead"] == 1
+
+
+def test_internal_health_facts_keeps_partial_result_when_database_fails(monkeypatch):
+    client = _client(monkeypatch, admins="ou_admin")
+
+    import data_foundation.internal_api as internal_api
+
+    monkeypatch.setattr(
+        internal_api,
+        "database_runtime_fact",
+        lambda observed_at: (_ for _ in ()).throw(RuntimeError("postgresql://user:db-secret@example/db")),
+    )
+
+    response = client.get("/internal/health/facts", headers=_admin_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["modules"]["database"]["status"] == "unavailable"
+    assert payload["modules"]["database"]["error"]["code"] == "RUNTIME_FACTS_DATABASE_UNAVAILABLE"
+    assert "db-secret" not in response.text
