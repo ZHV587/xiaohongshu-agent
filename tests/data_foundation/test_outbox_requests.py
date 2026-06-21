@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from data_foundation.models import Resource
 from data_foundation.outbox_requests import (
     CHUNKER_VERSION,
-    default_resource_requests,
     default_write_requests,
     embedding_request,
 )
@@ -28,13 +27,6 @@ def _resource() -> Resource:
         updated_at=now,
         version=3,
     )
-
-
-def test_default_resource_requests_do_not_create_unconfigured_embedding_work():
-    requests = default_resource_requests(_resource())
-
-    assert [request.topic for request in requests] == ["meili_index", "graph_ingest"]
-    assert all(request.topic != "embedding_generate" for request in requests)
 
 
 def test_default_write_requests_are_resource_agnostic_declarations():

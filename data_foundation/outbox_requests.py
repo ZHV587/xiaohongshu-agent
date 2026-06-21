@@ -40,7 +40,3 @@ def embedding_request(resource: Resource, *, embedding_index_id: str) -> OutboxR
             "chunker_version": CHUNKER_VERSION,
         },
     )
-
-
-def default_resource_requests(resource: Resource) -> list[OutboxRequest]:
-    return [search_index_request(resource), graph_ingest_request(resource)]
