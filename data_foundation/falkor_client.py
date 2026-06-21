@@ -41,14 +41,14 @@ class FalkorResourceGraph:
         params: dict[str, Any] = {"ids": resource_ids, "tenant": tenant_id}
         et_clause = ""
         if edge_types:
-            et_clause = "AND all(rel IN e WHERE rel.edge_type IN $etypes)"
+            et_clause = "WHERE all(rel IN relationships(p) WHERE rel.edge_type IN $etypes)"
             params["etypes"] = edge_types
         rows = self.graph.query(
             f"""
-            MATCH (s:Resource)-[e:REL*1..{hops}]->(t:Resource)
+            MATCH p = (s:Resource)-[:REL*1..{hops}]->(t:Resource)
             WHERE s.id IN $ids AND s.tenant_id = $tenant AND t.tenant_id = $tenant
-            {et_clause}
-            UNWIND e as rel
+            WITH p {et_clause}
+            UNWIND relationships(p) as rel
             RETURN startNode(rel).id, startNode(rel).title, startNode(rel).type,
                    endNode(rel).id, endNode(rel).title, endNode(rel).type,
                    rel.edge_type, rel.weight
