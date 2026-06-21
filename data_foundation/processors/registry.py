@@ -57,12 +57,16 @@ def default_processor_registry(
 ) -> ProcessorRegistry:
     if embedding_config is _UNSET:
         embedding_config = embedding_config_from_runtime()
-    from data_foundation.engine_config import meili_config_from_env
+    from data_foundation.engine_config import falkor_config_from_env, meili_config_from_env
+    from data_foundation.falkor_client import FalkorResourceGraph
     from data_foundation.meili_client import MeiliResourceIndex
+    from data_foundation.processors.graph import GraphProcessor
     from data_foundation.processors.meili import MeiliProcessor
 
     meili_cfg = meili_config_from_env()
     meili_index = MeiliResourceIndex.from_config(meili_cfg) if meili_cfg.state == "enabled" else None
+    falkor_cfg = falkor_config_from_env()
+    falkor_graph = FalkorResourceGraph.from_config(falkor_cfg) if falkor_cfg.state == "enabled" else None
     return ProcessorRegistry(
         {
             "embedding_generate": EmbeddingProcessor(
@@ -70,5 +74,6 @@ def default_processor_registry(
                 config=embedding_config,
             ),
             "meili_index": MeiliProcessor(conn, index=meili_index, config=meili_cfg),
+            "graph_ingest": GraphProcessor(conn, graph=falkor_graph, config=falkor_cfg),
         }
     )
