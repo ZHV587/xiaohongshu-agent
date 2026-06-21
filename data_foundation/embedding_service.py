@@ -144,8 +144,8 @@ class EmbeddingIndexService:
             if before is None:
                 enqueued += 1
 
-        if index.status == "active" and index.failed_resources == 0:
-            activated = index.completed_resources == index.expected_resources
+        if index.status == "active":
+            activated = True
         else:
             activated = self.embedding_repo.activate_if_complete(index.id, tenant_id=tenant_id)
         return EmbeddingReconcileResult(index.id, enqueued=enqueued, activated=activated)

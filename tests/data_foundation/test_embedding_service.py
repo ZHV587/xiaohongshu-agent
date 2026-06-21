@@ -38,7 +38,14 @@ def test_embedding_tenant_discovery_is_profile_aware_and_bounded():
     assert params == ("model", "cfg-v1", "text-v1", 1)
 
 
-def _resource(conn, *, tenant_id: str = "tenant-a", title: str, content: str | None = "正文"):
+def _resource(
+    conn,
+    *,
+    tenant_id: str = "tenant-a",
+    title: str,
+    content: str | None = "正文",
+    external_id: str | None = None,
+):
     return ResourceRepository(conn).upsert_resource(
         tenant_id=tenant_id,
         actor_open_id="ou_owner",
@@ -48,6 +55,11 @@ def _resource(conn, *, tenant_id: str = "tenant-a", title: str, content: str | N
         content_json={},
         visibility="team",
         owner_open_id="ou_owner",
+        mapping={
+            "system": "test",
+            "external_type": "doc",
+            "external_id": external_id or f"{tenant_id}:{title}",
+        },
     )
 
 
@@ -91,7 +103,7 @@ def test_embedding_reconcile_tenants_includes_stale_index_after_resource_becomes
     )
     assert service.embedding_repo.activate_if_complete(reconcile.embedding_index_id, tenant_id="stale")
 
-    _resource(migrated_conn, tenant_id="stale", title="已索引", content=" ")
+    _resource(migrated_conn, tenant_id="stale", title="已索引", content=" ", external_id="stale:已索引")
 
     assert service.discover_reconcile_tenants(limit=10) == ["stale"]
 
@@ -109,7 +121,7 @@ def test_reconcile_repairs_active_stale_index_after_resource_becomes_blank(migra
     )
     assert service.embedding_repo.activate_if_complete(reconcile.embedding_index_id, tenant_id="stale")
 
-    _resource(migrated_conn, tenant_id="stale", title="已索引", content=" ")
+    _resource(migrated_conn, tenant_id="stale", title="已索引", content=" ", external_id="stale:已索引")
 
     repaired = service.reconcile_tenant("stale")
 

@@ -320,7 +320,7 @@ def test_store_batch_with_no_chunks_does_not_overcount_completion(migrated_conn)
     assert row["completed_resources"] == 0
 
 
-def test_activate_requires_exact_completion_count(migrated_conn):
+def test_activate_recomputes_completion_count_before_deciding(migrated_conn):
     repo = EmbeddingRepository(migrated_conn)
     index = repo.create_index(
         tenant_id="tenant-a",
@@ -334,7 +334,12 @@ def test_activate_requires_exact_completion_count(migrated_conn):
         (index.id,),
     )
 
-    assert repo.activate_if_complete(index.id, tenant_id="tenant-a") is False
+    assert repo.activate_if_complete(index.id, tenant_id="tenant-a") is True
+    row = migrated_conn.execute(
+        "select status, expected_resources, completed_resources from embedding_indexes where id = %s",
+        (index.id,),
+    ).fetchone()
+    assert row == {"status": "active", "expected_resources": 0, "completed_resources": 0}
 
 
 def test_create_index_refreshes_expected_resources_for_existing_profile(migrated_conn):
