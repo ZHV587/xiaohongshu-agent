@@ -21,6 +21,7 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
     import data_foundation.http_app as http_app
 
     events = []
+    captured = {}
 
     class FakeSupervisor:
         enabled = False
@@ -38,7 +39,15 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
         async def stop(self, *, grace_seconds):
             events.append(("stop", grace_seconds))
 
-    monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
+    sentinel_registry = object()
+
+    def fake_build_supervisor(*, model_registry=None):
+        captured["model_registry"] = model_registry
+        return FakeSupervisor()
+
+    # 隔离对 agent 模块的真实 import(避免拉起模型探测),只验证 registry 被透传。
+    monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: sentinel_registry)
+    monkeypatch.setattr(http_app, "build_supervisor", fake_build_supervisor)
     monkeypatch.setattr(http_app, "shutdown_grace_seconds", lambda: 7)
 
     async with http_app.lifespan(http_app.app) as state:
@@ -48,6 +57,8 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
 
     assert events == ["start", ("stop", 7)]
     assert state["runtime_snapshot"].status == "stopped"
+    # 模型池热重载依赖 registry 被注入 supervisor → scheduler。
+    assert captured["model_registry"] is sentinel_registry
 
 
 @pytest.mark.asyncio
@@ -70,7 +81,8 @@ async def test_http_app_lifespan_persists_runtime_state_on_application(monkeypat
         async def stop(self, *, grace_seconds):
             return None
 
-    monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
+    monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: object())
+    monkeypatch.setattr(http_app, "build_supervisor", lambda *, model_registry=None: FakeSupervisor())
 
     async with http_app.lifespan(http_app.app):
         assert http_app.app.state.supervisor.instance_id == "instance-2"
