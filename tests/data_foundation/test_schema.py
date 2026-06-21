@@ -138,6 +138,18 @@ def test_schema_source_qualifies_trigram_operator_class_for_custom_search_paths(
     assert "public.gin_trgm_ops" in schema
 
 
+def test_schema_source_aligns_source_ready_index_with_dispatch_order():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "drop index if exists idx_sync_sources_ready;" in schema
+    assert "drop index if exists idx_sync_sources_ready_tenant;" in schema
+    assert "idx_sync_sources_ready_tenant_ordered" in schema
+    assert "on sync_sources (tenant_id, last_dispatched_at nulls first, next_run_at, id)" in schema
+    assert "idx_sync_sources_due_tenants" in schema
+    assert "on sync_sources (next_run_at, tenant_id, last_dispatched_at nulls first)" in schema
+    assert "where enabled" in schema
+
+
 def test_reset_allowlist_contains_only_all_operational_tables():
     assert set(db.DATA_FOUNDATION_TABLES) == EXPECTED_TABLES
 
@@ -469,7 +481,7 @@ def test_ready_and_lease_indexes_cover_operational_queues(migrated_conn):
     ).fetchall()
     indexes = {row[0]: row[1].lower() for row in rows}
 
-    assert "(status, next_attempt_at, topic)" in indexes["idx_resource_outbox_ready"]
+    assert "idx_resource_outbox_ready" not in indexes
     assert "(tenant_id, status, topic, next_attempt_at, created_at, id)" in indexes[
         "idx_resource_outbox_ready_tenant"
     ]
@@ -477,11 +489,14 @@ def test_ready_and_lease_indexes_cover_operational_queues(migrated_conn):
     assert "pending" in indexes["idx_resource_outbox_ready_tenant"]
     assert "retry" in indexes["idx_resource_outbox_ready_tenant"]
     assert "(lease_expires_at)" in indexes["idx_resource_outbox_lease"]
-    assert "(enabled, next_run_at, last_dispatched_at)" in indexes["idx_sync_sources_ready"]
-    assert "(tenant_id, last_dispatched_at, next_run_at, id)" in indexes[
-        "idx_sync_sources_ready_tenant"
+    assert "idx_sync_sources_ready" not in indexes
+    assert "idx_sync_sources_ready_tenant" not in indexes
+    assert "last_dispatched_at nulls first" in indexes["idx_sync_sources_ready_tenant_ordered"]
+    assert "where enabled" in indexes["idx_sync_sources_ready_tenant_ordered"]
+    assert "(next_run_at, tenant_id, last_dispatched_at nulls first)" in indexes[
+        "idx_sync_sources_due_tenants"
     ]
-    assert "where enabled" in indexes["idx_sync_sources_ready_tenant"]
+    assert "where enabled" in indexes["idx_sync_sources_due_tenants"]
     assert "(lease_expires_at)" in indexes["idx_sync_sources_lease"]
 
 

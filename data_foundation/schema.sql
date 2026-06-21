@@ -202,10 +202,13 @@ create table if not exists sync_sources (
 
 create index if not exists idx_sync_sources_tenant_recent
   on sync_sources (tenant_id, updated_at desc);
-create index if not exists idx_sync_sources_ready
-  on sync_sources (enabled, next_run_at, last_dispatched_at);
-create index if not exists idx_sync_sources_ready_tenant
-  on sync_sources (tenant_id, last_dispatched_at, next_run_at, id)
+drop index if exists idx_sync_sources_ready;
+drop index if exists idx_sync_sources_ready_tenant;
+create index if not exists idx_sync_sources_ready_tenant_ordered
+  on sync_sources (tenant_id, last_dispatched_at nulls first, next_run_at, id)
+  where enabled;
+create index if not exists idx_sync_sources_due_tenants
+  on sync_sources (next_run_at, tenant_id, last_dispatched_at nulls first)
   where enabled;
 create index if not exists idx_sync_sources_lease on sync_sources (lease_expires_at);
 
@@ -310,8 +313,7 @@ create table if not exists resource_outbox (
          (resource_id is not null and resource_version is not null))
 );
 
-create index if not exists idx_resource_outbox_ready
-  on resource_outbox (status, next_attempt_at, topic);
+drop index if exists idx_resource_outbox_ready;
 create index if not exists idx_resource_outbox_ready_tenant
   on resource_outbox (tenant_id, status, topic, next_attempt_at, created_at, id)
   where status in ('pending', 'retry');
