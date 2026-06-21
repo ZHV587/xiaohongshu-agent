@@ -17,6 +17,7 @@ class MeiliProcessor:
         self.conn.row_factory = dict_row
         self.index = index
         self.config = config
+        self._index_ensured = False
 
     def state(self) -> ProcessorState:
         if self.config.state != "enabled" or self.index is None:
@@ -39,6 +40,12 @@ class MeiliProcessor:
         ).fetchone()
         if row is None:
             return ProcessResult(status="superseded")
+        # 确保索引 settings(filterable/searchable)就位,且只在本实例首次写入前调一次。
+        # Meili update settings 幂等;这保证容器/数据卷重建后 settings 自动恢复,
+        # 不依赖部署期手动 ensure_index(否则 search 的 tenant_id filter 会因未声明 filterable 而失败)。
+        if not self._index_ensured:
+            self.index.ensure_index()
+            self._index_ensured = True
         await lease.assert_owned()
         self.index.upsert({
             "resource_id": row["id"],

@@ -52,3 +52,17 @@ def test_process_missing_resource_id_is_permanent():
         assert False, "should raise"
     except PermanentProcessingError:
         pass
+
+
+def test_process_ensures_index_settings_once_before_upsert():
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = {
+        "id": "r1", "tenant_id": "default", "type": "feishu_base_record",
+        "title": "t", "summary": None, "content_text": "body"}
+    index = MagicMock()
+    p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
+    # 两次 process:ensure_index 只应调用一次(实例级幂等),每次都 upsert
+    asyncio.run(p.process(_item({"resource_id": "r1", "version": 1}), _Lease()))
+    asyncio.run(p.process(_item({"resource_id": "r1", "version": 1}), _Lease()))
+    assert index.ensure_index.call_count == 1
+    assert index.upsert.call_count == 2
