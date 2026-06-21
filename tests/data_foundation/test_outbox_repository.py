@@ -298,3 +298,19 @@ def test_block_leased_item_requires_owner_and_unblock_is_tenant_scoped(migrated_
         "select status from resource_outbox where tenant_id = 'tenant-b'"
     ).fetchone()
     assert other_tenant == {"status": "pending"}
+
+
+def test_discover_blocked_tenants_filters_by_topic_and_status():
+    conn = _RecordingConnection([{"tenant_id": "default"}])
+    result = OutboxRepository(conn).discover_blocked_tenants(topics=["meili_index", "graph_ingest"], limit=10)
+    assert result == ["default"]
+    query, params = conn.calls[0]
+    assert "status = 'blocked'" in query
+    assert "topic = any(%s::text[])" in query
+    assert params == (["meili_index", "graph_ingest"], 10)
+
+
+def test_discover_blocked_tenants_empty_topics_returns_empty():
+    conn = _RecordingConnection([{"tenant_id": "default"}])
+    assert OutboxRepository(conn).discover_blocked_tenants(topics=[], limit=10) == []
+    assert conn.calls == []

@@ -77,6 +77,7 @@ class FakeSourceRepo:
 class FakeOutboxRepo:
     recovered: int = 0
     ready_tenants: list[str] = field(default_factory=list)
+    blocked_tenants: list[str] = field(default_factory=list)
     unblocked: list[dict] = field(default_factory=list)
 
     def recover_expired(self, *, limit):
@@ -84,6 +85,9 @@ class FakeOutboxRepo:
 
     def discover_ready_tenants(self, *, limit):
         return self.ready_tenants[:limit]
+
+    def discover_blocked_tenants(self, *, topics, limit):
+        return self.blocked_tenants[:limit]
 
     def unblock_available(self, *, tenant_id, topic):
         self.unblocked.append({"tenant_id": tenant_id, "topic": topic})

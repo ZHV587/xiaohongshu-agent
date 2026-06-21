@@ -190,9 +190,16 @@ class Scheduler:
             else []
         )
         ready = self.outbox_repo.discover_ready_tenants(limit=limit)
+        # 发现有 blocked 任务且对应 processor 现已 active 的租户,避免 processor 从 disabled
+        # 转 active 后历史 blocked 任务无人 unblock 的死锁(如 meili/graph 引擎启用)。
+        active_topics = [
+            topic for topic in self.outbox_registry.topics
+            if self.outbox_registry.state_for(topic).status == "active"
+        ]
+        blocked = self.outbox_repo.discover_blocked_tenants(topics=active_topics, limit=limit)
         source_set = set(source)
         non_source = _unique(
-            [tenant_id for tenant_id in embedding + ready if tenant_id not in source_set]
+            [tenant_id for tenant_id in embedding + ready + blocked if tenant_id not in source_set]
         )
         source_budget = limit if limit == 1 or not non_source else limit - 1
         return _unique(source[:source_budget] + non_source + source[source_budget:])[:limit]

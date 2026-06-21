@@ -63,6 +63,29 @@ class OutboxRepository:
         ).fetchall()
         return [row["tenant_id"] for row in rows]
 
+    def discover_blocked_tenants(self, *, topics: list[str], limit: int) -> list[str]:
+        """发现存在 blocked 任务的租户(限定 topic)。
+
+        blocked 任务靠 unblock_available 转回 pending,但只有被发现的租户才会触发 unblock。
+        当某 processor 从 disabled 转为 active(如 meili/graph 引擎启用)时,需要这个发现源
+        把历史 blocked 任务所在租户重新纳入调度,否则会死锁(blocked 永不被 unblock)。
+        """
+        if not topics:
+            return []
+        rows = self.conn.execute(
+            """
+            select tenant_id
+            from resource_outbox
+            where status = 'blocked'
+              and topic = any(%s::text[])
+            group by tenant_id
+            order by tenant_id
+            limit %s
+            """,
+            (topics, max(1, min(limit, 100))),
+        ).fetchall()
+        return [row["tenant_id"] for row in rows]
+
     def lease_ready(
         self,
         *,
