@@ -21,15 +21,19 @@ async def ok(_request):
 
 
 @asynccontextmanager
-async def lifespan(_app: Starlette):
+async def lifespan(app: Starlette):
     supervisor = build_supervisor()
     await supervisor.start()
     runtime_snapshot = create_runtime_snapshot(supervisor)
+    app.state.supervisor = supervisor
+    app.state.runtime_snapshot = runtime_snapshot
     try:
         yield {"supervisor": supervisor, "runtime_snapshot": runtime_snapshot}
     finally:
         await supervisor.stop(grace_seconds=shutdown_grace_seconds())
         runtime_snapshot.stop(observed_at=utc_now())
+        app.state.supervisor = None
+        app.state.runtime_snapshot = None
 
 
 app = Starlette(routes=[Route("/ok", ok), *internal_routes], lifespan=lifespan)

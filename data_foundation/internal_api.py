@@ -241,6 +241,13 @@ def startup_runtime_fact(snapshot, *, observed_at: str) -> dict:
     )
 
 
+def _runtime_state(request: Request, name: str):
+    value = getattr(request.state, name, None)
+    if value is not None:
+        return value
+    return getattr(request.app.state, name, None)
+
+
 def scheduler_runtime_fact(supervisor, *, observed_at: str) -> dict:
     if supervisor is None:
         return module_fact(
@@ -302,11 +309,11 @@ def runtime_facts_payload(request: Request) -> dict:
 
     modules = {
         "startup": startup_runtime_fact(
-            getattr(request.state, "runtime_snapshot", None),
+            _runtime_state(request, "runtime_snapshot"),
             observed_at=observed_at,
         ),
         "scheduler": scheduler_runtime_fact(
-            getattr(request.state, "supervisor", None),
+            _runtime_state(request, "supervisor"),
             observed_at=observed_at,
         ),
         "database": database,

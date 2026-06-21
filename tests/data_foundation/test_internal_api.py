@@ -317,6 +317,47 @@ def test_internal_health_facts_combines_instance_and_database_modules(monkeypatc
     assert payload["modules"]["database"]["data"]["outbox"]["dead"] == 1
 
 
+def test_internal_health_facts_reads_runtime_state_from_application(monkeypatch):
+    import data_foundation.http_app as http_app
+    import data_foundation.internal_api as internal_api
+
+    class FakeSupervisor:
+        enabled = True
+        interval_seconds = 30
+        instance_id = "instance-from-app"
+        accepting_work = True
+        last_cycle_started_at = "2026-06-21T00:00:00+00:00"
+        last_cycle_finished_at = "2026-06-21T00:00:01+00:00"
+        last_cycle_status = "succeeded"
+        last_cycle_error_code = None
+
+        async def start(self):
+            return None
+
+        async def stop(self, *, grace_seconds):
+            return None
+
+    monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
+    monkeypatch.setattr(
+        internal_api,
+        "database_runtime_fact",
+        lambda observed_at: {
+            "status": "healthy",
+            "source": "database",
+            "observed_at": observed_at,
+            "stale_after_seconds": 30,
+            "data": {},
+        },
+    )
+
+    with _client(monkeypatch, admins="ou_admin") as client:
+        response = client.get("/internal/health/facts", headers=_admin_headers())
+
+    payload = response.json()
+    assert payload["modules"]["startup"]["status"] == "running"
+    assert payload["modules"]["scheduler"]["data"]["instance_id"] == "instance-from-app"
+
+
 def test_internal_health_facts_keeps_partial_result_when_database_fails(monkeypatch):
     client = _client(monkeypatch, admins="ou_admin")
 

@@ -48,3 +48,30 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
 
     assert events == ["start", ("stop", 7)]
     assert state["runtime_snapshot"].status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_http_app_lifespan_persists_runtime_state_on_application(monkeypatch):
+    import data_foundation.http_app as http_app
+
+    class FakeSupervisor:
+        enabled = True
+        interval_seconds = 30
+        instance_id = "instance-2"
+        accepting_work = True
+        last_cycle_started_at = None
+        last_cycle_finished_at = None
+        last_cycle_status = None
+        last_cycle_error_code = None
+
+        async def start(self):
+            return None
+
+        async def stop(self, *, grace_seconds):
+            return None
+
+    monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
+
+    async with http_app.lifespan(http_app.app):
+        assert http_app.app.state.supervisor.instance_id == "instance-2"
+        assert http_app.app.state.runtime_snapshot.status == "running"
