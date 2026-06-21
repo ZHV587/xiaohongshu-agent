@@ -1,6 +1,11 @@
 {
   "dependencies": ["."],
   "pip_config_file": "./deploy/pip.conf",
+  "dockerfile_lines": [
+    "ENV UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
+    "ENV UV_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
+    "ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple"
+  ],
   "graphs": {
     "xhs_agent": "./agent.py:agent"
   },
