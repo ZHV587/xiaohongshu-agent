@@ -11,17 +11,31 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from config_center import ConfigCenter, ConfigValidationError
+from config_center import ConfigCenter, ConfigValidationError, latest_config_snapshot
 from data_foundation.db import connect
 from data_foundation.permissions import default_tenant_id
 from data_foundation.repository import ResourceRepository
 from data_foundation.runtime_facts import module_fact, supervisor_runtime_fact, utc_now
+from models import build_pool_from_config
 from tools.lark_cli import lark_cli
 from tools.runtime_identity import identity_config
 from tools.uat_store import get_uat, save_uat
 
 
 logger = logging.getLogger(__name__)
+
+# 影响模型池的配置 key:本次 configs 含其一,才触发"构池验证 + 即时热重载"。
+# 其余 key(飞书/bitable 字段名等)与模型池无关,改它们不探测、不 reload。
+_MODEL_POOL_KEYS = frozenset({
+    "LLM_PROVIDER",
+    "LLM_BASE_URL",
+    "LLM_API_KEY",
+    "LLM_QUALITY_MODELS",
+    "LLM_GATEWAY_2_BASE_URL",
+    "LLM_GATEWAY_2_API_KEY",
+    "LLM_GATEWAY_3_BASE_URL",
+    "LLM_GATEWAY_3_API_KEY",
+})
 
 
 @dataclass(frozen=True)
@@ -123,8 +137,44 @@ async def internal_config_post(request: Request) -> JSONResponse:
         configs = body.get("configs")
         if not isinstance(configs, dict):
             return _json_error(400, "Bad Request: Missing configs object")
-        snapshot = _config_center().save(actor_open_id=actor.open_id, updates=configs)
-        return _json_ok({"ok": True, "version": snapshot.version, "changed_keys": snapshot.changed_keys})
+
+        center = _config_center()
+        merged = {**center.get_plain(), **{k: str(v or "") for k, v in configs.items()}}
+
+        # 是否要"构池验证 + 即时热重载":须同时满足
+        # (1) 本次改动涉及模型池 key;
+        # (2) 合并后网关配置已完整(至少一个 base_url+key 齐全 且 白名单非空)。
+        # 不完整(admin 分步配置中,如先填 key 再填 base_url)则只存不验证、不 reload,
+        # 等配齐后再生效 —— 避免"半成品配置"被构池验证拦下导致无法分步保存。
+        touches_model_pool = bool(_MODEL_POOL_KEYS & set(configs.keys()))
+        gateway_complete = bool(
+            merged.get("LLM_BASE_URL", "").strip()
+            and merged.get("LLM_API_KEY", "").strip()
+            and merged.get("LLM_QUALITY_MODELS", "").strip()
+        )
+        should_apply = touches_model_pool and gateway_complete
+
+        # 构池验证(force 探测):白名单内无任一模型被网关探测确认可用 → 400、不落库。
+        # 配置中心永远只存能构出非空池的完整模型配置。验证即构池,save 后 reload
+        # 复用刚填的探测缓存(不再 force),零额外探测、0 延迟生效。
+        if should_apply:
+            try:
+                build_pool_from_config(merged, force_discover=True)
+            except Exception as exc:  # noqa: BLE001
+                return _json_error(400, f"模型配置无可用模型,未保存:{exc}")
+
+        snapshot = center.save(actor_open_id=actor.open_id, updates=configs)
+
+        reloaded = None
+        if should_apply:
+            from agent import model_registry  # 延迟 import:同进程单例(N_WORKERS=1)
+
+            reloaded = model_registry.reload_from_config(snapshot)
+
+        payload = {"ok": True, "version": snapshot.version, "changed_keys": snapshot.changed_keys}
+        if reloaded is not None:
+            payload["model_pool_reloaded"] = reloaded
+        return _json_ok(payload)
     except ConfigValidationError as exc:
         return _json_error(400, str(exc))
     except KeyError as exc:

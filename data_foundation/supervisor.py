@@ -107,11 +107,8 @@ def supervisor_enabled() -> bool:
     return os.environ.get("XHS_SYNC_ENABLED", "false").strip().lower() == "true"
 
 
-def build_supervisor(*, model_registry=None) -> BackgroundServiceSupervisor:
-    # model_registry 透传给 scheduler,使后台 cycle 能与 embedding 刷新对称地热重载
-    # 模型池。registry 为 agent.py 进程内单例(N_WORKERS=1 同进程),由 http_app 注入。
+def build_supervisor() -> BackgroundServiceSupervisor:
     return BackgroundServiceSupervisor(
-        scheduler_factory=lambda: build_scheduler(model_registry=model_registry),
         enabled=supervisor_enabled(),
         interval_seconds=float(os.environ.get("XHS_SCHEDULER_INTERVAL_SECONDS", "30")),
     )

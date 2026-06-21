@@ -337,8 +337,17 @@ def test_internal_health_facts_reads_runtime_state_from_application(monkeypatch)
         async def stop(self, *, grace_seconds):
             return None
 
+    class FakeProbe:
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
     monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: object())
-    monkeypatch.setattr(http_app, "build_supervisor", lambda *, model_registry=None: FakeSupervisor())
+    monkeypatch.setattr(http_app, "build_model_health_probe", lambda reg: FakeProbe())
+    monkeypatch.setattr(http_app, "latest_config_snapshot", lambda: None)
     monkeypatch.setattr(
         internal_api,
         "database_runtime_fact",

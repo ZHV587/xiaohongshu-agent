@@ -38,12 +38,17 @@ load_dotenv()
 with open("deepagents_harness.json", "r", encoding="utf-8") as f:
     register_harness_profile("openai", HarnessProfileConfig.from_dict(json.load(f)))
 
-# ── 高质量模型自主调度:构造模型池 ──────────────────────────────────
-# 探测/白名单出候选模型池,主模型 + 路由中间件 + 评分模型均从此池调度。
-pool = build_pool()
-initial_model = build_primary_model(pool)
+# ── 高质量模型自主调度 ──────────────────────────────────────────────
+# 单一数据源:运行时模型池只来自 config-center(经探测∩白名单按质量序),
+# 由 server lifespan 启动对齐 + 定时健康探测 + 配置事件三条引线填充/刷新。
+# 这里 registry 创建即空,不灌 env —— env 不再是平行运行时配置源。
+#
+# initial_model:create_deep_agent / RubricMiddleware / 子智能体装配时各需一个
+# BaseChatModel 实例作占位。用 env 快路径构一个(不进 registry、非配置源);
+# 运行时主/子 agent 的真实调用经 ModelRouterMiddleware 被 registry 池覆盖,
+# registry 空时(填充前/测试态)才真正落到这个占位上。
+initial_model = build_primary_model(build_pool())
 model_registry = ModelRegistry()
-model_registry.replace(version=os.environ.get("XHS_CONFIG_VERSION", "env-bootstrap"), pool=list(pool))
 
 # 三路由 CompositeBackend:/skills/(磁盘共享只读)、/shared/(Store 共享)、
 # /drafts/ 及默认(State 随会话隔离)。详见 backends.py。

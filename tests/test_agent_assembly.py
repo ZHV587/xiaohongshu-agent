@@ -175,11 +175,16 @@ def test_agent_exposes_shared_model_registry(monkeypatch):
 
     agent_mod = importlib.reload(agent_mod)
 
+    # 单一数据源:registry 启动即空(不灌 env),池由 server lifespan 从 config-center
+    # 构建填充。装配期 router 经空池回退到 initial_model 占位,不报错。
     status = agent_mod.model_registry.status()
-    assert status["active_models"]
+    assert status["version"] == ""          # 启动未对齐任何 config 版本
+    assert status["active_models"] == []    # 空池,等 lifespan 填充
     assert status["hot_reload_coverage"]["main_agent"] is True
     assert status["hot_reload_coverage"]["subagents"] is True
     assert status["hot_reload_coverage"]["rubric"] is False
+    # 占位模型仍可装配出可用 agent(空池下 router 回退到它)
+    assert hasattr(agent_mod.agent, "invoke")
 
 
 def test_agent_registers_data_foundation_tools(monkeypatch):

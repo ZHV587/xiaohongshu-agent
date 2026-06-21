@@ -21,7 +21,6 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
     import data_foundation.http_app as http_app
 
     events = []
-    captured = {}
 
     class FakeSupervisor:
         enabled = False
@@ -39,30 +38,44 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
         async def stop(self, *, grace_seconds):
             events.append(("stop", grace_seconds))
 
-    sentinel_registry = object()
+    class FakeProbe:
+        async def start(self):
+            events.append("probe_start")
 
-    def fake_build_supervisor(*, model_registry=None):
-        captured["model_registry"] = model_registry
-        return FakeSupervisor()
+        async def stop(self):
+            events.append("probe_stop")
 
-    # 隔离对 agent 模块的真实 import(避免拉起模型探测),只验证 registry 被透传。
-    monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: sentinel_registry)
-    monkeypatch.setattr(http_app, "build_supervisor", fake_build_supervisor)
+    class FakeRegistry:
+        def __init__(self):
+            self.reloaded = []
+
+        def reload_from_config(self, snapshot, *, force_discover=False):
+            self.reloaded.append((snapshot.version, force_discover))
+            return True
+
+    registry = FakeRegistry()
+    monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
     monkeypatch.setattr(http_app, "shutdown_grace_seconds", lambda: 7)
+    monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: registry)
+    monkeypatch.setattr(http_app, "build_model_health_probe", lambda reg: FakeProbe())
+    # 启动对齐:config-center 有快照 → 启动即 reload(force 探测)
+    monkeypatch.setattr(http_app, "latest_config_snapshot", lambda: type("S", (), {"version": "v-start"})())
 
     async with http_app.lifespan(http_app.app) as state:
-        assert events == ["start"]
+        assert "start" in events and "probe_start" in events
         assert state["supervisor"] is not None
         assert state["runtime_snapshot"].status == "running"
 
-    assert events == ["start", ("stop", 7)]
+    # 关停顺序:先停探测,再停 supervisor
+    assert events == ["start", "probe_start", "probe_stop", ("stop", 7)]
     assert state["runtime_snapshot"].status == "stopped"
-    # 模型池热重载依赖 registry 被注入 supervisor → scheduler。
-    assert captured["model_registry"] is sentinel_registry
+    # 启动对齐确实 reload 了 config-center 快照(force 探测)
+    assert registry.reloaded == [("v-start", True)]
 
 
 @pytest.mark.asyncio
-async def test_http_app_lifespan_persists_runtime_state_on_application(monkeypatch):
+async def test_http_app_lifespan_skips_align_when_no_snapshot(monkeypatch):
+    """config-center 为空(纯 env/全新部署):启动不 reload,registry 维持空池。"""
     import data_foundation.http_app as http_app
 
     class FakeSupervisor:
@@ -81,9 +94,28 @@ async def test_http_app_lifespan_persists_runtime_state_on_application(monkeypat
         async def stop(self, *, grace_seconds):
             return None
 
-    monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: object())
-    monkeypatch.setattr(http_app, "build_supervisor", lambda *, model_registry=None: FakeSupervisor())
+    class FakeProbe:
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    class FakeRegistry:
+        def __init__(self):
+            self.reloaded = []
+
+        def reload_from_config(self, snapshot, *, force_discover=False):
+            self.reloaded.append(snapshot.version)
+            return True
+
+    registry = FakeRegistry()
+    monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
+    monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: registry)
+    monkeypatch.setattr(http_app, "build_model_health_probe", lambda reg: FakeProbe())
+    monkeypatch.setattr(http_app, "latest_config_snapshot", lambda: None)
 
     async with http_app.lifespan(http_app.app):
         assert http_app.app.state.supervisor.instance_id == "instance-2"
         assert http_app.app.state.runtime_snapshot.status == "running"
+    assert registry.reloaded == []  # 无快照,不启动对齐

@@ -46,20 +46,29 @@ class StaticModelPoolProvider:
         return list(self._pool)
 
 
-# 进程内探测缓存:同 (base_url, key) 只探一次。
-_DISCOVER_CACHE: dict[tuple[str, str], list[str] | None] = {}
+# 进程内探测缓存:同 (base_url, key) 在 TTL 内复用,过期重探。
+# 值为 (探测时刻 monotonic, 结果)。定时健康探测周期 300s,TTL 取略小的 250s,
+# 保证每个探测周期都拿到新鲜结果(网关增减模型能在一个周期内被感知)。
+_DISCOVER_CACHE: dict[tuple[str, str], tuple[float, list[str] | None]] = {}
 
 _DISCOVER_TIMEOUT = 5.0
+_DISCOVER_TTL = 250.0
 
 
-def discover_models(base_url: str, api_key: str) -> list[str] | None:
-    """探测网关 GET /v1/models,返回裸 id 列表;失败或禁用返回 None。"""
+def discover_models(base_url: str, api_key: str, *, force: bool = False) -> list[str] | None:
+    """探测网关 GET /v1/models,返回裸 id 列表;失败或禁用返回 None。
+
+    force=True 跳过缓存强制重探(定时健康探测、配置保存 verify 用),
+    并把新鲜结果写回缓存。普通构池调用走 TTL 缓存,减负载。
+    """
     if os.environ.get("DISCOVER_MODELS") == "false":
         return None
 
     cache_key = (base_url, api_key)
-    if cache_key in _DISCOVER_CACHE:
-        return _DISCOVER_CACHE[cache_key]
+    if not force:
+        cached = _DISCOVER_CACHE.get(cache_key)
+        if cached is not None and (time.monotonic() - cached[0]) < _DISCOVER_TTL:
+            return cached[1]
 
     url = base_url.rstrip("/") + "/models"
     result: list[str] | None
@@ -79,7 +88,7 @@ def discover_models(base_url: str, api_key: str) -> list[str] | None:
         logger.warning("discover_models 探测 %s 失败,降级: %s", url, exc)
         result = None
 
-    _DISCOVER_CACHE[cache_key] = result
+    _DISCOVER_CACHE[cache_key] = (time.monotonic(), result)
     return result
 
 
@@ -221,16 +230,18 @@ _COOLDOWN_SECONDS = 30.0
 
 
 class ModelRouterMiddleware(AgentMiddleware):
-    """质量优先的运行时调度:从健康候选轮转选模型,失败切同档下一个。
+    """严格质量优先的运行时调度:总是用池里最强(白名单序靠前)且健康的模型,
+    它冷却/失败才降级到次强,恢复后立刻切回。
 
-    健康度为 best-effort 无锁状态(spec §6):_health 存网关名→冷却到期时间。
+    健康度为 best-effort 无锁状态:_health 存 (网关名,模型id)→冷却到期时间。
+    池来自 pool_provider(通常包 ModelRegistry),每次调用实时读最新池,
+    故定时探测/配置热重载替换 registry 池后,本中间件下次调用即生效。
     """
 
     def __init__(self, pool_provider: ModelPoolProvider) -> None:
         super().__init__()
         self._pool_provider = pool_provider
         self._health: dict[tuple[str, str], float] = {}  # (gateway_name, model_id) -> 冷却到期
-        self._rr = 0  # 轮询游标
 
     def _current_pool(self) -> list[ModelCandidate]:
         return self._pool_provider.get_pool()
@@ -243,20 +254,27 @@ class ModelRouterMiddleware(AgentMiddleware):
         self._health[(candidate.gateway_name, candidate.model_id)] = time.monotonic() + _COOLDOWN_SECONDS
 
     def _ordered_candidates(self) -> list[ModelCandidate]:
-        """轮询起点 + 健康优先:先健康候选(从轮询游标起),冷却中的垫后(兜底)。"""
+        """严格质量优先:池按白名单序(强→弱)排列,本方法不打乱顺序。
+
+        健康候选按质量序在前(永远先试最强健康的那个),冷却中的按质量序垫后
+        (全冷却时仍按强→弱尝试,作自愈窗口)。区别于负载均衡的轮询——这里
+        不轮转、不均摊,总是优先最强可用模型,只有它冷却/失败才降级到次强。
+        """
         pool = self._current_pool()
         if not pool:
-            raise ValueError("ModelRouterMiddleware 需要非空候选池")
-        n = len(pool)
-        rotated = [pool[(self._rr + i) % n] for i in range(n)]
-        self._rr = (self._rr + 1) % n
-        healthy = [c for c in rotated if not self._is_cooling(c)]
-        cooling = [c for c in rotated if self._is_cooling(c)]
-        return healthy + cooling  # 全冷却时仍尝试(自愈窗口)
+            return []  # 池空由调用方(wrap/awrap)回退到 request 装配占位 model
+        healthy = [c for c in pool if not self._is_cooling(c)]
+        cooling = [c for c in pool if self._is_cooling(c)]
+        return healthy + cooling
 
     def wrap_model_call(self, request: ModelRequest, handler):
+        candidates = self._ordered_candidates()
+        if not candidates:
+            # 池为空:registry 尚未被 lifespan/探测/事件填充(server 接客前不会命中),
+            # 或测试/CLI 态。回退到 request 自带的装配占位 model,不阻断调用。
+            return handler(request)
         last_exc: Exception | None = None
-        for cand in self._ordered_candidates():
+        for cand in candidates:
             try:
                 return handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
@@ -269,8 +287,11 @@ class ModelRouterMiddleware(AgentMiddleware):
         raise last_exc
 
     async def awrap_model_call(self, request: ModelRequest, handler):
+        candidates = self._ordered_candidates()
+        if not candidates:
+            return await handler(request)
         last_exc: Exception | None = None
-        for cand in self._ordered_candidates():
+        for cand in candidates:
             try:
                 return await handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
@@ -310,8 +331,14 @@ def build_router_middleware(pool_provider: ModelPoolProvider) -> ModelRouterMidd
     return ModelRouterMiddleware(pool_provider)
 
 
-def build_pool_from_config(values: dict[str, str]) -> list[ModelCandidate]:
-    """从配置中心快照构造模型候选池，不依赖进程 env 作为权威源。"""
+def build_pool_from_config(values: dict[str, str], *, force_discover: bool = False) -> list[ModelCandidate]:
+    """从配置中心快照构造模型候选池，不依赖进程 env 作为权威源。
+
+    池按白名单(LLM_QUALITY_MODELS)顺序构建 —— 白名单序即质量优先序。
+    只收"网关探测确认存在 ∩ 在白名单"的模型,绝不塞未探测确认的模型。
+    force_discover=True 强制重探(定时健康探测、配置 verify 用)。
+    全挂(无任一可用)时 raise RuntimeError,由调用方决定处理(保留旧池/记错)。
+    """
     gateways: list[tuple[str, str, str]] = []
     base = values.get("LLM_BASE_URL", "").strip()
     key = values.get("LLM_API_KEY", "").strip()
@@ -324,32 +351,25 @@ def build_pool_from_config(values: dict[str, str]) -> list[ModelCandidate]:
             gateways.append((f"gateway_{n}", b, k))
 
     whitelist = [m.strip() for m in values.get("LLM_QUALITY_MODELS", "").split(",") if m.strip()]
-    whitelist_set = set(whitelist)
     pool: list[ModelCandidate] = []
 
     old_provider = os.environ.get("LLM_PROVIDER")
     if values.get("LLM_PROVIDER"):
         os.environ["LLM_PROVIDER"] = values["LLM_PROVIDER"]
     try:
-        for gw_name, base_url, api_key in gateways:
-            available = discover_models(base_url, api_key)
-            if not available:
-                continue
-            for model_id in available:
-                if model_id in whitelist_set:
+        # 先探测每个网关的可用清单(一次),再按白名单序匹配,保证质量优先序。
+        gateway_available = {
+            gw_name: set(discover_models(base_url, api_key, force=force_discover) or [])
+            for gw_name, base_url, api_key in gateways
+        }
+        for model_id in whitelist:  # 白名单序 = 质量序
+            for gw_name, base_url, api_key in gateways:
+                if model_id in gateway_available[gw_name]:
                     pool.append(ModelCandidate(
                         gateway_name=gw_name,
                         model_id=model_id,
                         model=_build_chat_model(model_id, base_url, api_key),
                     ))
-        if not pool and gateways and whitelist:
-            gw_name, base_url, api_key = gateways[0]
-            fallback_id = whitelist[0]
-            pool.append(ModelCandidate(
-                gateway_name=gw_name,
-                model_id=fallback_id,
-                model=_build_chat_model(fallback_id, base_url, api_key),
-            ))
     finally:
         if old_provider is None:
             os.environ.pop("LLM_PROVIDER", None)
@@ -357,14 +377,14 @@ def build_pool_from_config(values: dict[str, str]) -> list[ModelCandidate]:
             os.environ["LLM_PROVIDER"] = old_provider
 
     if not pool:
-        raise RuntimeError("无法从配置中心构造模型池")
+        raise RuntimeError("无法从配置中心构造模型池:白名单内无任一模型被网关探测确认可用")
     return pool
 
 
 def verify_gateway(base_url: str, api_key: str) -> bool:
     """配置时连通性验证:能探到非空清单即视为'配上能用'。
 
-    委托 discover_models;能返回非空清单为 True。供配置写入路径调用
-    (本次仅后端函数;web 联动后续立项,见 spec §12)。
+    委托 discover_models;能返回非空清单为 True。供配置写入路径调用。
+    force=True:admin 刚改的网关配置必须新鲜探测,不命中旧缓存。
     """
-    return bool(discover_models(base_url, api_key))
+    return bool(discover_models(base_url, api_key, force=True))

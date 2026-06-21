@@ -178,13 +178,14 @@ def default_config_center() -> ConfigCenter:
 
 
 def latest_config_snapshot() -> ConfigSnapshot | None:
-    """读 config-center 当前生效快照(history 末条),供运行时热重载比对版本。
+    """读 config-center 当前生效快照(history 末条),供进程启动时按权威配置构建模型池。
 
-    返回 None 的两种情形(均为"无可热载配置",调用方应保留启动态、不报错):
-    - 未配置 XHS_CONFIG_ENCRYPTION_KEY / 路径不可用(无配置中心,纯 env 部署)
-    - 配置中心存在但 history 为空(尚无任何写入)
-    不在此处 bootstrap 写盘:写盘是 embedding 运行时快照(runtime_embedding_snapshot)
-    的既有职责,这里只做只读比对,避免两条路径竞争写同一文件。
+    返回 None 的两种情形(调用方应退回 env 冷启动,不报错):
+    - 未配置 XHS_CONFIG_ENCRYPTION_KEY / 路径(无配置中心,纯 env 部署)
+    - 配置中心存在但 history 为空(全新部署,尚无任何写入)
+
+    只读,不在此处 bootstrap 写盘——写盘是 web 配置保存路径与 embedding 运行时快照
+    的既有职责,避免多入口竞争写同一加密文件。
     """
     if not (os.environ.get("XHS_CONFIG_ENCRYPTION_KEY") and os.environ.get("XHS_CONFIG_CENTER_PATH")):
         return None
