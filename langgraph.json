@@ -1,5 +1,6 @@
 {
   "dependencies": ["."],
+  "pip_config_file": "./deploy/pip.conf",
   "graphs": {
     "xhs_agent": "./agent.py:agent"
   },
