@@ -13,3 +13,8 @@ drafts/
 .xhs-config/
 tests/
 docs/
+# 运行时数据卷(compose 挂载,root 拥有)——不进 build context。
+# 否则 docker 扫 context 读 root 文件权限不足,build 直接失败。
+data/
+.uat_store.enc
+
