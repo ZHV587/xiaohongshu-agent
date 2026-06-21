@@ -38,7 +38,7 @@ include = ["tools", "shared", "data_foundation"]
 data_foundation = ["schema.sql"]
 
 [tool.setuptools]
-py-modules = ["agent", "auth", "backends", "middlewares", "prompts", "subagents", "verify_1b1", "verify_1b3", "verify_memory"]
+py-modules = ["agent", "auth", "backends", "middlewares", "prompts", "subagents"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

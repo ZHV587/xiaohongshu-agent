@@ -1,0 +1,160 @@
+# 小红书智能体 · 全栈生产编排
+#
+# 一份声明式文件描述整个后端栈:pg / redis / meili / falkor / langgraph / web。
+# 统一网络 xhs-net,服务间用服务名互连。替代 langgraph dev + 散装容器 + PM2。
+#
+# 部署:
+#   langgraph build -t xhs-langgraph:latest   # 先用 langgraph_cli 出后端镜像
+#   docker compose up -d --build              # web 现场 build,其余拉起
+#
+# 数据(无损复用现有):
+#   pgdata        named volume(external)→ 业务库 xhs_agent + langgraph 库
+#   ./data/meili  bind(由 /home/ubuntu/meili-data 迁入)
+#   ./data/falkor bind(由 /home/ubuntu/falkor-data 迁入)
+#
+# 密钥经 env_file 注入(.env / web/.env,均不进 git)。
+
+name: xhs
+
+networks:
+  xhs-net:
+    name: xhs-net
+    driver: bridge
+
+volumes:
+  pgdata:
+    external: true
+
+services:
+  pg:
+    image: local/postgres16-pgvector:0.8.3
+    container_name: xhs-pg
+    command: ["postgres"]
+    networks: [xhs-net]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: xhs_agent
+      POSTGRES_USER: xhs_user
+      POSTGRES_PASSWORD: ${XHS_PG_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xhs_user -d xhs_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: xhs-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [xhs-net]
+    restart: unless-stopped
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  meili:
+    image: getmeili/meilisearch:v1.10
+    container_name: xhs-meili
+    networks: [xhs-net]
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${XHS_MEILI_KEY}
+    volumes:
+      - ./data/meili:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  falkor:
+    image: falkordb/falkordb:latest
+    container_name: xhs-falkor
+    networks: [xhs-net]
+    restart: unless-stopped
+    volumes:
+      - ./data/falkor:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  langgraph:
+    image: xhs-langgraph:latest
+    container_name: xhs-langgraph
+    networks: [xhs-net]
+    restart: unless-stopped
+    mem_limit: 1500m
+    depends_on:
+      pg: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      meili: {condition: service_healthy}
+      falkor: {condition: service_healthy}
+    ports:
+      - "127.0.0.1:2030:8000"   # 仅本机:供 web BFF / 调试
+    env_file:
+      - .env
+    environment:
+      # langgraph server 平台持久化:独立 langgraph 库
+      POSTGRES_URI: "postgres://xhs_user:${XHS_PG_PASSWORD}@pg:5432/langgraph?sslmode=disable"
+      REDIS_URI: "redis://redis:6379"
+      N_JOBS_PER_WORKER: "10"
+      # 业务数据底座 + 引擎:服务名互连(覆盖 .env 里的 127.0.0.1)
+      XHS_DATABASE_URL: "postgresql://xhs_user:${XHS_PG_PASSWORD}@pg:5432/xhs_agent"
+      XHS_MEILI_URL: "http://meili:7700"
+      XHS_MEILI_KEY: ${XHS_MEILI_KEY}
+      XHS_FALKOR_URL: "redis://falkor:6379"
+      XHS_FALKOR_GRAPH: "xhs"
+      XHS_SYNC_ENABLED: "true"
+      # 配置中心 + UAT store:与 web 共享同一对宿主文件,容器内统一路径
+      XHS_CONFIG_CENTER_PATH: "/shared-state/.xhs-config/config-center.enc"
+      XHS_UAT_STORE_PATH: "/shared-state/.uat_store.enc"
+    volumes:
+      - ./.xhs-config:/shared-state/.xhs-config
+      - ./.uat_store.enc:/shared-state/.uat_store.enc
+    healthcheck:
+      test: ["CMD", "python", "/api/healthcheck.py"]
+      interval: 60s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* 在 build 时内联;公网固定值,可从 web/.env 经 shell 传入或写死
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://124.221.173.80:9091/api}
+        NEXT_PUBLIC_ASSISTANT_ID: ${NEXT_PUBLIC_ASSISTANT_ID:-xhs_agent}
+        NEXT_PUBLIC_AUTH_SCHEME: ${NEXT_PUBLIC_AUTH_SCHEME:-}
+    image: xhs-web:latest
+    container_name: xhs-web
+    networks: [xhs-net]
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on:
+      langgraph: {condition: service_started}
+    ports:
+      - "0.0.0.0:9091:3000"   # 公网入口
+    env_file:
+      - web/.env
+    environment:
+      # 容器内连后端用服务名(覆盖 web/.env 里的 localhost:2030)
+      LANGGRAPH_API_URL: "http://langgraph:8000"
+      XHS_INTERNAL_BASE_URL: "http://langgraph:8000"
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+      # 配置中心 + UAT store:与 langgraph 共享同一对宿主文件
+      XHS_CONFIG_CENTER_PATH: "/shared-state/.xhs-config/config-center.enc"
+      XHS_UAT_STORE_PATH: "/shared-state/.uat_store.enc"
+    volumes:
+      - ./.xhs-config:/shared-state/.xhs-config
+      - ./.uat_store.enc:/shared-state/.uat_store.enc

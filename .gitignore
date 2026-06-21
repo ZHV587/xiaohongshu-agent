@@ -20,7 +20,6 @@ large_tool_results/
 web/node_modules/
 web/.next/
 web/.env
-web/package-lock.json
 web/out/
 web/tsconfig.tsbuildinfo
 node_modules/.cache/
@@ -40,8 +39,6 @@ tools/check_real_user.py
 tools/check_server_ports_new.py
 tools/deploy.py
 tools/fix_venv.py
-tools/run_backend.py
-!tools/run_backend.py
 
 # 模拟登录接口(本地测试用,不入生产)
 web/src/app/api/auth/feishu/simulate/

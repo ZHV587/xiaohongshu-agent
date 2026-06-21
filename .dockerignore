@@ -1,0 +1,15 @@
+# langgraph build 镜像构建忽略项 —— 避免把巨大/无关目录打进镜像层
+.venv/
+web/node_modules/
+web/.next/
+.git/
+.langgraph_api/
+__pycache__/
+*.pyc
+.pytest_cache/
+analysis/
+drafts/
+*.env.bak.*
+.xhs-config/
+tests/
+docs/
