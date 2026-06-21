@@ -269,6 +269,27 @@ class ResourceRepository:
             for table in tables
         }
 
+    def readable_rows_by_ids(self, *, tenant_id: str, actor_open_id: str, resource_ids: list[str]):
+        if not resource_ids:
+            return []
+        ordering = {rid: i for i, rid in enumerate(resource_ids)}
+        rows = self.conn.execute(
+            f"""
+            select r.*,
+                   (
+                     select max(rm.external_updated_at)
+                     from resource_mappings rm
+                     where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
+                   ) as source_updated_at,
+                   1.0::real as score
+            from resources r
+            where r.id = any(%(ids)s::uuid[])
+              and {readable_resource_where('r')}
+            """,
+            {"tenant_id": tenant_id, "actor_open_id": actor_open_id, "ids": resource_ids},
+        ).fetchall()
+        return sorted(rows, key=lambda row: ordering.get(str(row["id"]), len(ordering)))
+
     def keyword_rows(self, *, tenant_id: str, actor_open_id: str, query: str, limit: int):
         return self.conn.execute(
             f"""

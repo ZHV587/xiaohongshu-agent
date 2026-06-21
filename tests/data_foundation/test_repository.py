@@ -633,3 +633,18 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
     assert "OTHER_TENANT" not in rendered
     assert "cfg-other" not in rendered
     assert "other-outbox-payload-secret" not in rendered
+
+
+def test_readable_rows_by_ids_filters_and_preserves_order(migrated_conn):
+    from data_foundation.repository import ResourceRepository
+    repo = ResourceRepository(migrated_conn)
+    a = repo.upsert_resource(tenant_id="default", actor_open_id="ou_x", resource_type="feishu_base_record",
+        title="A", content_text="a", content_json={}, visibility="team", owner_open_id="ou_x")
+    b = repo.upsert_resource(tenant_id="default", actor_open_id="ou_x", resource_type="feishu_base_record",
+        title="B", content_text="b", content_json={}, visibility="team", owner_open_id="ou_x")
+    rows = repo.readable_rows_by_ids(tenant_id="default", actor_open_id="ou_x", resource_ids=[b.id, a.id])
+    assert [str(r["id"]) for r in rows] == [b.id, a.id]
+    c = repo.upsert_resource(tenant_id="default", actor_open_id="ou_other", resource_type="feishu_base_record",
+        title="C", content_text="c", content_json={}, visibility="private", owner_open_id="ou_other")
+    rows2 = repo.readable_rows_by_ids(tenant_id="default", actor_open_id="ou_x", resource_ids=[c.id, a.id])
+    assert [str(r["id"]) for r in rows2] == [a.id]
