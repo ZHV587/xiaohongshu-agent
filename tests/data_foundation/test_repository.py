@@ -32,6 +32,27 @@ def test_actor_from_config_requires_langgraph_identity():
         actor_from_config(None)
 
 
+@dataclass(frozen=True)
+class _LangGraphUser:
+    identity: str
+
+
+def test_actor_from_config_reads_langgraph_auth_user():
+    # LangGraph server 在 tool 上下文把认证用户注入 configurable["langgraph_auth_user"]。
+    cfg = {"configurable": {"langgraph_auth_user": _LangGraphUser("ou_real")}}
+    assert actor_from_config(cfg) == "ou_real"
+    # dict 形态的用户对象也兼容
+    cfg_dict = {"configurable": {"langgraph_auth_user": {"identity": "ou_dict"}}}
+    assert actor_from_config(cfg_dict) == "ou_dict"
+
+
+def test_actor_from_config_ignores_client_supplied_user_id():
+    # 安全:绝不信任 configurable 里客户端可伪造的 user_id/open_id,只认服务端注入的 auth_user。
+    cfg = {"configurable": {"user_id": "ou_forged", "open_id": "ou_forged2"}}
+    with pytest.raises(PermissionError, match="Missing LangGraph user identity"):
+        actor_from_config(cfg)
+
+
 def test_resource_repository_no_longer_exposes_legacy_outbox_runtime():
     assert not hasattr(ResourceRepository, "lease_outbox")
     assert not hasattr(ResourceRepository, "complete_outbox")
