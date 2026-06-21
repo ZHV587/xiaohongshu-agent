@@ -66,11 +66,15 @@ def list_base_tables(app_token: str, config: RunnableConfig = None) -> tuple[lis
     from tools.lark_cli import lark_cli
 
     tables: list[dict[str, str]] = []
-    page_token = ""
+    offset = 0
+    limit = 100
     while True:
-        args = ["base", "+table-list", "--base-token", app_token, "--page-size", "100"]
-        if page_token:
-            args += ["--page-token", page_token]
+        args = [
+            "base", "+table-list",
+            "--base-token", app_token,
+            "--limit", str(limit),
+            "--offset", str(offset),
+        ]
         resp = lark_cli.func(shlex.join(args), config=config)
         if resp.startswith("Error") or resp.startswith("⚠️") or resp.startswith("Feishu"):
             return tables, f"lark-cli 列出数据表失败：{resp}"
@@ -78,12 +82,14 @@ def list_base_tables(app_token: str, config: RunnableConfig = None) -> tuple[lis
             block = json.loads(resp).get("data", {})
         except json.JSONDecodeError:
             return tables, f"lark-cli 列表表返回非 JSON：{resp[:200]}"
-        for item in block.get("items", []) or []:
+        items = block.get("items", []) or []
+        for item in items:
             tid = item.get("table_id")
             if tid:
                 tables.append({"table_id": str(tid), "name": str(item.get("name") or tid)})
-        page_token = block.get("page_token") or ""
-        if not block.get("has_more") or not page_token:
+        if block.get("has_more") and items:
+            offset += limit
+        else:
             break
     return tables, None
 

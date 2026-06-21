@@ -171,6 +171,8 @@ def test_sync_base_rows_upserts_records(migrated_conn):
     assert resource.content_json == {
         "fields": {"标题": "露营标题", "正文": "露营正文", "点赞": 88},
         "identity_kind": "feishu_record_id",
+        "table_id": "tbl1",
+        "table_name": "",
     }
 
     mapping = migrated_conn.execute(
