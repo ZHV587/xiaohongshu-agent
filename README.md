@@ -96,3 +96,4 @@ cd web
 ## 文档
 - 设计:`docs/superpowers/specs/2026-06-15-xhs-content-agent-design.md`
 - 计划:`docs/superpowers/plans/`
+- 服务器部署规则:`docs/deployment/server-deployment-rules.md`
