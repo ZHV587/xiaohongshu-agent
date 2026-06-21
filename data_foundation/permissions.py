@@ -81,6 +81,5 @@ def readable_resource_where(alias: str = "r") -> str:
           and rp.subject_id = %(actor_open_id)s
           and rp.permission in ('read', 'write', 'admin')
       )
-      or %(actor_open_id)s = any(regexp_split_to_array(coalesce(current_setting('app.admin_open_ids', true), ''), '\\s*,\\s*'))
     )
     """

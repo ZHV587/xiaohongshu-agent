@@ -408,7 +408,6 @@ class ResourceRepository:
                     and rp.subject_id = %(actor_open_id)s
                     and rp.permission in ('write', 'admin')
                 )
-                or %(actor_open_id)s = any(regexp_split_to_array(coalesce(current_setting('app.admin_open_ids', true), ''), '\\s*,\\s*'))
               )
             """,
             {"tenant_id": tenant_id, "actor_open_id": actor_open_id, "resource_id": resource_id},

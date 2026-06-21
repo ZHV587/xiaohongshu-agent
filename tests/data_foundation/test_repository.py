@@ -273,21 +273,34 @@ def test_permission_filter_blocks_other_private_resource(migrated_conn):
     assert repo.get_resource("default", "ou_other", created.id) is not None
 
 
-def test_admin_can_read_same_tenant_without_per_resource_grant(migrated_conn):
+def test_admin_open_id_has_no_implicit_cross_user_read(migrated_conn):
+    # 数据底座不再有 admin 旁路:运维 admin(XHS_ADMIN_OPEN_IDS)不自动获得他人
+    # private 资源的读权限。跨用户读必须经 owner/team/resource_permissions 显式授予。
     repo = ResourceRepository(migrated_conn)
     created = repo.upsert_resource(
         tenant_id="default",
         actor_open_id="ou_owner",
         resource_type="draft",
-        title="管理员可读草稿",
-        content_text="管理员无需逐资源授权",
+        title="他人私有草稿",
+        content_text="无显式授权管理员也读不到",
         content_json={},
         visibility="private",
         owner_open_id="ou_owner",
     )
 
-    migrated_conn.execute("set app.admin_open_ids = 'ou_other, ou_admin'")
+    # 即使把某 open_id 写进 app.admin_open_ids,也不再产生任何效果(旁路已删)
+    migrated_conn.execute("set app.admin_open_ids = 'ou_admin'")
 
+    assert repo.get_resource("default", "ou_admin", created.id) is None
+
+    # 显式 read 授权后才可读
+    repo.grant_permission(
+        tenant_id="default",
+        resource_id=created.id,
+        subject_type="user",
+        subject_id="ou_admin",
+        permission="read",
+    )
     assert repo.get_resource("default", "ou_admin", created.id) is not None
 
 
