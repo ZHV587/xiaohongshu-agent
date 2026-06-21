@@ -31,13 +31,15 @@ def sync_base_rows(
     tenant_id: str,
     actor_open_id: str,
     app_token: str,
-    table_id: str,
     rows: list[dict[str, Any]],
 ) -> SyncResult:
     imported = 0
     errors: list[str] = []
     for row in rows:
         record_id = str(row.get("record_id") or "<missing>")
+        # 每行带自己的来源 table_id(多表聚合);缺失时回退占位,保证 external_id 唯一。
+        table_id = str(row.get("table_id") or "table")
+        table_name = str(row.get("table_name") or "")
         external_id = f"{app_token}:{table_id}:{record_id}"
         identity_kind = str(row.get("identity_kind") or "feishu_record_id")
         external_type = "base_record" if identity_kind == "feishu_record_id" else "base_record_snapshot"
@@ -45,8 +47,8 @@ def sync_base_rows(
             if record_id == "<missing>":
                 raise ValueError("record_id is required")
             fields = dict(row.get("fields") or {})
-            title = _field(fields, ["标题", "title", "Title"]) or record_id
-            body = _field(fields, ["正文", "正文内容", "视频文案", "content", "Content"])
+            title = _field(fields, ["标题", "选题", "title", "Title"]) or table_name or record_id
+            body = _field(fields, ["正文", "正文内容", "视频文案", "评论内容", "文档内容", "content", "Content"])
             mapping = {
                 "system": "feishu",
                 "external_type": external_type,
@@ -61,7 +63,12 @@ def sync_base_rows(
                 resource_type="feishu_base_record",
                 title=title,
                 content_text=body,
-                content_json={"fields": fields, "identity_kind": identity_kind},
+                content_json={
+                    "fields": fields,
+                    "identity_kind": identity_kind,
+                    "table_id": table_id,
+                    "table_name": table_name,
+                },
                 visibility="team",
                 owner_open_id=actor_open_id,
                 mapping=mapping,

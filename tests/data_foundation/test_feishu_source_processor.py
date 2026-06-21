@@ -107,8 +107,8 @@ async def test_feishu_base_source_uses_registered_identity_and_repository():
             "app_token": "base-app",
             "table_id": "tbl",
             "sync_rows": [
-                {"record_id": "rec1", "fields": {"标题": "露营", "正文": "正文"}},
-                {"record_id": "rec2", "fields": {"title": "收纳", "content": "内容"}},
+                {"record_id": "rec1", "table_id": "tbl", "fields": {"标题": "露营", "正文": "正文"}},
+                {"record_id": "rec2", "table_id": "tbl", "fields": {"title": "收纳", "content": "内容"}},
             ],
         }
 

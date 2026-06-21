@@ -31,7 +31,6 @@ class FeishuBaseSourceProcessor:
             tenant_id=context.source.tenant_id,
             actor_open_id=context.actor_open_id,
             app_token=str(payload.get("app_token") or context.source.config.get("app_token") or ""),
-            table_id=str(payload.get("table_id") or context.source.config.get("table_id") or ""),
             rows=rows,
         )
         errors.extend(result.errors)

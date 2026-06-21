@@ -76,10 +76,10 @@ def test_feishu_sync_preserves_external_source_updated_at():
         tenant_id="default",
         actor_open_id="ou_sync",
         app_token="base1",
-        table_id="tbl1",
         rows=[
             {
                 "record_id": "rec1",
+                "table_id": "tbl1",
                 "external_updated_at": "2026-05-01T08:00:00Z",
                 "fields": {"标题": "旧资料"},
             }
@@ -130,8 +130,7 @@ def test_sync_base_rows_reports_record_identity_on_invalid_input():
         tenant_id="default",
         actor_open_id="ou_sync",
         app_token="base1",
-        table_id="tbl1",
-        rows=[{"fields": {"标题": "缺少记录 ID"}}],
+        rows=[{"table_id": "tbl1", "fields": {"标题": "缺少记录 ID"}}],
     )
 
     assert result.imported == 0
@@ -147,10 +146,9 @@ def test_sync_base_rows_upserts_records(migrated_conn):
         tenant_id="default",
         actor_open_id="ou_sync",
         app_token="base1",
-        table_id="tbl1",
         rows=[
-            {"record_id": "rec1", "fields": {"标题": "露营标题", "正文": "露营正文", "点赞": 88}},
-            {"record_id": "rec2", "fields": {"标题": "收纳标题", "正文": "收纳正文"}},
+            {"record_id": "rec1", "table_id": "tbl1", "fields": {"标题": "露营标题", "正文": "露营正文", "点赞": 88}},
+            {"record_id": "rec2", "table_id": "tbl1", "fields": {"标题": "收纳标题", "正文": "收纳正文"}},
         ],
     )
 
