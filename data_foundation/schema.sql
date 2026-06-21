@@ -307,6 +307,12 @@ create index if not exists idx_sync_runs_tenant_recent
   on sync_runs (tenant_id, started_at desc);
 create index if not exists idx_sync_runs_source_recent
   on sync_runs (sync_source_id, started_at desc);
+create index if not exists idx_sync_runs_tenant_running
+  on sync_runs (tenant_id, started_at desc, id desc)
+  where status = 'running';
+create index if not exists idx_sync_runs_stale_running
+  on sync_runs (started_at, id)
+  where status = 'running';
 
 create table if not exists resource_outbox (
   id uuid primary key default gen_random_uuid(),

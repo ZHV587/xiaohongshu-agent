@@ -188,6 +188,16 @@ def test_schema_source_declares_resource_type_count_facts():
     assert "on conflict (tenant_id, type) do update" in schema
 
 
+def test_schema_source_declares_sync_run_running_indexes():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "idx_sync_runs_tenant_running" in schema
+    assert "on sync_runs (tenant_id, started_at desc, id desc)" in schema
+    assert "idx_sync_runs_stale_running" in schema
+    assert "on sync_runs (started_at, id)" in schema
+    assert "where status = 'running'" in schema
+
+
 def test_reset_allowlist_contains_only_all_operational_tables():
     assert set(db.DATA_FOUNDATION_TABLES) == EXPECTED_TABLES
 
@@ -564,6 +574,22 @@ def test_runtime_fact_indexes_cover_status_aggregation_paths(migrated_conn):
     assert "(tenant_id, window_started_at desc, window_ended_at desc, id desc)" in indexes[
         "idx_service_error_aggregates_tenant_recent_ordered"
     ]
+
+
+def test_sync_run_running_indexes_cover_status_and_stale_recovery(migrated_conn):
+    rows = migrated_conn.execute(
+        """
+        select indexname, indexdef
+        from pg_indexes
+        where schemaname = current_schema()
+        """
+    ).fetchall()
+    indexes = {row[0]: row[1].lower() for row in rows}
+
+    assert "(tenant_id, started_at desc, id desc)" in indexes["idx_sync_runs_tenant_running"]
+    assert "where (status = 'running'" in indexes["idx_sync_runs_tenant_running"]
+    assert "(started_at, id)" in indexes["idx_sync_runs_stale_running"]
+    assert "where (status = 'running'" in indexes["idx_sync_runs_stale_running"]
 
 
 def test_resource_content_trigram_index_supports_keyword_fallback(migrated_conn):
