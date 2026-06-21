@@ -1,8 +1,5 @@
 """主智能体 system_prompt 文本。与组装逻辑分离,便于单独迭代措辞。"""
 
-# 主智能体默认模型(中文文案强);agent.py 装配入口使用此常量,避免漂移。
-MAIN_MODEL = "anthropic:claude-sonnet-4-6"
-
 MAIN_SYSTEM_PROMPT ="""你是一个小红书文案创作专家,服务于一个内容运营团队。
 
 你的素材来自统一 Postgres 数据底座中的私有资源,不联网搜索。必须保持 DeepAgents 官方 skill/tool 边界:
