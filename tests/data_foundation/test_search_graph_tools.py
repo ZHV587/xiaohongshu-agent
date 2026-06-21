@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import math
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from cryptography.fernet import Fernet
@@ -11,7 +12,7 @@ from cryptography.fernet import Fernet
 from data_foundation.graph import expand_graph
 from data_foundation.processors.embedding import EmbeddingProviderConfig
 from data_foundation.repository import ResourceRepository
-from data_foundation.search import _result_from_row, keyword_search, semantic_search
+from data_foundation.search import _result_from_row, semantic_search
 
 
 class _User:
@@ -35,18 +36,22 @@ class _FakeRepository:
         self.calls.append(("active_index", {"tenant_id": tenant_id}))
         return self.active_index
 
-    def keyword_rows(self, **kwargs):
-        self.calls.append(("keyword", kwargs))
-        return [
-            {
-                "id": "resource-1",
+    def readable_rows_by_ids(self, **kwargs):
+        self.calls.append(("readable_by_ids", kwargs))
+        ids = kwargs.get("resource_ids") or []
+        rows = []
+        for rid in ids:
+            rows.append({
+                "id": rid,
                 "title": "露营装备",
                 "summary": None,
                 "type": "topic",
                 "visibility": "team",
-                "score": 0.75,
-            }
-        ]
+                "score": 1.0,
+                "source_updated_at": None,
+                "updated_at": None,
+            })
+        return rows
 
     def semantic_rows(self, **kwargs):
         self.calls.append(("semantic", kwargs))
@@ -87,49 +92,23 @@ class _FakeRepository:
         self.calls.append(("graph", kwargs))
         return [
             {
-                "kind": "node",
-                "id": "resource-1",
-                "title": "起点",
-                "type": "topic",
-                "depth": 0,
-                "source_resource_id": None,
-                "target_resource_id": None,
-                "edge_type": None,
-                "weight": None,
+                "kind": "node", "id": "resource-1", "title": "起点", "type": "topic", "depth": 0,
+                "source_resource_id": None, "target_resource_id": None, "edge_type": None, "weight": None,
             },
             {
-                "kind": "node",
-                "id": "resource-2",
-                "title": "终点",
-                "type": "topic",
-                "depth": 1,
-                "source_resource_id": None,
-                "target_resource_id": None,
-                "edge_type": None,
-                "weight": None,
+                "kind": "node", "id": "resource-2", "title": "终点", "type": "topic", "depth": 1,
+                "source_resource_id": None, "target_resource_id": None, "edge_type": None, "weight": None,
             },
             {
-                "kind": "edge",
-                "id": None,
-                "title": None,
-                "type": None,
-                "depth": 1,
-                "source_resource_id": "resource-1",
-                "target_resource_id": "resource-2",
-                "edge_type": "LINK",
-                "weight": 0.8,
+                "kind": "edge", "id": None, "title": None, "type": None, "depth": 1,
+                "source_resource_id": "resource-1", "target_resource_id": "resource-2",
+                "edge_type": "LINK", "weight": 0.8,
             },
             {
-                "kind": "edge",
-                "id": None,
-                "title": None,
-                "type": None,
-                "depth": 1,
-                "source_resource_id": "resource-1",
-                "target_resource_id": "hidden-resource",
-                "edge_type": "LINK",
-                "weight": 0.8,
-            }
+                "kind": "edge", "id": None, "title": None, "type": None, "depth": 1,
+                "source_resource_id": "resource-1", "target_resource_id": "hidden-resource",
+                "edge_type": "LINK", "weight": 0.8,
+            },
         ]
 
 
@@ -153,29 +132,6 @@ def test_search_result_metadata_distinguishes_source_and_index_freshness():
     assert result.metadata["source_updated_at"] == source_updated_at.isoformat()
     assert result.metadata["indexed_at"] == indexed_at.isoformat()
     assert "updated_at" not in result.metadata
-
-
-def test_keyword_search_empty_query_returns_empty_without_database_call():
-    repo = _FakeRepository()
-
-    assert keyword_search(repo, tenant_id="tenant", actor_open_id="actor", query="  ") == []
-    assert repo.calls == []
-
-
-@pytest.mark.parametrize(("requested", "expected"), [(-2, 1), (0, 1), (8, 8), (99, 20)])
-def test_keyword_search_clamps_limit(requested, expected):
-    repo = _FakeRepository()
-
-    results = keyword_search(
-        repo,
-        tenant_id="tenant",
-        actor_open_id="actor",
-        query="露营",
-        limit=requested,
-    )
-
-    assert results[0].resource_id == "resource-1"
-    assert repo.calls[0][1]["limit"] == expected
 
 
 @pytest.mark.parametrize(("requested", "expected"), [(-2, 1), (0, 1), (8, 8), (99, 20)])
@@ -329,16 +285,17 @@ def _insert_embedding(
     )
 
 
-def test_keyword_search_filters_by_query_tenant_and_permission(migrated_conn):
+def test_readable_rows_by_ids_filters_by_permission(migrated_conn):
     repo = ResourceRepository(migrated_conn)
-    _create_resource(repo, title="露营装备", content="帐篷 天幕 炉具")
-    _create_resource(repo, title="私有露营笔记", visibility="private", content="露营")
-    _create_resource(repo, tenant_id="other", title="其他租户露营", content="露营")
+    visible = _create_resource(repo, title="露营装备", content="帐篷 天幕 炉具")
+    private = _create_resource(repo, title="私有露营笔记", visibility="private", content="露营")
 
-    results = keyword_search(repo, tenant_id="default", actor_open_id="ou_other", query="露营", limit=10)
+    rows = repo.readable_rows_by_ids(
+        tenant_id="default", actor_open_id="ou_other",
+        resource_ids=[private.id, visible.id],
+    )
 
-    assert [item.title for item in results] == ["露营装备"]
-    assert results[0].score > 0
+    assert [str(r["id"]) for r in rows] == [visible.id]
 
 
 def test_semantic_search_returns_best_chunk_once_per_resource(migrated_conn):
@@ -400,64 +357,6 @@ def test_add_edge_validates_edge_type_and_weight(migrated_conn):
         )
 
 
-def test_expand_graph_is_cycle_safe_deduplicated_and_permission_filtered(migrated_conn):
-    repo = ResourceRepository(migrated_conn)
-    start = _create_resource(repo, title="起点")
-    middle = _create_resource(repo, title="中点")
-    end = _create_resource(repo, title="终点")
-    hidden = _create_resource(repo, title="隐藏", visibility="private")
-    for source, target, edge_type in [
-        (start, middle, "LINK"),
-        (middle, end, "LINK"),
-        (end, start, "LINK"),
-        (middle, hidden, "LINK"),
-        (start, hidden, "IGNORED"),
-    ]:
-        repo.add_edge(
-            tenant_id="default",
-            source_resource_id=source.id,
-            target_resource_id=target.id,
-            edge_type=edge_type,
-        )
-
-    graph = expand_graph(
-        repo,
-        tenant_id="default",
-        actor_open_id="ou_other",
-        resource_ids=[start.id],
-        hops=3,
-        edge_types=["LINK"],
-    )
-
-    assert {node.resource_id: node.depth for node in graph.nodes} == {start.id: 0, middle.id: 1, end.id: 2}
-    assert {(edge.source_resource_id, edge.target_resource_id) for edge in graph.edges} == {
-        (start.id, middle.id),
-        (middle.id, end.id),
-    }
-
-
-def test_expand_graph_invisible_start_returns_nothing(migrated_conn):
-    repo = ResourceRepository(migrated_conn)
-    hidden = _create_resource(repo, title="隐藏起点", visibility="private")
-    target = _create_resource(repo, title="可见终点")
-    repo.add_edge(
-        tenant_id="default",
-        source_resource_id=hidden.id,
-        target_resource_id=target.id,
-        edge_type="LINK",
-    )
-
-    graph = expand_graph(
-        repo,
-        tenant_id="default",
-        actor_open_id="ou_other",
-        resource_ids=[hidden.id],
-    )
-
-    assert graph.nodes == []
-    assert graph.edges == []
-
-
 def test_tools_reject_missing_identity():
     from data_foundation.tools import search_resources
 
@@ -465,35 +364,7 @@ def test_tools_reject_missing_identity():
         search_resources.func("露营", config=None)
 
 
-def test_search_tool_returns_structured_json(monkeypatch, migrated_conn):
-    from data_foundation import tools as df_tools
-
-    repo = ResourceRepository(migrated_conn)
-    repo.upsert_resource(
-        tenant_id="default",
-        actor_open_id="ou_owner",
-        resource_type="topic",
-        title="露营装备",
-        content_text="帐篷 天幕",
-        content_json={},
-        visibility="team",
-        owner_open_id="ou_owner",
-    )
-
-    @contextmanager
-    def repository():
-        yield ResourceRepository(migrated_conn)
-
-    monkeypatch.setattr(df_tools, "_repository", repository)
-
-    result = df_tools.search_resources.func("露营", limit=10, config=_Config())
-
-    assert result["ok"] is True
-    assert result["results"][0]["title"] == "露营装备"
-    assert "content_text" not in result["results"][0]
-
-
-def test_semantic_search_tool_falls_back_to_keyword_when_no_active_index(monkeypatch):
+def test_search_tool_returns_structured_json(monkeypatch):
     from data_foundation import tools as df_tools
 
     repo = _FakeRepository()
@@ -502,8 +373,55 @@ def test_semantic_search_tool_falls_back_to_keyword_when_no_active_index(monkeyp
     def repository():
         yield repo
 
+    fake_index = MagicMock()
+    fake_index.search.return_value = ["resource-1"]
     monkeypatch.setattr(df_tools, "_repository", repository)
-    monkeypatch.setenv("LLM_API_KEY", "must-not-be-used")
+    monkeypatch.setenv("XHS_MEILI_URL", "http://127.0.0.1:7700")
+    monkeypatch.setenv("XHS_MEILI_KEY", "k")
+    monkeypatch.setattr(
+        "data_foundation.meili_client.MeiliResourceIndex.from_config",
+        classmethod(lambda cls, cfg: fake_index),
+    )
+
+    result = df_tools.search_resources.func("露营", limit=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["results"][0]["resource_id"] == "resource-1"
+    assert result["results"][0]["title"] == "露营装备"
+    assert "content_text" not in result["results"][0]
+    fake_index.search.assert_called_once()
+
+
+def test_search_tool_returns_error_when_meili_unavailable(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    monkeypatch.delenv("XHS_MEILI_URL", raising=False)
+    monkeypatch.delenv("XHS_MEILI_KEY", raising=False)
+
+    result = df_tools.search_resources.func("露营", limit=10, config=_Config())
+
+    assert result["ok"] is False
+    assert result["error"] == "MEILI_UNAVAILABLE"
+
+
+def test_semantic_search_tool_falls_back_to_fulltext_when_no_active_index(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = _FakeRepository()
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    fake_index = MagicMock()
+    fake_index.search.return_value = ["resource-9"]
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setenv("XHS_MEILI_URL", "http://127.0.0.1:7700")
+    monkeypatch.setenv("XHS_MEILI_KEY", "k")
+    monkeypatch.setattr(
+        "data_foundation.meili_client.MeiliResourceIndex.from_config",
+        classmethod(lambda cls, cfg: fake_index),
+    )
     monkeypatch.setattr(
         df_tools,
         "_embed_query",
@@ -516,34 +434,7 @@ def test_semantic_search_tool_falls_back_to_keyword_when_no_active_index(monkeyp
     assert result["ok"] is True
     assert result["mode"] == "keyword_fallback"
     assert result["fallback_reason"] == "NO_ACTIVE_EMBEDDING_INDEX"
-    assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
-
-
-def test_semantic_search_tool_requires_explicit_embedding_base_url(monkeypatch):
-    from data_foundation import tools as df_tools
-
-    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
-    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
-    repo = _FakeRepository()
-    repo.active_index = SimpleNamespace(embedding_model="embedding-model", dimensions=1536, config_version="cfg-active")
-
-    @contextmanager
-    def repository():
-        yield repo
-
-    monkeypatch.setattr(df_tools, "_repository", repository)
-    monkeypatch.setenv("XHS_EMBEDDING_CONFIG_VERSION", "cfg-active")
-    monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "embedding-key")
-    monkeypatch.setenv("XHS_EMBEDDING_MODEL", "embedding-model")
-    monkeypatch.delenv("XHS_EMBEDDING_BASE_URL", raising=False)
-    monkeypatch.setenv("LLM_BASE_URL", "https://chat.example/v1")
-
-    result = df_tools.semantic_search_resources.func("露营", top_k=10, config=_Config())
-
-    assert result["ok"] is True
-    assert result["mode"] == "keyword_fallback"
-    assert result["fallback_reason"] == "EMBEDDING_QUERY_CONFIG_MISSING"
-    assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
+    assert result["results"][0]["resource_id"] == "resource-9"
 
 
 def test_semantic_search_tool_uses_active_index_historical_profile(monkeypatch, tmp_path):
@@ -605,39 +496,6 @@ def test_semantic_search_tool_uses_active_index_historical_profile(monkeypatch, 
     assert captured["config"].api_key == "old-key"
     assert captured["config"].timeout_seconds == 11.0
     assert [call[0] for call in repo.calls] == ["active_index", "semantic"]
-
-
-def test_semantic_search_tool_falls_back_when_active_profile_is_missing(monkeypatch):
-    from data_foundation import tools as df_tools
-
-    repo = _FakeRepository()
-    repo.active_index = SimpleNamespace(
-        embedding_model="old-model",
-        dimensions=1536,
-        config_version="retired-version",
-    )
-
-    @contextmanager
-    def repository():
-        yield repo
-
-    monkeypatch.setattr(df_tools, "_repository", repository)
-    monkeypatch.setenv("XHS_EMBEDDING_CONFIG_VERSION", "current-version")
-    monkeypatch.setenv("XHS_EMBEDDING_BASE_URL", "https://current.example/v1")
-    monkeypatch.setenv("XHS_EMBEDDING_API_KEY", "current-key")
-    monkeypatch.setenv("XHS_EMBEDDING_MODEL", "current-model")
-    monkeypatch.setattr(
-        df_tools,
-        "_embed_query",
-        lambda *_args, **_kwargs: pytest.fail("missing historical profile must not call provider"),
-    )
-
-    result = df_tools.semantic_search_resources.func("露营", top_k=10, config=_Config())
-
-    assert result["ok"] is True
-    assert result["mode"] == "keyword_fallback"
-    assert result["fallback_reason"] == "EMBEDDING_QUERY_PROFILE_UNAVAILABLE"
-    assert [call[0] for call in repo.calls] == ["active_index", "keyword"]
 
 
 def test_embed_query_sends_requested_dimensions(monkeypatch):

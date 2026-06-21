@@ -23,7 +23,7 @@ from data_foundation.performance_feedback import (
 )
 from data_foundation.processors.embedding import EmbeddingProviderConfig, embedding_config_from_snapshot
 from data_foundation.repository import ResourceRepository
-from data_foundation.search import keyword_search, semantic_search
+from data_foundation.search import semantic_search
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sync_service import sync_feishu_sources
 
@@ -92,58 +92,71 @@ def _search_payload(results: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _rows_to_payload(rows: list[Any]) -> list[dict[str, Any]]:
+    payload = []
+    for row in rows:
+        meta = {"type": row["type"], "visibility": row["visibility"]}
+        if row.get("source_updated_at"):
+            meta["source_updated_at"] = row["source_updated_at"].isoformat()
+        if row.get("updated_at"):
+            meta["indexed_at"] = row["updated_at"].isoformat()
+        payload.append({
+            "resource_id": str(row["id"]),
+            "title": row["title"],
+            "summary": row["summary"],
+            "score": float(row.get("score") or 0),
+            "metadata": meta,
+        })
+    return payload
+
+
 @tool
 def search_resources(query: str, limit: int = 10, config: RunnableConfig | None = None) -> dict[str, Any]:
-    """Search readable resources by keyword and return summaries only."""
+    """Search readable resources by full-text (Meilisearch) and return summaries only."""
     actor = actor_from_config(config)
+    from data_foundation.engine_config import meili_config_from_env
+    from data_foundation.meili_client import MeiliResourceIndex
+
+    cfg = meili_config_from_env()
+    if cfg.state != "enabled":
+        return {"ok": False, "error": "MEILI_UNAVAILABLE"}
+    try:
+        index = MeiliResourceIndex.from_config(cfg)
+        ids = index.search(query.strip(), tenant_id=default_tenant_id(), limit=min(max(int(limit), 1), 20))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"MEILI_QUERY_FAILED: {exc}"}
     with _repository() as repo:
-        results = keyword_search(
-            repo,
+        rows = repo.readable_rows_by_ids(
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
-            query=query,
-            limit=limit,
+            resource_ids=ids,
         )
-    return {"ok": True, "results": _search_payload(results)}
+    return {"ok": True, "results": _rows_to_payload(rows)}
 
 
 @tool
 def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfig | None = None) -> dict[str, Any]:
     """Search readable resources by configured embedding provider and pgvector."""
     actor = actor_from_config(config)
+
+    def _fulltext_fallback(reason: str) -> dict[str, Any]:
+        # 语义不可用时降级到全文(Meilisearch),与设计一致(全文引擎=Meili,非 PG)
+        fallback = search_resources.func(query, limit=top_k, config=config)
+        if not fallback.get("ok"):
+            return {"ok": False, "mode": "keyword_fallback", "fallback_reason": reason,
+                    "error": fallback.get("error"), "results": []}
+        return {"ok": True, "mode": "keyword_fallback", "fallback_reason": reason,
+                "results": fallback.get("results", [])}
+
     with _repository() as repo:
         active_index = repo.active_embedding_index(default_tenant_id())
         if active_index is None:
-            results = keyword_search(
-                repo,
-                tenant_id=default_tenant_id(),
-                actor_open_id=actor,
-                query=query,
-                limit=top_k,
-            )
-            return {
-                "ok": True,
-                "mode": "keyword_fallback",
-                "fallback_reason": "NO_ACTIVE_EMBEDDING_INDEX",
-                "results": _search_payload(results),
-            }
+            return _fulltext_fallback("NO_ACTIVE_EMBEDDING_INDEX")
         try:
             query_config = _embedding_query_config_for_index(active_index)
             embedding = _embed_query(query, config=query_config)
         except EmbeddingSearchUnavailable as exc:
-            results = keyword_search(
-                repo,
-                tenant_id=default_tenant_id(),
-                actor_open_id=actor,
-                query=query,
-                limit=top_k,
-            )
-            return {
-                "ok": True,
-                "mode": "keyword_fallback",
-                "fallback_reason": exc.reason_code,
-                "results": _search_payload(results),
-            }
+            return _fulltext_fallback(exc.reason_code)
         results = semantic_search(
             repo,
             tenant_id=default_tenant_id(),

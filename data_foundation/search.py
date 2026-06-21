@@ -38,26 +38,6 @@ def _result_from_row(row: Any) -> ResourceSearchResult:
     )
 
 
-def keyword_search(
-    repo: ResourceRepository,
-    *,
-    tenant_id: str,
-    actor_open_id: str,
-    query: str,
-    limit: int = 10,
-) -> list[ResourceSearchResult]:
-    query = query.strip()
-    if not query:
-        return []
-    rows = repo.keyword_rows(
-        tenant_id=tenant_id,
-        actor_open_id=actor_open_id,
-        query=query,
-        limit=min(max(int(limit), 1), 20),
-    )
-    return [_result_from_row(row) for row in rows]
-
-
 def semantic_search(
     repo: ResourceRepository,
     *,
