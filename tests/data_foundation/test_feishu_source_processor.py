@@ -201,3 +201,41 @@ async def test_feishu_source_normalizes_invalid_external_updated_at():
     assert result.created_count == 1
     assert "invalid external_updated_at" in result.errors[0]
     assert "external_updated_at" not in repo.upserts[0]["mapping"]
+
+
+def test_default_loaders_pass_actor_identity_not_bot(monkeypatch):
+    """回归:默认 loader 必须用 actor 的身份(UAT)读飞书,而非 config=None 退回无 token 的 bot。
+
+    之前 _default_base_loader/_default_wiki_loader 写死 config=None,导致 lark_cli 退回
+    bot 身份,而 bot 无 access token → sync 读多维表失败、数据进不了库。
+    """
+    from data_foundation.sources import feishu as feishu_mod
+
+    captured = {}
+
+    def fake_read_xhs_data_func(config=None):
+        captured["base_config"] = config
+        return {"sync_rows": [], "app_token": "a", "table_id": "t"}
+
+    def fake_read_wiki_func(config=None):
+        captured["wiki_config"] = config
+        return {"documents": [], "wiki_space_id": "s"}
+
+    monkeypatch.setattr("tools.feishu_bitable.read_xhs_data.func", fake_read_xhs_data_func)
+    monkeypatch.setattr("tools.feishu_wiki.read_feishu_wiki.func", fake_read_wiki_func)
+
+    ctx = SourceContext(
+        source=_source("feishu_base"),
+        secrets=SourceSecrets(credentials={}),
+        actor_open_id="ou_actor_123",
+    )
+
+    feishu_mod._default_base_loader(ctx)
+    feishu_mod._default_wiki_loader(ctx)
+
+    # 关键:传入的 config 不是 None,且携带 actor 身份(server_info.user.identity)
+    from tools.runtime_identity import actor_open_id_from_config
+    assert captured["base_config"] is not None
+    assert actor_open_id_from_config(captured["base_config"]) == "ou_actor_123"
+    assert captured["wiki_config"] is not None
+    assert actor_open_id_from_config(captured["wiki_config"]) == "ou_actor_123"
