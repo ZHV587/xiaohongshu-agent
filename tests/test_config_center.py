@@ -101,3 +101,12 @@ def test_bootstrap_snapshot_from_env_imports_allowed_keys(monkeypatch):
 
     assert snapshot.values["LLM_API_KEY"] == "sk-bootstrap"
     assert "XHS_JWT_SECRET" not in snapshot.values
+
+
+def test_engine_keys_are_deploy_only():
+    from config_center import DEPLOY_ONLY_KEYS, SECRET_KEYS
+    assert "XHS_MEILI_URL" in DEPLOY_ONLY_KEYS
+    assert "XHS_MEILI_KEY" in DEPLOY_ONLY_KEYS
+    assert "XHS_FALKOR_URL" in DEPLOY_ONLY_KEYS
+    assert "XHS_FALKOR_GRAPH" in DEPLOY_ONLY_KEYS
+    assert "XHS_MEILI_KEY" in SECRET_KEYS
