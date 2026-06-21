@@ -491,6 +491,114 @@ def test_build_scheduler_skips_embedding_service_for_invalid_env(monkeypatch):
     assert built.embedding_service is None
 
 
+# ── 模型池热重载:与 embedding 刷新对称,每 cycle 比对 config-center 版本 ──────────
+
+@dataclass
+class FakeModelRegistry:
+    """记录 reload 调用,version 反映已加载快照版本(对齐真实 ModelRegistry.status)。"""
+    version: str = "env-bootstrap"
+    reloaded: list[str] = field(default_factory=list)
+    raise_on_reload: bool = False
+    errors: list[str] = field(default_factory=list)
+
+    def status(self) -> dict:
+        return {"version": self.version}
+
+    def reload_from_config(self, snapshot) -> None:
+        self.reloaded.append(snapshot.version)
+        if self.raise_on_reload:
+            self.errors.append(snapshot.version)
+            raise RuntimeError("token=secret pool rebuild failed")
+        self.version = snapshot.version
+
+
+@dataclass
+class _FakeSnapshot:
+    version: str
+
+
+def _scheduler_with_registry(registry, snapshots, **overrides):
+    """构造只跑 model-pool 刷新链路的最小 scheduler;snapshots 为每 cycle 返回的快照序列。"""
+    snap_iter = iter(snapshots)
+    kwargs = dict(
+        telemetry=FakeTelemetry(),
+        source_repo=FakeSourceRepo(tenants=[]),
+        outbox_repo=FakeOutboxRepo(),
+        embedding_service=None,
+        source_registry=FakeSourceRegistry(None),
+        outbox_registry=FakeOutboxRegistry(status="disabled"),
+        process_outbox_batch=FakeOutboxRunner(),
+        config=SchedulerConfig(component="scheduler", instance_id="i1", deployment_id="d1"),
+        model_registry=registry,
+        model_snapshot_provider=lambda: next(snap_iter, None),
+    )
+    kwargs.update(overrides)
+    return Scheduler(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_cycle_reloads_model_pool_when_config_version_changes():
+    registry = FakeModelRegistry(version="env-bootstrap")
+    scheduler = _scheduler_with_registry(
+        registry,
+        snapshots=[_FakeSnapshot("cfg-v1"), _FakeSnapshot("cfg-v2")],
+    )
+
+    await scheduler.run_cycle()
+    await scheduler.run_cycle()
+
+    assert registry.reloaded == ["cfg-v1", "cfg-v2"]
+    assert registry.version == "cfg-v2"
+
+
+@pytest.mark.asyncio
+async def test_cycle_skips_model_reload_when_version_unchanged():
+    registry = FakeModelRegistry(version="cfg-v1")
+    scheduler = _scheduler_with_registry(
+        registry,
+        snapshots=[_FakeSnapshot("cfg-v1"), _FakeSnapshot("cfg-v1")],
+    )
+
+    await scheduler.run_cycle()
+    await scheduler.run_cycle()
+
+    assert registry.reloaded == []
+
+
+@pytest.mark.asyncio
+async def test_cycle_skips_model_reload_when_no_snapshot_available():
+    registry = FakeModelRegistry(version="env-bootstrap")
+    scheduler = _scheduler_with_registry(registry, snapshots=[None])
+
+    stats = await scheduler.run_cycle()
+
+    assert registry.reloaded == []
+    assert stats.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_cycle_survives_model_reload_failure():
+    registry = FakeModelRegistry(version="env-bootstrap", raise_on_reload=True)
+    scheduler = _scheduler_with_registry(registry, snapshots=[_FakeSnapshot("cfg-v1")])
+
+    # reload 抛错不得让整轮 cycle 崩(模型池保持旧值继续服务)。
+    stats = await scheduler.run_cycle()
+
+    assert registry.errors == ["cfg-v1"]
+    assert registry.version == "env-bootstrap"
+    assert stats.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_cycle_without_registry_does_not_touch_model_pool():
+    # 未注入 registry(测试/无 server 进程内场景):不应因缺 registry 报错。
+    scheduler = _scheduler_with_registry(None, snapshots=[_FakeSnapshot("cfg-v1")])
+
+    stats = await scheduler.run_cycle()
+
+    assert stats.failed == 0
+
+
 def test_build_scheduler_uses_disabled_embedding_service_without_explicit_env(monkeypatch):
     import data_foundation.scheduler as scheduler
 

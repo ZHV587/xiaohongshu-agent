@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from config_center import latest_config_snapshot
 from data_foundation.db import connect
 from data_foundation.embedding_service import EmbeddingIndexProfile, EmbeddingIndexService
 from data_foundation.errors import classify_error
@@ -17,6 +19,9 @@ from data_foundation.source_repository import SourceRepository
 from data_foundation.sources.base import SourceContext, SourceLease
 from data_foundation.sources.registry import default_source_registry
 from data_foundation.telemetry_repository import TelemetryRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,8 @@ class Scheduler:
         outbox_registry,
         embedding_runtime_factory=None,
         process_outbox_batch=process_outbox_batch,
+        model_registry=None,
+        model_snapshot_provider=latest_config_snapshot,
         config: SchedulerConfig | None = None,
     ):
         self.telemetry = telemetry
@@ -92,11 +99,17 @@ class Scheduler:
         self.outbox_registry = outbox_registry
         self.embedding_runtime_factory = embedding_runtime_factory
         self.process_outbox_batch = process_outbox_batch
+        # 模型池热重载:与 embedding 刷新对称。registry 为 agent.py 的进程内单例
+        # (N_WORKERS=1,graph 与 scheduler 同进程同内存)。provider 默认读 config-center
+        # 最新快照,二者均缺省时本机制为 no-op(纯 env 部署/测试无需热载)。
+        self.model_registry = model_registry
+        self.model_snapshot_provider = model_snapshot_provider
         self.config = config or SchedulerConfig()
         self._cycle_config_version = self.config.config_version
 
     async def run_cycle(self) -> CycleStats:
         self._refresh_embedding_runtime()
+        self._refresh_model_pool()
         self.telemetry.register_instance(
             component=self.config.component,
             instance_id=self.config.instance_id,
@@ -145,6 +158,30 @@ class Scheduler:
         self.embedding_service = runtime.embedding_service
         self.outbox_registry = runtime.outbox_registry
         self._cycle_config_version = runtime.config_version
+
+    def _refresh_model_pool(self) -> None:
+        """与 embedding 刷新对称:每 cycle 比对 config-center 版本,变化则重建模型池。
+
+        - 无 registry 或无 provider:本机制未启用(测试/纯 env 部署的合法配置),返回。
+          注:server 进程内必有 registry(http_app 强制注入,拿不到会在启动时炸),
+          故此分支不会在生产命中,不是"拿不到就关掉"的兜底。
+        - 快照为 None(配置中心未配/history 空):配置中心确无内容,保留启动池。
+        - 版本未变:跳过,避免无谓的网关探测与模型实例重建。
+        - reload 失败:属运行时瞬时错误(网关探测不通/新配置 verify 失败),与 source
+          同步、outbox 处理正交,不应拖垮整轮 cycle。reload_from_config 内部已 record_error
+          (经 runtime-facts 对 admin 可见),旧池继续服务,下一 cycle 自动重试。
+        """
+        if self.model_registry is None or self.model_snapshot_provider is None:
+            return
+        snapshot = self.model_snapshot_provider()
+        if snapshot is None:
+            return
+        if snapshot.version == self.model_registry.status().get("version"):
+            return
+        try:
+            self.model_registry.reload_from_config(snapshot)
+        except Exception:
+            logger.warning("model_pool_reload_failed version=%s", snapshot.version)
 
     async def _run_cycle_body(self) -> CycleStats:
         recovered_sources = self.source_repo.recover_stale_runs(
@@ -385,7 +422,7 @@ def _build_embedding_runtime(conn, *, config: SchedulerConfig) -> EmbeddingRunti
     )
 
 
-def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
+def build_scheduler(config: SchedulerConfig | None = None, *, model_registry=None) -> Scheduler:
     config = config or SchedulerConfig()
     conn = connect()
     resource_repo = ResourceRepository(conn)
@@ -400,5 +437,6 @@ def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
         outbox_registry=initial_runtime.outbox_registry,
         embedding_runtime_factory=runtime_factory,
         process_outbox_batch=process_outbox_batch,
+        model_registry=model_registry,
         config=config,
     )
