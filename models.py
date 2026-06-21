@@ -322,10 +322,6 @@ def build_primary_model(pool: list[ModelCandidate]) -> BaseChatModel:
     raise ValueError("候选池为空，无法构建初始模型")
 
 
-def build_static_model_provider(pool: list[ModelCandidate]) -> StaticModelPoolProvider:
-    return StaticModelPoolProvider(pool)
-
-
 def build_router_middleware(pool_provider: ModelPoolProvider) -> ModelRouterMiddleware:
     """构造调度中间件(主/子/评分各取一个,共用同一池)。"""
     return ModelRouterMiddleware(pool_provider)
