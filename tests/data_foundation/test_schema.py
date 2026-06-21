@@ -150,6 +150,20 @@ def test_schema_source_aligns_source_ready_index_with_dispatch_order():
     assert "where enabled" in schema
 
 
+def test_schema_source_replaces_legacy_runtime_fact_indexes():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "idx_resource_outbox_tenant_status" in schema
+    assert "on resource_outbox (tenant_id, status)" in schema
+    assert "drop index if exists idx_embedding_indexes_tenant_recent;" in schema
+    assert "idx_embedding_indexes_tenant_status_recent" in schema
+    assert "on embedding_indexes (tenant_id, status, created_at desc, id desc)" in schema
+    assert "where status in ('active', 'building')" in schema
+    assert "drop index if exists idx_service_error_aggregates_tenant_recent;" in schema
+    assert "idx_service_error_aggregates_tenant_recent_ordered" in schema
+    assert "on service_error_aggregates (tenant_id, window_started_at desc, window_ended_at desc, id desc)" in schema
+
+
 def test_reset_allowlist_contains_only_all_operational_tables():
     assert set(db.DATA_FOUNDATION_TABLES) == EXPECTED_TABLES
 
@@ -498,6 +512,29 @@ def test_ready_and_lease_indexes_cover_operational_queues(migrated_conn):
     ]
     assert "where enabled" in indexes["idx_sync_sources_due_tenants"]
     assert "(lease_expires_at)" in indexes["idx_sync_sources_lease"]
+
+
+def test_runtime_fact_indexes_cover_status_aggregation_paths(migrated_conn):
+    rows = migrated_conn.execute(
+        """
+        select indexname, indexdef
+        from pg_indexes
+        where schemaname = current_schema()
+        """
+    ).fetchall()
+    indexes = {row[0]: row[1].lower() for row in rows}
+
+    assert "(tenant_id, status)" in indexes["idx_resource_outbox_tenant_status"]
+    assert "idx_embedding_indexes_tenant_recent" not in indexes
+    assert "(tenant_id, status, created_at desc, id desc)" in indexes[
+        "idx_embedding_indexes_tenant_status_recent"
+    ]
+    assert "active" in indexes["idx_embedding_indexes_tenant_status_recent"]
+    assert "building" in indexes["idx_embedding_indexes_tenant_status_recent"]
+    assert "idx_service_error_aggregates_tenant_recent" not in indexes
+    assert "(tenant_id, window_started_at desc, window_ended_at desc, id desc)" in indexes[
+        "idx_service_error_aggregates_tenant_recent_ordered"
+    ]
 
 
 def test_resource_content_trigram_index_supports_keyword_fallback(migrated_conn):

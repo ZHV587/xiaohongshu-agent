@@ -146,8 +146,10 @@ create table if not exists embedding_indexes (
 
 create unique index if not exists uq_embedding_indexes_tenant_active
   on embedding_indexes (tenant_id) where status = 'active';
-create index if not exists idx_embedding_indexes_tenant_recent
-  on embedding_indexes (tenant_id, created_at desc);
+drop index if exists idx_embedding_indexes_tenant_recent;
+create index if not exists idx_embedding_indexes_tenant_status_recent
+  on embedding_indexes (tenant_id, status, created_at desc, id desc)
+  where status in ('active', 'building');
 
 create table if not exists resource_embeddings (
   id uuid primary key default gen_random_uuid(),
@@ -320,6 +322,8 @@ create index if not exists idx_resource_outbox_ready_tenant
 create index if not exists idx_resource_outbox_lease on resource_outbox (lease_expires_at);
 create index if not exists idx_resource_outbox_tenant_recent
   on resource_outbox (tenant_id, created_at desc);
+create index if not exists idx_resource_outbox_tenant_status
+  on resource_outbox (tenant_id, status);
 
 create table if not exists service_error_aggregates (
   id uuid primary key default gen_random_uuid(),
@@ -338,7 +342,8 @@ create unique index if not exists uq_service_error_aggregates_dimensions
   (window_started_at, window_ended_at, tenant_id, component, operation, error_code)
   nulls not distinct;
 
-create index if not exists idx_service_error_aggregates_tenant_recent
-  on service_error_aggregates (tenant_id, window_started_at desc);
+drop index if exists idx_service_error_aggregates_tenant_recent;
+create index if not exists idx_service_error_aggregates_tenant_recent_ordered
+  on service_error_aggregates (tenant_id, window_started_at desc, window_ended_at desc, id desc);
 create index if not exists idx_service_error_aggregates_component_recent
   on service_error_aggregates (component, window_started_at desc);
