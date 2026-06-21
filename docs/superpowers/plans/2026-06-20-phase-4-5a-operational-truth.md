@@ -1055,7 +1055,7 @@ Run from the project root with the deployed virtualenv:
 .venv/bin/python -c "from dotenv import load_dotenv; load_dotenv(); from data_foundation.db import connect, reset_data_foundation; c=connect(); reset_data_foundation(c); c.close()"
 ```
 
-Expected: all 14 business tables exist; `lark_uat_tokens` and config-center files still exist.
+Expected: all 15 business tables exist; `lark_uat_tokens` and config-center files still exist.
 
 - [ ] **Step 4: Install/build and restart both application processes**
 
@@ -1103,7 +1103,7 @@ Expected: no generated metadata or runtime files are tracked.
 - [ ] `cd web && pnpm build` passes.
 - [ ] `git diff --check` produces no output.
 - [ ] Server Git revision matches the pushed revision.
-- [ ] Server data foundation schema contains exactly the 14 designed business tables.
+- [ ] Server data foundation schema contains exactly the 15 designed business tables.
 - [ ] `lark_uat_tokens` and configuration data survive the clean reset.
 - [ ] Scheduler heartbeat and execution facts advance over two intervals.
 - [ ] No legacy daemon thread, fake-success processor, old status, or compatibility alias remains.
