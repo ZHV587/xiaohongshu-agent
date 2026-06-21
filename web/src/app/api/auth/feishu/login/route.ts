@@ -6,6 +6,7 @@ import {
   STATE_COOKIE,
   getFeishuConfig,
 } from "@/lib/server/feishu";
+import { FEISHU_OAUTH_SCOPES } from "@/lib/feishu-scopes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,27 +35,7 @@ export async function GET(req: NextRequest) {
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("state", state);
 
-  const scopes = [
-    "im:message",
-    "im:message.send_as_user",
-    "im:chat",
-    "im:chat.members:read",
-    "base:form:update",
-    "base:record:read",
-    "base:record:retrieve",
-    "base:table:read",
-    "drive:drive",
-    "drive:file:download",
-    "drive:file:upload",
-    "task:task:read",
-    "task:task:write",
-    "calendar:calendar:read",
-    "calendar:calendar.event:create",
-    "wiki:space:read",
-    "wiki:node:read",
-    "wiki:node:retrieve",
-    "docx:document:readonly",
-  ];
+  const scopes = FEISHU_OAUTH_SCOPES;
   authorizeUrl.searchParams.set("scope", scopes.join(" "));
 
   const res = NextResponse.redirect(authorizeUrl.toString());
