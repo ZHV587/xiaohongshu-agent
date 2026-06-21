@@ -82,11 +82,13 @@ def list_base_tables(app_token: str, config: RunnableConfig = None) -> tuple[lis
             block = json.loads(resp).get("data", {})
         except json.JSONDecodeError:
             return tables, f"lark-cli 列表表返回非 JSON：{resp[:200]}"
-        items = block.get("items", []) or []
+        # lark-cli 返回 data.tables[{id, name}](与 record-list 的 items/table_id 不同)
+        items = block.get("tables") or block.get("items") or []
         for item in items:
-            tid = item.get("table_id")
+            tid = item.get("table_id") or item.get("id")
             if tid:
                 tables.append({"table_id": str(tid), "name": str(item.get("name") or tid)})
+        # table-list 一次性返回全部;仅在明确还有更多时继续翻页
         if block.get("has_more") and items:
             offset += limit
         else:
@@ -147,8 +149,9 @@ def _read_single_table(
         else:
             fields_names = block.get("fields", [])
             rows_data = block.get("data", [])
+            record_ids = block.get("record_id_list") or []
             page_count = len(rows_data)
-            for row_values in rows_data:
+            for idx, row_values in enumerate(rows_data):
                 fields_dict = {
                     fields_names[i]: row_values[i]
                     for i in range(min(len(fields_names), len(row_values)))
@@ -157,13 +160,24 @@ def _read_single_table(
                 filtered = _filter_fields(fields_dict)
                 if not filtered:
                     continue
-                sync_rows.append({
-                    "record_id": _snapshot_id({**filtered, "__table__": table_id}),
-                    "identity_kind": "content_snapshot",
-                    "table_id": table_id,
-                    "table_name": table_name,
-                    "fields": filtered,
-                })
+                # 矩阵格式优先用 record_id_list 的真实 ID;缺失才回退内容快照
+                rid = record_ids[idx] if idx < len(record_ids) else None
+                if rid:
+                    sync_rows.append({
+                        "record_id": str(rid),
+                        "identity_kind": "feishu_record_id",
+                        "table_id": table_id,
+                        "table_name": table_name,
+                        "fields": filtered,
+                    })
+                else:
+                    sync_rows.append({
+                        "record_id": _snapshot_id({**filtered, "__table__": table_id}),
+                        "identity_kind": "content_snapshot",
+                        "table_id": table_id,
+                        "table_name": table_name,
+                        "fields": filtered,
+                    })
 
         if block.get("has_more") and page_count > 0:
             offset += limit
