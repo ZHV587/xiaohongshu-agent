@@ -55,8 +55,6 @@
 - `semantic_search_resources`:**不动**。
 - `default_write_requests()`:当前只发 embedding 请求;改为同时发 `embedding_generate` + `meili_index` + `graph_ingest` 三个 outbox 请求。
 
-<!-- PART2 -->
-
 ## 4. 部署与配置
 
 ### 4.1 Docker 服务(服务器,与 pg-db 并列,只绑 127.0.0.1)
