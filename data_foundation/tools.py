@@ -203,15 +203,18 @@ def graph_expand(
 ) -> dict[str, Any]:
     """Expand readable graph context from resource ids."""
     actor = actor_from_config(config)
-    with _repository() as repo:
-        graph = expand_graph_query(
-            repo,
-            tenant_id=default_tenant_id(),
-            actor_open_id=actor,
-            resource_ids=resource_ids,
-            hops=hops,
-            edge_types=edge_types,
-        )
+    try:
+        with _repository() as repo:
+            graph = expand_graph_query(
+                repo,
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                resource_ids=resource_ids,
+                hops=hops,
+                edge_types=edge_types,
+            )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"GRAPH_UNAVAILABLE: {exc}"}
     return {
         "ok": True,
         "nodes": [node.__dict__ for node in graph.nodes],

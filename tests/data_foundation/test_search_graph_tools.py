@@ -197,28 +197,67 @@ def test_semantic_search_rejects_blank_embedding_model():
     assert repo.calls == []
 
 
-@pytest.mark.parametrize(("requested", "expected"), [(-1, 1), (0, 1), (2, 2), (10, 3)])
-def test_expand_graph_clamps_hops_and_parameterizes_edge_types(requested, expected):
-    repo = _FakeRepository()
+def test_expand_graph_queries_falkor_and_filters_by_permission(monkeypatch):
+    repo = _FakeRepository()  # readable_rows_by_ids returns all passed ids as visible
+    fake_graph = MagicMock()
+    fake_graph.expand.return_value = (
+        [{"id": "resource-1", "title": "起点", "type": "topic"},
+         {"id": "resource-2", "title": "终点", "type": "topic"}],
+        [{"source": "resource-1", "target": "resource-2", "edge_type": "derived_from", "weight": 1.0}],
+    )
+    monkeypatch.setenv("XHS_FALKOR_URL", "redis://127.0.0.1:6379")
+    monkeypatch.setenv("XHS_FALKOR_GRAPH", "xhs")
+    monkeypatch.setattr(
+        "data_foundation.falkor_client.FalkorResourceGraph.from_config",
+        classmethod(lambda cls, cfg: fake_graph),
+    )
 
     graph = expand_graph(
         repo,
-        tenant_id="tenant",
+        tenant_id="default",
         actor_open_id="actor",
         resource_ids=["resource-1"],
-        hops=requested,
-        edge_types=["SIMILAR_TO"],
+        hops=2,
+        edge_types=["derived_from"],
     )
 
-    assert graph.nodes[0].depth == 0
-    assert {(edge.source_resource_id, edge.target_resource_id) for edge in graph.edges} == {
+    assert {n.resource_id for n in graph.nodes} == {"resource-1", "resource-2"}
+    assert {(e.source_resource_id, e.target_resource_id) for e in graph.edges} == {
         ("resource-1", "resource-2")
     }
-    assert repo.calls[0][1]["hops"] == expected
-    assert repo.calls[0][1]["edge_types"] == ["SIMILAR_TO"]
+    # hops 透传(clamp 在 1..3)
+    assert fake_graph.expand.call_args.kwargs["hops"] == 2
+    assert fake_graph.expand.call_args.kwargs["edge_types"] == ["derived_from"]
 
 
-def test_expand_graph_empty_start_returns_empty_without_database_call():
+def test_expand_graph_filters_out_invisible_nodes(monkeypatch):
+    class _PartialVisibleRepo(_FakeRepository):
+        def readable_rows_by_ids(self, **kwargs):
+            # 只有 resource-1 可见,resource-2 被权限过滤
+            return [{"id": "resource-1", "title": "起点", "summary": None, "type": "topic",
+                     "visibility": "team", "score": 1.0, "source_updated_at": None, "updated_at": None}]
+
+    repo = _PartialVisibleRepo()
+    fake_graph = MagicMock()
+    fake_graph.expand.return_value = (
+        [{"id": "resource-1", "title": "起点", "type": "topic"},
+         {"id": "resource-2", "title": "隐藏", "type": "topic"}],
+        [{"source": "resource-1", "target": "resource-2", "edge_type": "derived_from", "weight": 1.0}],
+    )
+    monkeypatch.setenv("XHS_FALKOR_URL", "redis://127.0.0.1:6379")
+    monkeypatch.setattr(
+        "data_foundation.falkor_client.FalkorResourceGraph.from_config",
+        classmethod(lambda cls, cfg: fake_graph),
+    )
+
+    graph = expand_graph(repo, tenant_id="default", actor_open_id="actor", resource_ids=["resource-1"])
+
+    assert {n.resource_id for n in graph.nodes} == {"resource-1"}
+    # 含被过滤节点的边也被剔除
+    assert graph.edges == []
+
+
+def test_expand_graph_empty_start_returns_empty_without_engine_call():
     repo = _FakeRepository()
 
     graph = expand_graph(repo, tenant_id="tenant", actor_open_id="actor", resource_ids=[])
