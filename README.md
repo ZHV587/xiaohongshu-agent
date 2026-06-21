@@ -83,7 +83,7 @@ uv run python verify_1b1.py
 - Phase 4.3 已加入创作记忆沉淀：`save_generated_topic`、`save_generated_copy`、`save_user_feedback` 会把选题、文案、反馈/修改意见写入 Postgres，并用 `derived_from` / `feedback_on` 关系连接来源资源。
 - Phase 4.4 已加入效果反馈闭环：`save_performance_metric` 会把发布后的点赞、收藏、评论、转发、浏览和转化沉淀为 `performance_metric` 资源，`get_resource_performance` 可读取历史表现；内容资源通过 `measured_by` 边连接效果资源，第一版只做可解释评分，不做预测模型。
 - Phase 4 仍通过 DeepAgents 官方 `tools`、`skills`、`subagents` 和 `middleware` 扩展；LLM 负责分析与创作，Postgres 只提供来源、时效和关系上下文，不新增业务 CLI 或管理后台。
-- 当前唯一 active outbox processor 是 `embedding_generate`；Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster 均为 disabled/未启用，不允许把对应任务标记为 succeeded。
+- active outbox processor:`embedding_generate`(pgvector 语义)、`meili_index`(Meilisearch 全文)、`graph_ingest`(FalkorDB 图谱)三者均已启用。检索/图谱以引擎为唯一路径:`search_resources` 走 Meilisearch、`graph_expand` 走 FalkorDB、`semantic_search_resources` 走 pgvector;引擎返回 resource_id 后统一回 Postgres 经 `readable_resource_where` 裁决可见性。PG tsvector 全文与递归 SQL 图谱旧逻辑已移除,无降级(引擎不可用时工具返回 `ok:false`)。Graphiti、Dagster 仍未启用。
 - `sync_sources.credentials` 按当前开发决策允许明文保存在 Postgres，但凭证不得进入日志、错误摘要、outbox payload、遥测或后续只读状态接口。
 
 ## 测试

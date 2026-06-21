@@ -18,9 +18,13 @@
 
 - `xhs-backend`：LangGraph/Python 后端，由 PM2 管理。
 - `xhs-frontend`：Next.js Web 前端，由 PM2 管理。
-- Postgres：权威业务库，必须启用 `pgcrypto` 与 `vector` 扩展。
-- LangGraph `http.app`：承载 `/internal/*` route、scheduler supervisor、outbox 和 embedding 生命周期。
+- Postgres：权威业务库,Docker 容器 `pg-db`(`127.0.0.1:5432`),必须启用 `pgcrypto` 与 `vector` 扩展。
+- Meilisearch：全文检索引擎,Docker 容器 `xhs-meili`(`127.0.0.1:7700`,`--restart unless-stopped`)。`search_resources` 唯一路径。
+- FalkorDB：图谱引擎,Docker 容器 `xhs-falkor`(`127.0.0.1:6379`,`--restart unless-stopped`)。`graph_expand` 唯一路径。
+- LangGraph `http.app`：承载 `/internal/*` route、scheduler supervisor、outbox 和 embedding/meili/graph 生命周期。
 - Next.js API route：负责浏览器侧鉴权、管理员判断和转发内部请求。
+
+引擎配置(deploy-only,服务器 .env):`XHS_MEILI_URL`/`XHS_MEILI_KEY`/`XHS_FALKOR_URL`/`XHS_FALKOR_GRAPH`。配置就绪则对应 outbox processor 自动 active;留空则 disabled。引擎不存 ACL,可见性一律回 Postgres 裁决。
 
 内部调用链：
 
