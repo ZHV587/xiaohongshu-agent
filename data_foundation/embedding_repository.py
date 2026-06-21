@@ -83,6 +83,18 @@ class EmbeddingRepository:
             raise ValueError("Chunk index must be zero or greater")
 
         with transaction(self.conn):
+            resource = self.conn.execute(
+                """
+                select id
+                from resources
+                where tenant_id = %s and id = %s
+                for update
+                """,
+                (tenant_id, resource_id),
+            ).fetchone()
+            if resource is None:
+                raise PermissionError("Resource not found for tenant")
+
             index = self.conn.execute(
                 """
                 select *
@@ -108,18 +120,6 @@ class EmbeddingRepository:
             if int(latest["version"]) != int(resource_version):
                 return "superseded"
 
-            already_completed = self.conn.execute(
-                """
-                select 1
-                from resource_embeddings
-                where tenant_id = %s
-                  and embedding_index_id = %s
-                  and resource_id = %s
-                  and resource_version = %s
-                limit 1
-                """,
-                (tenant_id, embedding_index_id, resource_id, resource_version),
-            ).fetchone()
             self.conn.execute(
                 """
                 delete from resource_embeddings
@@ -155,20 +155,21 @@ class EmbeddingRepository:
                             for chunk_index, chunk_text, vector_literal in prepared
                         ],
                     )
-            if prepared and already_completed is None:
-                self.conn.execute(
-                    """
-                    update embedding_indexes
-                    set completed_resources = completed_resources + 1,
-                        updated_at = now()
-                    where tenant_id = %s and id = %s
-                    """,
-                    (tenant_id, embedding_index_id),
-                )
+            self._recount_index(embedding_index_id, tenant_id=tenant_id)
         return "stored"
 
     def activate_if_complete(self, index_id: str, *, tenant_id: str) -> bool:
         with transaction(self.conn):
+            self.conn.execute(
+                """
+                select id
+                from resources
+                where tenant_id = %s
+                order by id
+                for update
+                """,
+                (tenant_id,),
+            ).fetchall()
             self.conn.execute(
                 """
                 select id
@@ -190,6 +191,16 @@ class EmbeddingRepository:
             ).fetchone()
             if index is None:
                 raise PermissionError("Embedding index not found for tenant")
+            self._recount_index(index_id, tenant_id=tenant_id)
+            index = self.conn.execute(
+                """
+                select *
+                from embedding_indexes
+                where tenant_id = %s and id = %s
+                for update
+                """,
+                (tenant_id, index_id),
+            ).fetchone()
             if (
                 index["failed_resources"] != 0
                 or index["completed_resources"] != index["expected_resources"]
@@ -215,6 +226,83 @@ class EmbeddingRepository:
                 (tenant_id, index_id),
             )
         return True
+
+    def recount_index(self, index_id: str, *, tenant_id: str) -> EmbeddingIndex:
+        with transaction(self.conn):
+            self.conn.execute(
+                """
+                select id
+                from resources
+                where tenant_id = %s
+                order by id
+                for update
+                """,
+                (tenant_id,),
+            ).fetchall()
+            index = self.conn.execute(
+                """
+                select *
+                from embedding_indexes
+                where tenant_id = %s and id = %s
+                for update
+                """,
+                (tenant_id, index_id),
+            ).fetchone()
+            if index is None:
+                raise PermissionError("Embedding index not found for tenant")
+            self._recount_index(index_id, tenant_id=tenant_id)
+            row = self.conn.execute(
+                """
+                select *
+                from embedding_indexes
+                where tenant_id = %s and id = %s
+                """,
+                (tenant_id, index_id),
+            ).fetchone()
+        return self._index_from_row(row)
+
+    def _recount_index(self, index_id: str, *, tenant_id: str) -> None:
+        self.conn.execute(
+            """
+            with current_resources as (
+              select r.id, max(rv.version) as resource_version
+              from resources r
+              join resource_versions rv
+                on rv.tenant_id = r.tenant_id
+               and rv.resource_id = r.id
+              where r.tenant_id = %s
+                and r.status = 'active'
+                and nullif(trim(coalesce(r.content_text, '')), '') is not null
+              group by r.id
+            ), counts as (
+              select count(*)::int as expected_resources,
+                     count(*) filter (
+                       where exists (
+                         select 1
+                         from resource_embeddings re
+                         where re.tenant_id = %s
+                           and re.embedding_index_id = %s
+                           and re.resource_id = current_resources.id
+                           and re.resource_version = current_resources.resource_version
+                       )
+                     )::int as completed_resources
+              from current_resources
+            )
+            update embedding_indexes ei
+            set expected_resources = counts.expected_resources,
+                completed_resources = counts.completed_resources,
+                updated_at = now()
+            from counts
+            where ei.tenant_id = %s and ei.id = %s
+            """,
+            (
+                tenant_id,
+                tenant_id,
+                index_id,
+                tenant_id,
+                index_id,
+            ),
+        )
 
     @staticmethod
     def _vector_literal(embedding: list[float]) -> str:

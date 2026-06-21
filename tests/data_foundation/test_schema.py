@@ -151,6 +151,16 @@ def test_schema_source_aligns_source_ready_index_with_dispatch_order():
     assert "where enabled" in schema
 
 
+def test_schema_declares_universal_work_discovery_indexes():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "idx_resources_embedding_work_tenants" in schema
+    assert "on resources (tenant_id, id)" in schema
+    assert "nullif(trim(coalesce(content_text, '')), '') is not null" in schema
+    assert "idx_resource_outbox_ready_tenants" in schema
+    assert "on resource_outbox (next_attempt_at, tenant_id)" in schema
+
+
 def test_schema_source_counts_have_tenant_first_indexes():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
 

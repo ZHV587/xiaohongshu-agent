@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import math
 from pathlib import Path
 
+import psycopg
 import pytest
 
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
@@ -171,6 +173,118 @@ def test_store_batch_is_idempotent_for_completed_resource(migrated_conn):
     ).fetchone()
     assert row["completed_resources"] == 1
     assert migrated_conn.execute("select count(*) as count from resource_embeddings").fetchone()["count"] == 1
+
+
+def test_storing_revised_resource_keeps_index_completion_equal_to_current_resources(migrated_conn):
+    resource = _resource(migrated_conn)
+    repo = EmbeddingRepository(migrated_conn)
+    index = repo.create_index(
+        tenant_id="tenant-a",
+        embedding_model="model",
+        config_version="v1",
+        chunker_version="text-v1",
+        expected_resources=1,
+    )
+    assert repo.store_batch(
+        tenant_id="tenant-a",
+        embedding_index_id=index.id,
+        resource_id=resource.id,
+        resource_version=resource.version,
+        chunks=[VectorChunk(0, "正文", _vector(0.1))],
+    ) == "stored"
+
+    revised = _update_resource(migrated_conn, resource)
+    assert repo.store_batch(
+        tenant_id="tenant-a",
+        embedding_index_id=index.id,
+        resource_id=revised.id,
+        resource_version=revised.version,
+        chunks=[VectorChunk(0, "新正文", _vector(0.2))],
+    ) == "stored"
+
+    row = migrated_conn.execute(
+        "select expected_resources, completed_resources from embedding_indexes where id = %s",
+        (index.id,),
+    ).fetchone()
+    assert row["expected_resources"] == 1
+    assert row["completed_resources"] == 1
+
+
+def test_store_batch_waits_for_resource_revision_lock(database_url, migrated_conn):
+    resource = _resource(migrated_conn)
+    repo = EmbeddingRepository(migrated_conn)
+    index = repo.create_index(
+        tenant_id="tenant-a",
+        embedding_model="model",
+        config_version="v1",
+        chunker_version="text-v1",
+        expected_resources=1,
+    )
+    schema = migrated_conn.execute("select current_schema() as schema").fetchone()["schema"]
+
+    def store() -> str:
+        with psycopg.connect(database_url) as conn:
+            conn.execute(f'set search_path to "{schema}", public')
+            return EmbeddingRepository(conn).store_batch(
+                tenant_id="tenant-a",
+                embedding_index_id=index.id,
+                resource_id=resource.id,
+                resource_version=resource.version,
+                chunks=[VectorChunk(0, "正文", _vector())],
+            )
+
+    with psycopg.connect(database_url) as blocker, ThreadPoolExecutor(max_workers=1) as pool:
+        blocker.execute(f'set search_path to "{schema}", public')
+        blocker.execute(
+            "select id from resources where tenant_id = %s and id = %s for update",
+            ("tenant-a", resource.id),
+        )
+        future = pool.submit(store)
+        with pytest.raises(TimeoutError):
+            future.result(timeout=0.25)
+        blocker.commit()
+        assert future.result(timeout=5) == "stored"
+
+
+def test_activation_recomputes_counts_after_resource_becomes_blank(migrated_conn):
+    resource = _resource(migrated_conn)
+    repo = EmbeddingRepository(migrated_conn)
+    index = repo.create_index(
+        tenant_id="tenant-a",
+        embedding_model="model",
+        config_version="v1",
+        chunker_version="text-v1",
+        expected_resources=1,
+    )
+    repo.store_batch(
+        tenant_id="tenant-a",
+        embedding_index_id=index.id,
+        resource_id=resource.id,
+        resource_version=resource.version,
+        chunks=[VectorChunk(0, "正文", _vector())],
+    )
+    ResourceRepository(migrated_conn).upsert_resource(
+        tenant_id=resource.tenant_id,
+        actor_open_id="ou_owner",
+        resource_type=resource.type,
+        title=f"{resource.title} 空白版",
+        content_text=" ",
+        content_json={},
+        visibility=resource.visibility,
+        owner_open_id=resource.owner_open_id,
+        mapping={
+            "system": "test",
+            "external_type": "doc",
+            "external_id": f"{resource.tenant_id}:{resource.title}",
+        },
+    )
+
+    assert repo.activate_if_complete(index.id, tenant_id="tenant-a") is True
+    row = migrated_conn.execute(
+        "select status, expected_resources, completed_resources from embedding_indexes where id = %s",
+        (index.id,),
+    ).fetchone()
+    assert row == {"status": "active", "expected_resources": 0, "completed_resources": 0}
 
 
 def test_store_batch_with_no_chunks_does_not_overcount_completion(migrated_conn):

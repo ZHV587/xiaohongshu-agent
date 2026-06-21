@@ -27,6 +27,10 @@ create index if not exists idx_resources_fts on resources using gin (
 create index if not exists idx_resources_trgm_content on resources using gin (
   (coalesce(title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content_text, '')) public.gin_trgm_ops
 );
+create index if not exists idx_resources_embedding_work_tenants
+  on resources (tenant_id, id)
+  where status = 'active'
+    and nullif(trim(coalesce(content_text, '')), '') is not null;
 
 create table if not exists resource_type_counts (
   tenant_id text not null,
@@ -346,6 +350,9 @@ create table if not exists resource_outbox (
 drop index if exists idx_resource_outbox_ready;
 create index if not exists idx_resource_outbox_ready_tenant
   on resource_outbox (tenant_id, status, topic, next_attempt_at, created_at, id)
+  where status in ('pending', 'retry');
+create index if not exists idx_resource_outbox_ready_tenants
+  on resource_outbox (next_attempt_at, tenant_id)
   where status in ('pending', 'retry');
 create index if not exists idx_resource_outbox_lease on resource_outbox (lease_expires_at);
 create index if not exists idx_resource_outbox_tenant_recent

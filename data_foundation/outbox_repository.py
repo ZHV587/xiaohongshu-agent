@@ -48,6 +48,21 @@ class OutboxRepository:
         self.conn.commit()
         return self._item_from_row(row)
 
+    def discover_ready_tenants(self, *, limit: int) -> list[str]:
+        rows = self.conn.execute(
+            """
+            select tenant_id
+            from resource_outbox
+            where status in ('pending', 'retry')
+              and next_attempt_at <= now()
+            group by tenant_id
+            order by min(next_attempt_at), tenant_id
+            limit %s
+            """,
+            (max(1, min(limit, 100)),),
+        ).fetchall()
+        return [row["tenant_id"] for row in rows]
+
     def lease_ready(
         self,
         *,

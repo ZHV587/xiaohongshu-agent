@@ -5,6 +5,39 @@ from data_foundation.embedding_service import EmbeddingIndexProfile, EmbeddingIn
 from data_foundation.repository import ResourceRepository
 
 
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class _RecordingConnection:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+        self.row_factory = None
+
+    def execute(self, query, params):
+        self.calls.append((query, params))
+        return _Rows(self.rows)
+
+
+def test_embedding_tenant_discovery_is_profile_aware_and_bounded():
+    conn = _RecordingConnection([{"tenant_id": "needs-index"}])
+    service = _service(conn, profile_version="cfg-v1")
+
+    assert service.discover_reconcile_tenants(limit=0) == ["needs-index"]
+    query, params = conn.calls[0]
+    assert "embedding_model = %s" in query
+    assert "config_version = %s" in query
+    assert "chunker_version = %s" in query
+    assert "re.resource_version = cr.version" in query
+    assert "stale_indexes" in query
+    assert params == ("model", "cfg-v1", "text-v1", 1)
+
+
 def _resource(conn, *, tenant_id: str = "tenant-a", title: str, content: str | None = "正文"):
     return ResourceRepository(conn).upsert_resource(
         tenant_id=tenant_id,
@@ -27,6 +60,66 @@ def _service(conn, *, profile_version: str = "cfg-v1") -> EmbeddingIndexService:
             chunker_version="text-v1",
         ),
     )
+
+
+def test_embedding_reconcile_tenants_excludes_currently_covered_resources(migrated_conn):
+    _resource(migrated_conn, tenant_id="needs-index", title="待索引")
+    covered = _resource(migrated_conn, tenant_id="covered", title="已索引")
+    service = _service(migrated_conn)
+    reconcile = service.reconcile_tenant("covered")
+    service.embedding_repo.store_batch(
+        tenant_id="covered",
+        embedding_index_id=reconcile.embedding_index_id,
+        resource_id=covered.id,
+        resource_version=covered.version,
+        chunks=[VectorChunk(0, "正文", [0.1] + [0.0] * 1535)],
+    )
+
+    assert service.discover_reconcile_tenants(limit=10) == ["needs-index"]
+
+
+def test_embedding_reconcile_tenants_includes_stale_index_after_resource_becomes_blank(migrated_conn):
+    resource = _resource(migrated_conn, tenant_id="stale", title="已索引")
+    service = _service(migrated_conn)
+    reconcile = service.reconcile_tenant("stale")
+    service.embedding_repo.store_batch(
+        tenant_id="stale",
+        embedding_index_id=reconcile.embedding_index_id,
+        resource_id=resource.id,
+        resource_version=resource.version,
+        chunks=[VectorChunk(0, "正文", [0.1] + [0.0] * 1535)],
+    )
+    assert service.embedding_repo.activate_if_complete(reconcile.embedding_index_id, tenant_id="stale")
+
+    _resource(migrated_conn, tenant_id="stale", title="已索引", content=" ")
+
+    assert service.discover_reconcile_tenants(limit=10) == ["stale"]
+
+
+def test_reconcile_repairs_active_stale_index_after_resource_becomes_blank(migrated_conn):
+    resource = _resource(migrated_conn, tenant_id="stale", title="已索引")
+    service = _service(migrated_conn)
+    reconcile = service.reconcile_tenant("stale")
+    service.embedding_repo.store_batch(
+        tenant_id="stale",
+        embedding_index_id=reconcile.embedding_index_id,
+        resource_id=resource.id,
+        resource_version=resource.version,
+        chunks=[VectorChunk(0, "正文", [0.1] + [0.0] * 1535)],
+    )
+    assert service.embedding_repo.activate_if_complete(reconcile.embedding_index_id, tenant_id="stale")
+
+    _resource(migrated_conn, tenant_id="stale", title="已索引", content=" ")
+
+    repaired = service.reconcile_tenant("stale")
+
+    assert repaired.activated is True
+    assert service.discover_reconcile_tenants(limit=10) == []
+    row = migrated_conn.execute(
+        "select status, expected_resources, completed_resources from embedding_indexes where id = %s",
+        (reconcile.embedding_index_id,),
+    ).fetchone()
+    assert row == {"status": "active", "expected_resources": 0, "completed_resources": 0}
 
 
 def test_new_profile_enqueues_complete_backfill_once(migrated_conn):

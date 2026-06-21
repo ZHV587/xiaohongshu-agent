@@ -32,6 +32,76 @@ class EmbeddingIndexService:
         self.embedding_repo = EmbeddingRepository(conn)
         self.outbox_repo = OutboxRepository(conn)
 
+    def discover_reconcile_tenants(self, *, limit: int) -> list[str]:
+        rows = self.conn.execute(
+            """
+            with current_resources as (
+              select r.tenant_id, r.id, max(rv.version) as version
+              from resources r
+              join resource_versions rv
+                on rv.tenant_id = r.tenant_id
+               and rv.resource_id = r.id
+              where r.status = 'active'
+                and nullif(trim(coalesce(r.content_text, '')), '') is not null
+              group by r.tenant_id, r.id
+            ), current_counts as (
+              select tenant_id, count(*)::int as expected_resources
+              from current_resources
+              group by tenant_id
+            ), matching_indexes as (
+              select *
+              from embedding_indexes
+              where embedding_model = %s
+                and config_version = %s
+                and chunker_version = %s
+                and status in ('active', 'building')
+            ), missing_resources as (
+              select distinct cr.tenant_id
+              from current_resources cr
+              where not exists (
+                select 1
+                from matching_indexes ei
+                join resource_embeddings re
+                  on re.tenant_id = ei.tenant_id
+                 and re.embedding_index_id = ei.id
+                 and re.resource_id = cr.id
+                 and re.resource_version = cr.version
+                where ei.tenant_id = cr.tenant_id
+              )
+            ), stale_indexes as (
+              select distinct ei.tenant_id
+              from matching_indexes ei
+              left join current_counts cc on cc.tenant_id = ei.tenant_id
+              where ei.expected_resources <> coalesce(cc.expected_resources, 0)
+                 or ei.completed_resources <> (
+                   select count(*)::int
+                   from current_resources cr
+                   where cr.tenant_id = ei.tenant_id
+                     and exists (
+                       select 1
+                       from resource_embeddings re
+                       where re.tenant_id = ei.tenant_id
+                         and re.embedding_index_id = ei.id
+                         and re.resource_id = cr.id
+                         and re.resource_version = cr.version
+                     )
+                 )
+            )
+            select tenant_id from missing_resources
+            union
+            select tenant_id from stale_indexes
+            order by tenant_id
+            limit %s
+            """,
+            (
+                self.profile.embedding_model,
+                self.profile.config_version,
+                self.profile.chunker_version,
+                max(1, min(limit, 100)),
+            ),
+        ).fetchall()
+        return [row["tenant_id"] for row in rows]
+
     def reconcile_tenant(self, tenant_id: str) -> EmbeddingReconcileResult:
         current_resources = self._current_embeddable_resources(tenant_id)
         index = self.embedding_repo.create_index(
@@ -41,6 +111,7 @@ class EmbeddingIndexService:
             chunker_version=self.profile.chunker_version,
             expected_resources=len(current_resources),
         )
+        index = self.embedding_repo.recount_index(index.id, tenant_id=tenant_id)
         enqueued = 0
         for resource in current_resources:
             dedupe_key = self._dedupe_key(
@@ -73,10 +144,10 @@ class EmbeddingIndexService:
             if before is None:
                 enqueued += 1
 
-        activated = index.status == "active" or self.embedding_repo.activate_if_complete(
-            index.id,
-            tenant_id=tenant_id,
-        )
+        if index.status == "active" and index.failed_resources == 0:
+            activated = index.completed_resources == index.expected_resources
+        else:
+            activated = self.embedding_repo.activate_if_complete(index.id, tenant_id=tenant_id)
         return EmbeddingReconcileResult(index.id, enqueued=enqueued, activated=activated)
 
     def _current_embeddable_resources(self, tenant_id: str):

@@ -3,6 +3,36 @@ from __future__ import annotations
 from data_foundation.outbox_repository import OutboxRepository
 
 
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class _RecordingConnection:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+        self.row_factory = None
+
+    def execute(self, query, params):
+        self.calls.append((query, params))
+        return _Rows(self.rows)
+
+
+def test_ready_tenant_discovery_is_bounded_and_ordered_by_due_time():
+    conn = _RecordingConnection([{"tenant_id": "alpha"}])
+
+    assert OutboxRepository(conn).discover_ready_tenants(limit=101) == ["alpha"]
+    query, params = conn.calls[0]
+    assert "status in ('pending', 'retry')" in query
+    assert "next_attempt_at <= now()" in query
+    assert "order by min(next_attempt_at), tenant_id" in query
+    assert params == (100,)
+
+
 def test_enqueue_is_idempotent(migrated_conn):
     repo = OutboxRepository(migrated_conn)
 
@@ -32,6 +62,35 @@ def test_same_dedupe_key_can_exist_in_different_tenants(migrated_conn):
     assert first.tenant_id == "tenant-a"
     assert second.tenant_id == "tenant-b"
     assert first.id != second.id
+
+
+def test_ready_tenants_returns_due_pending_and_retry_once(migrated_conn):
+    repo = OutboxRepository(migrated_conn)
+    repo.enqueue(tenant_id="alpha", topic="embedding_generate", dedupe_key="pending", payload={})
+    retry = repo.enqueue(
+        tenant_id="alpha", topic="embedding_generate", dedupe_key="retry", payload={}
+    )
+    future = repo.enqueue(
+        tenant_id="future", topic="embedding_generate", dedupe_key="future", payload={}
+    )
+    processing = repo.enqueue(
+        tenant_id="processing", topic="embedding_generate", dedupe_key="processing", payload={}
+    )
+    migrated_conn.execute(
+        "update resource_outbox set status = 'retry', next_attempt_at = now() - interval '2 minutes' where id = %s",
+        (retry.id,),
+    )
+    migrated_conn.execute(
+        "update resource_outbox set next_attempt_at = now() + interval '1 hour' where id = %s",
+        (future.id,),
+    )
+    migrated_conn.execute(
+        "update resource_outbox set status = 'processing' where id = %s",
+        (processing.id,),
+    )
+    migrated_conn.commit()
+
+    assert repo.discover_ready_tenants(limit=10) == ["alpha"]
 
 
 def test_lease_ready_claims_only_requested_tenant_and_topics(migrated_conn):

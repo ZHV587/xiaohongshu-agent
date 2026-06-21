@@ -76,10 +76,14 @@ class FakeSourceRepo:
 @dataclass
 class FakeOutboxRepo:
     recovered: int = 0
+    ready_tenants: list[str] = field(default_factory=list)
     unblocked: list[dict] = field(default_factory=list)
 
     def recover_expired(self, *, limit):
         return self.recovered
+
+    def discover_ready_tenants(self, *, limit):
+        return self.ready_tenants[:limit]
 
     def unblock_available(self, *, tenant_id, topic):
         self.unblocked.append({"tenant_id": tenant_id, "topic": topic})
@@ -89,6 +93,10 @@ class FakeOutboxRepo:
 @dataclass
 class FakeEmbeddingService:
     calls: list[str] = field(default_factory=list)
+    reconcile_tenants: list[str] = field(default_factory=list)
+
+    def discover_reconcile_tenants(self, *, limit):
+        return self.reconcile_tenants[:limit]
 
     def reconcile_tenant(self, tenant_id: str):
         self.calls.append(tenant_id)
@@ -261,6 +269,69 @@ async def test_cycle_dispatches_one_batch_per_tenant_in_fair_order():
         "succeeded_count": 3,
         "failed_count": 2,
     }
+
+
+@pytest.mark.asyncio
+async def test_cycle_processes_embedding_tenant_without_sync_source():
+    embedding_service = FakeEmbeddingService(reconcile_tenants=["generated"])
+    scheduler = Scheduler(
+        telemetry=FakeTelemetry(),
+        source_repo=FakeSourceRepo(tenants=[]),
+        outbox_repo=FakeOutboxRepo(),
+        embedding_service=embedding_service,
+        source_registry=FakeSourceRegistry(None),
+        outbox_registry=FakeOutboxRegistry(),
+        process_outbox_batch=FakeOutboxRunner(),
+        config=SchedulerConfig(component="scheduler", instance_id="i1", deployment_id="d1"),
+    )
+
+    stats = await scheduler.run_cycle()
+
+    assert stats.tenants_visited == 1
+    assert embedding_service.calls == ["generated"]
+
+
+@pytest.mark.asyncio
+async def test_cycle_reserves_non_source_slot_when_due_sources_fill_limit():
+    embedding_service = FakeEmbeddingService(reconcile_tenants=["generated"])
+    outbox_runner = FakeOutboxRunner()
+    scheduler = Scheduler(
+        telemetry=FakeTelemetry(),
+        source_repo=FakeSourceRepo(tenants=["s1", "s2", "s3"]),
+        outbox_repo=FakeOutboxRepo(),
+        embedding_service=embedding_service,
+        source_registry=FakeSourceRegistry(None),
+        outbox_registry=FakeOutboxRegistry(),
+        process_outbox_batch=outbox_runner,
+        config=SchedulerConfig(
+            component="scheduler",
+            instance_id="i1",
+            deployment_id="d1",
+            tenant_limit=3,
+        ),
+    )
+
+    stats = await scheduler.run_cycle()
+
+    assert stats.tenants_visited == 3
+    assert outbox_runner.calls == ["s1", "s2", "generated"]
+
+
+@pytest.mark.asyncio
+async def test_cycle_deduplicates_tenants_across_work_categories():
+    embedding_service = FakeEmbeddingService(reconcile_tenants=["shared"])
+    scheduler = Scheduler(
+        telemetry=FakeTelemetry(),
+        source_repo=FakeSourceRepo(tenants=["shared"]),
+        outbox_repo=FakeOutboxRepo(ready_tenants=["shared"]),
+        embedding_service=embedding_service,
+        source_registry=FakeSourceRegistry(None),
+        outbox_registry=FakeOutboxRegistry(),
+        process_outbox_batch=FakeOutboxRunner(),
+        config=SchedulerConfig(component="scheduler", instance_id="i1", deployment_id="d1"),
+    )
+
+    assert (await scheduler.run_cycle()).tenants_visited == 1
 
 
 @pytest.mark.asyncio

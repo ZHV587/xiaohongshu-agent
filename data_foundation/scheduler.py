@@ -152,7 +152,7 @@ class Scheduler:
             limit=self.config.tenant_limit,
         )
         recovered_outbox = self.outbox_repo.recover_expired(limit=self.config.outbox_batch_size)
-        tenants = self.source_repo.discover_due_tenants(limit=self.config.tenant_limit)
+        tenants = self._discover_work_tenants()
 
         sources_processed = 0
         outbox_processed = 0
@@ -180,6 +180,22 @@ class Scheduler:
             retention_deleted=retention_deleted,
             failed=failed,
         )
+
+    def _discover_work_tenants(self) -> list[str]:
+        limit = max(1, self.config.tenant_limit)
+        source = self.source_repo.discover_due_tenants(limit=limit)
+        embedding = (
+            self.embedding_service.discover_reconcile_tenants(limit=limit)
+            if self.embedding_service is not None
+            else []
+        )
+        ready = self.outbox_repo.discover_ready_tenants(limit=limit)
+        source_set = set(source)
+        non_source = _unique(
+            [tenant_id for tenant_id in embedding + ready if tenant_id not in source_set]
+        )
+        source_budget = limit if limit == 1 or not non_source else limit - 1
+        return _unique(source[:source_budget] + non_source + source[source_budget:])[:limit]
 
     def _prepare_processors(self, tenant_id: str) -> int:
         failed = 0
@@ -330,6 +346,16 @@ class Scheduler:
                 error_summary=classification.error_summary,
             )
             return {"processed": 0, "failed": 1}
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return unique
 
 
 def _build_embedding_runtime(conn, *, config: SchedulerConfig) -> EmbeddingRuntime:
