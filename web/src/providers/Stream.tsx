@@ -22,7 +22,6 @@ import { Switch } from "@/components/ui/switch";
 import { ArrowRight } from "lucide-react";
 import { PasswordInput } from "@/components/ui/password-input";
 import { getApiKey } from "@/lib/api-key";
-import { getAuthToken } from "@/lib/auth";
 import { useThreads } from "./Thread";
 import { toast } from "sonner";
 
@@ -56,11 +55,10 @@ async function checkGraphStatus(
     const headers = new Headers();
     if (apiKey) headers.set("X-Api-Key", apiKey);
     if (authScheme) headers.set("X-Auth-Scheme", authScheme);
-    const token = getAuthToken();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
 
     const res = await fetch(`${apiUrl}/info`, {
       headers,
+      credentials: "same-origin",
     });
 
     return res.ok;
@@ -91,8 +89,7 @@ const StreamSession = ({
     assistantId,
     defaultHeaders: {
       ...(authScheme && { "X-Auth-Scheme": authScheme }),
-      // 真飞书 OAuth:身份 JWT 作 Bearer 传给后端,实现按用户隔离会话。
-      ...(getAuthToken() && { Authorization: `Bearer ${getAuthToken()}` }),
+      // BFF 模式:身份 JWT 在 httpOnly cookie 中,由同源 /api 代理在服务端注入 Bearer。
     },
     threadId: threadId ?? null,
     fetchStateHistory: true,
@@ -178,8 +175,12 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     _setApiKey(key);
   };
 
-  // Determine final values to use, prioritizing URL params then env vars
-  const finalApiUrl = apiUrl || envApiUrl;
+  // Determine final values to use.
+  // 安全:apiUrl 在生产固定为同源 env 值(/api),忽略 ?apiUrl= query 覆盖,
+  // 防止绕过 BFF 代理直连任意后端(身份令牌注入只在代理服务端发生)。
+  // 仅开发环境保留 query 覆盖,便于本地联调直连。
+  const finalApiUrl =
+    process.env.NODE_ENV === "development" ? apiUrl || envApiUrl : envApiUrl;
   const finalAssistantId = assistantId || envAssistantId;
   const finalAuthScheme = authScheme || envAuthScheme || "";
 

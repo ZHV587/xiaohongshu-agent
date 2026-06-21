@@ -42,6 +42,9 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const [apiUrl] = useQueryState("apiUrl", {
     defaultValue: envApiUrl || "",
   });
+  // 安全:生产忽略 ?apiUrl= 覆盖,固定走同源 /api 代理(对齐 StreamProvider)。
+  const finalApiUrl =
+    process.env.NODE_ENV === "development" ? apiUrl || envApiUrl : envApiUrl;
   const [assistantId] = useQueryState("assistantId");
   const [authScheme] = useQueryState("authScheme", {
     defaultValue: envAuthScheme || "",
@@ -51,9 +54,9 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
 
   const getThreads = useCallback(async (): Promise<Thread[]> => {
     const resolvedAssistantId = assistantId || envAssistantId;
-    if (!apiUrl || !resolvedAssistantId) return [];
+    if (!finalApiUrl || !resolvedAssistantId) return [];
     const client = createClient(
-      apiUrl,
+      finalApiUrl,
       getApiKey() ?? undefined,
       authScheme || undefined,
     );
@@ -66,7 +69,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     });
 
     return threads;
-  }, [apiUrl, assistantId, authScheme, envAssistantId]);
+  }, [finalApiUrl, assistantId, authScheme, envAssistantId]);
 
   const value = {
     getThreads,

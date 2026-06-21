@@ -16,8 +16,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useQueryState("auth_error");
 
   useEffect(() => {
-    setUser(getCurrentUser());
-    setReady(true);
+    let active = true;
+    getCurrentUser().then((u) => {
+      if (active) {
+        setUser(u);
+        setReady(true);
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // 飞书登录回调失败时,? auth_error=... 会带回来,在登录页提示后清掉。

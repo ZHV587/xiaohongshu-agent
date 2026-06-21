@@ -88,10 +88,16 @@ function ThreadHistoryLoading() {
 }
 
 function UserArea() {
-  // 客户端读 cookie 里的身份 JWT,展示当前飞书用户 / 登录入口。
+  // 身份 JWT 在 httpOnly cookie 中,前端不可读;改向服务端 /api/me 询问当前飞书用户。
   const [user, setUser] = useState<CurrentUser | null>(null);
   useEffect(() => {
-    setUser(getCurrentUser());
+    let active = true;
+    getCurrentUser().then((u) => {
+      if (active) setUser(u);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (!user) {

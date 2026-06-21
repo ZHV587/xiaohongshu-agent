@@ -132,10 +132,11 @@ export async function GET(req: NextRequest) {
   const jwt = signJwt({ sub: openId, name }, cfg.jwtSecret);
 
   const res = NextResponse.redirect(new URL(next, getActualOrigin(req)));
-  // 可读 cookie(非 httpOnly):前端 JS 要读出来塞进 Authorization 头发给后端。
+  // httpOnly cookie:身份 JWT 仅由服务端 BFF 代理(/api/[..._path])读取并注入 Bearer,
+  // 浏览器 JS 读不到 → 消除 XSS 窃取令牌的攻击面。前端显示名改用 /api/me(服务端验签)。
   res.cookies.set(AUTH_COOKIE, jwt, {
-    httpOnly: false,
-    sameSite: "lax",
+    httpOnly: true,
+    sameSite: "strict",
     secure: req.nextUrl.protocol === "https:",
     maxAge: 7 * 24 * 3600,
     path: "/",
