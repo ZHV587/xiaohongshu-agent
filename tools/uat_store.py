@@ -55,9 +55,19 @@ def _ensure_pg_table() -> None:
             logger.error(f"Failed to initialize PostgreSQL Lark token table: {e}")
 
 def _get_fernet_key() -> bytes:
-    jwt_secret = os.environ.get("XHS_JWT_SECRET", "default_fallback_secret_for_key_derivation_32bytes")
+    # UAT 加密密钥与 JWT 签名密钥必须解耦:JWT 泄露不应等于全员飞书令牌可解密。
+    # 优先用独立的 XHS_UAT_ENCRYPTION_KEY;仅当其缺失时,回退到 XHS_JWT_SECRET 派生
+    # (平滑过渡,不硬断),并告警提示运维配置独立密钥。
+    secret = os.environ.get("XHS_UAT_ENCRYPTION_KEY", "").strip()
+    if not secret:
+        secret = os.environ.get("XHS_JWT_SECRET", "default_fallback_secret_for_key_derivation_32bytes")
+        logger.warning(
+            "XHS_UAT_ENCRYPTION_KEY is not set; falling back to deriving the UAT encryption "
+            "key from XHS_JWT_SECRET. Configure a dedicated XHS_UAT_ENCRYPTION_KEY so that a "
+            "JWT secret leak cannot also decrypt stored Feishu user tokens."
+        )
     # Derive a 32-byte key using SHA-256 and base64 urlsafe encode
-    derived = hashlib.sha256(jwt_secret.encode()).digest()
+    derived = hashlib.sha256(secret.encode()).digest()
     return base64.urlsafe_b64encode(derived)
 
 def _read_store() -> dict:

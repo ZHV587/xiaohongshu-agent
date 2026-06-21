@@ -18,6 +18,7 @@
 ## 多用户部署关键配置
 
 - `XHS_ADMIN_OPEN_IDS`: 逗号分隔的飞书 open_id,只有这些用户能访问系统配置。
+- `XHS_UAT_ENCRYPTION_KEY`: 飞书用户令牌(UAT)落盘加密密钥,必须与 `XHS_JWT_SECRET` 不同。两者解耦后,JWT 签名密钥泄露不会同时导致存储的飞书用户令牌可被解密;留空时回退用 `XHS_JWT_SECRET` 派生并打告警,生产部署应配置独立密钥。
 - `XHS_BACKEND_APPLY_MODE`: `.env` 回退模式下使用 `manual`、`pm2` 或 `systemd`。配置中心开启后，embedding 配置不走重启生效，而是由 scheduler 新建索引后切换。
 - `LLM_PROVIDER`: 第一阶段生产路径建议固定为 `openai`。
 - `LLM_QUALITY_MODELS`: 高质量模型池,逗号分隔;第一项是首选模型。
