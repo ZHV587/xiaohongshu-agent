@@ -25,6 +25,7 @@ DATA_FOUNDATION_TABLES = (
     "resource_events",
     "resource_versions",
     "resource_mappings",
+    "resource_type_counts",
     "resources",
 )
 

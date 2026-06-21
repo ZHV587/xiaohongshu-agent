@@ -11,6 +11,7 @@ from data_foundation import db, models
 
 EXPECTED_TABLES = {
     "resources",
+    "resource_type_counts",
     "resource_versions",
     "resource_events",
     "resource_mappings",
@@ -150,6 +151,17 @@ def test_schema_source_aligns_source_ready_index_with_dispatch_order():
     assert "where enabled" in schema
 
 
+def test_schema_source_counts_have_tenant_first_indexes():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "idx_sync_sources_tenant_due" in schema
+    assert "on sync_sources (tenant_id, next_run_at, lease_expires_at)" in schema
+    assert "where enabled" in schema
+    assert "idx_sync_sources_tenant_running" in schema
+    assert "on sync_sources (tenant_id, lease_expires_at)" in schema
+    assert "where enabled and lease_expires_at is not null" in schema
+
+
 def test_schema_source_replaces_legacy_runtime_fact_indexes():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
 
@@ -162,6 +174,18 @@ def test_schema_source_replaces_legacy_runtime_fact_indexes():
     assert "drop index if exists idx_service_error_aggregates_tenant_recent;" in schema
     assert "idx_service_error_aggregates_tenant_recent_ordered" in schema
     assert "on service_error_aggregates (tenant_id, window_started_at desc, window_ended_at desc, id desc)" in schema
+
+
+def test_schema_source_declares_resource_type_count_facts():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "create table if not exists resource_type_counts" in schema
+    assert "primary key (tenant_id, type)" in schema
+    assert "count bigint not null default 0 check (count >= 0)" in schema
+    assert "insert into resource_type_counts (tenant_id, type, count)" in schema
+    assert "select tenant_id, type, count(*)" in schema
+    assert "from resources" in schema
+    assert "on conflict (tenant_id, type) do update" in schema
 
 
 def test_reset_allowlist_contains_only_all_operational_tables():
@@ -511,6 +535,11 @@ def test_ready_and_lease_indexes_cover_operational_queues(migrated_conn):
         "idx_sync_sources_due_tenants"
     ]
     assert "where enabled" in indexes["idx_sync_sources_due_tenants"]
+    assert "(tenant_id, next_run_at, lease_expires_at)" in indexes["idx_sync_sources_tenant_due"]
+    assert "where enabled" in indexes["idx_sync_sources_tenant_due"]
+    assert "(tenant_id, lease_expires_at)" in indexes["idx_sync_sources_tenant_running"]
+    assert "where ((enabled" in indexes["idx_sync_sources_tenant_running"]
+    assert "lease_expires_at is not null" in indexes["idx_sync_sources_tenant_running"]
     assert "(lease_expires_at)" in indexes["idx_sync_sources_lease"]
 
 

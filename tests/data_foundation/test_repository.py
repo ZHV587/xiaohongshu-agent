@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -318,6 +319,77 @@ def test_same_external_mapping_can_exist_in_different_tenants(migrated_conn):
     )
 
     assert second.id != first.id
+
+
+def test_resource_type_counts_follow_new_and_retyped_resources(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+    created = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="draft",
+        title="草稿",
+        content_text="正文",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+        mapping={"system": "test", "external_type": "doc", "external_id": "resource-type-count"},
+    )
+    repo.upsert_resource(
+        tenant_id="other-tenant",
+        actor_open_id="ou_owner",
+        resource_type="draft",
+        title="其他租户草稿",
+        content_text="正文",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+    )
+    updated = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="generated_copy",
+        title="文案",
+        content_text="新版正文",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou_owner",
+        mapping={"system": "test", "external_type": "doc", "external_id": "resource-type-count"},
+    )
+
+    assert updated.id == created.id
+    rows = migrated_conn.execute(
+        """
+        select tenant_id, type, count
+        from resource_type_counts
+        order by tenant_id, type
+        """
+    ).fetchall()
+    assert rows == [
+        {"tenant_id": "default", "type": "generated_copy", "count": 1},
+        {"tenant_id": "other-tenant", "type": "draft", "count": 1},
+    ]
+    status = repo.data_foundation_status("default")
+    facts = repo.runtime_fact_aggregates("default")
+    assert status["resources"]["by_type"] == {"generated_copy": 1}
+    assert facts["resources"]["by_type"]["generated_copy"] == 1
+    assert facts["resources"]["by_type"]["draft"] == 0
+
+
+def test_runtime_status_reads_resource_type_count_facts_not_resource_table():
+    source = Path("data_foundation/repository.py").read_text(encoding="utf-8").lower()
+
+    assert "from resource_type_counts" in source
+    assert "select type, count(*) as count\n            from resources\n            where tenant_id = %s\n            group by type" not in source
+
+
+def test_runtime_facts_split_source_counts_for_index_usage():
+    source = Path("data_foundation/repository.py").read_text(encoding="utf-8").lower()
+
+    assert "count(*) filter" not in source
+    assert "source_enabled" in source
+    assert "source_expired" in source
+    assert "source_running" in source
+    assert "lease_expires_at is not null\n              and lease_expires_at > now()" in source
 
 
 def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):

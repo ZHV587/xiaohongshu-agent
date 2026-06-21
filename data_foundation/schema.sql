@@ -28,6 +28,22 @@ create index if not exists idx_resources_trgm_content on resources using gin (
   (coalesce(title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content_text, '')) public.gin_trgm_ops
 );
 
+create table if not exists resource_type_counts (
+  tenant_id text not null,
+  type text not null,
+  count bigint not null default 0 check (count >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, type)
+);
+
+insert into resource_type_counts (tenant_id, type, count)
+select tenant_id, type, count(*)
+from resources
+group by tenant_id, type
+on conflict (tenant_id, type) do update
+set count = excluded.count,
+    updated_at = now();
+
 create table if not exists resource_mappings (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
@@ -212,6 +228,12 @@ create index if not exists idx_sync_sources_ready_tenant_ordered
 create index if not exists idx_sync_sources_due_tenants
   on sync_sources (next_run_at, tenant_id, last_dispatched_at nulls first)
   where enabled;
+create index if not exists idx_sync_sources_tenant_due
+  on sync_sources (tenant_id, next_run_at, lease_expires_at)
+  where enabled;
+create index if not exists idx_sync_sources_tenant_running
+  on sync_sources (tenant_id, lease_expires_at)
+  where enabled and lease_expires_at is not null;
 create index if not exists idx_sync_sources_lease on sync_sources (lease_expires_at);
 
 create table if not exists service_instances (

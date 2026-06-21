@@ -80,6 +80,7 @@ class ResourceRepository:
                         owner_open_id,
                     ),
                 ).fetchone()
+                self._adjust_resource_type_count(tenant_id=tenant_id, resource_type=resource_type, delta=1)
             else:
                 current = self.conn.execute(
                     "select * from resources where id = %s and tenant_id = %s for update",
@@ -131,6 +132,17 @@ class ResourceRepository:
                 ).fetchone()
                 if row is None:
                     raise PermissionError("Resource mapping points to another tenant")
+                if current["type"] != resource_type:
+                    self._adjust_resource_type_count(
+                        tenant_id=tenant_id,
+                        resource_type=current["type"],
+                        delta=-1,
+                    )
+                    self._adjust_resource_type_count(
+                        tenant_id=tenant_id,
+                        resource_type=resource_type,
+                        delta=1,
+                    )
 
             version = self._next_version(row["id"])
             self.conn.execute(
@@ -616,10 +628,10 @@ class ResourceRepository:
     def data_foundation_status(self, tenant_id: str) -> dict[str, Any]:
         resource_rows = self.conn.execute(
             """
-            select type, count(*) as count
-            from resources
+            select type, count
+            from resource_type_counts
             where tenant_id = %s
-            group by type
+              and count > 0
             order by type
             """,
             (tenant_id,),
@@ -684,25 +696,37 @@ class ResourceRepository:
         }
 
     def runtime_fact_aggregates(self, tenant_id: str) -> dict[str, Any]:
-        source_counts = self.conn.execute(
+        source_enabled = self.conn.execute(
             """
-            select
-              count(*) filter (where enabled) as enabled,
-              count(*) filter (
-                where enabled
-                  and next_run_at <= now()
-                  and (lease_expires_at is null or lease_expires_at <= now())
-              ) as expired,
-              count(*) filter (
-                where enabled
-                  and lease_expires_at is not null
-                  and lease_expires_at > now()
-              ) as running
+            select count(*) as count
             from sync_sources
             where tenant_id = %s
+              and enabled
             """,
             (tenant_id,),
-        ).fetchone()
+        ).fetchone()["count"]
+        source_expired = self.conn.execute(
+            """
+            select count(*) as count
+            from sync_sources
+            where tenant_id = %s
+              and enabled
+              and next_run_at <= now()
+              and (lease_expires_at is null or lease_expires_at <= now())
+            """,
+            (tenant_id,),
+        ).fetchone()["count"]
+        source_running = self.conn.execute(
+            """
+            select count(*) as count
+            from sync_sources
+            where tenant_id = %s
+              and enabled
+              and lease_expires_at is not null
+              and lease_expires_at > now()
+            """,
+            (tenant_id,),
+        ).fetchone()["count"]
         last_sync = self.conn.execute(
             """
             select status
@@ -743,10 +767,10 @@ class ResourceRepository:
         ).fetchall()
         resource_rows = self.conn.execute(
             """
-            select type, count(*) as count
-            from resources
+            select type, count
+            from resource_type_counts
             where tenant_id = %s
-            group by type
+              and count > 0
             order by type
             """,
             (tenant_id,),
@@ -789,9 +813,9 @@ class ResourceRepository:
 
         return {
             "sources": {
-                "enabled": source_counts["enabled"],
-                "expired": source_counts["expired"],
-                "running": source_counts["running"],
+                "enabled": source_enabled,
+                "expired": source_expired,
+                "running": source_running,
                 "last_status": None if last_sync is None else last_sync["status"],
             },
             "outbox": {status: outbox.get(status, 0) for status in OUTBOX_STATUSES},
@@ -894,6 +918,38 @@ class ResourceRepository:
                 mapping.get("sync_cursor"),
                 mapping.get("sync_status"),
             ),
+        )
+
+    def _adjust_resource_type_count(self, *, tenant_id: str, resource_type: str, delta: int) -> None:
+        if delta == 0:
+            return
+        if delta > 0:
+            self.conn.execute(
+                """
+                insert into resource_type_counts (tenant_id, type, count)
+                values (%s, %s, %s)
+                on conflict (tenant_id, type)
+                do update set count = resource_type_counts.count + excluded.count,
+                              updated_at = now()
+                """,
+                (tenant_id, resource_type, delta),
+            )
+            return
+        self.conn.execute(
+            """
+            update resource_type_counts
+            set count = count + %s,
+                updated_at = now()
+            where tenant_id = %s and type = %s
+            """,
+            (delta, tenant_id, resource_type),
+        )
+        self.conn.execute(
+            """
+            delete from resource_type_counts
+            where tenant_id = %s and type = %s and count = 0
+            """,
+            (tenant_id, resource_type),
         )
 
     def _latest_version(self, resource_id: Any) -> Any:
