@@ -1,10 +1,31 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import falkordb
 
 from data_foundation.engine_config import FalkorConfig
+
+
+# 模块级 FalkorDB 连接缓存:按 url 复用底层连接(redis),避免每次工具调用/每 cycle
+# 新建 redis 连接累积。select_graph 轻量,每次按 graph_name 取。
+_db_cache: dict[str, Any] = {}
+_cache_lock = threading.Lock()
+
+
+def _reset_db_cache() -> None:
+    with _cache_lock:
+        _db_cache.clear()
+
+
+def _get_db(url: str) -> Any:
+    with _cache_lock:
+        db = _db_cache.get(url)
+        if db is None:
+            db = falkordb.FalkorDB.from_url(url)
+            _db_cache[url] = db
+        return db
 
 
 class FalkorResourceGraph:
@@ -13,8 +34,8 @@ class FalkorResourceGraph:
 
     @classmethod
     def from_config(cls, config: FalkorConfig) -> "FalkorResourceGraph":
-        client = falkordb.FalkorDB.from_url(config.url)
-        return cls(graph=client.select_graph(config.graph_name))
+        db = _get_db(config.url)
+        return cls(graph=db.select_graph(config.graph_name))
 
     def merge_node(self, node: dict[str, Any]) -> None:
         self.graph.query(

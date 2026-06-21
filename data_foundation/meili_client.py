@@ -1,10 +1,32 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import meilisearch
 
 from data_foundation.engine_config import MeiliConfig
+
+
+# 模块级底层 client 缓存:按 (url, api_key) 复用 meilisearch.Client,避免每次工具调用/
+# 每 cycle 新建 HTTP 客户端。config 变化(换地址/key)自动建新实例。
+_client_cache: dict[tuple[str, str], Any] = {}
+_cache_lock = threading.Lock()
+
+
+def _reset_client_cache() -> None:
+    with _cache_lock:
+        _client_cache.clear()
+
+
+def _get_client(config: MeiliConfig) -> Any:
+    key = (config.url, config.api_key)
+    with _cache_lock:
+        client = _client_cache.get(key)
+        if client is None:
+            client = meilisearch.Client(config.url, config.api_key)
+            _client_cache[key] = client
+        return client
 
 
 class MeiliResourceIndex:
@@ -17,8 +39,7 @@ class MeiliResourceIndex:
 
     @classmethod
     def from_config(cls, config: MeiliConfig) -> "MeiliResourceIndex":
-        client = meilisearch.Client(config.url, config.api_key)
-        return cls(client=client)
+        return cls(client=_get_client(config))
 
     def ensure_index(self) -> None:
         index = self.client.index(self.index_uid)

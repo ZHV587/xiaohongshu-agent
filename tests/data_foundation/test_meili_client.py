@@ -39,3 +39,25 @@ def test_search_returns_ordered_ids_with_tenant_filter():
     assert args[0] == "减脂"
     assert kwargs["opt_params"]["filter"] == 'tenant_id = "default"'
     assert kwargs["opt_params"]["limit"] == 10
+
+
+def test_from_config_reuses_underlying_client_for_same_config(monkeypatch):
+    import data_foundation.meili_client as mc
+    mc._reset_client_cache()
+    created = []
+
+    class _FakeClient:
+        def __init__(self, url, key):
+            created.append((url, key))
+
+    monkeypatch.setattr(mc.meilisearch, "Client", _FakeClient)
+    from data_foundation.engine_config import MeiliConfig
+    cfg = MeiliConfig(state="enabled", url="http://x:7700", api_key="k")
+    a = mc.MeiliResourceIndex.from_config(cfg)
+    b = mc.MeiliResourceIndex.from_config(cfg)
+    # 同 config:底层 client 只建一次,复用
+    assert len(created) == 1
+    assert a.client is b.client
+    # 不同 config:新建
+    mc.MeiliResourceIndex.from_config(MeiliConfig(state="enabled", url="http://y:7700", api_key="k2"))
+    assert len(created) == 2

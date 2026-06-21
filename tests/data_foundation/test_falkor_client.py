@@ -34,3 +34,27 @@ def test_expand_returns_nodes_and_edges():
     nodes, edges = fg.expand(resource_ids=["a"], hops=1, edge_types=None, tenant_id="default")
     assert any(n["id"] == "a" for n in nodes)
     assert any(e["source"] == "a" and e["target"] == "b" for e in edges)
+
+
+def test_from_config_reuses_underlying_db_for_same_config(monkeypatch):
+    import data_foundation.falkor_client as fc
+    fc._reset_db_cache()
+    created = []
+
+    class _FakeDB:
+        @classmethod
+        def from_url(cls, url):
+            created.append(url)
+            inst = MagicMock()
+            return inst
+
+    monkeypatch.setattr(fc.falkordb, "FalkorDB", _FakeDB)
+    from data_foundation.engine_config import FalkorConfig
+    cfg = FalkorConfig(state="enabled", url="redis://x:6379", graph_name="xhs")
+    fc.FalkorResourceGraph.from_config(cfg)
+    fc.FalkorResourceGraph.from_config(cfg)
+    # 同 url:底层 FalkorDB 连接只建一次
+    assert len(created) == 1
+    # 不同 url:新建
+    fc.FalkorResourceGraph.from_config(FalkorConfig(state="enabled", url="redis://y:6379", graph_name="xhs"))
+    assert len(created) == 2
