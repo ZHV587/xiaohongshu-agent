@@ -19,4 +19,5 @@ def test_run_backend_uses_project_venv_and_local_langgraph_server():
         "2030",
         "--host",
         "127.0.0.1",
+        "--allow-blocking",
     ]
