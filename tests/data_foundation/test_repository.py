@@ -53,6 +53,25 @@ def test_actor_from_config_ignores_client_supplied_user_id():
         actor_from_config(cfg)
 
 
+def test_actor_from_config_falls_back_to_runtime_contextvar():
+    # 并发工具调用(asyncio.gather + run_in_executor 线程池)下,显式 config 参数可能丢失
+    # configurable/身份。此时应通过 LangGraph get_config() 从运行时 contextvar 兜底取身份。
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    runtime_cfg = {"configurable": {"langgraph_auth_user": _LangGraphUser("ou_ctxvar"), "thread_id": "t"}}
+    token = var_child_runnable_config.set(runtime_cfg)
+    try:
+        # 参数 config 完全没有身份,但 contextvar 里有 -> 兜底成功
+        assert actor_from_config(None) == "ou_ctxvar"
+        assert actor_from_config({"configurable": {}}) == "ou_ctxvar"
+    finally:
+        var_child_runnable_config.reset(token)
+
+    # contextvar 也清空后,应正确拒绝(兜底不会变成放行口子)
+    with pytest.raises(PermissionError, match="Missing LangGraph user identity"):
+        actor_from_config(None)
+
+
 def test_resource_repository_no_longer_exposes_legacy_outbox_runtime():
     assert not hasattr(ResourceRepository, "lease_outbox")
     assert not hasattr(ResourceRepository, "complete_outbox")
