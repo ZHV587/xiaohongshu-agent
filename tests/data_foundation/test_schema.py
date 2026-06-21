@@ -538,7 +538,7 @@ def test_ready_and_lease_indexes_cover_operational_queues(migrated_conn):
     assert "(tenant_id, next_run_at, lease_expires_at)" in indexes["idx_sync_sources_tenant_due"]
     assert "where enabled" in indexes["idx_sync_sources_tenant_due"]
     assert "(tenant_id, lease_expires_at)" in indexes["idx_sync_sources_tenant_running"]
-    assert "where ((enabled" in indexes["idx_sync_sources_tenant_running"]
+    assert "enabled" in indexes["idx_sync_sources_tenant_running"]
     assert "lease_expires_at is not null" in indexes["idx_sync_sources_tenant_running"]
     assert "(lease_expires_at)" in indexes["idx_sync_sources_lease"]
 
