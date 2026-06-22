@@ -188,13 +188,36 @@ async def on_thread_create_run(ctx: Auth.types.AuthContext, value: dict) -> dict
 
 
 # --- 共享资源:显式放行(全员可读写,实现共享爆款库/风格) ---
-# store = /shared 风格沉淀、/skills 方法论;assistants = 只读图。
-# 这些是团队共享资产,放行(返回 None = 不加 owner 过滤)。
+# store = /shared 风格沉淀、/memories 团队记忆(同 namespace ("xhs-shared",))、/skills 方法论;
+# /user-memories 是按用户隔离的私有记忆(namespace (open_id, "user-memories"))。
+# assistants = 只读图。
+
+
+# 私有记忆 namespace 的第二段标识(backends._user_memory_namespace 产出 (identity, _MARKER))
+_USER_MEMORY_MARKER = "user-memories"
 
 
 @auth.on.store
 async def on_store(ctx: Auth.types.AuthContext, value: dict) -> None:
-    """store(/shared、/skills)全员共享,不按 user 过滤。"""
+    """store 访问控制。
+
+    - /shared、/memories(namespace ("xhs-shared",))、/skills:团队共享,放行。
+    - /user-memories(namespace (open_id, "user-memories")):私有记忆,**强制**把
+      namespace 首段钉成当前认证用户身份 —— 否则用户经 BFF 直调 /store/* 指定他人
+      namespace(如 ("ou_victim","user-memories"))即可越权读写他人私有记忆。
+      namespace 隔离只约束 agent 自身工具(永远用当前身份),不约束 Store 原生 HTTP API,
+      故必须在 auth 层兜住。
+
+    LangGraph store 操作(Get/Search/Put/Delete/ListNamespaces)的 value 均含可变
+    `namespace`(官方:auth handler 可改 namespace 强制访问控制)。这里原地改写。
+    """
+    namespace = value.get("namespace")
+    # ListNamespaces 的 namespace 是 prefix,可能为 None;其余操作必有 namespace。
+    if isinstance(namespace, (tuple, list)) and _USER_MEMORY_MARKER in namespace:
+        # 私有记忆 namespace 恒为两段 (open_id, "user-memories")(见 backends._user_memory_namespace)。
+        # 无论客户端传什么(颠倒顺序、塞他人 open_id、加额外段),一律规范化为当前用户的
+        # (identity, "user-memories") —— 杜绝任何越权到他人分区的可能。
+        value["namespace"] = (ctx.user.identity, _USER_MEMORY_MARKER)
     return None
 
 

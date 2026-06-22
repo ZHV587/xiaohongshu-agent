@@ -64,3 +64,52 @@ async def test_auth_with_secret_expired_jwt(monkeypatch):
     token = _make_jwt("ou_alice_001", "Alice", secret, expired=True)
     with pytest.raises(Exception):
         await auth_mod.authenticate({"authorization": f"Bearer {token}"})
+
+
+class _FakeUser:
+    def __init__(self, identity):
+        self.identity = identity
+
+
+class _FakeCtx:
+    def __init__(self, identity):
+        self.user = _FakeUser(identity)
+
+
+@pytest.mark.anyio
+async def test_on_store_rewrites_user_memory_namespace_to_self(monkeypatch):
+    """安全回归:客户端指定他人 user-memories namespace,必须被改写为当前用户 ——
+    否则经 BFF 直调 /store/* 可越权读写他人私有记忆。"""
+    ctx = _FakeCtx("ou_alice")
+    # 攻击者把 namespace 指向受害者私有分区
+    value = {"namespace": ("ou_victim", "user-memories"), "key": "AGENTS.md"}
+    await auth_mod.on_store(ctx, value)
+    assert value["namespace"] == ("ou_alice", "user-memories")
+    assert "ou_victim" not in value["namespace"]
+
+
+@pytest.mark.anyio
+async def test_on_store_normalizes_tampered_user_memory_namespace(monkeypatch):
+    """颠倒顺序/加额外段也一律规范化为当前用户两段。"""
+    ctx = _FakeCtx("ou_alice")
+    value = {"namespace": ("user-memories", "ou_victim", "extra")}
+    await auth_mod.on_store(ctx, value)
+    assert value["namespace"] == ("ou_alice", "user-memories")
+
+
+@pytest.mark.anyio
+async def test_on_store_leaves_shared_namespace_untouched(monkeypatch):
+    """团队共享 namespace(/shared、/memories → ("xhs-shared",))不受影响,保持共享。"""
+    ctx = _FakeCtx("ou_alice")
+    value = {"namespace": ("xhs-shared",), "key": "xhs-style.md"}
+    await auth_mod.on_store(ctx, value)
+    assert value["namespace"] == ("xhs-shared",)
+
+
+@pytest.mark.anyio
+async def test_on_store_handles_none_prefix_namespace(monkeypatch):
+    """ListNamespaces 的 prefix 可能为 None,不得崩溃。"""
+    ctx = _FakeCtx("ou_alice")
+    value = {"namespace": None}
+    await auth_mod.on_store(ctx, value)
+    assert value["namespace"] is None
