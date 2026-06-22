@@ -120,9 +120,15 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
     cfg = meili_config_from_env()
     if cfg.state != "enabled":
         return {"ok": False, "error": "MEILI_UNAVAILABLE"}
+    want = min(max(int(limit), 1), 20)
+    # Meili 只按 tenant 过滤(无行级 owner/visibility ACL),权限裁决在 PG 后置。
+    # 若只取 want 个 id 再过权限,命中里他人私有资源会挤掉可读结果 → 静默欠召回,
+    # 极端返回空让 agent 误判"无数据"。故 over-fetch(want*5,上限 200),PG 过权限后
+    # 按相关性序(readable_rows_by_ids 保序)截断到 want。
+    over_fetch = min(want * 5, 200)
     try:
         index = MeiliResourceIndex.from_config(cfg)
-        ids = index.search(query.strip(), tenant_id=default_tenant_id(), limit=min(max(int(limit), 1), 20))
+        ids = index.search(query.strip(), tenant_id=default_tenant_id(), limit=over_fetch)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"MEILI_QUERY_FAILED: {exc}"}
     with _repository() as repo:
@@ -131,7 +137,7 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
             actor_open_id=actor,
             resource_ids=ids,
         )
-    return {"ok": True, "results": _rows_to_payload(rows)}
+    return {"ok": True, "results": _rows_to_payload(rows[:want])}
 
 
 @tool
@@ -148,6 +154,10 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
         return {"ok": True, "mode": "keyword_fallback", "fallback_reason": reason,
                 "results": fallback.get("results", [])}
 
+    if not query or not query.strip():
+        # 空查询不送 provider(避免空文本 embedding 触发 provider 报错),直接走全文。
+        return _fulltext_fallback("EMPTY_QUERY")
+
     with _repository() as repo:
         active_index = repo.active_embedding_index(default_tenant_id())
         if active_index is None:
@@ -155,16 +165,22 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
         try:
             query_config = _embedding_query_config_for_index(active_index)
             embedding = _embed_query(query, config=query_config)
+            results = semantic_search(
+                repo,
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                embedding=embedding,
+                embedding_model=active_index.embedding_model,
+                top_k=top_k,
+            )
         except EmbeddingSearchUnavailable as exc:
             return _fulltext_fallback(exc.reason_code)
-        results = semantic_search(
-            repo,
-            tenant_id=default_tenant_id(),
-            actor_open_id=actor,
-            embedding=embedding,
-            embedding_model=active_index.embedding_model,
-            top_k=top_k,
-        )
+        except httpx.HTTPError as exc:
+            # provider 5xx/429/超时/连接拒绝等运行时网络异常:降级到全文,不崩工具。
+            return _fulltext_fallback(f"EMBEDDING_QUERY_HTTP_ERROR: {type(exc).__name__}")
+        except ValueError as exc:
+            # 向量校验失败(provider 忽略 dimensions 返回非预期维度、含 NaN 等):降级。
+            return _fulltext_fallback(f"EMBEDDING_QUERY_INVALID_VECTOR: {exc}")
     return {"ok": True, "mode": "semantic", "results": _search_payload(results)}
 
 
