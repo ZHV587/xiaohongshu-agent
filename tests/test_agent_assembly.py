@@ -352,3 +352,31 @@ def test_agent_import_does_not_update_lark_adapters(monkeypatch):
     importlib.reload(agent_module)
 
     assert update_calls == []
+
+
+def test_agent_registers_humanizer_editor(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import deepagents
+
+    captured = {}
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create(*args, **kwargs):
+        captured["subagents"] = kwargs.get("subagents", [])
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
+    
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    subagents = captured.get("subagents", [])
+    subagent_names = {sub["name"] for sub in subagents}
+    assert "humanizer-editor" in subagent_names
+    
+    editor = next(sub for sub in subagents if sub["name"] == "humanizer-editor")
+    assert "AI腔" in editor["description"]
+    assert "AI腔调" in editor["system_prompt"]

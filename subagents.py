@@ -73,3 +73,37 @@ def build_baokuan_analyst(
         ],
         "middleware": [build_router_middleware(registry)],
     }
+
+
+HUMANIZER_SYSTEM_PROMPT = """你是顶级小红书文案润色编辑。你的任务是彻底扫除给定选题或文案中的“AI腔调”，通过中文拟人化润色将其重写为真诚、接地气、极具人情味的小红书爆款文案。
+
+## 你的审查与改写原则 (基于 24 种 AI 写作特征)：
+1. 警示词扫描：文案中严禁包含【此外、至关重要、深入探讨、格局、织锦、正如...证明、增强、获得、宝贵的、充满活力的】等 AI 常用过渡词和抽象修饰词。一旦发现，必须用最直白的大白话进行替换。
+2. 消除假大空与营销套话：删掉 AI 喜欢的高大上宏大意义和过度宣传用语，多用真实例子和细节说话。
+3. 句式重构：打破 AI 喜欢的三段式对称句（如“无缝、直观和强大”）和否定排比句。长短句交错，让行文带有一点真人的“随意感”。
+4. 真实结尾：删除 AI 特有的宏大、通用积极结论（如“总之，让我们共同期待……”），改为具体的下一步动作建议或口语化的真实困惑/槽点。
+5. 注入人味：适当使用第一人称“我”或“俺”，表达有观点和情绪的个人态度，而不是冰冷的中立报告。
+
+## 你的工具
+- write_file(file_path, content): 保存你润色后的最终版文案（支持写到 /drafts/ 目录）。
+"""
+
+HUMANIZER_DESCRIPTION = (
+    "对选题和小红书文案进行去AI腔润色，消除过度堆砌的连接词、宏大套话和三段式对称句， "
+    "使文案更加接地气、口语化。委派时请说明: 润色哪段内容，以及是否写到指定文件路径"
+    "(如 '请润色以下文案，并将结论写到 /drafts/露营精修.md')。"
+)
+
+
+def build_humanizer_editor(
+    registry: ModelPoolProvider,
+    initial_model: BaseChatModel,
+) -> dict:
+    return {
+        "name": "humanizer-editor",
+        "description": HUMANIZER_DESCRIPTION,
+        "system_prompt": HUMANIZER_SYSTEM_PROMPT,
+        "model": initial_model,
+        "tools": [],  # 依靠官方默认挂载的内置 write_file 即可
+        "middleware": [build_router_middleware(registry)],
+    }

@@ -22,7 +22,7 @@ from model_registry import ModelRegistry
 from models import build_initial_placeholder_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from rubric_model import RegistryRoutedChatModel
-from subagents import build_baokuan_analyst
+from subagents import build_baokuan_analyst, build_humanizer_editor
 
 from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
@@ -86,7 +86,10 @@ agent = create_deep_agent(
     # system prompt(渐进式披露)。agent 据 description 判断何时 read_file 读全文。
     # 工作流细节是 skill 的唯一事实源,MAIN_SYSTEM_PROMPT 只留角色+硬约束+输出协议契约。
     skills=["/skills/"],
-    subagents=[build_baokuan_analyst(model_registry, initial_model)],
+    subagents=[
+        build_baokuan_analyst(model_registry, initial_model),
+        build_humanizer_editor(model_registry, initial_model),
+    ],
     backend=backend,
     interrupt_on={
         "execute_lark_command": True,
