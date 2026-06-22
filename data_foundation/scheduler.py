@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -32,6 +33,10 @@ class SchedulerConfig:
     retention_days: int = 90
     retention_batch_size: int = 100
     chunker_version: str = "v1"
+    # 单个 source 同步 / 单批 outbox 处理的硬超时:防某租户飞书 HTTP 挂起冻结整轮 cycle。
+    # 超时后该租户记 failed,租约自然过期由 recover_stale_runs 回收,循环继续下个租户。
+    source_timeout_seconds: float = 120.0
+    outbox_timeout_seconds: float = 120.0
 
 
 @dataclass(frozen=True)
@@ -208,14 +213,17 @@ class Scheduler:
         failed = 0
         for topic in self.outbox_registry.topics:
             state = self.outbox_registry.state_for(topic)
-            if state.status == "active":
-                if topic == "embedding_generate":
-                    try:
-                        if self.embedding_service is not None:
-                            self.embedding_service.reconcile_tenant(tenant_id)
-                    except Exception:
-                        failed += 1
+            if state.status != "active":
+                continue
+            # 整个 topic 的准备(reconcile + unblock)包在一个 try 里:任一步抛 DB 异常
+            # 只让该 topic 记 failed,不冒泡出 _run_cycle_body 中止整轮(原 unblock_available
+            # 在 except 之外,出错会跳过剩余租户 + retention)。
+            try:
+                if topic == "embedding_generate" and self.embedding_service is not None:
+                    self.embedding_service.reconcile_tenant(tenant_id)
                 self.outbox_repo.unblock_available(tenant_id=tenant_id, topic=topic)
+            except Exception:
+                failed += 1
         return failed
 
     async def _process_one_source(self, tenant_id: str, *, lease_owner: str) -> dict[str, int]:
@@ -247,15 +255,18 @@ class Scheduler:
                 tenant_id=tenant_id,
                 source_id=source.id,
             )
-            result = await processor.sync(
-                SourceContext(source=public_source, secrets=secrets, actor_open_id=self.config.instance_id),
-                _SourceLease(
-                    self.source_repo,
-                    source_id=source.id,
-                    tenant_id=tenant_id,
-                    lease_owner=lease_owner,
-                    lease_seconds=self.config.lease_seconds,
+            result = await asyncio.wait_for(
+                processor.sync(
+                    SourceContext(source=public_source, secrets=secrets, actor_open_id=self.config.instance_id),
+                    _SourceLease(
+                        self.source_repo,
+                        source_id=source.id,
+                        tenant_id=tenant_id,
+                        lease_owner=lease_owner,
+                        lease_seconds=self.config.lease_seconds,
+                    ),
                 ),
+                timeout=self.config.source_timeout_seconds,
             )
             self.source_repo.finish_run(
                 run_id,
@@ -321,13 +332,16 @@ class Scheduler:
             config_version=self._cycle_config_version,
         )
         try:
-            stats = await self.process_outbox_batch(
-                self.outbox_repo,
-                tenant_id=tenant_id,
-                registry=self.outbox_registry,
-                batch_size=self.config.outbox_batch_size,
-                lease_owner=lease_owner,
-                lease_seconds=self.config.lease_seconds,
+            stats = await asyncio.wait_for(
+                self.process_outbox_batch(
+                    self.outbox_repo,
+                    tenant_id=tenant_id,
+                    registry=self.outbox_registry,
+                    batch_size=self.config.outbox_batch_size,
+                    lease_owner=lease_owner,
+                    lease_seconds=self.config.lease_seconds,
+                ),
+                timeout=self.config.outbox_timeout_seconds,
             )
             processed = int(stats.get("processed", 0))
             failed = int(stats.get("failed", 0))

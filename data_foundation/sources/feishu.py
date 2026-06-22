@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -19,7 +20,9 @@ class FeishuBaseSourceProcessor:
 
     async def sync(self, context: SourceContext, lease: SourceLease) -> SourceSyncResult:
         try:
-            payload = self.loader(context)
+            # loader 是同步阻塞调用(lark-cli 子进程 / 飞书 HTTP)。卸到线程,使外层
+            # scheduler 的 asyncio.wait_for 超时能真正打断挂起的同步 IO(否则 await 不到它)。
+            payload = await asyncio.to_thread(self.loader, context)
         except Exception as exc:
             return _failed_result(exc)
 
@@ -46,7 +49,7 @@ class FeishuWikiSourceProcessor:
 
     async def sync(self, context: SourceContext, lease: SourceLease) -> SourceSyncResult:
         try:
-            payload = self.loader(context)
+            payload = await asyncio.to_thread(self.loader, context)
         except Exception as exc:
             return _failed_result(exc)
 
