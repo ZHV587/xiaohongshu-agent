@@ -52,6 +52,23 @@ def test_runtime_identity_missing_identity_returns_none():
     assert actor_open_id_from_config(_Config()) is None
 
 
+def test_runtime_identity_trusts_langgraph_auth_user_in_dict_config():
+    """server 模式工具收 RunnableConfig(dict):身份取 configurable.langgraph_auth_user(可信)。"""
+    from tools.runtime_identity import actor_open_id_from_config
+
+    cfg = {"configurable": {"langgraph_auth_user": {"identity": "ou_trusted"}}}
+    assert actor_open_id_from_config(cfg) == "ou_trusted"
+
+
+def test_runtime_identity_ignores_client_supplied_user_id():
+    """安全回归:configurable.user_id/open_id 是客户端 run 请求可伪造字段,必须忽略 ——
+    否则可注入他人 open_id 经 get_uat 冒用其飞书令牌(越权)。"""
+    from tools.runtime_identity import actor_open_id_from_config
+
+    cfg = {"configurable": {"user_id": "ou_victim", "open_id": "ou_victim"}}
+    assert actor_open_id_from_config(cfg) is None
+
+
 @patch("tools.lark_cli.get_uat")
 @patch("tools.lark_cli.subprocess.run")
 def test_lark_cli_uses_runtime_identity_for_user_token(mock_run, mock_get_uat):

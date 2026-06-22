@@ -4,7 +4,6 @@ import asyncio
 import os
 import sys
 import threading
-from collections.abc import Mapping
 from typing import Any
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -14,17 +13,13 @@ from tools.runtime_identity import actor_open_id_from_config
 
 
 def _open_id_from_runtime(runtime: Any) -> str | None:
-    config = getattr(runtime, "config", None)
-    open_id = actor_open_id_from_config(config)
-    if open_id:
-        return open_id
+    """从 MCP 工具运行时取当前用户 open_id —— 只认 actor_open_id_from_config 的
+    服务端可信来源(server_info / configurable.langgraph_auth_user)。
 
-    context = getattr(runtime, "context", None)
-    for attr in ("user_id", "open_id", "identity"):
-        value = context.get(attr) if isinstance(context, Mapping) else getattr(context, attr, None)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+    绝不从 runtime.context 读 user_id/open_id/identity:context 来自 run 请求的
+    context_schema,客户端可任意填写,信它等于让用户注入他人身份冒用其飞书 UAT(越权)。
+    """
+    return actor_open_id_from_config(getattr(runtime, "config", None))
 
 
 async def inject_lark_mcp_identity(request: MCPToolCallRequest, handler):

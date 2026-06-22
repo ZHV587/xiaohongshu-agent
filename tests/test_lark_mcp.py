@@ -31,14 +31,17 @@ def test_mcp_server_rejects_missing_user_id_without_bot_fallback():
     mock_tool.func.assert_not_called()
 
 
-def test_lark_mcp_identity_interceptor_injects_user_id():
+def test_lark_mcp_identity_interceptor_injects_trusted_user():
+    """只注入服务端可信身份(configurable.langgraph_auth_user)。"""
     from tools.lark_mcp import inject_lark_mcp_identity
 
     request = MCPToolCallRequest(
         name="execute_lark_command",
         args={"command": "im +chat-list"},
         server_name="lark-cli",
-        runtime=SimpleNamespace(config={"configurable": {"user_id": "ou_runtime_user"}}),
+        runtime=SimpleNamespace(
+            config={"configurable": {"langgraph_auth_user": {"identity": "ou_trusted"}}}
+        ),
     )
     handler = AsyncMock(return_value="handled")
 
@@ -48,4 +51,31 @@ def test_lark_mcp_identity_interceptor_injects_user_id():
     handler.assert_awaited_once()
     modified = handler.await_args.args[0]
     assert modified is not request
-    assert modified.args == {"command": "im +chat-list", "user_id": "ou_runtime_user"}
+    assert modified.args == {"command": "im +chat-list", "user_id": "ou_trusted"}
+
+
+def test_lark_mcp_identity_interceptor_ignores_client_supplied_user_id():
+    """安全回归:客户端在 run 请求里塞 configurable.user_id 不得被当作身份 ——
+    否则可注入他人 open_id 冒用其飞书 UAT。无可信身份时不注入 user_id,
+    原样转发(由 MCP server 端因缺身份拒绝)。"""
+    from tools.lark_mcp import inject_lark_mcp_identity
+
+    request = MCPToolCallRequest(
+        name="execute_lark_command",
+        args={"command": "im +chat-list"},
+        server_name="lark-cli",
+        runtime=SimpleNamespace(
+            config={"configurable": {"user_id": "ou_victim", "open_id": "ou_victim"}},
+            context={"user_id": "ou_victim", "open_id": "ou_victim", "identity": "ou_victim"},
+        ),
+    )
+    handler = AsyncMock(return_value="handled")
+
+    result = asyncio.run(inject_lark_mcp_identity(request, handler))
+
+    assert result == "handled"
+    handler.assert_awaited_once()
+    forwarded = handler.await_args.args[0]
+    # 未注入任何 user_id,且绝不出现受害者 open_id
+    assert "user_id" not in forwarded.args
+    assert "ou_victim" not in str(forwarded.args)
