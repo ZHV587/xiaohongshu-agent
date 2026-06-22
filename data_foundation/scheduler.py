@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -88,6 +89,7 @@ class Scheduler:
         embedding_runtime_factory=None,
         process_outbox_batch=process_outbox_batch,
         config: SchedulerConfig | None = None,
+        conn=None,
     ):
         self.telemetry = telemetry
         self.source_repo = source_repo
@@ -99,6 +101,33 @@ class Scheduler:
         self.process_outbox_batch = process_outbox_batch
         self.config = config or SchedulerConfig()
         self._cycle_config_version = self.config.config_version
+        # 关停协作:supervisor 在 stop 时调 request_stop() 置位,run_cycle 的租户循环
+        # 每轮检查、及时收尾。_conn 由 build_scheduler 传入,stop() 时关闭(消除连接泄漏)。
+        self._conn = conn
+        self._stop_event = threading.Event()
+
+    def request_stop(self) -> None:
+        """协作式停止信号:run_cycle 的租户循环检查到即提前收尾(不再磨完所有租户)。"""
+        self._stop_event.set()
+
+    def stop(self) -> None:
+        """supervisor 在确认 cycle 线程已退出后调用:登记实例下线 + 关闭独占连接。
+
+        必须在 worker 线程真正结束之后调用(supervisor 用 executor.shutdown(wait=True)
+        保证),否则与仍在用同一 conn 的孤儿线程产生 psycopg 连接竞态。
+        """
+        try:
+            self.telemetry.stop_instance(
+                component=self.config.component,
+                instance_id=self.config.instance_id,
+                deployment_id=self.config.deployment_id,
+            )
+        finally:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                finally:
+                    self._conn = None
 
     async def run_cycle(self) -> CycleStats:
         self._refresh_embedding_runtime()
@@ -164,6 +193,9 @@ class Scheduler:
         failed = 0
         lease_owner = f"{self.config.instance_id}:{uuid4()}"
         for tenant_id in tenants:
+            if self._stop_event.is_set():
+                # 收到停止信号:及时收尾,不再磨完剩余租户(本轮 retention 下轮补偿)。
+                break
             source_result = await self._process_one_source(tenant_id, lease_owner=lease_owner)
             sources_processed += source_result["processed"]
             failed += source_result["failed"]
@@ -415,4 +447,5 @@ def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
         embedding_runtime_factory=runtime_factory,
         process_outbox_batch=process_outbox_batch,
         config=config,
+        conn=conn,
     )

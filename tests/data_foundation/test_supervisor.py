@@ -13,11 +13,16 @@ class FakeScheduler:
     def __init__(self):
         self.cycles = 0
         self.stops = []
+        self.calls = []  # 记录 request_stop / stop 调用顺序,验证关停时序
 
     async def run_cycle(self):
         self.cycles += 1
 
+    def request_stop(self):
+        self.calls.append("request_stop")
+
     def stop(self):
+        self.calls.append("stop")
         self.stops.append(True)
 
 
@@ -39,6 +44,9 @@ async def test_supervisor_starts_once_and_stops_gracefully():
     assert supervisor.accepting_work is False
     assert scheduler.cycles >= 1
     assert scheduler.stops == [True]
+    # 关停时序:先 request_stop(协作通知)再 stop(关 conn/登记下线),且 executor 已清。
+    assert scheduler.calls == ["request_stop", "stop"]
+    assert supervisor._executor is None
 
 
 @pytest.mark.asyncio
