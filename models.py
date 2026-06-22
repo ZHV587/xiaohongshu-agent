@@ -35,16 +35,6 @@ class ModelPoolProvider(Protocol):
         raise NotImplementedError
 
 
-class StaticModelPoolProvider:
-    """把启动时构造的静态候选池显式暴露成 provider。"""
-
-    def __init__(self, pool: list[ModelCandidate]) -> None:
-        self._pool = pool
-
-    def get_pool(self) -> list[ModelCandidate]:
-        return list(self._pool)
-
-
 # 进程内探测缓存:同 (base_url, key) 在 TTL 内复用,过期重探。
 # 值为 (探测时刻 monotonic, 结果)。定时健康探测周期 300s,TTL 取略小的 250s,
 # 保证每个探测周期都拿到新鲜结果(网关增减模型能在一个周期内被感知)。
@@ -300,12 +290,3 @@ def build_pool_from_config(values: dict[str, str], *, force_discover: bool = Fal
     if not pool:
         raise RuntimeError("无法从配置中心构造模型池:白名单内无任一模型被网关探测确认可用")
     return pool
-
-
-def verify_gateway(base_url: str, api_key: str) -> bool:
-    """配置时连通性验证:能探到非空清单即视为'配上能用'。
-
-    委托 discover_models;能返回非空清单为 True。供配置写入路径调用。
-    force=True:admin 刚改的网关配置必须新鲜探测,不命中旧缓存。
-    """
-    return bool(discover_models(base_url, api_key, force=True))

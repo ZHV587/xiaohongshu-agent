@@ -238,7 +238,21 @@ def test_build_pool_from_config_quality_order(monkeypatch):
     assert [c.model_id for c in pool] == ["claude-opus-4-8", "claude-sonnet-4-6", "gpt-4o"]
 
 
-from models import ModelRouterMiddleware, StaticModelPoolProvider
+from models import ModelRouterMiddleware
+
+
+class StaticModelPoolProvider:
+    """测试夹具:把静态候选 list 包成 ModelPoolProvider。
+
+    生产代码不需要它(运行时 provider 都是 ModelRegistry),仅 router 单测用来
+    喂固定池,故定义在测试文件内,不污染 models.py。
+    """
+
+    def __init__(self, pool):
+        self._pool = pool
+
+    def get_pool(self):
+        return list(self._pool)
 
 
 def _candidate(name, mid):
@@ -427,18 +441,6 @@ def test_build_router_middleware_wraps_pool():
     mw = build_router_middleware(provider)
     assert isinstance(mw, ModelRouterMiddleware)
     assert mw._pool_provider.get_pool() == pool
-
-
-def test_verify_gateway_true_when_discoverable(monkeypatch):
-    from models import verify_gateway
-    monkeypatch.setattr(models_mod, "discover_models", lambda url, key, **kw: ["claude-sonnet-4-6"])
-    assert verify_gateway("https://gw/v1", "key") is True
-
-
-def test_verify_gateway_false_when_none(monkeypatch):
-    from models import verify_gateway
-    monkeypatch.setattr(models_mod, "discover_models", lambda url, key, **kw: None)
-    assert verify_gateway("https://gw/v1", "key") is False
 
 
 def test_router_recovers_to_strongest_after_cooldown(monkeypatch):
