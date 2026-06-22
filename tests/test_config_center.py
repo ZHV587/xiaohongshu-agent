@@ -110,3 +110,37 @@ def test_engine_keys_are_deploy_only():
     assert "XHS_FALKOR_URL" in DEPLOY_ONLY_KEYS
     assert "XHS_FALKOR_GRAPH" in DEPLOY_ONLY_KEYS
     assert "XHS_MEILI_KEY" in SECRET_KEYS
+
+
+def test_config_center_atomic_write_survives_mid_write_crash(tmp_path, monkeypatch):
+    """写到一半进程被杀(OOM/容器重启),目标文件必须保持上一份完好,不被截断损坏。
+
+    根因:原 _write_document 用 path.write_bytes 直接覆写,非原子 —— 写一半中断会把
+    .enc 截断成残片,下次 decrypt 抛 InvalidToken,整个配置中心(含 history)永久不可读。
+    修复后用临时文件 + os.replace 原子 rename,任一时刻只读到完整旧/新文件。
+    """
+    import os
+    path = tmp_path / "config.enc"
+    center = ConfigCenter(path=path, encryption_key=Fernet.generate_key().decode())
+    center.save(actor_open_id="ou_admin", updates={"LLM_BASE_URL": "https://gw1/v1"})
+
+    # 模拟"临时文件已写、os.replace 前"进程被杀:让 fsync 抛异常。
+    real_fsync = os.fsync
+
+    def boom(fd):
+        real_fsync(fd)
+        raise KeyboardInterrupt("simulated kill mid-write")
+
+    monkeypatch.setattr(os, "fsync", boom)
+    with pytest.raises(KeyboardInterrupt):
+        center.save(actor_open_id="ou_admin", updates={"LLM_API_KEY": "k2"})
+    monkeypatch.undo()
+
+    # 目标文件保持第一次保存的完好内容(不损坏、未被部分写污染)。
+    assert center.get_plain() == {"LLM_BASE_URL": "https://gw1/v1"}
+    # 临时文件被清理,无泄漏。
+    assert [f for f in os.listdir(tmp_path) if f.endswith(".tmp")] == []
+    # 后续正常保存仍工作,history 正确累积。
+    center.save(actor_open_id="ou_admin", updates={"LLM_API_KEY": "k3"})
+    assert center.get_plain()["LLM_API_KEY"] == "k3"
+    assert len(center.history()) == 2

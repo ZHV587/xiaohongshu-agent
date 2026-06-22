@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from hashlib import sha256
@@ -104,7 +105,29 @@ class ConfigCenter:
     def _write_document(self, document: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(document, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        self.path.write_bytes(self.fernet.encrypt(payload))
+        ciphertext = self.fernet.encrypt(payload)
+        # 原子写:先写同目录临时文件 + fsync 落盘,再 os.replace 原子 rename 覆盖目标。
+        # 直接 write_bytes 覆写非原子 —— 写到一半进程被杀(OOM/容器重启)会把目标文件
+        # 截断成残片,下次 _read_document 的 fernet.decrypt 抛 InvalidToken,整个配置中心
+        # (含 history)永久不可读。os.replace 在同一文件系统上是原子的:任一时刻读到的
+        # 要么是完整旧文件、要么是完整新文件,绝无截断中间态。临时文件必须与目标同目录,
+        # 否则跨设备 rename 会退化为非原子的拷贝+删除。
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.path.parent), prefix=self.path.name + ".", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "wb") as tmp:
+                tmp.write(ciphertext)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.replace(tmp_name, self.path)
+        except BaseException:
+            # 写临时文件或 rename 失败:清理临时文件,目标文件保持原样(未被触碰)。
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
 
     def save(self, actor_open_id: str, updates: dict[str, Any]) -> ConfigSnapshot:
         sanitized = _validate_updates(updates)
