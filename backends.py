@@ -8,7 +8,7 @@ CompositeBackend 按路径前缀路由(已实测:路由会剥掉前缀):
   传给 SkillsMiddleware,它 ls("/skills/") 列 skill 子目录、download 各 SKILL.md 注入 prompt。
 - /shared/ → StoreBackend,跨会话/用户共享(风格沉淀)。server 注入 store。
 - /memories/ → StoreBackend,团队共享自学习记忆(MemoryMiddleware 的 AGENTS.md);
-  与 /shared/ 同 namespace,全员一份团队方法论。
+  独立 namespace "xhs-team-memory",与 /shared/ 物理隔离避免内容互污。
 - /user-memories/ → StoreBackend,按 user 隔离的个人记忆(namespace 含 open_id)。
 - /drafts/ 及其他 → 默认 StateBackend,随会话隔离。
 """
@@ -55,7 +55,7 @@ def build_backend() -> CompositeBackend:
     skills_root = os.path.join(_PROJECT_ROOT, ".agents", "skills")
     skills_backend = FilesystemBackend(root_dir=skills_root, virtual_mode=True)
     shared_store = StoreBackend(namespace=lambda rt: ("xhs-shared",))
-    team_memory = StoreBackend(namespace=lambda rt: ("xhs-shared",))
+    team_memory = StoreBackend(namespace=lambda rt: ("xhs-team-memory",))
     user_memory = StoreBackend(namespace=_user_memory_namespace)
     return CompositeBackend(
         default=StateBackend(),

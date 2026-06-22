@@ -1,4 +1,4 @@
-"""agent 组装入口。create_deep_agent 装配主智能体 + 飞书工具 + 子智能体 + skill。"""
+"""agent 组装入口。create_deep_agent 装配主智能体 + 飞书工具 + 8 大领域主智能体 + skill。"""
 import os
 if "NO_PROXY" in os.environ:
     del os.environ["NO_PROXY"]
@@ -22,7 +22,16 @@ from model_registry import ModelRegistry
 from models import build_initial_placeholder_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from rubric_model import RegistryRoutedChatModel
-from subagents import build_baokuan_analyst, build_humanizer_editor
+
+# 导入 8 个领域主智能体的构造函数
+from subagents_positioning import build_positioning_main_agent
+from subagents_action import build_action_main_agent
+from subagents_research import build_research_main_agent
+from subagents_decision import build_decision_main_agent
+from subagents_planning import build_planning_main_agent
+from subagents_copywriting import build_copywriting_main_agent
+from subagents_audit import build_audit_main_agent
+from subagents_system import build_system_main_agent
 
 from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
@@ -32,33 +41,17 @@ from tools.lark_mcp import load_lark_mcp_tools
 load_dotenv()
 
 # ── 安全加固:关掉本场景不需要的内置工具和默认子智能体 ──────────────────
-# - execute: Shell 命令执行,文案场景不需要,留着是安全隐患
-# - write_todos: 已重新启用，方便长任务执行规划
-# - general-purpose: 默认通用子智能体,已有 baokuan-analyst,多一个会让模型选错
-# 采用官方推荐的外部声明式配置文件进行初始化，彻底移除 Python 代码级硬编码配置
 with open("deepagents_harness.json", "r", encoding="utf-8") as f:
     register_harness_profile("openai", HarnessProfileConfig.from_dict(json.load(f)))
 
 # ── 高质量模型自主调度 ──────────────────────────────────────────────
-# 单一数据源:运行时模型池只来自 config-center(经探测∩白名单按质量序),
-# 由 server lifespan 启动对齐 + 定时健康探测 + 配置事件三条引线填充/刷新。
-# 这里 registry 创建即空,不灌 env —— env 不再是平行运行时配置源。
-#
-# initial_model:create_deep_agent / 子智能体装配时各需一个 BaseChatModel 实例作占位。
-# 用 env 构一个(不探测不联网、不进 registry、非配置源);运行时主/子 agent 的真实调用
-# 经 ModelRouterMiddleware 被 registry 池覆盖,registry 空时(填充前/测试态)才落到占位上。
 initial_model = build_initial_placeholder_model()
 model_registry = ModelRegistry()
 
-# 三路由 CompositeBackend:/skills/(磁盘共享只读)、/shared/(Store 共享)、
-# /drafts/ 及默认(State 随会话隔离)。详见 backends.py。
+# 三路由 CompositeBackend
 backend = build_backend()
 
 # ── 文案质量评分中间件 ────────────────────────────────────────────
-# 生成文案后自动评估质量,不合格让智能体重写(最多重试 2 轮)。
-# rubric 的 grader 是 deepagents 内部 create_agent 子图,不经 ModelRouterMiddleware,
-# 故 model 传 RegistryRoutedChatModel:它每次评分从 registry 取当前最强候选(空池回退
-# 占位),让评分也吃 config-center 热重载,质量优先不降级,且 env 不再钉死评分模型。
 rubric_middleware = RubricMiddleware(
     model=RegistryRoutedChatModel(model_registry, initial_model),
     system_prompt="""你是小红书文案质量检查员。评估文案是否满足以下标准:
@@ -77,23 +70,38 @@ rubric_middleware = RubricMiddleware(
 )
 content_rubric_activator = ContentRubricActivator()
 
+# ── 编译 8 个主智能体，并将它们各自的子图嵌套编译 ───────────────────────────
+positioning_master = build_positioning_main_agent(model_registry, initial_model, backend)
+action_master = build_action_main_agent(model_registry, initial_model, backend)
+research_master = build_research_main_agent(model_registry, initial_model, backend)
+decision_master = build_decision_main_agent(model_registry, initial_model, backend)
+planning_master = build_planning_main_agent(model_registry, initial_model, backend)
+copywriting_master = build_copywriting_main_agent(model_registry, initial_model, backend)
+audit_master = build_audit_main_agent(model_registry, initial_model, backend)
+system_master = build_system_main_agent(model_registry, initial_model, backend)
+
+# 最顶层 xhs-router Gateway 总线智能体
 agent = create_deep_agent(
     model=initial_model,
     tools=data_foundation_tools + feishu_action_tools + load_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
-    # 官方 skill 机制:SkillsMiddleware 复用下方 backend,经 /skills/ route 读
-    # .agents/skills/ 下的 SKILL.md,把每个 skill 的 name/description/path 注入
-    # system prompt(渐进式披露)。agent 据 description 判断何时 read_file 读全文。
-    # 工作流细节是 skill 的唯一事实源,MAIN_SYSTEM_PROMPT 只留角色+硬约束+输出协议契约。
     skills=["/skills/"],
     subagents=[
-        build_baokuan_analyst(model_registry, initial_model),
-        build_humanizer_editor(model_registry, initial_model),
+        positioning_master,
+        action_master,
+        research_master,
+        decision_master,
+        planning_master,
+        copywriting_master,
+        audit_master,
+        system_master,
     ],
     backend=backend,
     interrupt_on={
         "execute_lark_command": True,
         "sync_copy_to_feishu": True,
+        "sync_topic_to_feishu": True,
+        "sync_diagnosis_to_feishu": True,
         "send_review_notification": True,
     },
     checkpointer=True,
@@ -103,21 +111,16 @@ agent = create_deep_agent(
         content_rubric_activator,
         build_router_middleware(model_registry),
     ],
-    # 自学习记忆:团队共享(全员一份方法论)+ 用户私有(按 open_id 隔离)。
-    # 团队在前、个人在后 —— sources 按序拼接注入,个人记忆覆盖团队默认。
-    # MemoryMiddleware 用 edit_file 写回,文件不存在时首轮跳过、由 agent 创建。
     memory=["/memories/team/AGENTS.md", "/user-memories/AGENTS.md"],
-    # ── 文件权限:限制可写路径,防止模型乱写 ─────────────────────────
-    # 规则按声明顺序匹配,首条命中即停止。读操作全部放行,写操作只允许白名单路径。
     permissions=[
         FilesystemPermission(operations=["read"], paths=["/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/drafts/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/analysis/**"], mode="allow"),
+        FilesystemPermission(operations=["write"], paths=["/root/.dbs/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/shared/**"], mode="interrupt"),
         FilesystemPermission(operations=["write"], paths=["/memories/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/user-memories/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/**"], mode="deny"),
     ],
-    # LangSmith 追踪时显示的名称,方便在 trace 里快速识别。
-    name="xhs-content-agent",
+    name="xhs-router",
 )

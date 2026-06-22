@@ -26,6 +26,23 @@ def _set_assembly_env(monkeypatch):
     monkeypatch.setenv("XHS_SYNC_ENABLED", "false")
 
 
+def _reload_subagents():
+    import sys
+    import importlib
+    for name in [
+        "subagents_positioning",
+        "subagents_action",
+        "subagents_research",
+        "subagents_decision",
+        "subagents_planning",
+        "subagents_copywriting",
+        "subagents_audit",
+        "subagents_system",
+    ]:
+        if name in sys.modules:
+            importlib.reload(sys.modules[name])
+
+
 def test_agent_importable_and_compiled(monkeypatch):
     # 组装阶段会构造模型池,需要禁探测 + 池 env(不真实调用)
     _set_assembly_env(monkeypatch)
@@ -305,6 +322,8 @@ def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
     assert captured["checkpointer"] is True
     assert interrupts["execute_lark_command"] is True
     assert interrupts["sync_copy_to_feishu"] is True
+    assert interrupts["sync_topic_to_feishu"] is True
+    assert interrupts["sync_diagnosis_to_feishu"] is True
     assert interrupts["send_review_notification"] is True
 
 
@@ -361,22 +380,140 @@ def test_agent_registers_humanizer_editor(monkeypatch):
     import importlib
     import deepagents
 
-    captured = {}
+    captured_subagents = []
     real_create = deepagents.create_deep_agent
 
     def _capturing_create(*args, **kwargs):
-        captured["subagents"] = kwargs.get("subagents", [])
+        captured_subagents.extend(kwargs.get("subagents", []))
         return real_create(*args, **kwargs)
 
     monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
+    _reload_subagents()
     
     import agent as agent_module
     importlib.reload(agent_module)
 
-    subagents = captured.get("subagents", [])
+    subagents = captured_subagents
     subagent_names = {sub["name"] for sub in subagents}
     assert "humanizer-editor" in subagent_names
     
     editor = next(sub for sub in subagents if sub["name"] == "humanizer-editor")
     assert "AI腔" in editor["description"]
     assert "AI腔调" in editor["system_prompt"]
+
+
+def test_agent_registers_persona_distiller(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import deepagents
+
+    captured_subagents = []
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create(*args, **kwargs):
+        captured_subagents.extend(kwargs.get("subagents", []))
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
+    _reload_subagents()
+    
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    subagents = captured_subagents
+    subagent_names = {sub["name"] for sub in subagents}
+    assert "persona-distiller" in subagent_names
+    
+    distiller = next(sub for sub in subagents if sub["name"] == "persona-distiller")
+    assert "人设" in distiller["description"]
+    assert "YAML Frontmatter" in distiller["system_prompt"]
+
+
+def test_agent_registers_monetization_architect(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import deepagents
+
+    captured_subagents = []
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create(*args, **kwargs):
+        captured_subagents.extend(kwargs.get("subagents", []))
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
+    _reload_subagents()
+    
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    subagents = captured_subagents
+    subagent_names = {sub["name"] for sub in subagents}
+    assert "monetization-architect" in subagent_names
+    
+    architect = next(sub for sub in subagents if sub["name"] == "monetization-architect")
+    assert "变现" in architect["description"] or "转化漏斗" in architect["description"]
+    assert "商业变现" in architect["system_prompt"]
+
+
+def test_agent_registers_benchmark_denoiser(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import deepagents
+
+    captured_subagents = []
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create(*args, **kwargs):
+        captured_subagents.extend(kwargs.get("subagents", []))
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
+    _reload_subagents()
+    
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    subagents = captured_subagents
+    subagent_names = {sub["name"] for sub in subagents}
+    assert "benchmark-denoiser" in subagent_names
+    
+    denoiser = next(sub for sub in subagents if sub["name"] == "benchmark-denoiser")
+    assert "去噪" in denoiser["description"]
+    assert "五重去噪漏斗" in denoiser["system_prompt"] or "五重漏斗去噪法" in denoiser["system_prompt"]
+
+
+def test_agent_registers_strategy_auditor(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import deepagents
+
+    captured_subagents = []
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create(*args, **kwargs):
+        captured_subagents.extend(kwargs.get("subagents", []))
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
+    _reload_subagents()
+    
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    subagents = captured_subagents
+    subagent_names = {sub["name"] for sub in subagents}
+    assert "strategy-auditor" in subagent_names
+    
+    auditor = next(sub for sub in subagents if sub["name"] == "strategy-auditor")
+    assert "审计" in auditor["description"]
+    assert "策略与调性质检报告" in auditor["system_prompt"] or "AI 痕迹筛查" in auditor["system_prompt"]
+
