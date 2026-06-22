@@ -187,28 +187,29 @@ class SourceRepository:
         delay_seconds = next_run_after_seconds
         if delay_seconds is None:
             delay_seconds = self.get_source(tenant_id=tenant_id, source_id=source_id).schedule_seconds
-        cursor_result = self.conn.execute(
-            f"""
-            update sync_sources
-            set cursor = %s::jsonb,
-                next_run_at = now() + (%s || ' seconds')::interval,
-                lease_owner = null,
-                lease_expires_at = null,
-                updated_at = now()
-            where tenant_id = %s
-              and id = %s
-              {where_lease}
-            """,
-            (
-                json.dumps(cursor, sort_keys=True, ensure_ascii=False),
-                max(0, delay_seconds),
-                tenant_id,
-                source_id,
-                *params,
-            ),
-        )
-        self.conn.commit()
-        return cursor_result.rowcount == 1
+        with transaction(self.conn):
+            cursor_result = self.conn.execute(
+                f"""
+                update sync_sources
+                set cursor = %s::jsonb,
+                    next_run_at = now() + (%s || ' seconds')::interval,
+                    lease_owner = null,
+                    lease_expires_at = null,
+                    updated_at = now()
+                where tenant_id = %s
+                  and id = %s
+                  {where_lease}
+                """,
+                (
+                    json.dumps(cursor, sort_keys=True, ensure_ascii=False),
+                    max(0, delay_seconds),
+                    tenant_id,
+                    source_id,
+                    *params,
+                ),
+            )
+            rowcount = cursor_result.rowcount
+        return rowcount == 1
 
     def start_run(
         self,
@@ -219,24 +220,24 @@ class SourceRepository:
         execution_id: str | None = None,
     ) -> str:
         source = self.get_source(tenant_id=tenant_id, source_id=source_id)
-        row = self.conn.execute(
-            """
-            insert into sync_runs (
-              sync_source_id, tenant_id, source_type, instance_id, execution_id, cursor_before
-            )
-            values (%s, %s, %s, %s, %s, %s::jsonb)
-            returning id::text as id
-            """,
-            (
-                source.id,
-                tenant_id,
-                source.source_type,
-                instance_id,
-                execution_id,
-                json.dumps(source.cursor, sort_keys=True, ensure_ascii=False),
-            ),
-        ).fetchone()
-        self.conn.commit()
+        with transaction(self.conn):
+            row = self.conn.execute(
+                """
+                insert into sync_runs (
+                  sync_source_id, tenant_id, source_type, instance_id, execution_id, cursor_before
+                )
+                values (%s, %s, %s, %s, %s, %s::jsonb)
+                returning id::text as id
+                """,
+                (
+                    source.id,
+                    tenant_id,
+                    source.source_type,
+                    instance_id,
+                    execution_id,
+                    json.dumps(source.cursor, sort_keys=True, ensure_ascii=False),
+                ),
+            ).fetchone()
         return row["id"]
 
     def finish_run(
@@ -261,40 +262,41 @@ class SourceRepository:
                 component="source_repository",
                 operation="finish_run",
             )
-        cursor = self.conn.execute(
-            """
-            update sync_runs
-            set status = %s,
-                cursor_after = %s::jsonb,
-                read_count = %s,
-                created_count = %s,
-                updated_count = %s,
-                skipped_count = %s,
-                failed_count = %s,
-                error_code = %s,
-                error_summary = left(%s, 1000),
-                finished_at = now()
-            where tenant_id = %s
-              and id = %s
-              and status = 'running'
-              and finished_at is null
-            """,
-            (
-                status,
-                None if cursor_after is None else json.dumps(cursor_after, sort_keys=True, ensure_ascii=False),
-                read_count,
-                created_count,
-                updated_count,
-                skipped_count,
-                failed_count,
-                error_code or (classification.error_code if classification else None),
-                classification.error_summary if classification else None,
-                tenant_id,
-                run_id,
-            ),
-        )
-        self.conn.commit()
-        return cursor.rowcount == 1
+        with transaction(self.conn):
+            cursor = self.conn.execute(
+                """
+                update sync_runs
+                set status = %s,
+                    cursor_after = %s::jsonb,
+                    read_count = %s,
+                    created_count = %s,
+                    updated_count = %s,
+                    skipped_count = %s,
+                    failed_count = %s,
+                    error_code = %s,
+                    error_summary = left(%s, 1000),
+                    finished_at = now()
+                where tenant_id = %s
+                  and id = %s
+                  and status = 'running'
+                  and finished_at is null
+                """,
+                (
+                    status,
+                    None if cursor_after is None else json.dumps(cursor_after, sort_keys=True, ensure_ascii=False),
+                    read_count,
+                    created_count,
+                    updated_count,
+                    skipped_count,
+                    failed_count,
+                    error_code or (classification.error_code if classification else None),
+                    classification.error_summary if classification else None,
+                    tenant_id,
+                    run_id,
+                ),
+            )
+            rowcount = cursor.rowcount
+        return rowcount == 1
 
     def recover_stale_runs(self, *, older_than_seconds: int, limit: int) -> int:
         with transaction(self.conn):

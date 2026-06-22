@@ -319,3 +319,50 @@ def test_finish_run_redacts_error_summary_before_persisting(migrated_conn):
     assert "super-secret" not in row["error_summary"]
     assert "also-secret" not in row["error_summary"]
     assert "api_key=<redacted>" in row["error_summary"]
+
+
+def test_finish_run_rolls_back_and_keeps_connection_usable_on_failure(migrated_conn, monkeypatch):
+    """缺陷3 回归:finish_run 的 update 失败必须回滚,连接不进 aborted 态级联拖垮整轮。
+
+    原裸 commit 无 rollback —— 一条 execute 失败后连接 aborted,后续任何语句报
+    'current transaction is aborted',整轮所有后续租户 finish_run 连环失败。
+    改 with transaction 后:异常自动 rollback,连接回到干净态可继续用。
+    """
+    repo = SourceRepository(migrated_conn)
+    source = _register(repo, tenant_id="tenant-a", external_id="s-rollback")
+    run_id = repo.start_run(source.id, tenant_id="tenant-a")
+
+    real_execute = migrated_conn.execute
+    calls = {"n": 0}
+
+    def failing_execute(sql, params=None):
+        # 只让 finish_run 的 update sync_runs 失败一次,模拟 DB 抖动
+        if "update sync_runs" in str(sql).lower() and calls["n"] == 0:
+            calls["n"] += 1
+            raise psycopg.errors.OperationalError("simulated transient DB error")
+        return real_execute(sql, params)
+
+    monkeypatch.setattr(migrated_conn, "execute", failing_execute)
+    try:
+        raised = False
+        try:
+            repo.finish_run(
+                run_id, tenant_id="tenant-a", status="succeeded", cursor_after=None,
+                read_count=0, created_count=0, updated_count=0, skipped_count=0,
+                failed_count=0, error_code=None, error_summary=None,
+            )
+        except Exception:
+            raised = True
+        assert raised
+    finally:
+        monkeypatch.undo()
+
+    # 关键:连接未 aborted,后续语句正常执行(不报 current transaction is aborted)。
+    row = migrated_conn.execute("select 1 as ok").fetchone()
+    assert row["ok"] == 1
+    # run 仍是 running(回滚了失败的 finish),可被后续正常 finish。
+    assert repo.finish_run(
+        run_id, tenant_id="tenant-a", status="succeeded", cursor_after=None,
+        read_count=0, created_count=0, updated_count=0, skipped_count=0,
+        failed_count=0, error_code=None, error_summary=None,
+    ) is True
