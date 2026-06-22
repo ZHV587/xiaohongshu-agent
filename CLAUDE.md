@@ -7,17 +7,27 @@
 
 ## 部署与测试
 
-- **直接部署到服务器测试,不在本地跑测试验证。** 所有功能验证、回归、冒烟都在服务器真实环境(真实 Postgres 库、真实飞书凭据、PM2 进程)上进行。本地只做代码编写。
-  - 标准流程:本地改代码 → `git commit` → `git push origin master` → 服务器 `git pull --ff-only` → 重新构建/重启 → 在服务器上验证。
-  - 本地推送走 HTTPS,git 配了 `127.0.0.1:7897` 代理但 Gitee 不需要,推送用 `git -c http.proxy= -c https.proxy= push origin master` 绕过。
+- **所有服务统一在 Docker Compose 环境下运行与测试。** 生产环境与远端回归均在容器化拓扑（六容器编排、有界网络互联）上完成。
+  - 标准流程: 本地改代码 ➔ `git commit` ➔ `git push origin master` ➔ 服务器 `git pull --ff-only` ➔ 重新编译并拉起服务 ➔ 运行容器内测试与人工验证。
+  - 本地推送走 HTTPS，绕过代理：`git -c http.proxy= -c https.proxy= push origin master`。
 
 ## 服务器拓扑(详见 docs/deployment/server-deployment-rules.md)
 
-- 服务器:`124.221.173.80`,ubuntu,SSH 密码登录(凭据见 `verify_remote_logs.py` 等脚本)。项目路径 `/home/ubuntu/xiaohongshu-agent`。
-- PM2 两进程:`xhs-backend`(`./.venv/bin/python3 tools/run_backend.py`,langgraph dev,端口 2030)、`xhs-frontend`(`/usr/bin/npm run start -- -p 9091`,cwd web)。
-- 前端用 **npm**(非 pnpm)。前端改动:`cd web && npm run build` 后 `pm2 restart xhs-frontend --update-env`。后端改动:`pm2 restart xhs-backend --update-env`。
-- `.env` 与 `web/.env` 不进 git,服务器独立维护;改 deploy-only 变量后必须 `--update-env` 重启。
-- 服务器真实库测试:`set -a && . ./.env && set +a && TEST_XHS_DATABASE_URL="$XHS_DATABASE_URL" ./.venv/bin/python3 -m pytest <path> -q`。
+- 服务器：`124.221.173.80`，ubuntu，SSH 密码登录。项目路径 `/home/ubuntu/xiaohongshu-agent`。
+- 容器编排架构（六容器）：
+  - 核心微服务：`xhs-langgraph`（后端，宿主机 127.0.0.1:2030）、`xhs-web`（Next.js，宿主机 0.0.0.0:9091）。
+  - 底座数据库与引擎：`xhs-pg` (Postgres 16)、`xhs-redis` (Redis 7)、`xhs-meili` (Meilisearch)、`xhs-falkor` (FalkorDB)，全部隐藏在 `xhs-net` 网络内部，不对公网暴露，通过服务名直连。
+- 重新部署命令：
+  ```bash
+  git pull --ff-only origin master
+  langgraph build -t xhs-langgraph:latest
+  docker compose up -d --build
+  ```
+- 环境变量：宿主机根目录下 `.env` 和 `web/.env` 挂载至对应容器，宿主机修改后需执行 `docker compose up -d` 重新装载。
+- 服务器容器内集成测试：
+  ```bash
+  docker compose exec langgraph pytest <path_to_test> -q
+  ```
 
 ## 安全
 

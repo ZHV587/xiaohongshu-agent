@@ -14,17 +14,16 @@
 
 ## 2. 服务器拓扑
 
-当前单机部署包含：
+当前单机采用 Docker Compose 统一编排六容器架构：
 
-- `xhs-backend`：LangGraph/Python 后端，由 PM2 管理。
-- `xhs-frontend`：Next.js Web 前端，由 PM2 管理。
-- Postgres：权威业务库,Docker 容器 `pg-db`(`127.0.0.1:5432`),必须启用 `pgcrypto` 与 `vector` 扩展。
-- Meilisearch：全文检索引擎,Docker 容器 `xhs-meili`(`127.0.0.1:7700`,`--restart unless-stopped`)。`search_resources` 唯一路径。
-- FalkorDB：图谱引擎,Docker 容器 `xhs-falkor`(`127.0.0.1:6379`,`--restart unless-stopped`)。`graph_expand` 唯一路径。
-- LangGraph `http.app`：承载 `/internal/*` route、scheduler supervisor、outbox 和 embedding/meili/graph 生命周期。
-- Next.js API route：负责浏览器侧鉴权、管理员判断和转发内部请求。
+- `xhs-langgraph`：LangGraph/Python 后端容器。运行在宿主机内部 `127.0.0.1:2030`（不公网暴露，仅供 BFF 代理与本地调试）。承载主/子智能体、配置中心热重载、`/internal/*` 内部安全接口，以及底座 outbox、scheduler 和 embedding 同步生命周期。
+- `xhs-web`：Next.js 前端容器。宿主机暴露 `0.0.0.0:9091` 作为用户公网访问入口。负责浏览器侧 JWT 鉴权、管理员校验并代理调用后端内部接口。
+- `xhs-pg`：PostgreSQL 16 数据库容器。承载业务主库 `xhs_agent` 和 LangGraph server 状态库。
+- `xhs-redis`：Redis 7 容器。提供 LangGraph 后端运行时的持久化异步队列支持。
+- `xhs-meili`：Meilisearch 全文检索容器。`search_resources` 工具检索的唯一路由端。
+- `xhs-falkor`：FalkorDB 图数据库容器。`graph_expand` 关系扩展的唯一路由端。
 
-引擎配置(deploy-only,服务器 .env):`XHS_MEILI_URL`/`XHS_MEILI_KEY`/`XHS_FALKOR_URL`/`XHS_FALKOR_GRAPH`。配置就绪则对应 outbox processor 自动 active;留空则 disabled。引擎不存 ACL,可见性一律回 Postgres 裁决。
+各服务组件运行在名为 `xhs-net` 的 Docker 网卡下，服务名直连，非公网映射端口（Postgres, Redis, Meilisearch, FalkorDB）完全隐藏在容器局域网内以保障数据底座安全。
 
 内部调用链：
 
@@ -125,50 +124,46 @@ git pull --ff-only origin master
 
 ### 4.4 服务器真实库测试
 
-服务器必须使用真实 Postgres 验证：
+由于服务器宿主机上已不保留 python 及虚拟环境，所有的真实库测试必须在 `xhs-langgraph` 容器内部执行：
 
 ```bash
 cd /home/ubuntu/xiaohongshu-agent
-set -a
-source .env
-set +a
-TEST_XHS_DATABASE_URL="$XHS_DATABASE_URL" ./.venv/bin/pytest tests/data_foundation -q
+docker compose exec langgraph pytest tests/data_foundation -q
 ```
 
 注意：
+- 运行测试前请确保宿主机 `.env` 已映射成功且 `xhs-langgraph` 容器状态为 `healthy`。
+- 容器内已经加载了生产环境变量，且测试 fixture 使用了隔离 schema，保证测试与生产数据物理隔绝。
 
-- 运行命令时不得打印 `.env`。
-- 不得输出 `XHS_DATABASE_URL`、API key、internal secret。
-- 当前开发阶段允许用生产库跑集成测试，因为测试 fixture 使用隔离 schema；不要改成临时 SQLite。
+### 4.5 重启与拉起服务
 
-### 4.5 重启服务
-
-后端代码或 deploy-only 环境变量变化后：
+无论是后端代码、前端代码还是 deploy-only 环境变量发生变更，均使用统一的 Docker Compose 命令进行重建和拉起：
 
 ```bash
-pm2 restart xhs-backend --update-env
+cd /home/ubuntu/xiaohongshu-agent
+# 编译最新的后端镜像
+langgraph build -t xhs-langgraph:latest
+# 热重启拉起全栈
+docker compose up -d --build
 ```
 
-前端代码或 Web 环境变量变化后：
-
-```bash
-pm2 restart xhs-frontend --update-env
-```
-
-只修改配置中心内的 embedding 配置时，不需要立刻重启后端；下一轮 scheduler 会按新配置创建新 index，完成后切换 active index。
+注：只修改配置中心内的业务配置（如模型白名单、飞书表格 ID、embedding 模型参数等）时，不需要重启 Docker 容器。ModelRouterMiddleware 支持配置热重载零延迟生效；Embedding 配置变更后，下一轮后台 scheduler 也会自动拉起新索引并在回填后原子切换，均不触发容器重建。
 
 ## 5. 健康检查
 
-### 5.1 PM2 状态
+### 5.1 Docker 容器状态
 
 ```bash
-pm2 status
+docker compose ps
 ```
 
-期望：
-
-- `xhs-backend` 为 `online`
-- `xhs-frontend` 为 `online`
+期望 6 个编排服务全部处于 `Up` 运行态，且状态标识如下：
+- `xhs-langgraph` ➔ `Up (healthy)`（健康检查通过）
+- `xhs-web` ➔ `Up`
+- `xhs-redis` ➔ `Up (healthy)`
+- `xhs-pg` ➔ `Up (healthy)`
+- `xhs-meili` ➔ `Up (healthy)`
+- `xhs-falkor` ➔ `Up (healthy)`
 
 ### 5.2 内部运行事实
 
@@ -244,12 +239,11 @@ git push origin master
 
 ```bash
 git pull --ff-only origin master
-pm2 restart xhs-backend --update-env
-pm2 restart xhs-frontend --update-env
+langgraph build -t xhs-langgraph:latest
+docker compose up -d --build
 ```
 
 禁止事项：
-
 - 不用 `git reset --hard` 作为默认回滚方式。
 - 不在服务器留下未提交热修复。
 - 不用数据库 reset 代替代码回滚。
@@ -301,12 +295,10 @@ git diff --check
 ```bash
 cd /home/ubuntu/xiaohongshu-agent
 git pull --ff-only origin master
-set -a
-source .env
-set +a
-TEST_XHS_DATABASE_URL="$XHS_DATABASE_URL" ./.venv/bin/pytest tests/data_foundation -q
-pm2 restart xhs-backend --update-env
-pm2 status
+langgraph build -t xhs-langgraph:latest
+docker compose up -d --build
+docker compose ps
+docker compose exec langgraph pytest tests/data_foundation -q
 ```
 
 内部 health：
@@ -325,10 +317,9 @@ curl -fsS \
 
 - 服务器项目路径：`/home/ubuntu/xiaohongshu-agent`
 - Git remote：Gitee `origin/master`
-- 进程管理：PM2
-- 后端进程名：`xhs-backend`
-- 前端进程名：`xhs-frontend`
-- 数据库：Postgres + pgvector
-- 后台服务入口：LangGraph `http.app` ASGI lifespan
+- 运行编排管理：Docker Compose (取代了历史的 PM2 进程守护)
+- 运行容器列表：`xhs-langgraph`, `xhs-web`, `xhs-pg`, `xhs-redis`, `xhs-meili`, `xhs-falkor`
+- 数据库：Postgres + pgvector (运行于 `xhs-pg` 容器)
+- 后台服务入口：LangGraph `http.app` ASGI lifespan (运行于 `xhs-langgraph` 容器)
 
 如果服务器拓扑变化，必须先更新本文档，再按新规则执行部署。

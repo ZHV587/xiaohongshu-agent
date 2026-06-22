@@ -24,26 +24,34 @@
 - `LLM_QUALITY_MODELS`: 高质量模型池,逗号分隔;第一项是首选模型。
 - 飞书操作在 server 模式下默认使用当前用户 UAT,缺授权时不会静默退回 bot。
 
-## 运行方式
+## 运行与部署方式
 
-### LangGraph server(多会话 + 共享/隔离)
+### 1. 本地开发与调试 (Local Dev)
+本地单独调试后端：
 ```bash
 uv run langgraph dev
 ```
 默认起在 `http://127.0.0.1:2024`。
 
-本项目已移除交互式 Python CLI 运行入口。生产和本地联调都以 Web 对话 + LangGraph server 为入口；`agent.py` 是唯一 DeepAgents/LangGraph 装配入口。
-导入 `agent.py` 不会触发飞书 adapter 更新、网络请求或子进程启动；后台 scheduler/outbox/embedding 服务只通过 LangGraph `http.app` ASGI lifespan 启停。
-
-`/internal/ok` 只用于内部 HTTP 活性探针，不代表数据底座、调度器或 embedding 队列健康。
-真实运行事实走管理员限定的 `/internal/health/facts`：响应按 `startup`、`scheduler`、`database` 模块返回，支持局部 degraded/unavailable，且只暴露固定聚合指标、安全错误码和摘要。
-管理员在现有 Web 对话应用侧栏的“运行事实”入口查看该只读面板；项目不新增独立管理后台。
-
-联调验证(另开终端,server 起好后):
+本地调试前端 (Next.js)：
 ```bash
-uv run python verify_1b1.py
+cd web
+npm run dev
 ```
-验证:跨轮记忆、`/shared` 跨会话共享、`/drafts` 按会话隔离。
+
+### 2. 生产环境部署 (Docker Compose)
+项目在生产服务器上使用 **Docker Compose** 进行全栈六容器统一编排部署：
+
+```bash
+# 1. 编译后端智能体最新镜像
+langgraph build -t xhs-langgraph:latest
+
+# 2. 现场构建前端并拉起全部服务
+docker compose up -d --build
+```
+启动后，全栈组件（`xhs-langgraph`, `xhs-web`, `xhs-pg`, `xhs-redis`, `xhs-meili`, `xhs-falkor`）会在专有的内部有界网络中自动互联，仅 `xhs-web` 前端容器对公网映射 `9091` 端口。
+
+---
 
 ## 文件后端路由(1b-1)
 
