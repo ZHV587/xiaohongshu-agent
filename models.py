@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 import time
 from dataclasses import dataclass
 from typing import Protocol
@@ -149,81 +148,25 @@ def _read_whitelist() -> list[str]:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
-class LazyPool(list):
-    """线程安全的延迟加载模型候选池。
-    在模块导入时不触发任何网络请求，只有在首次使用（如迭代、取值或算长度）时才开始网络探测。
+def build_initial_placeholder_model() -> BaseChatModel:
+    """构造 import-time 装配占位模型,**不探测、不联网**。
+
+    create_deep_agent / RubricMiddleware / 子智能体装配在模块 import 阶段(server
+    lifespan 之前、registry 尚不存在时)各需一个 BaseChatModel 实例。此函数从 env 读
+    网关与白名单,直接用白名单首个(质量序最强)@ 网关一构一个实例,不做任何网络探测。
+
+    这是占位,不是运行时配置源:接客后主/子 agent 经 ModelRouterMiddleware、rubric 经
+    RegistryRoutedChatModel,都从 registry 取当前最强候选,占位仅在 registry 空(填充前/
+    测试态)时兜底。env 至此退出运行时配置链,config-center 是唯一权威源。
     """
-    def __init__(self) -> None:
-        super().__init__()
-        self._loaded = False
-        self._lock = threading.Lock()
-
-    def _ensure_loaded(self) -> None:
-        with self._lock:
-            if not self._loaded:
-                pool = _actual_build_pool()
-                self.extend(pool)
-                self._loaded = True
-
-    def __iter__(self):
-        self._ensure_loaded()
-        return super().__iter__()
-
-    def __len__(self) -> int:
-        self._ensure_loaded()
-        return super().__len__()
-
-    def __getitem__(self, index):
-        self._ensure_loaded()
-        return super().__getitem__(index)
-
-    def __bool__(self) -> bool:
-        self._ensure_loaded()
-        return len(self) > 0
-
-
-def _actual_build_pool() -> list[ModelCandidate]:
-    """真正构造高质量候选池:各网关清单 ∩ 白名单;池为空则降级到白名单首个。"""
     gateways = _read_gateways()
     whitelist = _read_whitelist()
-    whitelist_set = set(whitelist)
-
-    pool: list[ModelCandidate] = []
-    for gw_name, base_url, api_key in gateways:
-        available = discover_models(base_url, api_key)
-        if not available:
-            continue
-        for model_id in available:
-            if model_id in whitelist_set:
-                pool.append(ModelCandidate(
-                    gateway_name=gw_name,
-                    model_id=model_id,
-                    model=_build_chat_model(model_id, base_url, api_key),
-                ))
-
-    if not pool:
-        if not gateways or not whitelist:
-            raise RuntimeError(
-                "无法构造模型池:LLM_BASE_URL/LLM_API_KEY/LLM_QUALITY_MODELS 至少一项缺失"
-            )
-        gw_name, base_url, api_key = gateways[0]
-        fallback_id = whitelist[0]
-        logger.warning(
-            "模型池为空(探测失败或白名单无交集),降级到白名单首个 %s @ %s",
-            fallback_id, base_url,
+    if not gateways or not whitelist:
+        raise RuntimeError(
+            "无法构造初始占位模型:LLM_BASE_URL/LLM_API_KEY/LLM_QUALITY_MODELS 至少一项缺失"
         )
-        pool.append(ModelCandidate(
-            gateway_name=gw_name,
-            model_id=fallback_id,
-            model=_build_chat_model(fallback_id, base_url, api_key),
-        ))
-
-    return pool
-
-
-def build_pool() -> list[ModelCandidate]:
-    """构造高质量候选池（延迟加载包装）。"""
-    return LazyPool()
+    gw_name, base_url, api_key = gateways[0]
+    return _build_chat_model(whitelist[0], base_url, api_key)
 
 
 _COOLDOWN_SECONDS = 30.0
@@ -302,24 +245,6 @@ class ModelRouterMiddleware(AgentMiddleware):
                 raise  # 非瞬时错误(400/鉴权)不换候选
         assert last_exc is not None
         raise last_exc
-
-
-def build_primary_model(pool: list[ModelCandidate]) -> BaseChatModel:
-    """静态构造初始模型实例，以避免在模块导入阶段触发 LazyPool 加载和网络请求。"""
-    if isinstance(pool, LazyPool) and not pool._loaded:
-        gateways = _read_gateways()
-        whitelist = _read_whitelist()
-        if not gateways or not whitelist:
-            raise RuntimeError(
-                "无法构造初始模型:LLM_BASE_URL/LLM_API_KEY/LLM_QUALITY_MODELS 至少一项缺失"
-            )
-        gw_name, base_url, api_key = gateways[0]
-        fallback_id = whitelist[0]
-        return _build_chat_model(fallback_id, base_url, api_key)
-
-    if pool:
-        return pool[0].model
-    raise ValueError("候选池为空，无法构建初始模型")
 
 
 def build_router_middleware(pool_provider: ModelPoolProvider) -> ModelRouterMiddleware:

@@ -89,8 +89,8 @@ def test_rubric_uses_model_instance_not_string(monkeypatch):
     """安全点B:RubricMiddleware 必须收 BaseChatModel 实例,不能收裸 id 字符串。
 
     机制:agent.py 用 `from deepagents import RubricMiddleware`,装配时
-    RubricMiddleware(model=build_primary_model(pool), ...)。若改回传字符串
-    (如 model="claude-sonnet-4-6"),deepagents 会按名推断 provider 自建
+    RubricMiddleware(model=RegistryRoutedChatModel(model_registry, initial_model), ...)。
+    若改回传字符串(如 model="claude-sonnet-4-6"),deepagents 会按名推断 provider 自建
     Anthropic 模型,拿真实 ANTHROPIC_API_KEY 绕网关直连泄漏。
 
     拦截点:patch deepagents.RubricMiddleware(agent.py 的 import 源),
@@ -128,6 +128,10 @@ def test_rubric_uses_model_instance_not_string(monkeypatch):
     # 必须是实例,不能是裸字符串 —— 否则会按名推断 provider 绕网关
     assert isinstance(model, BaseChatModel)
     assert not isinstance(model, str)
+    # 且必须是 registry 驱动的 RegistryRoutedChatModel:rubric grader 不经 router,
+    # 唯有传它才能让评分吃 config-center 热重载(env 不再钉死评分模型)。
+    from rubric_model import RegistryRoutedChatModel
+    assert isinstance(model, RegistryRoutedChatModel)
 
     rubric_prompt = captured["system_prompt"]
     assert "resource_id" in rubric_prompt
@@ -182,7 +186,7 @@ def test_agent_exposes_shared_model_registry(monkeypatch):
     assert status["active_models"] == []    # 空池,等 lifespan 填充
     assert status["hot_reload_coverage"]["main_agent"] is True
     assert status["hot_reload_coverage"]["subagents"] is True
-    assert status["hot_reload_coverage"]["rubric"] is False
+    assert status["hot_reload_coverage"]["rubric"] is True
     # 占位模型仍可装配出可用 agent(空池下 router 回退到它)
     assert hasattr(agent_mod.agent, "invoke")
 

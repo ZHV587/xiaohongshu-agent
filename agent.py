@@ -19,8 +19,9 @@ from backends import build_backend
 from content_rubric import ContentRubricActivator
 from middlewares import build_retry_middleware
 from model_registry import ModelRegistry
-from models import build_pool, build_primary_model, build_router_middleware
+from models import build_initial_placeholder_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
+from rubric_model import RegistryRoutedChatModel
 from subagents import build_baokuan_analyst
 
 from data_foundation.tools import data_foundation_tools
@@ -43,11 +44,10 @@ with open("deepagents_harness.json", "r", encoding="utf-8") as f:
 # 由 server lifespan 启动对齐 + 定时健康探测 + 配置事件三条引线填充/刷新。
 # 这里 registry 创建即空,不灌 env —— env 不再是平行运行时配置源。
 #
-# initial_model:create_deep_agent / RubricMiddleware / 子智能体装配时各需一个
-# BaseChatModel 实例作占位。用 env 快路径构一个(不进 registry、非配置源);
-# 运行时主/子 agent 的真实调用经 ModelRouterMiddleware 被 registry 池覆盖,
-# registry 空时(填充前/测试态)才真正落到这个占位上。
-initial_model = build_primary_model(build_pool())
+# initial_model:create_deep_agent / 子智能体装配时各需一个 BaseChatModel 实例作占位。
+# 用 env 构一个(不探测不联网、不进 registry、非配置源);运行时主/子 agent 的真实调用
+# 经 ModelRouterMiddleware 被 registry 池覆盖,registry 空时(填充前/测试态)才落到占位上。
+initial_model = build_initial_placeholder_model()
 model_registry = ModelRegistry()
 
 # 三路由 CompositeBackend:/skills/(磁盘共享只读)、/shared/(Store 共享)、
@@ -56,10 +56,11 @@ backend = build_backend()
 
 # ── 文案质量评分中间件 ────────────────────────────────────────────
 # 生成文案后自动评估质量,不合格让智能体重写(最多重试 2 轮)。
-# 评分用主模型同档实例(质量优先不降级);传实例而非裸 id,避免 provider 推断绕网关。
-# 仅当调用方传入 rubric 时才激活,平时不增加开销。
+# rubric 的 grader 是 deepagents 内部 create_agent 子图,不经 ModelRouterMiddleware,
+# 故 model 传 RegistryRoutedChatModel:它每次评分从 registry 取当前最强候选(空池回退
+# 占位),让评分也吃 config-center 热重载,质量优先不降级,且 env 不再钉死评分模型。
 rubric_middleware = RubricMiddleware(
-    model=initial_model,
+    model=RegistryRoutedChatModel(model_registry, initial_model),
     system_prompt="""你是小红书文案质量检查员。评估文案是否满足以下标准:
 1. 标题有钩子,不平淡,能引起点击欲望
 2. 正文像真人写的小红书笔记,无 AI 腔(不要"首先/其次/总之"、不要"在…领域"等八股)

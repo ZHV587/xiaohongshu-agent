@@ -160,7 +160,7 @@ def test_discover_models_force_bypasses_cache(monkeypatch):
     assert calls["n"] == 2  # force 不吃缓存
 
 
-from models import build_pool
+from models import build_initial_placeholder_model
 
 
 def _set_single_gateway(monkeypatch, quality="claude-sonnet-4-6,gpt-4o"):
@@ -172,47 +172,26 @@ def _set_single_gateway(monkeypatch, quality="claude-sonnet-4-6,gpt-4o"):
         monkeypatch.delenv(f"LLM_GATEWAY_{n}_API_KEY", raising=False)
 
 
-def test_build_pool_intersects_whitelist(monkeypatch):
-    models_mod._DISCOVER_CACHE.clear()
-    _set_single_gateway(monkeypatch)
-    monkeypatch.setattr(
-        models_mod, "discover_models",
-        lambda url, key, **kw: ["claude-sonnet-4-6", "gpt-4o", "cheap-model-x"],
-    )
+def test_initial_placeholder_uses_strongest_no_network(monkeypatch):
+    """import-time 占位:取白名单首个(质量序最强)@ 网关一,绝不联网探测。"""
+    _set_single_gateway(monkeypatch, quality="claude-opus-4-8,gpt-4o")
+
+    def boom(*a, **k):  # 占位绝不探测
+        raise AssertionError("build_initial_placeholder_model 不得触发网络探测")
+
+    monkeypatch.setattr(models_mod, "discover_models", boom)
     monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
-    pool = build_pool()
-    ids = [c.model_id for c in pool]
-    assert ids == ["claude-sonnet-4-6", "gpt-4o"]  # cheap-model-x 不在白名单被剔除
+    assert build_initial_placeholder_model() == "M:claude-opus-4-8@https://gw1/v1"
 
 
-def test_build_pool_multi_gateway(monkeypatch):
-    models_mod._DISCOVER_CACHE.clear()
-    _set_single_gateway(monkeypatch)
-    monkeypatch.setenv("LLM_GATEWAY_2_BASE_URL", "https://gw2/v1")
-    monkeypatch.setenv("LLM_GATEWAY_2_API_KEY", "key2")
+def test_initial_placeholder_raises_when_env_missing(monkeypatch):
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_QUALITY_MODELS", "claude-opus-4-8")
+    import pytest
+    with pytest.raises(RuntimeError):
+        build_initial_placeholder_model()
 
-    def fake_discover(url, key, **kw):
-        return ["claude-sonnet-4-6"] if "gw1" in url else ["gpt-4o"]
-
-    monkeypatch.setattr(models_mod, "discover_models", fake_discover)
-    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
-    pool = build_pool()
-    assert [(c.gateway_name, c.model_id) for c in pool] == [
-        ("gateway_1", "claude-sonnet-4-6"),
-        ("gateway_2", "gpt-4o"),
-    ]
-
-
-def test_build_pool_empty_falls_back_for_placeholder(monkeypatch):
-    """build_pool()(仅 initial_model 装配占位用)探测全失败时仍降级到白名单首个 ——
-    占位就是要"网络不通也能装配出一个 model",这是它与运行时 registry 源的本质区别。"""
-    models_mod._DISCOVER_CACHE.clear()
-    _set_single_gateway(monkeypatch, quality="claude-sonnet-4-6,gpt-4o")
-    monkeypatch.setattr(models_mod, "discover_models", lambda url, key, **kw: None)
-    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
-    pool = build_pool()
-    assert len(pool) == 1
-    assert pool[0].model_id == "claude-sonnet-4-6"  # 占位降级到白名单首个
 
 
 def test_build_pool_from_config_empty_raises_no_fallback(monkeypatch):
@@ -439,12 +418,7 @@ def test_router_concurrent_mark_unhealthy_consistent():
     assert mw._is_cooling(pool[0]) is True
 
 
-from models import build_primary_model, build_router_middleware
-
-
-def test_build_primary_model_returns_first_candidate_model():
-    pool = [_candidate("g1", "claude-sonnet-4-6"), _candidate("g2", "gpt-4o")]
-    assert build_primary_model(pool) is pool[0].model
+from models import build_router_middleware
 
 
 def test_build_router_middleware_wraps_pool():
@@ -503,30 +477,6 @@ def test_router_empty_pool_falls_back_to_request_model():
     out = mw.wrap_model_call(Req(placeholder), lambda req: seen.append(req.model) or "OK")
     assert out == "OK"
     assert seen == [placeholder]
-
-
-def test_lazy_pool_deferred_loading(monkeypatch):
-    """验证 LazyPool 确实延迟加载且线程安全。"""
-    from models import LazyPool, ModelCandidate
-
-    calls = {"n": 0}
-
-    def fake_actual_build_pool():
-        calls["n"] += 1
-        return [ModelCandidate(gateway_name="g1", model_id="m1", model=object())]
-
-    monkeypatch.setattr(models_mod, "_actual_build_pool", fake_actual_build_pool)
-
-    pool = LazyPool()
-    assert pool._loaded is False
-    assert calls["n"] == 0
-
-    assert len(pool) == 1
-    assert pool._loaded is True
-    assert calls["n"] == 1
-
-    assert pool[0].model_id == "m1"
-    assert calls["n"] == 1
 
 
 def test_build_chat_model_providers(monkeypatch):

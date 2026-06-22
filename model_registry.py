@@ -56,7 +56,7 @@ class ModelRegistry:
                     "main_agent": True,
                     "server_async": True,
                     "subagents": True,
-                    "rubric": False,
+                    "rubric": True,
                 },
             }
 
