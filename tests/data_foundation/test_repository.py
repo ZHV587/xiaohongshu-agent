@@ -217,6 +217,71 @@ def test_upsert_identical_mapping_is_idempotent(migrated_conn):
     assert repo.debug_counts()["resource_outbox"] == 2
 
 
+def _outbox_rows_for(migrated_conn, *, resource_id, topic):
+    return migrated_conn.execute(
+        "select resource_id::text as rid, resource_version from resource_outbox "
+        "where resource_id = %s and topic = %s",
+        (resource_id, topic),
+    ).fetchall()
+
+
+def test_add_edge_enqueues_graph_ingest_for_source_endpoint(migrated_conn):
+    """根因回归:add_edge 必须为边的 source 端点入队 graph_ingest —— 否则当 source 是
+    既有资源(非同批 upsert)时,边永远进不了 Falkor。模拟 performance_feedback 的
+    measured_by:既有文档 ← 新建 metric 度量,边 source=文档(既有)。"""
+    repo = ResourceRepository(migrated_conn)
+    # 既有文档(source 端),只入 meili,不带 graph_ingest —— 模拟"非新建、未被图 ingest"
+    doc = repo.upsert_resource(
+        tenant_id="default", actor_open_id="ou_owner", resource_type="xhs_copy",
+        title="文案", content_text="正文", content_json={}, visibility="team",
+        owner_open_id="ou_owner",
+        outbox_requests=[OutboxRequest("meili_index", ("search",), {})],
+    )
+    assert _outbox_rows_for(migrated_conn, resource_id=doc.id, topic="graph_ingest") == []
+
+    # 新建 metric 并建 measured_by 边:source=既有文档,target=新 metric
+    metric = repo.upsert_resource(
+        tenant_id="default", actor_open_id="ou_owner", resource_type="performance_metric",
+        title="效果", content_text="score", content_json={}, visibility="team",
+        owner_open_id="ou_owner",
+        outbox_requests=[OutboxRequest("graph_ingest", ("graph",), {})],
+    )
+    repo.add_edge(
+        tenant_id="default", source_resource_id=doc.id,
+        target_resource_id=metric.id, edge_type="measured_by", weight=1.0,
+    )
+
+    # 文档(边 source)现在有了 graph_ingest → 下次 ingest 文档时这条出边会进 Falkor
+    rows = _outbox_rows_for(migrated_conn, resource_id=doc.id, topic="graph_ingest")
+    assert len(rows) == 1
+    assert rows[0]["resource_version"] == doc.version
+
+
+def test_add_edge_graph_ingest_dedupes_with_existing(migrated_conn):
+    """source 自身已有 graph_ingest(同 version)时,add_edge 补的入队走 dedupe 去重,
+    不产生重复 graph_ingest 行。"""
+    repo = ResourceRepository(migrated_conn)
+    src = repo.upsert_resource(
+        tenant_id="default", actor_open_id="ou_owner", resource_type="topic",
+        title="源", content_text="x", content_json={}, visibility="team",
+        owner_open_id="ou_owner",
+        outbox_requests=[OutboxRequest("graph_ingest", ("graph",), {})],
+    )
+    tgt = repo.upsert_resource(
+        tenant_id="default", actor_open_id="ou_owner", resource_type="topic",
+        title="靶", content_text="y", content_json={}, visibility="team",
+        owner_open_id="ou_owner",
+        outbox_requests=[OutboxRequest("graph_ingest", ("graph",), {})],
+    )
+    # src 已有 1 条 graph_ingest(version=1);加边后 add_edge 用同 dedupe_parts+同 version
+    repo.add_edge(
+        tenant_id="default", source_resource_id=src.id,
+        target_resource_id=tgt.id, edge_type="derived_from", weight=1.0,
+    )
+    rows = _outbox_rows_for(migrated_conn, resource_id=src.id, topic="graph_ingest")
+    assert len(rows) == 1  # 去重,不是 2
+
+
 def test_first_sync_failure_is_persisted_as_unbound_event(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 

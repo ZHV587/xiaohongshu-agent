@@ -173,42 +173,13 @@ class ResourceRepository:
             if mapping is not None:
                 self._upsert_mapping(tenant_id=tenant_id, resource_id=row["id"], mapping=mapping)
 
-            for request in requests:
-                request_payload = {
-                    **request.payload,
-                    "resource_id": str(row["id"]),
-                    "version": version,
-                }
-                dedupe_key = hashlib.sha256(
-                    json.dumps(
-                        [
-                            tenant_id,
-                            str(row["id"]),
-                            version,
-                            request.topic,
-                            *request.dedupe_parts,
-                        ],
-                        sort_keys=True,
-                        ensure_ascii=False,
-                    ).encode("utf-8")
-                ).hexdigest()
-                self.conn.execute(
-                    """
-                    insert into resource_outbox (
-                      tenant_id, resource_id, resource_version, event_id, topic, dedupe_key, payload
-                    )
-                    values (%s, %s, %s, %s, %s, %s, %s::jsonb)
-                    """,
-                    (
-                        tenant_id,
-                        row["id"],
-                        version,
-                        event["id"],
-                        request.topic,
-                        dedupe_key,
-                        json.dumps(request_payload, sort_keys=True, ensure_ascii=False),
-                    ),
-                )
+            self._enqueue_outbox(
+                tenant_id=tenant_id,
+                resource_id=row["id"],
+                version=version,
+                requests=requests,
+                event_id=event["id"],
+            )
 
         return self._resource_from_row(row, version=version)
 
@@ -359,6 +330,60 @@ class ResourceRepository:
 
         return EmbeddingRepository(self.conn).active_index(tenant_id)
 
+    def _enqueue_outbox(
+        self,
+        *,
+        tenant_id: str,
+        resource_id: Any,
+        version: int,
+        requests,
+        event_id: Any = None,
+    ) -> None:
+        """把一组 OutboxRequest 写入 resource_outbox(投递到 meili/graph/embedding)。
+
+        必须在调用方已开启的事务内调用(与主数据写在同一事务,保证原子)。
+        event_id 可空:upsert 路径传新建 event 的 id;add_edge 等"无新 event"的路径
+        传 None(schema resource_outbox.event_id 可空,FK on delete set null)。
+        dedupe_key 与 payload 构造与 upsert 路径完全一致,保证幂等键稳定。
+        """
+        for request in requests:
+            request_payload = {
+                **request.payload,
+                "resource_id": str(resource_id),
+                "version": version,
+            }
+            dedupe_key = hashlib.sha256(
+                json.dumps(
+                    [
+                        tenant_id,
+                        str(resource_id),
+                        version,
+                        request.topic,
+                        *request.dedupe_parts,
+                    ],
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            self.conn.execute(
+                """
+                insert into resource_outbox (
+                  tenant_id, resource_id, resource_version, event_id, topic, dedupe_key, payload
+                )
+                values (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                on conflict (tenant_id, dedupe_key) do nothing
+                """,
+                (
+                    tenant_id,
+                    resource_id,
+                    version,
+                    event_id,
+                    request.topic,
+                    dedupe_key,
+                    json.dumps(request_payload, sort_keys=True, ensure_ascii=False),
+                ),
+            )
+
     def add_edge(
         self,
         *,
@@ -389,6 +414,22 @@ class ResourceRepository:
                 do update set weight = excluded.weight
                 """,
                 (tenant_id, source_resource_id, target_resource_id, edge_type, weight),
+            )
+            # 边能进 Falkor 的不变量:GraphProcessor 在 ingest 某资源时重建其全部出边
+            # (processors/graph.py 查 source_resource_id=该资源)。所以一条边要进图,
+            # 其 source 端点必须有一个 graph_ingest 事件。upsert 新资源自带 graph_ingest
+            # (creation_memory 的边 source 即新资源,搭车正确);但 add_edge 的 source 若是
+            # 既有资源(如 performance_feedback 的 measured_by:source=既有文档),没有任何
+            # graph_ingest → 边永不进图。这里显式为 source 端补一个 graph_ingest,把"边能进图"
+            # 的责任收进 add_edge 自身,不再依赖调用方碰巧让 source 被 upsert。
+            # dedupe_parts=("graph",) 与 upsert 路径一致 → 同 source 同 version 时撞同一
+            # dedupe_key,on conflict do nothing 自动去重(文档自身已有 graph_ingest 时不重复)。
+            source_version = self._latest_version(source_resource_id)["version"]
+            self._enqueue_outbox(
+                tenant_id=tenant_id,
+                resource_id=source_resource_id,
+                version=source_version,
+                requests=[OutboxRequest("graph_ingest", ("graph",), {})],
             )
 
     def writable_resource_metadata(self, *, tenant_id: str, actor_open_id: str, resource_id: str):
