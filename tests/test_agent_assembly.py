@@ -37,6 +37,29 @@ def test_agent_importable_and_compiled(monkeypatch):
     assert hasattr(agent_module.agent, "astream")
 
 
+def test_skills_middleware_wired(monkeypatch):
+    """官方 skill 机制已接线:create_deep_agent(skills=["/skills/"]) 必须装上
+    SkillsMiddleware,它在 before_agent 期把 .agents/skills/ 下的 SKILL.md 清单
+    注入 system prompt(渐进式披露)。
+
+    钉死这条线的存在,防止 skills= 被误删退回"死配置"(SKILL.md 存在但 agent
+    看不到)。断言用 graph 节点名——SkillsMiddleware 的 before_agent hook 会落成
+    一个 `SkillsMiddleware.before_agent` 图节点。
+
+    注:skills 的 ls/download 发生在 before_agent 运行期(请求时),不在 import 期,
+    故离线装配(DISCOVER_MODELS=false)不会因 skills= 触网。
+    """
+    _set_assembly_env(monkeypatch)
+    import importlib
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    nodes = list(agent_module.agent.get_graph().nodes)
+    assert any("SkillsMiddleware" in n for n in nodes), (
+        f"SkillsMiddleware 未接线(skills= 可能被删),当前节点:{nodes}"
+    )
+
+
 def test_harness_profile_excludes_execute(monkeypatch):
     """安全点A:profile 必须注册在 key="openai" 下,且排除 execute(shell 执行)。
 

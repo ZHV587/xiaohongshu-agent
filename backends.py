@@ -1,9 +1,11 @@
 """三路由文件后端工厂。
 
 CompositeBackend 按路径前缀路由(已实测:路由会剥掉前缀):
-- /skills/ → FilesystemBackend,root_dir 指向项目下的 skills/ 目录本身
-  (因为前缀 /skills/ 被剥掉后,/topic-content/SKILL.md 需对应 skills/topic-content/SKILL.md)。
+- /skills/ → FilesystemBackend,root_dir 指向 .agents/skills/ 目录本身
+  (因为前缀 /skills/ 被剥掉后,/topic-content/SKILL.md 需对应 .agents/skills/topic-content/SKILL.md)。
   共享只读,virtual_mode=True 避免 Windows 绝对路径问题。
+  **官方 SkillsMiddleware 经此 route 读 skill**:create_deep_agent(skills=["/skills/"]) 把本 backend
+  传给 SkillsMiddleware,它 ls("/skills/") 列 skill 子目录、download 各 SKILL.md 注入 prompt。
 - /shared/ → StoreBackend,跨会话/用户共享(风格沉淀)。server 注入 store。
 - /memories/ → StoreBackend,团队共享自学习记忆(MemoryMiddleware 的 AGENTS.md)。
 - /shared/ → ConcurrencySafeStoreBackend,跨会话/用户共享(风格沉淀)。server 注入 store。

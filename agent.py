@@ -81,6 +81,11 @@ agent = create_deep_agent(
     model=initial_model,
     tools=data_foundation_tools + feishu_action_tools + load_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
+    # 官方 skill 机制:SkillsMiddleware 复用下方 backend,经 /skills/ route 读
+    # .agents/skills/ 下的 SKILL.md,把每个 skill 的 name/description/path 注入
+    # system prompt(渐进式披露)。agent 据 description 判断何时 read_file 读全文。
+    # 工作流细节是 skill 的唯一事实源,MAIN_SYSTEM_PROMPT 只留角色+硬约束+输出协议契约。
+    skills=["/skills/"],
     subagents=[build_baokuan_analyst(model_registry, initial_model)],
     backend=backend,
     interrupt_on={
