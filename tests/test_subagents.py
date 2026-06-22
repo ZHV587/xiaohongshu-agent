@@ -40,4 +40,8 @@ def test_humanizer_editor_properties():
     assert "至关重要" in HUMANIZER_SYSTEM_PROMPT
     assert "三段式" in HUMANIZER_SYSTEM_PROMPT
     assert "write_file" in HUMANIZER_SYSTEM_PROMPT
+    # 假施动/名词化空转 —— 跨语言通用的 AI 腔,点名施动者
+    assert "数据告诉我们" in HUMANIZER_SYSTEM_PROMPT
+    # 交付前五维自检打分,低于阈值重写
+    assert "35/50" in HUMANIZER_SYSTEM_PROMPT
 
