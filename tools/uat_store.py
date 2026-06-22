@@ -2,6 +2,7 @@
 import os
 import json
 import base64
+import tempfile
 import time
 import hmac
 import hashlib
@@ -92,18 +93,26 @@ def _write_store(data: dict) -> None:
         f = Fernet(_get_fernet_key())
         serialized = json.dumps(data).encode("utf-8")
         encrypted_data = f.encrypt(serialized)
-        
-        # Enforce 0600 file permissions on Unix-like OS (or simple write on Windows)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        mode = 0o600
-        # Check OS compatibility
-        if os.name != 'nt':
-            fd = os.open(store_path, flags, mode)
-            with os.fdopen(fd, 'wb') as fp:
+
+        # 原子写:同目录临时文件 + fsync + os.replace 原子 rename。直接 O_TRUNC 覆写非原子,
+        # 写一半进程被杀会把文件截断,下次 _read_store 的 decrypt 抛异常 → 兜底返回 {} →
+        # 全员 UAT 静默全丢(所有用户需重新授权,且无报错)。os.replace 在同一文件系统原子,
+        # 任一时刻读到的要么完整旧文件、要么完整新文件。
+        # tempfile.mkstemp 默认即 0600,正好满足令牌文件的权限要求(rename 保留该权限)。
+        store_dir = os.path.dirname(store_path) or "."
+        fd, tmp_name = tempfile.mkstemp(dir=store_dir, prefix=".uat_store.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as fp:
                 fp.write(encrypted_data)
-        else:
-            with open(store_path, "wb") as fp:
-                fp.write(encrypted_data)
+                fp.flush()
+                os.fsync(fp.fileno())
+            os.replace(tmp_name, store_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
     except Exception as e:
         logger.error(f"Error writing token storage: {e}")
 

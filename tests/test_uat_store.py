@@ -31,13 +31,46 @@ def test_encrypted_file_safety():
     open_id = "usr_456"
     uat = "secret_uat_token"
     save_uat(open_id, uat, "refresh_token", time.time() + 3600, [], "User")
-    
+
     # Check that file content is raw ciphertext, not containing plaintext secrets
     store_path = os.environ.get("XHS_UAT_STORE_PATH")
     assert os.path.exists(store_path)
     with open(store_path, "rb") as f:
         ciphertext = f.read()
     assert b"secret_uat_token" not in ciphertext
+
+
+def test_uat_store_atomic_write_survives_mid_write_crash():
+    """写一半进程被杀,UAT 文件须保持上一份完好 —— 否则截断→decrypt 失败→_read_store
+    兜底返回 {}→全员令牌静默全丢(所有用户需重新授权)。"""
+    save_uat("usr_a", "token_a", "ref_a", time.time() + 3600, [], "A")
+
+    real_fsync = os.fsync
+
+    def boom(fd):
+        real_fsync(fd)
+        raise KeyboardInterrupt("simulated kill mid-write")
+
+    with patch("tools.uat_store.os.fsync", side_effect=boom):
+        with pytest.raises(KeyboardInterrupt):
+            save_uat("usr_b", "token_b", "ref_b", time.time() + 3600, [], "B")
+
+    # 旧令牌完好,未被部分写损坏。
+    assert get_uat("usr_a") == "token_a"
+    # 临时文件无泄漏。
+    store_dir = os.path.dirname(os.environ["XHS_UAT_STORE_PATH"])
+    assert [f for f in os.listdir(store_dir) if f.endswith(".tmp")] == []
+    # 后续保存仍正常。
+    save_uat("usr_c", "token_c", "ref_c", time.time() + 3600, [], "C")
+    assert get_uat("usr_c") == "token_c"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 文件权限")
+def test_uat_store_preserves_0600_after_atomic_write():
+    """原子写后令牌文件仍是 0600(tempfile.mkstemp 默认 0600,os.replace 保留)。"""
+    save_uat("usr_perm", "tok", "ref", time.time() + 3600, [], "P")
+    store_path = os.environ["XHS_UAT_STORE_PATH"]
+    assert (os.stat(store_path).st_mode & 0o777) == 0o600
 
 @patch("tools.uat_store.httpx.post")
 def test_uat_auto_refresh_success(mock_post):
