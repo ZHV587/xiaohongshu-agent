@@ -91,7 +91,7 @@ docker compose up -d --build
 - Phase 4.3 已加入创作记忆沉淀：`save_generated_topic`、`save_generated_copy`、`save_user_feedback` 会把选题、文案、反馈/修改意见写入 Postgres，并用 `derived_from` / `feedback_on` 关系连接来源资源。
 - Phase 4.4 已加入效果反馈闭环：`save_performance_metric` 会把发布后的点赞、收藏、评论、转发、浏览和转化沉淀为 `performance_metric` 资源，`get_resource_performance` 可读取历史表现；内容资源通过 `measured_by` 边连接效果资源，第一版只做可解释评分，不做预测模型。
 - Phase 4 仍通过 DeepAgents 官方 `tools`、`skills`、`subagents` 和 `middleware` 扩展；LLM 负责分析与创作，Postgres 只提供来源、时效和关系上下文，不新增业务 CLI 或管理后台。
-- active outbox processor:`embedding_generate`(pgvector 语义)、`meili_index`(Meilisearch 全文)、`graph_ingest`(FalkorDB 图谱)三者均已启用。检索/图谱以引擎为唯一路径:`search_resources` 走 Meilisearch、`graph_expand` 走 FalkorDB、`semantic_search_resources` 走 pgvector;引擎返回 resource_id 后统一回 Postgres 经 `readable_resource_where` 裁决可见性。PG tsvector 全文与递归 SQL 图谱旧逻辑已移除,无降级(引擎不可用时工具返回 `ok:false`)。Graphiti、Dagster 仍未启用。
+- active outbox processor:`embedding_generate`(pgvector 语义)、`meili_index`(Meilisearch 全文)、`graph_ingest`(FalkorDB 图谱)三者均已启用。检索/图谱以引擎为唯一路径:`search_resources` 走 Meilisearch、`graph_expand` 走 FalkorDB、`semantic_search_resources` 走 pgvector;引擎返回 resource_id 后统一回 Postgres 经 `readable_resource_where` 裁决可见性。PG tsvector 全文与递归 SQL 图谱旧逻辑已移除,无降级(引擎不可用时工具返回 `ok:false`)。图谱时序与任务编排不依赖外部组件:图查询由 FalkorDB 承担,同步/索引/入图的调度与重试由 outbox + 幂等 worker 承担;Graphiti、Dagster 不在当前架构中,如需事实演化能力优先走 Postgres 资源版本化。
 - `sync_sources.credentials` 按当前开发决策允许明文保存在 Postgres，但凭证不得进入日志、错误摘要、outbox payload、遥测或后续只读状态接口。
 - **第五阶段证据检索与服务解耦**：
   - **检索重排序 (Retrieval Ranking)**：`search_resources` 与 `semantic_search_resources` 工具内置 `rank_evidence` 加权排序服务，综合考虑相关度归一化得分、源端时效指数衰减（$e^{-0.05 \times t}$）、资源类型权重（`performance_metric`/`generated_copy`/`generated_topic`）及 $\tanh$ 历史效果表现分，并利用 Python 的 `SequenceMatcher` 进行 $>0.90$ 相似度的标题模糊去重。
