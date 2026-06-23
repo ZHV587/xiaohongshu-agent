@@ -90,7 +90,7 @@ pnpm lint
 pnpm build
 ```
 
-如果本地没有 `TEST_XHS_DATABASE_URL`，Postgres 集成测试可能跳过；这种情况下服务器真实 Postgres 测试是必跑项。
+如果本地没有 `TEST_XHS_DATABASE_URL`，Postgres 集成测试可能跳过；这种情况下应在 CI 或专用测试 runner 上补跑真实 Postgres 集成测试，不能把生产镜像当测试环境。
 
 ### 4.2 Git 发布
 
@@ -122,18 +122,20 @@ git pull --ff-only origin master
 
 只允许 fast-forward。若失败，先查清楚服务器是否存在未提交改动，不得用 `reset --hard` 直接覆盖，除非明确确认这些改动应废弃。
 
-### 4.4 服务器真实库测试
+### 4.4 服务器生产 smoke 验收
 
-由于服务器宿主机上已不保留 python 及虚拟环境，所有的真实库测试必须在 `xhs-langgraph` 容器内部执行：
+生产镜像只包含运行时依赖，不携带 `pytest`、测试目录或 dev 依赖；不得为了验收把测试工具安装进生产容器。服务器部署后的验收使用不污染镜像的 smoke 检查：
 
 ```bash
 cd /home/ubuntu/xiaohongshu-agent
-docker compose exec langgraph pytest tests/data_foundation -q
+docker compose exec -T langgraph python scripts/runtime_import_smoke.py
+python3 scripts/deploy_health_check.py --public-url http://127.0.0.1:9091/
 ```
 
 注意：
-- 运行测试前请确保宿主机 `.env` 已映射成功且 `xhs-langgraph` 容器状态为 `healthy`。
-- 容器内已经加载了生产环境变量，且测试 fixture 使用了隔离 schema，保证测试与生产数据物理隔绝。
+- 完整 `pytest` 回归在本地、CI 或专用测试 runner 中执行，不在生产镜像内执行。
+- smoke 只验证生产运行时：核心模块可导入、容器健康、内部 health facts 正常、Web 入口返回 2xx/3xx。
+- 若需要服务器真实 Postgres 集成测试，必须使用专用测试环境或临时测试 runner，并确保隔离 schema 和退出清理，不得修改生产运行容器。
 
 ### 4.5 重启与拉起服务
 
@@ -298,7 +300,8 @@ git pull --ff-only origin master
 langgraph build -t xhs-langgraph:latest
 docker compose up -d --build
 docker compose ps
-docker compose exec langgraph pytest tests/data_foundation -q
+docker compose exec -T langgraph python scripts/runtime_import_smoke.py
+python3 scripts/deploy_health_check.py --public-url http://127.0.0.1:9091/
 ```
 
 内部 health：

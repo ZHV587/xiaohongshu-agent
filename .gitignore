@@ -36,8 +36,7 @@ node_modules/.cache/
 # 模拟登录接口(本地测试用,不入生产)
 web/src/app/api/auth/feishu/simulate/
 
-# 含服务器凭据 / 直连服务器的本地运维脚本,严禁入库
-scripts/deploy.py
+# 含服务器凭据的本地运维脚本,严禁入库
 scripts/_remote_run.py
 scripts/_setup_github_deploy.py
 scripts/_cleanup_gitee.py

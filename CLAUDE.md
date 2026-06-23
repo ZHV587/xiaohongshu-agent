@@ -8,7 +8,7 @@
 ## 部署与测试
 
 - **所有服务统一在 Docker Compose 环境下运行与测试。** 生产环境与远端回归均在容器化拓扑（六容器编排、有界网络互联）上完成。
-  - 标准流程: 本地改代码 ➔ `git commit` ➔ `git push origin master` ➔ 服务器 `git pull --ff-only` ➔ 重新编译并拉起服务 ➔ 运行容器内测试与人工验证。
+  - 标准流程: 本地改代码 ➔ 本地/CI 跑完整测试 ➔ `git commit` ➔ `git push origin master` ➔ 服务器 `git pull --ff-only` ➔ 重新编译并拉起服务 ➔ 运行生产 smoke 与人工验证。
   - 本地推送走 HTTPS，绕过代理：`git -c http.proxy= -c https.proxy= push origin master`。
 
 ## 服务器拓扑(详见 docs/deployment/server-deployment-rules.md)
@@ -24,9 +24,10 @@
   docker compose up -d --build
   ```
 - 环境变量：宿主机根目录下 `.env` 和 `web/.env` 挂载至对应容器，宿主机修改后需执行 `docker compose up -d` 重新装载。
-- 服务器容器内集成测试：
+- 服务器生产 smoke 验收：
   ```bash
-  docker compose exec langgraph pytest <path_to_test> -q
+  docker compose exec -T langgraph python scripts/runtime_import_smoke.py
+  python3 scripts/deploy_health_check.py --public-url http://127.0.0.1:9091/
   ```
 
 ## 安全
