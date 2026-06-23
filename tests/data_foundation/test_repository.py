@@ -686,3 +686,60 @@ def test_readable_rows_by_ids_filters_and_preserves_order(migrated_conn):
         title="C", content_text="c", content_json={}, visibility="private", owner_open_id="ou_other")
     rows2 = repo.readable_rows_by_ids(tenant_id="default", actor_open_id="ou_x", resource_ids=[c.id, a.id])
     assert [str(r["id"]) for r in rows2] == [a.id]
+
+
+def test_bulk_performance_metrics_sql_syntax():
+    class _CapturingConnection:
+        row_factory = None
+
+        def __init__(self):
+            self.sql = ""
+            self.params = None
+
+        def execute(self, sql, params=None):
+            self.sql = sql.lower()
+            self.params = params
+            return self
+
+        def fetchall(self):
+            return []
+
+    conn = _CapturingConnection()
+    repo = ResourceRepository(conn)  # type: ignore[arg-type]
+    repo.bulk_performance_metrics("default", ["id-1", "id-2"])
+
+    assert "select target.id::text" in conn.sql
+    assert "join resource_edges e" in conn.sql
+    assert "join resources metric" in conn.sql
+    assert conn.params == (["id-1", "id-2"], "default")
+
+
+def test_bulk_performance_metrics_fetches_multiple(migrated_conn):
+
+    repo = ResourceRepository(migrated_conn)
+    tenant_id = "default"
+    actor_open_id = "ou_owner"
+    target1 = repo.upsert_resource(
+        tenant_id=tenant_id, actor_open_id=actor_open_id, resource_type="generated_copy",
+        title="笔记 1", content_text="正文 1", content_json={}, visibility="private", owner_open_id=actor_open_id
+    )
+    target2 = repo.upsert_resource(
+        tenant_id=tenant_id, actor_open_id=actor_open_id, resource_type="generated_copy",
+        title="笔记 2", content_text="正文 2", content_json={}, visibility="private", owner_open_id=actor_open_id
+    )
+    metric = repo.upsert_resource(
+        tenant_id=tenant_id, actor_open_id=actor_open_id, resource_type="performance_metric",
+        title="小红书效果 2026-06-23", content_text="",
+        content_json={"target_resource_id": str(target1.id), "metrics": {"likes": 50}, "score": 50.0},
+        visibility="private", owner_open_id=actor_open_id
+    )
+    repo.add_edge(tenant_id=tenant_id, source_resource_id=target1.id, target_resource_id=metric.id, edge_type="measured_by", weight=50.0)
+
+    res = repo.bulk_performance_metrics(tenant_id, [str(target1.id), str(target2.id)])
+    assert str(target1.id) in res
+    assert len(res[str(target1.id)]) == 1
+    assert res[str(target1.id)][0]["metrics"]["likes"] == 50
+    assert str(target2.id) in res
+    assert len(res[str(target2.id)]) == 0
+
+

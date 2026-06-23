@@ -562,6 +562,46 @@ class ResourceRepository:
                     ),
                 )
 
+    def bulk_performance_metrics(self, tenant_id: str, resource_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        if not resource_ids:
+            return {}
+        rows = self.conn.execute(
+            """
+            select target.id::text as target_id,
+                   metric.id::text as resource_id,
+                   metric.title,
+                   metric.content_json,
+                   e.weight,
+                   metric.updated_at
+            from resources target
+            join resource_edges e
+              on e.tenant_id = target.tenant_id
+             and e.source_resource_id = target.id
+             and e.edge_type = 'measured_by'
+            join resources metric
+              on metric.tenant_id = target.tenant_id
+             and metric.id = e.target_resource_id
+             and metric.type = 'performance_metric'
+            where target.id = any(%s::uuid[])
+              and target.tenant_id = %s
+            order by metric.updated_at desc, metric.id desc
+            """,
+            (resource_ids, tenant_id),
+        ).fetchall()
+
+        result: dict[str, list[dict[str, Any]]] = {rid: [] for rid in resource_ids}
+        for row in rows:
+            content_json = dict(row["content_json"])
+            result[row["target_id"]].append({
+                "resource_id": row["resource_id"],
+                "title": row["title"],
+                "score": float(content_json.get("score", row.get("weight", 0.0))),
+                "metrics": dict(content_json.get("metrics") or {}),
+                "channel": content_json.get("channel"),
+                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+            })
+        return result
+
     def data_foundation_status(self, tenant_id: str) -> dict[str, Any]:
         resource_rows = self.conn.execute(
             """
