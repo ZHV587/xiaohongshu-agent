@@ -103,7 +103,7 @@ git commit -m "<type>: <summary>"
 git push origin master
 ```
 
-不得在服务器直接手改业务代码后长期运行。服务器代码状态必须能由 Gitee `origin/master` 复现。
+不得在服务器直接手改业务代码后长期运行。服务器代码状态必须能由 GitHub `origin/master` 复现。
 
 ### 4.3 服务器拉取
 
@@ -279,7 +279,7 @@ docker compose up -d --build
 4. 禁止把未启用组件标记为 succeeded，例如 Meilisearch、Graphiti、Neo4j/FalkorDB、Dagster。
 5. 禁止 agent 直接连接 Postgres、飞书底层 API 或图数据库；必须通过官方 tools、subagents、middleware、MCP 或内部服务层。
 6. 禁止在响应、日志或测试输出里打印密钥。
-7. 禁止服务器代码与 Gitee `origin/master` 长期不一致。
+7. 禁止服务器代码与 GitHub `origin/master` 长期不一致。
 
 ## 10. 常用验证命令
 
@@ -316,7 +316,8 @@ curl -fsS \
 当前已知服务器事实：
 
 - 服务器项目路径：`/home/ubuntu/xiaohongshu-agent`
-- Git remote：Gitee `origin/master`
+- Git remote：GitHub `git@github.com:ZHV587/xiaohongshu-agent.git`(私有仓库；服务器经只读 deploy key `~/.ssh/xhs_github_deploy` 拉取)
+- 本地运维/部署登录：SSH 密钥 `~/.ssh/xhs_deploy` 免密登录(`scripts/deploy.py` 走密钥,不再使用明文密码)
 - 运行编排管理：Docker Compose (取代了历史的 PM2 进程守护)
 - 运行容器列表：`xhs-langgraph`, `xhs-web`, `xhs-pg`, `xhs-redis`, `xhs-meili`, `xhs-falkor`
 - 数据库：Postgres + pgvector (运行于 `xhs-pg` 容器)

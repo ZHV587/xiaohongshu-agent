@@ -13,7 +13,7 @@
 
 ## 服务器拓扑(详见 docs/deployment/server-deployment-rules.md)
 
-- 服务器：`124.221.173.80`，ubuntu，SSH 密码登录。项目路径 `/home/ubuntu/xiaohongshu-agent`。
+- 服务器：`124.221.173.80`，ubuntu，SSH 密钥登录（本地 `~/.ssh/xhs_deploy` 免密，`scripts/deploy.py` 走密钥；密码登录仍可作应急）。项目路径 `/home/ubuntu/xiaohongshu-agent`。代码托管在 GitHub 私有仓库 `git@github.com:ZHV587/xiaohongshu-agent.git`，服务器经只读 deploy key 拉取。
 - 容器编排架构（六容器）：
   - 核心微服务：`xhs-langgraph`（后端，宿主机 127.0.0.1:2030）、`xhs-web`（Next.js，宿主机 0.0.0.0:9091）。
   - 底座数据库与引擎：`xhs-pg` (Postgres 16)、`xhs-redis` (Redis 7)、`xhs-meili` (Meilisearch)、`xhs-falkor` (FalkorDB)，全部隐藏在 `xhs-net` 网络内部，不对公网暴露，通过服务名直连。
