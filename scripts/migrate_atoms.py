@@ -23,6 +23,9 @@ ATOMS_URL = "https://raw.githubusercontent.com/dontbesilent2025/dbskill/main/%E7
 RESOURCE_TYPE = "dbskill_atom"
 FEISHU_TABLE_NAME = "知识原子库"
 ACTOR = "migrate_atoms_script"
+# 已在飞书云空间建好，需手动移进知识库 7648177996175543260
+ATOMS_APP_TOKEN = "JGnIbAryTaauOqsGN99cGxWjnHc"
+ATOMS_TABLE_ID = "tbl5K1USNBJh2kEE"
 
 
 # ─── 加载原子 ───────────────────────────────────────────────────────────────────
@@ -147,17 +150,8 @@ def _get_or_create_table(app_token: str) -> str | None:
 
 
 def import_to_feishu(atoms: list[dict], dry_run: bool = False) -> None:
-    app_token = os.environ.get("FEISHU_BITABLE_APP_TOKEN")
-    if not app_token:
-        print("⚠️  FEISHU_BITABLE_APP_TOKEN 未设置，跳过飞书导入")
-        return
-
     if dry_run:
         print(f"[dry-run] 将写入 {len(atoms)} 条记录到飞书 {FEISHU_TABLE_NAME}")
-        return
-
-    table_id = _get_or_create_table(app_token)
-    if not table_id:
         return
 
     ok = skip = 0
@@ -179,8 +173,8 @@ def import_to_feishu(atoms: list[dict], dry_run: bool = False) -> None:
             fields["关联Skill"] = atom["skills"]
 
         payload = json.dumps({"fields": fields}, ensure_ascii=False)
-        cmd = shlex.join(["base", "+record-create", "--base-token", app_token,
-                          "--table-id", table_id, "--json", payload])
+        cmd = shlex.join(["base", "+record-create", "--base-token", ATOMS_APP_TOKEN,
+                          "--table-id", ATOMS_TABLE_ID, "--json", payload])
         resp = _lark(cmd)
         if resp.get("code") in (None, 0):
             ok += 1
