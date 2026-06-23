@@ -2,7 +2,7 @@
 name: xhs-content-system
 description: |
   小红书内容结构化系统（云原生版）。把飞书数据底座里的内容资产结构化：审计底座规模→生成主题地图→分类内容单元→装配选题卡片。
-  触发方式：/xhs-content-system、/dbs-content-system、/内容结构化、「把内容做成系统」「内容工程化」「主题地图」
+  触发方式：「把内容做成系统」「内容工程化」「主题地图」
 ---
 
 # xhs-content-system：内容结构化系统

@@ -2,7 +2,7 @@
 name: xhs-chatroom-austrian
 description: |
   奥派经济聊天室。用于小红书商业模式、定价、供需、市场选择等问题的奥派视角辩论。
-  触发方式：/xhs-chatroom-austrian、/dbs-chatroom-austrian、/奥派、「奥派聊天室」「哈耶克」「米塞斯」「市场机制」
+  触发方式：「奥派聊天室」「哈耶克」「米塞斯」「市场机制」
 ---
 
 # xhs-chatroom-austrian：奥派经济聊天室

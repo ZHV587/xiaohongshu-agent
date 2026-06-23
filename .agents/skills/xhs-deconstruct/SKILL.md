@@ -2,7 +2,7 @@
 name: xhs-deconstruct
 description: |
   小红书概念拆解。用维特根斯坦式审查拆掉「个人 IP、高价值内容、利他、差异化」等空转词，改写成可指物表达。
-  触发方式：/xhs-deconstruct、/dbs-deconstruct、「概念拆解」「去黑话」「这个词什么意思」「个人IP」「高价值内容」「差异化」
+  触发方式：「概念拆解」「去黑话」「这个词什么意思」「个人IP」「高价值内容」「差异化」
 ---
 
 # xhs-deconstruct：概念拆解

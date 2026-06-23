@@ -2,7 +2,7 @@
 name: xhs-learning
 description: |
   交互式自适应学习。把复杂课题拆成连续章节，根据用户上一篇的反馈调整下一篇的深度和角度。
-  触发方式：/xhs-learning、/dbs-learning、/dbs-learn、/学习、「带我学」「下一篇」「继续学」「我想系统学」
+  触发方式：「学习」「带我学」「下一篇」「继续学」「接着学」「我想系统学」
 ---
 
 # xhs-learning：交互式自适应学习

@@ -2,7 +2,7 @@
 name: xhs-slowisfast
 description: |
   小红书慢就是快诊断。识别用户为了提速而绕开关键判断、素材沉淀、反馈复盘的行为，把必须慢做的环节变成资产。
-  触发方式：/xhs-slowisfast、/dbs-slowisfast、「慢就是快」「我想提速」「怎么自动化」「能不能省掉这步」
+  触发方式：「慢就是快」「我想提速」「怎么自动化」「能不能省掉这步」
 ---
 
 # xhs-slowisfast：慢就是快

@@ -2,7 +2,7 @@
 name: xhs-good-question
 description: |
   小红书好问题说明书。把「帮我看看账号」「怎么涨粉」「文案怎么写」改成 Agent 可推理、可批评、可验证的问题。
-  触发方式：/xhs-good-question、/dbs-good-question、/好问题、「问题说清楚」「提问说明书」「帮我看看」「怎么问」
+  触发方式：「好问题」「问题说清楚」「提问说明书」「帮我看看」「怎么问」
 ---
 
 # xhs-good-question：好问题说明书

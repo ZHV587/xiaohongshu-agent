@@ -1,9 +1,8 @@
 ---
 name: xhs-system
 description: |
-  系统工具集。存档当前诊断状态（/xhs-save、/dbs-save）、拉取上次存档（/xhs-restore、/dbs-restore）、
-  打包阶段报告（/xhs-report、/dbs-report）、Agent工作台迁移审计（/dbs-agent-migration）。
-  触发方式：/xhs-save、/xhs-restore、/xhs-report、/xhs-system、/dbs-save、/dbs-restore、/dbs-report、/dbs-agent-migration、「保存」「存档」「接上次」「打包报告」「工作台迁移」
+  系统工具集。存档当前诊断状态、拉取上次存档、打包阶段报告、Agent工作台迁移审计。
+  触发方式：「保存」「存档」「接上次」「接着上次」「打包报告」「阶段报告」「工作台迁移」「迁移工作台」
 ---
 
 # xhs-system：系统工具

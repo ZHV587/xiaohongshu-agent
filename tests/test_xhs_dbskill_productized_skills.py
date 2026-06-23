@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -8,35 +9,23 @@ def _skill_text(name: str) -> str:
     return (ROOT / ".agents" / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
 
 
-def test_productized_dbskill_skills_exist_with_dbs_aliases():
-    expected = {
-        "xhs-slowisfast": "/dbs-slowisfast",
-        "xhs-goal": "/dbs-goal",
-        "xhs-deconstruct": "/dbs-deconstruct",
-        "xhs-good-question": "/dbs-good-question",
-    }
-
-    for skill_name, alias in expected.items():
-        text = _skill_text(skill_name)
-        assert f"name: {skill_name}" in text
-        assert alias in text
+def _frontmatter(name: str) -> str:
+    parts = _skill_text(name).split("---")
+    return parts[1] if len(parts) >= 3 else _skill_text(name)
 
 
-def test_xhs_system_documents_report_alias():
-    text = _skill_text("xhs-system")
+def test_productized_dbskill_skills_exist_with_semantic_triggers():
+    """由上游 dbskill 产品化而来的 skill 仍存在,且走语义触发(中文短语)。"""
+    expected = ["xhs-slowisfast", "xhs-goal", "xhs-deconstruct", "xhs-good-question"]
 
-    assert "/dbs-report" in text
-    assert "报告" in text
+    for skill_name in expected:
+        fm = _frontmatter(skill_name)
+        assert f"name: {skill_name}" in fm
+        assert len(re.findall(r"「[^」]+」", fm)) >= 2, f"{skill_name} 缺语义触发短语"
 
 
-def test_router_mentions_productized_dbskill_aliases():
-    prompt = (ROOT / "prompts.py").read_text(encoding="utf-8")
+def test_xhs_system_documents_report_capability():
+    fm = _frontmatter("xhs-system")
 
-    for alias in [
-        "/dbs-slowisfast",
-        "/dbs-goal",
-        "/dbs-deconstruct",
-        "/dbs-good-question",
-        "/dbs-report",
-    ]:
-        assert alias in prompt
+    assert "报告" in fm
+    assert "「打包报告」" in fm or "「阶段报告」" in fm

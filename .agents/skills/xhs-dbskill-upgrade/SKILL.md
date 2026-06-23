@@ -2,7 +2,7 @@
 name: xhs-dbskill-upgrade
 description: |
   dbskill 融合升级审计。检查上游 dontbesilent2025/dbskill 版本、技能清单、知识原子和本地 xhs-* 映射是否漂移。
-  触发方式：/xhs-dbskill-upgrade、/dbskill-upgrade、「检查dbskill版本」「同步dbskill」「dbskill升级」
+  触发方式：「检查dbskill版本」「同步dbskill」「dbskill升级」「dbskill融合审计」
 ---
 
 # xhs-dbskill-upgrade：dbskill 升级审计
