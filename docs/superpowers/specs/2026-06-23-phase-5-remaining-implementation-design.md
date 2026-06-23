@@ -20,13 +20,65 @@ This design document outlines the exact architecture, code modifications, and te
 ## User Review Required
 
 > [!IMPORTANT]
-> **Ranking Formula Coefficients**
+> **Ranking Formula Coefficients & Math Formulation**
 > We propose the following linear ranking formula for search results:
 > $$Score_{final} = 0.6 \times S_{relevance} + 0.2 \times W_{freshness} + 0.1 \times W_{type} + 0.1 \times W_{performance}$$
-> - **Relevance ($S_{relevance}$)**: Normalized vector similarity distance or Meilisearch rating (0.0 to 1.0).
-> - **Freshness ($W_{freshness}$)**: Exponential decay based on days since `source_updated_at`. If `source_updated_at` is unknown, apply a fixed multiplier penalty of `0.7`.
-> - **Resource Type ($W_{type}$)**: `1.0` for performance metrics or generated copies, `0.8` for topic cards, and `0.6` for ordinary documents.
-> - **Performance ($W_{performance}$)**: Scaled performance index (0.0 to 1.0) derived from linked `performance_metric` (likes, collections, shares). Max boost is `0.2` if the metrics show high user engagement.
+> 
+> * **Relevance ($S_{relevance}$)**: Normalized vector similarity score ($1 - \text{CosineDistance}$, bounds: $[0.0, 1.0]$) or Meilisearch score normalized by dividing the raw score by the maximum score in the current batch.
+> * **Freshness ($W_{freshness}$)**: Modeled using exponential decay:
+>   $$W_{freshness} = e^{-0.05 \times t}$$
+>   where $t$ is the time delta in days between the current time and `source_updated_at`. If `source_updated_at` is unknown, we assign a fixed penalty of $W_{freshness} = 0.7$.
+> * **Resource Type Weight ($W_{type}$)**: 
+>   * `performance_metric` / `generated_copy` (best practices & feedback): `1.0`
+>   * `generated_topic` (prioritized ideas): `0.8`
+>   * Ordinary documents (`doc`, `feishu_doc`): `0.6`
+> * **Performance Boost ($W_{performance}$)**: Query the Postgres database for any linked `performance_metric` resource via the `measured_by` edge. The performance score is squashed to $[0.0, 1.0]$ using a hyperbolic tangent function:
+>   $$W_{performance} = \tanh\left(\frac{\text{likes} + 2 \times \text{collects} + 5 \times \text{comments}}{500}\right)$$
+>   A highly viral post (e.g. 500 likes equivalent) yields $\tanh(1) \approx 0.76$, translating to a near-maximum boost.
+
+---
+
+## Detailed Component Specifications
+
+### 1. Deduplication Algorithm
+* **Strict Mapping Deduplication**: If two search results share the same `external_id` (from the `resource_mappings` table), they represent the same underlying document. We keep only the candidate with the highest similarity score.
+* **Fuzzy Title Deduplication**: For results in the same query batch, if their titles have a sequence similarity ratio $> 0.90$ (computed using Python's standard `difflib.SequenceMatcher`), they are considered duplicates. We keep the one with the higher score.
+
+### 2. Search & Retrieval Context Expansion
+* The Python tools `search_resources` and `semantic_search_resources` will output ranked results including:
+  ```json
+  {
+    "resource_id": "...",
+    "title": "...",
+    "summary": "...",
+    "score": 0.892,
+    "why_selected": "Matched keyword 'A' in title, refreshed 2 days ago, and has high historical engagement (823 likes).",
+    "rank_signals": {
+      "relevance": 0.92,
+      "freshness": 0.90,
+      "performance": 0.85
+    }
+  }
+  ```
+
+### 3. React Frontend State Provider Pattern
+To avoid state mutation conflicts and deep prop-drilling, the split components will communicate via a unified context:
+* Create `ThreadContext` inside `web/src/components/thread/ThreadContext.tsx`:
+  ```typescript
+  interface ThreadState {
+    messages: Message[];
+    isLoading: boolean;
+    isStreaming: boolean;
+    activeSidebarView: "feishu" | "evidence" | "facts" | null;
+    selectedEvidence: Evidence | null;
+  }
+  interface ThreadActions {
+    sendMessage: (content: string) => Promise<void>;
+    selectEvidence: (evidence: Evidence) => void;
+    toggleSidebar: (view: "feishu" | "evidence" | "facts" | null) => void;
+  }
+  ```
+* All sub-components (`ChatTimeline`, `ComposerPanel`, `EvidenceInspector`) will import and use the custom hook `useThread()`.
 
 ---
 
@@ -50,8 +102,11 @@ Ensure that the results returned by `semantic_search` maintain all necessary met
 
 #### [MODIFY] [index.tsx](file:///e:/小红书智能体/web/src/components/thread/index.tsx)
 - Refactor as `ThreadLayout` container.
-- Manage shared state and expose it via a React Context (`ThreadContext`).
+- Manage shared state and expose it via `ThreadContext.Provider`.
 - Outsource sub-components to separate files.
+
+#### [NEW] [ThreadContext.tsx](file:///e:/小红书智能体/web/src/components/thread/ThreadContext.tsx)
+Implements the context state and the `useThread()` custom hook.
 
 #### [NEW] [types.ts](file:///e:/小红书智能体/web/src/components/thread/types.ts)
 Expose standard TypeScript definitions for `Message`, `Evidence`, `Topic`, `Copy`, and `RuntimeFact`.
