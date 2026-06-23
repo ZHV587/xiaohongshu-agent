@@ -29,18 +29,8 @@ def _set_assembly_env(monkeypatch):
 def _reload_subagents():
     import sys
     import importlib
-    for name in [
-        "subagents_positioning",
-        "subagents_action",
-        "subagents_research",
-        "subagents_decision",
-        "subagents_planning",
-        "subagents_copywriting",
-        "subagents_audit",
-        "subagents_system",
-    ]:
-        if name in sys.modules:
-            importlib.reload(sys.modules[name])
+    if "subagents_executor" in sys.modules:
+        importlib.reload(sys.modules["subagents_executor"])
 
 
 def test_agent_importable_and_compiled(monkeypatch):
@@ -373,7 +363,8 @@ def test_agent_import_does_not_update_lark_adapters(monkeypatch):
     assert update_calls == []
 
 
-def test_agent_registers_humanizer_editor(monkeypatch):
+def test_agent_registers_executor_subagents(monkeypatch):
+    """xhs-router 必须注册全部4个执行型子智能体，不多不少。"""
     _set_assembly_env(monkeypatch)
     monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
@@ -389,20 +380,17 @@ def test_agent_registers_humanizer_editor(monkeypatch):
 
     monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
     _reload_subagents()
-    
+
     import agent as agent_module
     importlib.reload(agent_module)
 
-    subagents = captured_subagents
-    subagent_names = {sub["name"] for sub in subagents}
-    assert "humanizer-editor" in subagent_names
-    
-    editor = next(sub for sub in subagents if sub["name"] == "humanizer-editor")
-    assert "AI腔" in editor["description"]
-    assert "AI腔调" in editor["system_prompt"]
+    # 只有执行型子智能体，不含旧的域主 agent
+    names = {s["name"] for s in captured_subagents}
+    assert names == {"topic-generator", "copy-generator", "state-manager", "persona-distiller"}
 
 
-def test_agent_registers_persona_distiller(monkeypatch):
+def test_executor_subagents_have_persistence_tools(monkeypatch):
+    """每个执行型子智能体必须持有其负责的持久化工具。"""
     _set_assembly_env(monkeypatch)
     monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
@@ -418,102 +406,21 @@ def test_agent_registers_persona_distiller(monkeypatch):
 
     monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
     _reload_subagents()
-    
+
     import agent as agent_module
     importlib.reload(agent_module)
 
-    subagents = captured_subagents
-    subagent_names = {sub["name"] for sub in subagents}
-    assert "persona-distiller" in subagent_names
-    
-    distiller = next(sub for sub in subagents if sub["name"] == "persona-distiller")
-    assert "人设" in distiller["description"]
-    assert "YAML Frontmatter" in distiller["system_prompt"]
+    by_name = {s["name"]: s for s in captured_subagents}
 
+    topic = by_name["topic-generator"]
+    assert any(getattr(t, "name", "") == "save_generated_topic" for t in topic["tools"])
+    assert any(getattr(t, "name", "") == "sync_topic_to_feishu" for t in topic["tools"])
 
-def test_agent_registers_monetization_architect(monkeypatch):
-    _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+    copy = by_name["copy-generator"]
+    assert any(getattr(t, "name", "") == "save_generated_copy" for t in copy["tools"])
+    assert any(getattr(t, "name", "") == "sync_copy_to_feishu" for t in copy["tools"])
 
-    import importlib
-    import deepagents
-
-    captured_subagents = []
-    real_create = deepagents.create_deep_agent
-
-    def _capturing_create(*args, **kwargs):
-        captured_subagents.extend(kwargs.get("subagents", []))
-        return real_create(*args, **kwargs)
-
-    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
-    _reload_subagents()
-    
-    import agent as agent_module
-    importlib.reload(agent_module)
-
-    subagents = captured_subagents
-    subagent_names = {sub["name"] for sub in subagents}
-    assert "monetization-architect" in subagent_names
-    
-    architect = next(sub for sub in subagents if sub["name"] == "monetization-architect")
-    assert "变现" in architect["description"] or "转化漏斗" in architect["description"]
-    assert "商业变现" in architect["system_prompt"]
-
-
-def test_agent_registers_benchmark_denoiser(monkeypatch):
-    _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
-
-    import importlib
-    import deepagents
-
-    captured_subagents = []
-    real_create = deepagents.create_deep_agent
-
-    def _capturing_create(*args, **kwargs):
-        captured_subagents.extend(kwargs.get("subagents", []))
-        return real_create(*args, **kwargs)
-
-    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
-    _reload_subagents()
-    
-    import agent as agent_module
-    importlib.reload(agent_module)
-
-    subagents = captured_subagents
-    subagent_names = {sub["name"] for sub in subagents}
-    assert "benchmark-denoiser" in subagent_names
-    
-    denoiser = next(sub for sub in subagents if sub["name"] == "benchmark-denoiser")
-    assert "去噪" in denoiser["description"]
-    assert "五重去噪漏斗" in denoiser["system_prompt"] or "五重漏斗去噪法" in denoiser["system_prompt"]
-
-
-def test_agent_registers_strategy_auditor(monkeypatch):
-    _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
-
-    import importlib
-    import deepagents
-
-    captured_subagents = []
-    real_create = deepagents.create_deep_agent
-
-    def _capturing_create(*args, **kwargs):
-        captured_subagents.extend(kwargs.get("subagents", []))
-        return real_create(*args, **kwargs)
-
-    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
-    _reload_subagents()
-    
-    import agent as agent_module
-    importlib.reload(agent_module)
-
-    subagents = captured_subagents
-    subagent_names = {sub["name"] for sub in subagents}
-    assert "strategy-auditor" in subagent_names
-    
-    auditor = next(sub for sub in subagents if sub["name"] == "strategy-auditor")
-    assert "审计" in auditor["description"]
-    assert "策略与调性质检报告" in auditor["system_prompt"] or "AI 痕迹筛查" in auditor["system_prompt"]
+    state = by_name["state-manager"]
+    assert any(getattr(t, "name", "") == "save_session_snapshot" for t in state["tools"])
+    assert any(getattr(t, "name", "") == "sync_diagnosis_to_feishu" for t in state["tools"])
 

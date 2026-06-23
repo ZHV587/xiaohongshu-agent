@@ -365,6 +365,34 @@ def get_resource_performance(
         )
 
 
+@tool
+def save_session_snapshot(
+    project_name: str,
+    title: str,
+    content: str,
+    metadata: dict[str, Any] | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Persist session state, account positioning, diagnosis, or report snapshots into the Postgres database.
+    Use this for session diagnostics database persistence instead of only saving locally.
+    """
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        resource = repo.upsert_resource(
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            resource_type="session_snapshot",
+            title=f"[{project_name}] {title}",
+            summary=title,
+            content_text=content,
+            content_json=metadata or {},
+            visibility="team",
+            owner_open_id=actor,
+            outbox_requests=default_write_requests(),
+        )
+    return {"ok": True, "resource_id": str(resource.id)}
+
+
 data_foundation_tools = [
     search_resources,
     semantic_search_resources,
@@ -377,4 +405,6 @@ data_foundation_tools = [
     save_user_feedback,
     save_performance_metric,
     get_resource_performance,
+    save_session_snapshot,
 ]
+
