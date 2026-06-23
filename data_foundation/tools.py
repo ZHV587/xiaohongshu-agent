@@ -116,6 +116,7 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
     actor = actor_from_config(config)
     from data_foundation.engine_config import meili_config_from_env
     from data_foundation.meili_client import MeiliResourceIndex
+    from data_foundation.search_ranker import rank_evidence
 
     cfg = meili_config_from_env()
     if cfg.state != "enabled":
@@ -137,13 +138,26 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
             actor_open_id=actor,
             resource_ids=ids,
         )
-    return {"ok": True, "results": _rows_to_payload(rows[:want])}
+        valid_ids = [str(r["id"]) for r in rows]
+        perf_data = repo.bulk_performance_metrics(
+            tenant_id=default_tenant_id(),
+            resource_ids=valid_ids,
+        )
+    raw_results = _rows_to_payload(rows)
+    ranked_results = rank_evidence(
+        tenant_id=default_tenant_id(),
+        results=raw_results,
+        performance_data=perf_data,
+        limit=want,
+    )
+    return {"ok": True, "results": ranked_results}
 
 
 @tool
 def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfig | None = None) -> dict[str, Any]:
     """Search readable resources by configured embedding provider and pgvector."""
     actor = actor_from_config(config)
+    from data_foundation.search_ranker import rank_evidence
 
     def _fulltext_fallback(reason: str) -> dict[str, Any]:
         # 语义不可用时降级到全文(Meilisearch),与设计一致(全文引擎=Meili,非 PG)
@@ -171,7 +185,12 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
                 actor_open_id=actor,
                 embedding=embedding,
                 embedding_model=active_index.embedding_model,
-                top_k=top_k,
+                top_k=top_k * 5,
+            )
+            valid_ids = [res.resource_id for res in results]
+            perf_data = repo.bulk_performance_metrics(
+                tenant_id=default_tenant_id(),
+                resource_ids=valid_ids,
             )
         except EmbeddingSearchUnavailable as exc:
             return _fulltext_fallback(exc.reason_code)
@@ -181,7 +200,14 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
         except ValueError as exc:
             # 向量校验失败(provider 忽略 dimensions 返回非预期维度、含 NaN 等):降级。
             return _fulltext_fallback(f"EMBEDDING_QUERY_INVALID_VECTOR: {exc}")
-    return {"ok": True, "mode": "semantic", "results": _search_payload(results)}
+    raw_results = _search_payload(results)
+    ranked_results = rank_evidence(
+        tenant_id=default_tenant_id(),
+        results=raw_results,
+        performance_data=perf_data,
+        limit=top_k,
+    )
+    return {"ok": True, "mode": "semantic", "results": ranked_results}
 
 
 @tool

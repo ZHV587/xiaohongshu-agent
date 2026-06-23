@@ -217,3 +217,54 @@ def test_get_resource_performance_tool_reads_for_current_actor(monkeypatch):
         "actor_open_id": "ou_user",
         "resource_id": "generated-1",
     }
+
+
+def test_search_resources_integrates_ranking_fields(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+
+    # Define bulk_performance_metrics on our mock RecordingRepository
+    def _bulk_perf(tenant_id, resource_ids):
+        return {rid: [{"metrics": {"likes": 100}}] for rid in resource_ids}
+    repo.bulk_performance_metrics = _bulk_perf
+
+    def _readable_rows(tenant_id, actor_open_id, resource_ids):
+        return [
+            {
+                "id": rid,
+                "type": "doc",
+                "title": "露营装备",
+                "summary": "露营",
+                "visibility": "team",
+                "updated_at": None,
+                "source_updated_at": None,
+                "score": 1.0
+            }
+            for rid in resource_ids
+        ]
+    repo.readable_rows_by_ids = _readable_rows
+
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+    import data_foundation.engine_config as engine_config
+    monkeypatch.setattr(engine_config, "meili_config_from_env", lambda: type("Cfg", (), {"state": "enabled"})())
+
+    class MockIndex:
+        @classmethod
+        def from_config(cls, cfg):
+            return cls()
+        def search(self, query, tenant_id, limit):
+            return ["res-1"]
+        def ensure_index(self):
+            pass
+
+    import data_foundation.meili_client as meili_client
+    monkeypatch.setattr(meili_client, "MeiliResourceIndex", MockIndex)
+
+    result = df_tools.search_resources.func(query="露营", config=identity_config("ou_user"))
+
+    assert result["ok"] is True
+    assert len(result["results"]) == 1
+    assert "why_selected" in result["results"][0]
+    assert "rank_signals" in result["results"][0]
+

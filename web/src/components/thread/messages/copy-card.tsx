@@ -3,6 +3,8 @@ import { useState } from "react";
 import { Copy, CopyCheck, Database } from "lucide-react";
 import type { CopySegment } from "@/lib/xhs-blocks";
 import { EvidenceTime } from "./evidence-time";
+import { useThread } from "../ThreadContext";
+import { cn } from "@/lib/utils";
 
 export function CopyCard({ data }: { data: CopySegment["data"] }) {
   const [copied, setCopied] = useState(false);
@@ -21,6 +23,8 @@ export function CopyCard({ data }: { data: CopySegment["data"] }) {
       setTimeout(() => setCopied(false), 2000);
     });
   };
+
+  const threadCtx = useThread();
 
   return (
     <div className="border-border bg-card overflow-hidden rounded-2xl border">
@@ -55,14 +59,28 @@ export function CopyCard({ data }: { data: CopySegment["data"] }) {
           <div className="border-border/70 mt-3 border-t pt-3">
             <div className="text-muted-foreground mb-2 flex items-center gap-1.5 text-xs font-medium">
               <Database className="size-3.5" />
-              <span>创作依据</span>
+              <span>创作依据 (点击可查看分析)</span>
             </div>
             <div className="space-y-2">
               {data.evidence.map((source) => (
-                <div key={source.resource_id} className="text-xs leading-relaxed">
-                  <div className="text-foreground/80 font-medium">{source.title}</div>
-                  <div className="text-muted-foreground">{source.summary}</div>
-                  <EvidenceTime sourceUpdatedAt={source.source_updated_at} indexedAt={source.indexed_at} />
+                <div
+                  key={source.resource_id}
+                  onClick={() => {
+                    if (threadCtx) {
+                      threadCtx.setSelectedEvidence(source);
+                      threadCtx.setRightTab("evidence");
+                    }
+                  }}
+                  className={cn(
+                    "text-xs leading-relaxed p-2.5 rounded-xl border border-coral-light/20 bg-oats-light/20 cursor-pointer hover:border-coral hover:bg-white hover:shadow-2xs transition-all",
+                    threadCtx?.selectedEvidence?.resource_id === source.resource_id && "border-coral bg-white shadow-2xs"
+                  )}
+                >
+                  <div className="text-foreground/80 font-semibold">{source.title}</div>
+                  <div className="text-muted-foreground line-clamp-2 mt-0.5">{source.summary}</div>
+                  <div className="mt-1">
+                    <EvidenceTime sourceUpdatedAt={source.source_updated_at} indexedAt={source.indexed_at} />
+                  </div>
                 </div>
               ))}
             </div>

@@ -36,6 +36,10 @@ class _FakeRepository:
         self.calls.append(("active_index", {"tenant_id": tenant_id}))
         return self.active_index
 
+    def bulk_performance_metrics(self, tenant_id: str, resource_ids: list[str]):
+        self.calls.append(("bulk_performance_metrics", {"tenant_id": tenant_id, "resource_ids": resource_ids}))
+        return {rid: [] for rid in resource_ids}
+
     def readable_rows_by_ids(self, **kwargs):
         self.calls.append(("readable_by_ids", kwargs))
         ids = kwargs.get("resource_ids") or []
@@ -534,7 +538,7 @@ def test_semantic_search_tool_uses_active_index_historical_profile(monkeypatch, 
     assert captured["config"].base_url == "https://old.example/v1"
     assert captured["config"].api_key == "old-key"
     assert captured["config"].timeout_seconds == 11.0
-    assert [call[0] for call in repo.calls] == ["active_index", "semantic"]
+    assert [call[0] for call in repo.calls] == ["active_index", "semantic", "bulk_performance_metrics"]
 
 
 def test_embed_query_sends_requested_dimensions(monkeypatch):

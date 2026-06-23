@@ -93,6 +93,9 @@ docker compose up -d --build
 - Phase 4 仍通过 DeepAgents 官方 `tools`、`skills`、`subagents` 和 `middleware` 扩展；LLM 负责分析与创作，Postgres 只提供来源、时效和关系上下文，不新增业务 CLI 或管理后台。
 - active outbox processor:`embedding_generate`(pgvector 语义)、`meili_index`(Meilisearch 全文)、`graph_ingest`(FalkorDB 图谱)三者均已启用。检索/图谱以引擎为唯一路径:`search_resources` 走 Meilisearch、`graph_expand` 走 FalkorDB、`semantic_search_resources` 走 pgvector;引擎返回 resource_id 后统一回 Postgres 经 `readable_resource_where` 裁决可见性。PG tsvector 全文与递归 SQL 图谱旧逻辑已移除,无降级(引擎不可用时工具返回 `ok:false`)。Graphiti、Dagster 仍未启用。
 - `sync_sources.credentials` 按当前开发决策允许明文保存在 Postgres，但凭证不得进入日志、错误摘要、outbox payload、遥测或后续只读状态接口。
+- **第五阶段证据检索与服务解耦**：
+  - **检索重排序 (Retrieval Ranking)**：`search_resources` 与 `semantic_search_resources` 工具内置 `rank_evidence` 加权排序服务，综合考虑相关度归一化得分、源端时效指数衰减（$e^{-0.05 \times t}$）、资源类型权重（`performance_metric`/`generated_copy`/`generated_topic`）及 $\tanh$ 历史效果表现分，并利用 Python 的 `SequenceMatcher` 进行 $>0.90$ 相似度的标题模糊去重。
+  - **模块化前端结构**：`index.tsx` 已重构为状态提供者与布局 Wrapper，将聊天时间线（`ChatTimeline.tsx`）、输入控件（`ComposerPanel.tsx`）、依据分析看板（`EvidenceInspector.tsx`）与飞书协作看板（`RightInspector.tsx`）完全解耦，通过 `ThreadContext` 统一管理状态。
 
 ## 测试
 ```bash
