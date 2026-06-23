@@ -34,7 +34,7 @@ This design document outlines the exact architecture, code modifications, and te
 >   * Ordinary documents (`doc`, `feishu_doc`): `0.6`
 > * **Performance Boost ($W_{performance}$)**: Query the Postgres database for any linked `performance_metric` resource via the `measured_by` edge. The performance score is squashed to $[0.0, 1.0]$ using a hyperbolic tangent function:
 >   $$W_{performance} = \tanh\left(\frac{\text{likes} + 2 \times \text{collects} + 5 \times \text{comments}}{500}\right)$$
->   A highly viral post (e.g. 500 likes equivalent) yields $\tanh(1) \approx 0.76$, translating to a near-maximum boost.
+>   A highly viral post (e.g. 500 likes equivalent) yields $\tanh(1) \approx 0.76$, translating to a near-maximum boost. Missing fields in `content_json` default to `0`.
 
 ---
 
@@ -43,8 +43,20 @@ This design document outlines the exact architecture, code modifications, and te
 ### 1. Deduplication Algorithm
 * **Strict Mapping Deduplication**: If two search results share the same `external_id` (from the `resource_mappings` table), they represent the same underlying document. We keep only the candidate with the highest similarity score.
 * **Fuzzy Title Deduplication**: For results in the same query batch, if their titles have a sequence similarity ratio $> 0.90$ (computed using Python's standard `difflib.SequenceMatcher`), they are considered duplicates. We keep the one with the higher score.
+* **Algorithm Flow**:
+  1. Rank raw results by Relevance Score ($S_{relevance}$) in descending order.
+  2. Iterate through the ranked list: if the current item is similar to any already-selected item (fuzzy title ratio $> 0.90$ or matching `external_id`), skip it. Otherwise, add it to the final output list.
 
-### 2. Search & Retrieval Context Expansion
+### 2. Database Bulk Query Optimization
+To prevent the $N+1$ query problem when resolving `performance_metric` links for a batch of $N$ resources:
+* We will implement a bulk SQL query helper inside `ResourceRepository`:
+  ```python
+  def bulk_performance_metrics(self, tenant_id: str, resource_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+      # Query linked performance_metric resources using one IN (...) query over resource_edges
+  ```
+* This reduces database roundtrips to exactly 1 query during evidence ranking.
+
+### 3. Search & Retrieval Context Expansion
 * The Python tools `search_resources` and `semantic_search_resources` will output ranked results including:
   ```json
   {
@@ -60,8 +72,10 @@ This design document outlines the exact architecture, code modifications, and te
     }
   }
   ```
+* All input limits (`limit` / `top_k`) will be clamped to $[1, 20]$ to avoid over-fetching and performance degradation.
+* If a search method fails (e.g. Meilisearch index unavailable or pgvector query raises exception), the ranker handles the exception gracefully, falling back to empty list results instead of crashing the tool execution.
 
-### 3. React Frontend State Provider Pattern
+### 4. React Frontend State Provider Pattern
 To avoid state mutation conflicts and deep prop-drilling, the split components will communicate via a unified context:
 * Create `ThreadContext` inside `web/src/components/thread/ThreadContext.tsx`:
   ```typescript
