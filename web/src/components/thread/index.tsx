@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import { useEffect, useRef, useState, FormEvent, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { useStreamContext } from "@/providers/Stream";
+import { useStreamContext } from "@/providers/stream-context";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import {
   ensureToolCallsHaveResponses,

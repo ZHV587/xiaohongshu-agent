@@ -1,6 +1,6 @@
 // web/src/components/thread/messages/topic-cards.tsx
 import { ChevronRight, Database } from "lucide-react";
-import { useThreadActions } from "@/lib/thread-actions";
+import { useThreadActions } from "@/lib/thread-actions-context";
 import { MarkdownText } from "../markdown-text";
 import type { TopicsSegment } from "@/lib/xhs-blocks";
 import { EvidenceTime } from "./evidence-time";

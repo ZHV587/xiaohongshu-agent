@@ -32,18 +32,15 @@ def test_build_backend_skills_content_readable():
     assert result.file_data["content"].strip()
 
 
-def test_build_backend_routes_shared_to_store():
-    """/shared/ 前缀应路由到 StoreBackend,而非默认 StateBackend。
-
-    用公开属性 backend.routes(CompositeBackend 文档化的 Attributes)验证路由表,
-    不调用私有的 _get_backend_and_key。
-    """
+def test_build_backend_has_no_business_file_routes():
+    """业务资产只能走数据库工具，不注册虚拟文件路由。"""
     backend = build_backend()
-    assert isinstance(backend.routes["/shared/"], StoreBackend)
-
-
-def test_build_backend_routes_drafts_to_default_state():
-    """/drafts/ 未单独路由,应落到默认 StateBackend。"""
-    backend = build_backend()
-    assert "/drafts/" not in backend.routes
+    assert set(backend.routes) == {"/skills/", "/memories/", "/user-memories/"}
     assert isinstance(backend.default, StateBackend)
+
+
+def test_build_backend_routes_agent_memories_to_store():
+    """DeepAgents 内部团队和用户记忆继续使用独立 StoreBackend。"""
+    backend = build_backend()
+    assert isinstance(backend.routes["/memories/"], StoreBackend)
+    assert isinstance(backend.routes["/user-memories/"], StoreBackend)

@@ -1,6 +1,6 @@
 // web/src/components/thread/history/index.tsx
 import { Button } from "@/components/ui/button";
-import { useThreads } from "@/providers/Thread";
+import { useThreads } from "@/providers/thread-context";
 import { Thread } from "@langchain/langgraph-sdk";
 import { useEffect, useState } from "react";
 
@@ -169,7 +169,7 @@ function SidebarBody({
       .then(setThreads)
       .catch(console.error)
       .finally(() => setThreadsLoading(false));
-  }, []);
+  }, [getThreads, setThreads, setThreadsLoading]);
 
   return (
     <div className="flex h-full w-full flex-col">

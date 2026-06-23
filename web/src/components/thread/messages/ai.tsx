@@ -1,6 +1,6 @@
 import { parsePartialJson } from "@langchain/core/output_parsers";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useStreamContext } from "@/providers/Stream";
+import { useStreamContext } from "@/providers/stream-context";
 import { AIMessage, Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { getContentString } from "../utils";
@@ -14,7 +14,7 @@ import { Fragment } from "react/jsx-runtime";
 import { isAgentInboxInterruptSchema } from "@/lib/agent-inbox-interrupt";
 import { ThreadView } from "../agent-inbox";
 import { GenericInterruptView } from "./generic-interrupt";
-import { useArtifact } from "../artifact";
+import { useArtifact } from "../artifact-hooks";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { TopicCards } from "./topic-cards";
 import { CopyCard } from "./copy-card";
@@ -140,8 +140,7 @@ export function ThinkingAura({
       if (!tc.name) return false;
       const path = tc.args ? String(tc.args.file_path ?? tc.args.path ?? tc.args.filename ?? "") : "";
       if (path.includes("/skills/")) return false;
-      if (tc.name === "read_file" && (path.includes("/analysis/") || path.includes("/shared/"))) return false;
-      if ((tc.name === "write_file" || tc.name === "edit_file") && path.includes("/analysis/")) return false;
+      if (tc.name === "read_file" || tc.name === "write_file" || tc.name === "edit_file") return false;
       return true;
     });
   }, [toolCalls]);
@@ -184,16 +183,6 @@ export function ThinkingAura({
         logs.push(`[${formatOffsetTime(seconds + 3)}] [ANALYST] 词频统计：#露营装备 (42%), #新手避坑 (38%), #亲子出游 (20%)`);
         logs.push(`[${formatOffsetTime(seconds + 4)}] [ANALYST] 选题规则构建完成，正在输出精炼后的选题建议...`);
         seconds += 5;
-      } else if (tc.name && (tc.name.includes("write") || tc.name.includes("edit") || tc.name.includes("replace"))) {
-        const path = tc.args ? String(tc.args.file_path ?? tc.args.path ?? tc.args.filename ?? "") : "";
-        let typeText = "写入本地缓存";
-        if (path.includes("/shared/")) typeText = "更新风格库";
-        if (path.includes("/drafts/")) typeText = "生成小红书草稿";
-        
-        logs.push(`[${formatOffsetTime(seconds)}] [SYSTEM] 正在发起${typeText}指令...`);
-        logs.push(`[${formatOffsetTime(seconds + 1)}] [SYSTEM] 写入路径：${path || "/drafts/xiaohongshu_draft.md"}`);
-        logs.push(`[${formatOffsetTime(seconds + 2)}] [SYSTEM] 文件已同步，更新本地存储库及上下文成功！`);
-        seconds += 3;
       } else {
         logs.push(`[${formatOffsetTime(seconds)}] [SYSTEM] 启动底层工具 [${tc.name || "unknown"}] 并发送参数中...`);
         logs.push(`[${formatOffsetTime(seconds + 1)}] [SYSTEM] 指令执行成功，返回结果已成功注入上下文。`);
@@ -229,7 +218,7 @@ export function ThinkingAura({
     return () => {
       clearTimeout(timer);
     };
-  }, [status, targetLogs]);
+  }, [displayedLogs.length, status, targetLogs]);
 
   if (!toolCalls || toolCalls.length === 0 || visibleCalls.length === 0) return null;
 
@@ -259,16 +248,6 @@ export function ThinkingAura({
       steps.push({
         key: `task-${idx}`,
         label: isStepDone ? "已完成爆款数据深度分析" : "正在分析选题规律...",
-        isDone: isStepDone,
-      });
-    } else if (tc.name === "write_file" || tc.name === "edit_file" || tc.name === "replace_file_content" || tc.name === "multi_replace_file_content" || tc.name === "write_to_file") {
-      const path = tc.args ? String(tc.args.file_path ?? tc.args.path ?? tc.args.filename ?? "") : "";
-      let typeText = "写入本地缓存";
-      if (path.includes("/shared/")) typeText = "更新风格库";
-      if (path.includes("/drafts/")) typeText = "生成小红书草稿";
-      steps.push({
-        key: `write-${idx}`,
-        label: isStepDone ? `已成功${typeText}` : `正在${typeText}...`,
         isDone: isStepDone,
       });
     } else {

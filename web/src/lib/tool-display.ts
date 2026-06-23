@@ -47,18 +47,8 @@ export function getToolDisplay(
       return { hidden: false, running: "正在分析爆款规律…", done: "已总结这批爆款的共性" };
     case "write_file":
     case "edit_file":
-      if (path.includes("/shared/")) {
-        return { hidden: false, running: "正在更新你的风格库…", done: "已更新你的风格库" };
-      }
-      if (path.includes("/drafts/")) {
-        return { hidden: false, running: "正在保存草稿…", done: "已保存草稿" };
-      }
-      if (path.includes("/analysis/")) {
-        return { hidden: true, running: "", done: "" }; // 中间分析文件，内部噪音
-      }
-      return { hidden: false, running: "正在写入…", done: "已写入" };
+      return { hidden: true, running: "", done: "" };
     case "read_file":
-      // 读 /analysis/ /shared/ 等内部文件，不展示
       return { hidden: true, running: "", done: "" };
     default:
       return { hidden: false, running: "正在处理…", done: "已完成" };

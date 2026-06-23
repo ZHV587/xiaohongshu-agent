@@ -1,4 +1,4 @@
-"""三路由文件后端工厂。
+"""DeepAgents 只读技能与内部记忆后端工厂。
 
 CompositeBackend 按路径前缀路由(已实测:路由会剥掉前缀):
 - /skills/ → FilesystemBackend,root_dir 指向 .agents/skills/ 目录本身
@@ -6,11 +6,11 @@ CompositeBackend 按路径前缀路由(已实测:路由会剥掉前缀):
   共享只读,virtual_mode=True 避免 Windows 绝对路径问题。
   **官方 SkillsMiddleware 经此 route 读 skill**:create_deep_agent(skills=["/skills/"]) 把本 backend
   传给 SkillsMiddleware,它 ls("/skills/") 列 skill 子目录、download 各 SKILL.md 注入 prompt。
-- /shared/ → StoreBackend,跨会话/用户共享(风格沉淀)。server 注入 store。
 - /memories/ → StoreBackend,团队共享自学习记忆(MemoryMiddleware 的 AGENTS.md);
-  独立 namespace "xhs-team-memory",与 /shared/ 物理隔离避免内容互污。
+  独立 namespace "xhs-team-memory"。
 - /user-memories/ → StoreBackend,按 user 隔离的个人记忆(namespace 含 open_id)。
-- /drafts/ 及其他 → 默认 StateBackend,随会话隔离。
+
+业务资产不得写入虚拟文件系统，统一通过数据工具进入 Postgres，并按需同步飞书。
 """
 import os
 
@@ -54,14 +54,12 @@ def build_backend() -> CompositeBackend:
     """构造多路由 CompositeBackend(server 模式)。"""
     skills_root = os.path.join(_PROJECT_ROOT, ".agents", "skills")
     skills_backend = FilesystemBackend(root_dir=skills_root, virtual_mode=True)
-    shared_store = StoreBackend(namespace=lambda rt: ("xhs-shared",))
     team_memory = StoreBackend(namespace=lambda rt: ("xhs-team-memory",))
     user_memory = StoreBackend(namespace=_user_memory_namespace)
     return CompositeBackend(
         default=StateBackend(),
         routes={
             "/skills/": skills_backend,
-            "/shared/": shared_store,
             "/memories/": team_memory,
             "/user-memories/": user_memory,
         },

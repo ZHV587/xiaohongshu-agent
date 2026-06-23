@@ -79,10 +79,6 @@ agent = create_deep_agent(
     memory=["/memories/team/AGENTS.md", "/user-memories/AGENTS.md"],
     permissions=[
         FilesystemPermission(operations=["read"], paths=["/**"], mode="allow"),
-        FilesystemPermission(operations=["write"], paths=["/drafts/**"], mode="allow"),
-        FilesystemPermission(operations=["write"], paths=["/analysis/**"], mode="allow"),
-        FilesystemPermission(operations=["write"], paths=["/root/.dbs/**"], mode="allow"),
-        FilesystemPermission(operations=["write"], paths=["/shared/**"], mode="interrupt"),
         FilesystemPermission(operations=["write"], paths=["/memories/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/user-memories/**"], mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/**"], mode="deny"),

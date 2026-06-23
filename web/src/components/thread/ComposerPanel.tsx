@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useStreamContext } from "@/providers/Stream";
+import { useStreamContext } from "@/providers/stream-context";
 import { Button } from "../ui/button";
 import { LoaderCircle, Plus } from "lucide-react";
 import { Label } from "../ui/label";

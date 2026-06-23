@@ -2,7 +2,7 @@
 name: xhs-audit
 description: |
   小红书文案质检与润色。策略审计→22条AI指纹检测→意图追问→去腔改写，四段流程。
-  触发方式：/xhs-audit、/质检、「检测AI味」「帮我润色」「去AI腔」「文案审核」
+  触发方式：/xhs-audit、/dbs-ai-check、/质检、「检测AI味」「帮我润色」「去AI腔」「文案审核」
 ---
 
 # xhs-audit：文案质检与润色

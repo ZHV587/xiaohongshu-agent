@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { useStreamContext } from "@/providers/Stream";
+import { useStreamContext } from "@/providers/stream-context";
 import { Button } from "../ui/button";
 import { Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage } from "./messages/ai";

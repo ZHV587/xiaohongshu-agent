@@ -2,7 +2,7 @@
 name: xhs-chatroom
 description: |
   多专家定向聊天室。根据话题推荐专家角色，多角色辩论后出判官报告。
-  触发方式：/xhs-chatroom、/聊天室、「多角度看这个问题」「让几个专家讨论一下」「辩一辩」
+  触发方式：/xhs-chatroom、/dbs-chatroom、/聊天室、「多角度看这个问题」「让几个专家讨论一下」「辩一辩」
 ---
 
 # xhs-chatroom：多专家定向聊天室
@@ -70,7 +70,7 @@ description: |
 **对你的具体建议**：{1-3条可落地行动}
 ```
 
-调用 `write_file` 存入 `/analysis/chatroom/{话题}-{日期}.md`。
+调用 `save_session_snapshot(project_name, "聊天室判官报告-{日期}", content)` 保存到数据库，再调用 `sync_diagnosis_to_feishu(project_name, "聊天室判官报告-{日期}", content)` 同步飞书。数据库成功而飞书失败时保留数据库记录并明确提示同步失败。
 
 ---
 

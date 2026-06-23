@@ -3,7 +3,7 @@ import { AIMessage, ToolMessage } from "@langchain/langgraph-sdk";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, LoaderCircle, Check } from "lucide-react";
-import { useStreamContext } from "@/providers/Stream";
+import { useStreamContext } from "@/providers/stream-context";
 import { getToolDisplay, extractRowCount } from "@/lib/tool-display";
 
 // 进行中状态条：仅当该 tool_call 还没有对应的 ToolResult 时显示

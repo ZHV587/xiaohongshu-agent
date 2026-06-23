@@ -38,7 +38,21 @@ include = ["tools", "shared", "data_foundation"]
 data_foundation = ["schema.sql"]
 
 [tool.setuptools]
-py-modules = ["agent", "auth", "backends", "middlewares", "prompts", "subagents"]
+py-modules = [
+    "agent",
+    "auth",
+    "backends",
+    "config_center",
+    "content_rubric",
+    "lark_mcp_server",
+    "middlewares",
+    "model_health",
+    "model_registry",
+    "models",
+    "prompts",
+    "rubric_model",
+    "subagents_executor",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

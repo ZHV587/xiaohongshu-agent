@@ -370,6 +370,7 @@ def test_agent_registers_executor_subagents(monkeypatch):
 
     import importlib
     import deepagents
+    from subagents_executor import EXECUTOR_SUBAGENT_NAMES
 
     captured_subagents = []
     real_create = deepagents.create_deep_agent
@@ -386,7 +387,7 @@ def test_agent_registers_executor_subagents(monkeypatch):
 
     # 只有执行型子智能体，不含旧的域主 agent
     names = {s["name"] for s in captured_subagents}
-    assert names == {"topic-generator", "copy-generator", "state-manager", "persona-distiller"}
+    assert names == EXECUTOR_SUBAGENT_NAMES
 
 
 def test_executor_subagents_have_persistence_tools(monkeypatch):
@@ -424,3 +425,37 @@ def test_executor_subagents_have_persistence_tools(monkeypatch):
     assert any(getattr(t, "name", "") == "save_session_snapshot" for t in state["tools"])
     assert any(getattr(t, "name", "") == "sync_diagnosis_to_feishu" for t in state["tools"])
 
+
+def test_knowledge_retriever_subagent_uses_data_foundation_retrieval_tools(monkeypatch):
+    """知识检索子智能体必须复用底层检索能力,不能另起一套数据通道。"""
+    _set_assembly_env(monkeypatch)
+    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
+
+    import importlib
+    import deepagents
+
+    captured_subagents = []
+    real_create = deepagents.create_deep_agent
+
+    def _capturing_create(*args, **kwargs):
+        captured_subagents.extend(kwargs.get("subagents", []))
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(deepagents, "create_deep_agent", _capturing_create)
+    _reload_subagents()
+
+    import agent as agent_module
+    importlib.reload(agent_module)
+
+    by_name = {s["name"]: s for s in captured_subagents}
+    retriever = by_name["knowledge-atom-retriever"]
+    tool_names = {getattr(t, "name", "") for t in retriever["tools"]}
+
+    assert {
+        "semantic_search_resources",
+        "search_resources",
+        "graph_expand",
+        "get_resource",
+    } <= tool_names
+    assert "save_generated_topic" not in tool_names
+    assert "save_generated_copy" not in tool_names

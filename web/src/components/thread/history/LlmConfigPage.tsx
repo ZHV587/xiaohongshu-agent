@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Sparkles, Loader2, Check, ArrowLeft, ChevronDown, ChevronRight, Play, Server, Cpu, Key, Activity, ListRestart, HelpCircle, ShieldCheck, RefreshCw } from "lucide-react";
+import { Sparkles, Loader2, Check, ArrowLeft, ChevronDown, Play, Server, Cpu, Key, Activity, ListRestart, HelpCircle, ShieldCheck, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";

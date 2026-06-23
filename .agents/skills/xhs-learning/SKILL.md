@@ -2,7 +2,7 @@
 name: xhs-learning
 description: |
   交互式自适应学习。把复杂课题拆成连续章节，根据用户上一篇的反馈调整下一篇的深度和角度。
-  触发方式：/xhs-learning、/学习、「带我学」「下一篇」「继续学」「我想系统学」
+  触发方式：/xhs-learning、/dbs-learning、/dbs-learn、/学习、「带我学」「下一篇」「继续学」「我想系统学」
 ---
 
 # xhs-learning：交互式自适应学习
@@ -38,7 +38,7 @@ description: |
 回答完后，告诉我你卡在哪里（或者「全懂了」），我来写第{N+1}篇。
 ```
 
-调用 `write_file` 把章节写入 `/analysis/learning/{课题名}/第{N}篇.md`。
+章节生成后调用 `save_session_snapshot(project_name, "{课题名}-第{N}篇", content)` 保存到数据库，再调用 `sync_diagnosis_to_feishu(project_name, "{课题名}-第{N}篇", content)` 同步飞书。下一篇通过 `search_resources` / `get_resource` 找回前文与反馈，不依赖本地文件。
 
 ---
 

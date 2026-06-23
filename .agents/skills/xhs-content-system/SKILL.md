@@ -2,7 +2,7 @@
 name: xhs-content-system
 description: |
   小红书内容结构化系统（云原生版）。把飞书数据底座里的内容资产结构化：审计底座规模→生成主题地图→分类内容单元→装配选题卡片。
-  触发方式：/xhs-content-system、/内容结构化、「把内容做成系统」「内容工程化」「主题地图」
+  触发方式：/xhs-content-system、/dbs-content-system、/内容结构化、「把内容做成系统」「内容工程化」「主题地图」
 ---
 
 # xhs-content-system：内容结构化系统
@@ -57,7 +57,7 @@ description: |
    - 代表性 resource_id（最能体现该主题的2-3条）
    - 初步判断：这个主题的内容深度如何？
 
-**输出格式**（同时调用 `write_file` 存为 `/analysis/content-map-{date}.md`）：
+**输出格式**：
 
 ```markdown
 # 内容主题地图 — {date}
@@ -71,6 +71,8 @@ description: |
 ```
 
 完成后暂停，让用户确认主题划分是否准确，是否需要合并或拆分。
+
+用户确认主题地图后，调用 `save_session_snapshot(project_name, "内容主题地图-{date}", content)` 保存数据库版本，再调用 `sync_diagnosis_to_feishu(project_name, "内容主题地图-{date}", content)` 同步飞书。
 
 ---
 

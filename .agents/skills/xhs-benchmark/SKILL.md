@@ -2,7 +2,7 @@
 name: xhs-benchmark
 description: |
   小红书爆款对标研究。五重漏斗去噪找真对标，行级深度拆解选题与表达机制。
-  触发方式：/xhs-benchmark、/对标分析、「帮我找对标」「爆款怎么拆解」「同行在做什么」
+  触发方式：/xhs-benchmark、/dbs-benchmark、/对标分析、「帮我找对标」「爆款怎么拆解」「同行在做什么」
 ---
 
 # xhs-benchmark：爆款对标研究

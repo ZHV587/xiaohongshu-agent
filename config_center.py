@@ -87,7 +87,19 @@ def _validate_updates(updates: dict[str, Any]) -> dict[str, str]:
     for key, value in updates.items():
         if key in DEPLOY_ONLY_KEYS or key not in EDITABLE_KEYS:
             raise ConfigValidationError(f"Config key is not editable: {key}")
-        sanitized[key] = str(value or "")
+        sanitized_value = str(value or "")
+        if key == "XHS_EMBEDDING_DIMENSIONS" and sanitized_value.strip():
+            try:
+                dimensions = int(sanitized_value)
+            except ValueError as exc:
+                raise ConfigValidationError(
+                    "XHS_EMBEDDING_DIMENSIONS only supports 1536 with the current vector schema"
+                ) from exc
+            if dimensions != 1536:
+                raise ConfigValidationError(
+                    "XHS_EMBEDDING_DIMENSIONS only supports 1536 with the current vector schema"
+                )
+        sanitized[key] = sanitized_value
     return sanitized
 
 

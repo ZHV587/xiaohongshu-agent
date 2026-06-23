@@ -12,8 +12,9 @@
 """
 
 import json
-import os
 import shlex
+import shutil
+import subprocess
 import sys
 import time
 import urllib.request
@@ -23,9 +24,10 @@ ATOMS_URL = "https://raw.githubusercontent.com/dontbesilent2025/dbskill/main/%E7
 RESOURCE_TYPE = "dbskill_atom"
 FEISHU_TABLE_NAME = "知识原子库"
 ACTOR = "migrate_atoms_script"
-# 已在飞书云空间建好，需手动移进知识库 7648177996175543260
-ATOMS_APP_TOKEN = "JGnIbAryTaauOqsGN99cGxWjnHc"
-ATOMS_TABLE_ID = "tbl5K1USNBJh2kEE"
+# 已在飞书知识库「小红书爆单手册」(space_id=7648177996175543260) 内创建。
+# Wiki node: GTc6w6aajiEpnDkL5CKc57IJnD4
+ATOMS_APP_TOKEN = "U8C4baIMxawaBFsuscNcRQsKnkh"
+ATOMS_TABLE_ID = "tblQppgGGbLQwXo9"
 
 
 # ─── 加载原子 ───────────────────────────────────────────────────────────────────
@@ -71,13 +73,22 @@ def import_to_db(atoms: list[dict], dry_run: bool = False) -> None:
                         atom["knowledge"]
                         + ("\n\n原文：" + atom["original"] if atom.get("original") else "")
                     ),
-                    content_json={k: atom.get(k) for k in
-                                  ("id", "knowledge", "original", "url", "date",
-                                   "topics", "skills", "type", "confidence")},
+                    content_json={
+                        **{k: atom.get(k) for k in
+                           ("id", "knowledge", "original", "url", "date",
+                            "topics", "type", "confidence")},
+                        "skills": _map_atom_skills(atom.get("skills")),
+                    },
                     visibility="team",
                     owner_open_id=None,
                     summary=atom.get("original", "")[:200] or atom["knowledge"][:200],
-                    mapping={"dbskill_id": atom["id"]},
+                    mapping={
+                        "system": "dbskill",
+                        "external_type": "knowledge_atom",
+                        "external_id": atom["id"],
+                        "external_url": atom.get("url"),
+                        "sync_status": "synced",
+                    },
                     outbox_requests=default_write_requests(),
                 )
                 ok += 1
@@ -95,12 +106,21 @@ def import_to_db(atoms: list[dict], dry_run: bool = False) -> None:
 # ─── 飞书导入 ───────────────────────────────────────────────────────────────────
 
 def _lark(cmd: str) -> dict:
-    from tools.lark_cli import lark_cli
-    raw = lark_cli.func(cmd)
+    executable = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or shutil.which("lark-cli.CMD")
+    if not executable:
+        return {"ok": False, "error": "lark-cli executable not found on PATH"}
+    completed = subprocess.run(
+        [executable, *shlex.split(cmd), "--format", "json"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    raw = completed.stdout.strip() or completed.stderr.strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        return {"error": raw}
+        return {"ok": False, "error": raw, "exit_code": completed.returncode}
 
 
 def _get_or_create_table(app_token: str) -> str | None:
@@ -149,43 +169,94 @@ def _get_or_create_table(app_token: str) -> str | None:
     return table_id
 
 
+FEISHU_ATOM_FIELDS = [
+    "知识内容",
+    "原子ID",
+    "内容类型",
+    "可信度",
+    "发布日期",
+    "原文摘要",
+    "来源链接",
+    "主题标签",
+    "关联Skill",
+]
+
+DBSKILL_TO_LOCAL_SKILL = {
+    "dbs-content": "xhs-content",
+    "dbs-diagnosis": "xhs-diagnosis",
+    "dbs-deconstruct": "xhs-deconstruct",
+    "dbs-unblock": "xhs-action",
+    "dbs-benchmark": "xhs-benchmark",
+}
+
+
+def _join_cell(value: object) -> str:
+    if isinstance(value, list):
+        return "，".join(str(item) for item in value if item)
+    return str(value or "")
+
+
+def _map_atom_skills(skills: object) -> list[str]:
+    if not isinstance(skills, list):
+        return []
+    mapped = []
+    for skill in skills:
+        local_skill = DBSKILL_TO_LOCAL_SKILL.get(str(skill), str(skill))
+        if local_skill and local_skill not in mapped:
+            mapped.append(local_skill)
+    return mapped
+
+
+def _atom_to_feishu_row(atom: dict) -> list[object]:
+    return [
+        atom["knowledge"],
+        atom["id"],
+        atom.get("type", ""),
+        atom.get("confidence", ""),
+        atom.get("date", ""),
+        atom.get("original", ""),
+        atom.get("url", ""),
+        _join_cell(atom.get("topics")),
+        _join_cell(_map_atom_skills(atom.get("skills"))),
+    ]
+
+
+def _chunks(items: list[dict], size: int) -> list[list[dict]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _write_batch_payload(payload: dict, batch_index: int) -> str:
+    temp_dir = Path("large_tool_results") / "dbskill_atoms_import"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    payload_path = temp_dir / f"batch_{batch_index:04d}.json"
+    payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return "@" + payload_path.as_posix()
+
+
 def import_to_feishu(atoms: list[dict], dry_run: bool = False) -> None:
     if dry_run:
         print(f"[dry-run] 将写入 {len(atoms)} 条记录到飞书 {FEISHU_TABLE_NAME}")
         return
 
     ok = skip = 0
-    for i, atom in enumerate(atoms):
-        fields: dict = {
-            "知识内容": atom["knowledge"],
-            "原子ID": atom["id"],
-            "内容类型": atom.get("type", ""),
-            "可信度": atom.get("confidence", ""),
-            "发布日期": atom.get("date", ""),
+    for batch_index, batch in enumerate(_chunks(atoms, 200), start=1):
+        payload = {
+            "fields": FEISHU_ATOM_FIELDS,
+            "rows": [_atom_to_feishu_row(atom) for atom in batch],
         }
-        if atom.get("original"):
-            fields["原文摘要"] = atom["original"]
-        if atom.get("url"):
-            fields["来源链接"] = {"text": atom["url"], "link": atom["url"]}
-        if atom.get("topics"):
-            fields["主题标签"] = atom["topics"]
-        if atom.get("skills"):
-            fields["关联Skill"] = atom["skills"]
-
-        payload = json.dumps({"fields": fields}, ensure_ascii=False)
-        cmd = shlex.join(["base", "+record-create", "--base-token", ATOMS_APP_TOKEN,
-                          "--table-id", ATOMS_TABLE_ID, "--json", payload])
+        payload_arg = _write_batch_payload(payload, batch_index)
+        cmd = shlex.join(["base", "+record-batch-create", "--base-token", ATOMS_APP_TOKEN,
+                          "--table-id", ATOMS_TABLE_ID, "--json", payload_arg,
+                          "--as", "user"])
         resp = _lark(cmd)
-        if resp.get("code") in (None, 0):
-            ok += 1
+        if resp.get("ok") is True or resp.get("code") == 0:
+            ok += len(batch)
         else:
-            skip += 1
-            if skip <= 5:
-                print(f"  跳过 {atom['id']}: {resp.get('msg')}")
+            skip += len(batch)
+            print(f"  批次 {batch_index} 跳过 {len(batch)} 条: {resp.get('msg') or resp.get('error')}")
 
-        if (i + 1) % 200 == 0:
-            print(f"  飞书: {i + 1}/{len(atoms)}")
-            time.sleep(0.3)  # 限流保护
+        print(f"  飞书: {min(batch_index * 200, len(atoms))}/{len(atoms)}")
+        time.sleep(0.3)  # 限流保护
 
     print(f"飞书完成：{ok} 成功，{skip} 跳过")
 

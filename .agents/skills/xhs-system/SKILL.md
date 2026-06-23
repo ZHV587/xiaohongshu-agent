@@ -1,13 +1,14 @@
 ---
 name: xhs-system
 description: |
-  系统工具集。存档当前诊断状态（/xhs-save）、拉取上次存档（/xhs-restore）、Agent工作台迁移审计。
-  触发方式：/xhs-save、/xhs-restore、/xhs-system、「保存」「存档」「接上次」「工作台迁移」
+  系统工具集。存档当前诊断状态（/xhs-save、/dbs-save）、拉取上次存档（/xhs-restore、/dbs-restore）、
+  打包阶段报告（/xhs-report、/dbs-report）、Agent工作台迁移审计（/dbs-agent-migration）。
+  触发方式：/xhs-save、/xhs-restore、/xhs-report、/xhs-system、/dbs-save、/dbs-restore、/dbs-report、/dbs-agent-migration、「保存」「存档」「接上次」「打包报告」「工作台迁移」
 ---
 
 # xhs-system：系统工具
 
-系统级工具集合，三个独立功能按触发词激活。
+系统级工具集合，四个独立功能按触发词激活。
 
 ---
 
@@ -20,7 +21,6 @@ description: |
 2. 整理本次会话的关键结论（定位/选题/文案/决策中的任何有价值的部分）
 3. 调用 `save_session_snapshot(project_name, title, content)` 存入数据库
 4. 调用 `sync_diagnosis_to_feishu(project_name, title, content)` 同步飞书
-5. 同时调用 `write_file` 写本地备份到 `~/.dbs/sessions/{project_name}/{YYYYMMDD-HHMMSS}-{title-slug}.md`
 
 **返回**：数据库 resource_id + 飞书表格链接
 
@@ -37,7 +37,45 @@ description: |
 
 ---
 
-## 功能 C：Agent 工作台迁移审计（/xhs-system 或「工作台迁移」）
+## 功能 C：报告打包（/xhs-report、/dbs-report 或「打包报告」）
+
+把多次诊断、选题、文案、复盘沉淀成一份可分享的阶段报告。
+
+**使用场景**：
+- 用户说「整理成报告」「打包一下」「阶段复盘」
+- 用户已经多次 `/xhs-save`，想把过程合并成一份文档
+- 用户要把账号定位、对标、选题和下一步行动交给团队看
+
+**操作**：
+1. 询问 project_name（如未提供）
+2. 调用 `search_resources` 查找该项目最近的 session snapshot、诊断记录、选题记录
+3. 按时间线整理：背景 → 已否决方向 → 已确认判断 → 当前策略 → 下一步动作
+4. 调用 `save_session_snapshot(project_name, "阶段报告-{日期}", content)` 保存报告
+5. 调用 `sync_diagnosis_to_feishu(project_name, "阶段报告-{日期}", content)` 同步飞书
+
+**报告结构**：
+```
+## 阶段报告
+
+**项目**：{project_name}
+**时间范围**：{开始日期} - {结束日期}
+
+### 1. 当前结论
+{最重要的 3-5 条结论}
+
+### 2. 已否决方向
+{不要再重复尝试的方向}
+
+### 3. 关键证据
+{引用资源、数据或原话}
+
+### 4. 下一步行动
+{按优先级列出 3 条}
+```
+
+---
+
+## 功能 D：Agent 工作台迁移审计（/xhs-system、/dbs-agent-migration 或「工作台迁移」）
 
 审计当前 Agent 工作台目录结构，确保 Claude Code / Codex / Grok 三端一致。
 
@@ -50,11 +88,12 @@ description: |
 
 **输出**：审计清单 + 修复建议
 
-调用 `write_file` 写入 `/analysis/agent-migration-audit-{日期}.md`。
+调用 `save_session_snapshot(project_name, "Agent工作台迁移审计-{日期}", content)` 保存数据库版本，再调用 `sync_diagnosis_to_feishu(project_name, "Agent工作台迁移审计-{日期}", content)` 同步飞书。
 
 ---
 
 ## 说话风格
 
 1. 存档和恢复直接执行，不废话
-2. 工作台审计给具体清单，不给模糊建议
+2. 报告打包要按时间线组织，不要写成泛总结
+3. 工作台审计给具体清单，不给模糊建议
