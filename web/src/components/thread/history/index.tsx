@@ -13,11 +13,23 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, SquarePen, LogIn, LogOut, Sparkles, SlidersHorizontal } from "lucide-react";
+import {
+  Activity,
+  SquarePen,
+  LogIn,
+  LogOut,
+  Sparkles,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { BRAND } from "@/lib/brand";
-import { getCurrentUser, loginWithFeishu, logout, type CurrentUser } from "@/lib/auth";
+import {
+  getCurrentUser,
+  loginWithFeishu,
+  logout,
+  type CurrentUser,
+} from "@/lib/auth";
 
 function ThreadList({
   threads,
@@ -30,7 +42,7 @@ function ThreadList({
   const [, setView] = useQueryState("view");
 
   return (
-    <div className="flex h-full w-full flex-col items-start gap-1 overflow-y-auto px-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
+    <div className="[&::-webkit-scrollbar-thumb]:bg-border flex h-full w-full flex-col items-start gap-1 overflow-y-auto px-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full">
       {threads.map((t) => {
         // 优先用首条用户消息作标题;取不到(如失败/空会话)显示友好占位,
         // 不暴露 thread_id 这种 UUID(此前会显示成一长串乱码似的 ID)。
@@ -61,9 +73,9 @@ function ThreadList({
               }
             }}
             className={cn(
-              "w-full truncate rounded-lg px-3 py-2.5 text-left text-sm transition-all flex items-center justify-between",
+              "flex min-h-11 w-full items-center justify-between truncate rounded-lg px-3 py-2.5 text-left text-sm transition-all",
               active
-                ? "bg-oats text-coral border-l-2 border-coral font-semibold rounded-r-lg rounded-l-none pl-2"
+                ? "bg-oats text-coral border-coral rounded-l-none rounded-r-lg border-l-2 pl-2 font-semibold"
                 : "text-charcoal hover:bg-oats/50 rounded-lg",
             )}
           >
@@ -75,13 +87,14 @@ function ThreadList({
   );
 }
 
-
-
 function ThreadHistoryLoading() {
   return (
     <div className="flex w-full flex-col gap-1 px-2">
       {Array.from({ length: 12 }).map((_, i) => (
-        <Skeleton key={i} className="h-9 w-full" />
+        <Skeleton
+          key={i}
+          className="h-9 w-full"
+        />
       ))}
     </div>
   );
@@ -105,8 +118,10 @@ function UserArea() {
       <div className="border-border mt-auto border-t px-2 py-3 text-left">
         <Button
           variant="ghost"
-          className="text-foreground/80 hover:bg-secondary w-full justify-start gap-2"
-          onClick={() => loginWithFeishu(window.location.pathname + window.location.search)}
+          className="text-foreground/80 hover:bg-secondary min-h-11 w-full justify-start gap-2"
+          onClick={() =>
+            loginWithFeishu(window.location.pathname + window.location.search)
+          }
         >
           <LogIn className="size-4" />
           用飞书登录
@@ -119,10 +134,13 @@ function UserArea() {
   return (
     <div className="border-oats-dark mt-auto flex items-center justify-between border-t p-4 text-left">
       <div className="flex items-center gap-2.5">
-        <span className="bg-coral-light text-coral flex size-8 shrink-0 items-center justify-center rounded-lg font-bold text-xs">
+        <span className="bg-coral-light text-coral flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold">
           {display.slice(0, 1).toUpperCase()}
         </span>
-        <span className="text-charcoal font-semibold flex-1 truncate text-xs max-w-[150px]" title={display}>
+        <span
+          className="text-charcoal max-w-[150px] flex-1 truncate text-xs font-semibold"
+          title={display}
+        >
           {display}
         </span>
       </div>
@@ -130,7 +148,7 @@ function UserArea() {
         type="button"
         onClick={logout}
         title="退出登录"
-        className="text-gray-400 hover:text-coral shrink-0 transition-colors cursor-pointer"
+        className="hover:text-coral flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-400 transition-colors"
       >
         <LogOut className="size-4" />
       </button>
@@ -172,14 +190,19 @@ function SidebarBody({
   }, [getThreads, setThreads, setThreadsLoading]);
 
   return (
-    <div className="flex h-full w-full flex-col">
+    <nav
+      aria-label="会话历史"
+      className="flex h-full w-full flex-col"
+    >
       {/* 品牌区 */}
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div className="flex items-center gap-2">
           <span className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-lg text-sm">
             {BRAND.mark}
           </span>
-          <span className="text-foreground text-[15px] font-semibold">{BRAND.name}</span>
+          <span className="text-foreground text-[15px] font-semibold">
+            {BRAND.name}
+          </span>
         </div>
         <div className="flex items-center gap-1">
           {isAdmin && (
@@ -189,7 +212,7 @@ function SidebarBody({
                 size="icon"
                 title="AI模型配置"
                 onClick={onLlmConfigOpen}
-                className="size-8 text-gray-400 hover:text-coral transition-colors"
+                className="hover:text-coral min-h-11 min-w-11 text-gray-400 transition-colors"
               >
                 <Sparkles className="size-4" />
               </Button>
@@ -198,7 +221,7 @@ function SidebarBody({
                 size="icon"
                 title="飞书对接配置"
                 onClick={onFeishuConfigOpen}
-                className="size-8 text-gray-400 hover:text-coral transition-colors"
+                className="hover:text-coral min-h-11 min-w-11 text-gray-400 transition-colors"
               >
                 <SlidersHorizontal className="size-4" />
               </Button>
@@ -207,7 +230,7 @@ function SidebarBody({
                 size="icon"
                 title="运行事实"
                 onClick={onRuntimeFactsOpen}
-                className="size-8 text-gray-400 hover:text-coral transition-colors"
+                className="hover:text-coral min-h-11 min-w-11 text-gray-400 transition-colors"
               >
                 <Activity className="size-4" />
               </Button>
@@ -218,7 +241,7 @@ function SidebarBody({
       {/* 新对话 */}
       <div className="px-2 pb-2 text-left">
         <Button
-          className="bg-primary text-primary-foreground hover:bg-primary/90 w-full justify-start gap-2"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 min-h-11 w-full justify-start gap-2"
           onClick={() => {
             setView(null);
             if (onThreadClick) {
@@ -232,17 +255,22 @@ function SidebarBody({
           新对话
         </Button>
       </div>
-      <div className="text-muted-foreground px-4 pt-2 pb-1 text-xs tracking-wide text-left">最近</div>
+      <div className="text-muted-foreground px-4 pt-2 pb-1 text-left text-xs tracking-wide">
+        最近
+      </div>
       <div className="min-h-0 flex-1">
         {threadsLoading ? (
           <ThreadHistoryLoading />
         ) : (
-          <ThreadList threads={threads} onThreadClick={onThreadClick} />
+          <ThreadList
+            threads={threads}
+            onThreadClick={onThreadClick}
+          />
         )}
       </div>
       {/* 用户区:飞书登录态 */}
       <UserArea />
-    </div>
+    </nav>
   );
 }
 
@@ -276,7 +304,10 @@ export default function ThreadHistory({
             setChatHistoryOpen(open);
           }}
         >
-          <SheetContent side="left" className="flex w-[300px] p-0 lg:hidden">
+          <SheetContent
+            side="left"
+            className="flex w-[300px] p-0 lg:hidden"
+          >
             <SheetHeader className="sr-only">
               <SheetTitle>会话历史</SheetTitle>
             </SheetHeader>

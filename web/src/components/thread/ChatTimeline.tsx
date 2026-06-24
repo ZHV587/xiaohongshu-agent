@@ -94,7 +94,9 @@ function groupMessages(messages: Message[]): MessageGroup[] {
       }
       currentGroup.toolCalls = currentGroup.toolCalls || [];
       const toolCallId = msg.tool_call_id;
-      const existingCall = currentGroup.toolCalls.find((tc) => tc.id === toolCallId);
+      const existingCall = currentGroup.toolCalls.find(
+        (tc) => tc.id === toolCallId,
+      );
       if (existingCall) {
         existingCall.result = msg.content;
       } else {
@@ -179,14 +181,15 @@ export function ChatTimeline() {
   );
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden h-full">
+    <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+      {chatStarted && <h1 className="sr-only">{BRAND.name}创作工作台</h1>}
       {chatStarted && (
-        <div className="relative z-10 flex items-center justify-between gap-3 p-2 bg-white/70 backdrop-blur-xs border-b border-coral-light/20 select-none">
+        <div className="border-coral-light/20 relative z-10 flex items-center justify-between gap-3 border-b bg-white/70 p-2 backdrop-blur-xs select-none">
           <div className="relative flex items-center justify-start gap-2">
             <div className="absolute left-0 z-10">
               {(!chatHistoryOpen || !isLargeScreen) && (
                 <Button
-                  className="hover:bg-gray-100"
+                  className="min-h-11 min-w-11 hover:bg-gray-100"
                   variant="ghost"
                   onClick={() => setChatHistoryOpen((p: boolean) => !p)}
                 >
@@ -200,15 +203,15 @@ export function ChatTimeline() {
             </div>
             <motion.button
               type="button"
-              className="flex cursor-pointer items-center gap-2"
+              className="flex min-h-11 cursor-pointer items-center gap-2"
               onClick={() => setThreadId(null)}
               animate={{ marginLeft: !chatHistoryOpen ? 48 : 0 }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
             >
-              <span className="bg-primary text-primary-foreground flex size-8 items-center justify-center rounded-xl font-display shadow-xs text-base">
+              <span className="bg-primary text-primary-foreground font-display flex size-8 items-center justify-center rounded-xl text-base shadow-xs">
                 {BRAND.mark}
               </span>
-              <span className="text-base font-bold tracking-tight text-charcoal font-display">
+              <span className="text-charcoal font-display text-base font-bold tracking-tight">
                 {BRAND.name}
               </span>
             </motion.button>
@@ -217,7 +220,7 @@ export function ChatTimeline() {
           <div className="flex items-center gap-4">
             <TooltipIconButton
               size="lg"
-              className="p-4 hover:text-coral transition-colors"
+              className="hover:text-coral p-4 transition-colors"
               tooltip="新对话"
               variant="ghost"
               onClick={() => setThreadId(null)}
@@ -231,9 +234,9 @@ export function ChatTimeline() {
       <StickToBottom className="relative flex-1 overflow-hidden">
         <StickyToBottomContent
           className={cn(
-            "absolute inset-0 overflow-y-scroll px-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-coral/20 [&::-webkit-scrollbar-track]:bg-transparent",
+            "[&::-webkit-scrollbar-thumb]:bg-coral/20 absolute inset-0 overflow-y-scroll px-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent",
             !chatStarted && "mt-[25vh] flex flex-col items-stretch",
-            chatStarted && "grid grid-rows-[1fr_auto]"
+            chatStarted && "grid grid-rows-[1fr_auto]",
           )}
           contentClassName="pt-8 pb-16 max-w-3xl mx-auto flex flex-col gap-4 w-full"
           content={
@@ -265,34 +268,39 @@ export function ChatTimeline() {
                   handleRegenerate={handleRegenerate}
                 />
               )}
-              {isLoading && !isStreaming && (
-                (!messages.length || messages[messages.length - 1].type === "human") && (
-                  <div className="mr-auto flex flex-col gap-2 py-2 w-full max-w-[460px]">
-                    <div className="bg-white border border-coral-light/60 p-3.5 rounded-2xl shadow-xs flex items-center gap-2.5">
-                      <LoaderCircle className="size-4 animate-spin text-coral" />
-                      <span className="text-xs text-charcoal-light">正在启动智能分析...</span>
+              {isLoading &&
+                !isStreaming &&
+                (!messages.length ||
+                  messages[messages.length - 1].type === "human") && (
+                  <div className="mr-auto flex w-full max-w-[460px] flex-col gap-2 py-2">
+                    <div className="border-coral-light/60 flex items-center gap-2.5 rounded-2xl border bg-white p-3.5 shadow-xs">
+                      <LoaderCircle className="text-coral size-4 animate-spin" />
+                      <span className="text-charcoal-light text-xs">
+                        正在启动智能分析...
+                      </span>
                     </div>
                   </div>
-                )
-              )}
+                )}
             </>
           }
           footer={
-            <div className="sticky bottom-0 flex flex-col items-center gap-8 bg-transparent w-full">
+            <div className="sticky bottom-0 flex w-full flex-col items-center gap-8 bg-transparent">
               {!chatStarted && (
                 <div className="flex flex-col items-center gap-3">
                   <span className="bg-primary text-primary-foreground flex size-14 items-center justify-center rounded-2xl text-3xl shadow-md">
                     {BRAND.mark}
                   </span>
-                  <h1 className="text-2xl font-bold tracking-tight text-charcoal font-display">{BRAND.name}</h1>
-                  <p className="text-gray-500 text-sm">{BRAND.slogan}</p>
+                  <h1 className="text-charcoal font-display text-2xl font-bold tracking-tight">
+                    {BRAND.name}
+                  </h1>
+                  <p className="text-sm text-gray-500">{BRAND.slogan}</p>
                   <div className="mt-2 flex max-w-xl flex-wrap justify-center gap-2">
                     {BRAND.examples.map((ex) => (
                       <button
                         key={ex}
                         type="button"
                         onClick={() => submitText(ex)}
-                        className="border-coral-light/60 text-charcoal/70 hover:border-coral hover:bg-coral-light rounded-full border bg-white px-3.5 py-1.5 text-xs transition-colors cursor-pointer"
+                        className="border-coral-light/60 text-charcoal/70 hover:border-coral hover:bg-coral-light min-h-11 cursor-pointer rounded-full border bg-white px-4 py-2 text-xs transition-colors"
                       >
                         {ex}
                       </button>
@@ -301,7 +309,7 @@ export function ChatTimeline() {
                 </div>
               )}
 
-              <ScrollToBottom className="animate-in fade-in-0 zoom-in-95 absolute bottom-full left-1/2 mb-4 -translate-x-1/2 border-coral-light text-coral" />
+              <ScrollToBottom className="animate-in fade-in-0 zoom-in-95 border-coral-light text-coral absolute bottom-full left-1/2 mb-4 -translate-x-1/2" />
 
               <ComposerPanel />
             </div>

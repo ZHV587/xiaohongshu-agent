@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;600&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 @plugin "tailwindcss-animate";
@@ -8,105 +8,105 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: #FAF8F5; /* Alabaster warm default background (much cleaner than yellow-oats) */
-  --foreground: #1A1A1C; /* Premium dark gray default text */
+  --background: #faf8f5; /* Alabaster warm default background (much cleaner than yellow-oats) */
+  --foreground: #1a1a1c; /* Premium dark gray default text */
   --card: #ffffff;
-  --card-foreground: #1A1A1C;
+  --card-foreground: #1a1a1c;
   --popover: #ffffff;
-  --popover-foreground: #1A1A1C;
-  --primary: #E52E40; /* Refined, elegant coral crimson red */
+  --popover-foreground: #1a1a1c;
+  --primary: #e52e40; /* Refined, elegant coral crimson red */
   --primary-foreground: #ffffff;
-  --secondary: #FCFAF9;
-  --secondary-foreground: #1A1A1C;
-  --muted: #F4F2EE; /* Clean light gray-oats */
-  --muted-foreground: #5E5E62; /* Clean muted slate */
-  --accent: #FFF0F2; /* Soft warm pink-rose accent background */
-  --accent-foreground: #E52E40;
+  --secondary: #fcfaf9;
+  --secondary-foreground: #1a1a1c;
+  --muted: #f4f2ee; /* Clean light gray-oats */
+  --muted-foreground: #5e5e62; /* Clean muted slate */
+  --accent: #fff0f2; /* Soft warm pink-rose accent background */
+  --accent-foreground: #e52e40;
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: #EBEAE4; /* Beautiful clean neutral border instead of childish pink */
-  --input: #FAF8F5;
-  --ring: #E52E40;
+  --border: #ebeae4; /* Beautiful clean neutral border instead of childish pink */
+  --input: #faf8f5;
+  --ring: #e52e40;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --radius: 1rem;
-  
-  --oats-default: #FAF8F5;
-  --oats-dark: #F4F2EE;
-  --oats-light: #FCFAF9;
-  
-  --coral-default: #E52E40;
-  --coral-hover: #C81D33;
-  --coral-light: #FFF0F2;
-  
-  --charcoal-default: #1A1A1C;
-  --charcoal-light: #5E5E62;
-  --charcoal-dark: #0F0F10;
-  
-  --topicblue-default: #007FFF;
-  --topicblue-light: #E6F2FF;
+
+  --oats-default: #faf8f5;
+  --oats-dark: #f4f2ee;
+  --oats-light: #fcfaf9;
+
+  --coral-default: #e52e40;
+  --coral-hover: #c81d33;
+  --coral-light: #fff0f2;
+
+  --charcoal-default: #1a1a1c;
+  --charcoal-light: #5e5e62;
+  --charcoal-dark: #0f0f10;
+
+  --topicblue-default: #007fff;
+  --topicblue-light: #e6f2ff;
 
   --sidebar: #ffffff;
-  --sidebar-foreground: #1A1A1C;
-  --sidebar-primary: #E52E40;
+  --sidebar-foreground: #1a1a1c;
+  --sidebar-primary: #e52e40;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #FAF8F5;
-  --sidebar-accent-foreground: #E52E40;
-  --sidebar-border: #EBEAE4;
-  --sidebar-ring: #E52E40;
+  --sidebar-accent: #faf8f5;
+  --sidebar-accent-foreground: #e52e40;
+  --sidebar-border: #ebeae4;
+  --sidebar-ring: #e52e40;
 }
 
 .dark {
-  --background: #0B0B0C; /* Deep space dark background */
-  --foreground: #F5F5F7; /* Bright white-gray text */
+  --background: #0b0b0c; /* Deep space dark background */
+  --foreground: #f5f5f7; /* Bright white-gray text */
   --card: #131315; /* Premium dark-gray card background */
-  --card-foreground: #F5F5F7;
+  --card-foreground: #f5f5f7;
   --popover: #131315;
-  --popover-foreground: #F5F5F7;
-  --primary: #FF3B54; /* Highly visible coral crimson for dark mode */
+  --popover-foreground: #f5f5f7;
+  --primary: #ff3b54; /* Highly visible coral crimson for dark mode */
   --primary-foreground: #ffffff;
-  --secondary: #1C1C1E;
-  --secondary-foreground: #F5F5F7;
-  --muted: #1E1E22; /* Slate-dark gray background */
-  --muted-foreground: #A1A1A8;
-  --accent: #2C1A1D; /* Deep rose-dark red background */
-  --accent-foreground: #FF3B54;
+  --secondary: #1c1c1e;
+  --secondary-foreground: #f5f5f7;
+  --muted: #1e1e22; /* Slate-dark gray background */
+  --muted-foreground: #a1a1a8;
+  --accent: #2c1a1d; /* Deep rose-dark red background */
+  --accent-foreground: #ff3b54;
   --destructive: oklch(0.396 0.141 25.723);
   --destructive-foreground: oklch(0.637 0.237 25.331);
   --border: #222226; /* Deep border tone */
-  --input: #1A1A1D;
-  --ring: #FF3B54;
+  --input: #1a1a1d;
+  --ring: #ff3b54;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
   --sidebar: #101012;
-  --sidebar-foreground: #F5F5F7;
-  --sidebar-primary: #FF3B54;
+  --sidebar-foreground: #f5f5f7;
+  --sidebar-primary: #ff3b54;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1E1E22;
-  --sidebar-accent-foreground: #FF3B54;
+  --sidebar-accent: #1e1e22;
+  --sidebar-accent-foreground: #ff3b54;
   --sidebar-border: #222226;
-  --sidebar-ring: #FF3B54;
+  --sidebar-ring: #ff3b54;
 }
 
 @theme inline {
   --color-oats: var(--oats-default);
   --color-oats-dark: var(--oats-dark);
   --color-oats-light: var(--oats-light);
-  
+
   --color-coral: var(--coral-default);
   --color-coral-hover: var(--coral-hover);
   --color-coral-light: var(--coral-light);
-  
+
   --color-charcoal: var(--charcoal-default);
   --color-charcoal-light: var(--charcoal-light);
   --color-charcoal-dark: var(--charcoal-dark);
-  
+
   --color-topicblue: var(--topicblue-default);
   --color-topicblue-light: var(--topicblue-light);
 
@@ -146,9 +146,11 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  
-  --font-sans: 'Inter', -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
-  --font-display: 'Outfit', -apple-system, "PingFang SC", sans-serif;
+
+  --font-sans:
+    "Inter", -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC",
+    system-ui, sans-serif;
+  --font-display: "Outfit", -apple-system, "PingFang SC", sans-serif;
 }
 
 /* Custom scrollbars for oats/coral theme */
@@ -162,6 +164,13 @@
 }
 .custom-scrollbar::-webkit-scrollbar-track {
   background-color: transparent;
+}
+
+.toaster [data-close-button="true"] {
+  width: 3rem !important;
+  height: 3rem !important;
+  min-width: 3rem !important;
+  min-height: 3rem !important;
 }
 
 /* 3D perspective settings for flipping cards */
@@ -247,9 +256,18 @@
 }
 
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20%, 60% { transform: translateX(-4px); }
-  40%, 80% { transform: translateX(4px); }
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20%,
+  60% {
+    transform: translateX(-4px);
+  }
+  40%,
+  80% {
+    transform: translateX(4px);
+  }
 }
 
 .animate-shake {

@@ -2,12 +2,8 @@ import { validate } from "uuid";
 import { getApiKey } from "@/lib/api-key";
 import type { Thread } from "@langchain/langgraph-sdk";
 import { useQueryState } from "nuqs";
-import {
-  ReactNode,
-  useCallback,
-  useState,
-} from "react";
-import { createClient } from "./client";
+import { ReactNode, useCallback, useState } from "react";
+import { createClient, toBrowserApiUrl } from "./client";
 import { ThreadContext } from "./thread-context";
 
 function getThreadSearchMetadata(
@@ -42,8 +38,10 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const getThreads = useCallback(async (): Promise<Thread[]> => {
     const resolvedAssistantId = assistantId || envAssistantId;
     if (!finalApiUrl || !resolvedAssistantId) return [];
+    const browserApiUrl = toBrowserApiUrl(finalApiUrl);
+    if (!browserApiUrl) return [];
     const client = createClient(
-      finalApiUrl,
+      browserApiUrl,
       getApiKey() ?? undefined,
       authScheme || undefined,
     );

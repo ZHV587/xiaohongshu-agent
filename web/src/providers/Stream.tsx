@@ -1,8 +1,4 @@
-import React, {
-  ReactNode,
-  useState,
-  useEffect,
-} from "react";
+import React, { ReactNode, useState, useEffect } from "react";
 import { useQueryState } from "nuqs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,6 +8,7 @@ import { ArrowRight } from "lucide-react";
 import { PasswordInput } from "@/components/ui/password-input";
 import { getApiKey } from "@/lib/api-key";
 import { useThreads } from "./thread-context";
+import { toBrowserApiUrl } from "./client";
 import { toast } from "sonner";
 import {
   StreamContext,
@@ -159,11 +156,12 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   // 仅开发环境保留 query 覆盖,便于本地联调直连。
   const finalApiUrl =
     process.env.NODE_ENV === "development" ? apiUrl || envApiUrl : envApiUrl;
+  const browserApiUrl = toBrowserApiUrl(finalApiUrl);
   const finalAssistantId = assistantId || envAssistantId;
   const finalAuthScheme = authScheme || envAuthScheme || "";
 
   // Show the form if we: don't have an API URL, or don't have an assistant ID
-  if (!finalApiUrl || !finalAssistantId) {
+  if (!browserApiUrl || !finalAssistantId) {
     return (
       <div className="flex min-h-screen w-full items-center justify-center p-4">
         <div className="animate-in fade-in-0 zoom-in-95 bg-background flex max-w-3xl flex-col rounded-lg border shadow-lg">
@@ -232,7 +230,9 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
             <div className="flex flex-col gap-2">
               <Label htmlFor="apiKey">LangSmith API Key</Label>
               <p className="text-muted-foreground text-sm">
-                使用本地 LangGraph 服务时<strong>无需填写</strong>。该值仅保存在浏览器本地，用于向你的 LangGraph 服务发起鉴权请求。
+                使用本地 LangGraph 服务时<strong>无需填写</strong>
+                。该值仅保存在浏览器本地，用于向你的 LangGraph
+                服务发起鉴权请求。
               </p>
               <PasswordInput
                 id="apiKey"
@@ -279,7 +279,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   return (
     <StreamSession
       apiKey={apiKey}
-      apiUrl={finalApiUrl}
+      apiUrl={browserApiUrl}
       assistantId={finalAssistantId}
       authScheme={finalAuthScheme || undefined}
     >

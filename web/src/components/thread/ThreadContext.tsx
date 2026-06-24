@@ -60,16 +60,6 @@ export interface ThreadContextProps {
   setIsSyncing: (syncing: boolean) => void;
   isFlying: boolean;
   setIsFlying: (flying: boolean) => void;
-  likeCount: number;
-  setLikeCount: (c: number | ((prev: number) => number)) => void;
-  isLiked: boolean;
-  setIsLiked: (l: boolean) => void;
-  collectCount: number;
-  setCollectCount: (c: number | ((prev: number) => number)) => void;
-  isCollected: boolean;
-  setIsCollected: (col: boolean) => void;
-  showPlusOne: boolean;
-  setShowPlusOne: (show: boolean) => void;
   showCommandPalette: boolean;
   setShowCommandPalette: (show: boolean) => void;
   cmdSearch: string;
