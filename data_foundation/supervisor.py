@@ -43,12 +43,15 @@ class BackgroundServiceSupervisor:
         # 独占单线程池跑 cycle:与默认 executor 分开,关停时可精确 join 本任务线程。
         self._executor: ThreadPoolExecutor | None = None
         self._cycle_future = None
+        self._listener_task = None
+        self._wake_event = asyncio.Event()
 
     async def start(self) -> None:
         if not self.enabled or self._task is not None:
             return
         self.accepting_work = True
         self._stop_event.clear()
+        self._wake_event.clear()
         self._scheduler = self.scheduler_factory()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xhs-sched-cycle")
         self._task = asyncio.create_task(self._run(), name="xhs-data-foundation-supervisor")
@@ -57,6 +60,14 @@ class BackgroundServiceSupervisor:
     async def stop(self, *, grace_seconds: float = 10.0) -> None:
         self.accepting_work = False
         self._stop_event.set()
+        self._wake_event.set()
+        if self._listener_task is not None:
+            self._listener_task.cancel()
+            try:
+                await self._listener_task
+            except asyncio.CancelledError:
+                pass
+            self._listener_task = None
         # 协作通知 cycle 尽快收敛(租户循环每轮检查 _stop_event)。
         scheduler = self._scheduler
         request_stop = getattr(scheduler, "request_stop", None)
@@ -84,7 +95,9 @@ class BackgroundServiceSupervisor:
 
     async def _run(self) -> None:
         loop = asyncio.get_running_loop()
+        self._listener_task = asyncio.create_task(self._listen_db_notifies())
         while self.accepting_work:
+            self._wake_event.clear()
             scheduler = self._scheduler
             if scheduler is not None and self._executor is not None:
                 self.last_cycle_started_at = _utc_now()
@@ -105,9 +118,45 @@ class BackgroundServiceSupervisor:
                     self._cycle_future = None
                     self.last_cycle_finished_at = _utc_now()
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
+                await asyncio.wait_for(self._wake_event.wait(), timeout=self.interval_seconds)
             except TimeoutError:
                 continue
+
+    async def _listen_db_notifies(self) -> None:
+        """异步监听当前 Schema 的 PG 发件箱广播通知，连接断开时自动 5 秒退避重连。"""
+        import logging
+        from psycopg import AsyncConnection
+        from psycopg.rows import dict_row
+        from data_foundation.db import database_url
+        
+        logger = logging.getLogger(__name__)
+        db_url = database_url()
+        
+        while self.accepting_work:
+            try:
+                async with await AsyncConnection.connect(db_url, autocommit=True) as conn:
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        await cur.execute("SELECT current_schema()")
+                        row = await cur.fetchone()
+                        schema = row["current_schema"] if (row and row["current_schema"]) else "public"
+                        channel = f"outbox_work_{schema}"
+                        await cur.execute(f"LISTEN {channel}")
+                    
+                    logger.info("Outbox listener connected and listening to channel: %s", channel)
+                    
+                    async for notify in conn.notifies():
+                        self._wake_event.set()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning(
+                    "Outbox listener connection lost, retrying in 5 seconds. Error: %s", 
+                    exc
+                )
+                try:
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    break
 
     def _stop_scheduler(self) -> None:
         scheduler = self._scheduler
