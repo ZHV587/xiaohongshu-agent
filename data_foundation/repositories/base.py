@@ -12,8 +12,9 @@ class BaseRepository:
             return conn, False
         return db.connect(), True
 
-    def readable_resource_where(self, actor: RuntimeIdentityConfig) -> str:
+    def readable_resource_where(self, actor: RuntimeIdentityConfig, alias: str = None) -> str:
         """Generate safe, SQL-injection-proof tenant filtering fragment"""
         clean_tenant = actor.tenant_id.replace("'", "''")
         clean_user = actor.open_id.replace("'", "''")
-        return f"(tenant_id = '{clean_tenant}' OR visibility = 'team') AND (owner_id = '{clean_user}' OR visibility = 'team')"
+        prefix = f"{alias}." if alias else ""
+        return f"({prefix}tenant_id = '{clean_tenant}' OR {prefix}visibility = 'team') AND ({prefix}owner_open_id = '{clean_user}' OR {prefix}visibility = 'team')"
