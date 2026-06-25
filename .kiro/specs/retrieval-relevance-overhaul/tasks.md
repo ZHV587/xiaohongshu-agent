@@ -43,7 +43,7 @@
     - 验证 `embedding_config_from_snapshot` 未新增检索期策略字段、行为不变
     - _Requirements: 1.3, 5.3_
 
-- [ ] 3. 检查点 — 底层常量与配置就绪
+- [x] 3. 检查点 — 底层常量与配置就绪
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 4. 查询端:`_embed_query` 模型感知注入指令前缀
@@ -91,7 +91,7 @@
     - 纯提示词文案改动,不改工具签名;确保不指示在该态下回退关键词凑依据
     - _Requirements: 7.1, 7.2, 7.3, 7.4_
 
-- [ ] 6. 检查点 — 查询端与工具编排就绪
+- [x] 6. 检查点 — 查询端与工具编排就绪
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 7. 测试重写(不做兼容)
@@ -113,17 +113,17 @@
     - 断言模板/`api_key` 不入日志
     - _Requirements: 1.9, 3.8, 6.4, 6.5, 6.6_
 
-  - [ ]* 7.3 属性测试:余弦 relevance 与候选集无关
+  - [x]* 7.3 属性测试:余弦 relevance 与候选集无关
     - **Property 2: 绝对相关度不被抹除**
     - 使用 Hypothesis 生成随机 score 列表,验证 `rank_evidence(score_kind="cosine")` 的 `rank_signals.relevance == clamp(input_score, 0, 1)`,不随候选集最大值变化
     - **Validates: Requirements 2.2, 2.4**
 
-  - [ ]* 7.4 属性测试:闸门单调性
+  - [x]* 7.4 属性测试:闸门单调性
     - **Property 1: 数据不足必明说**
     - 使用 Hypothesis 在阈值上下边界生成 top_score,验证 top_score 单调下降越过 `Relevance_Floor` 时返回态从 `semantic` 切到 `insufficient_relevance`(单调、互斥)
     - **Validates: Requirements 3.2, 3.3, 3.5**
 
-  - [ ]* 7.5 属性测试:口径隔离与降级语义保持
+  - [x]* 7.5 属性测试:口径隔离与降级语义保持
     - **Property 3: 口径隔离 / Property 6: 降级语义保持**
     - 验证 `score_kind="bm25"` 路径永不与 `Relevance_Floor` 比较;基础设施不可用仍返回 `keyword_fallback`,不被误判为 `insufficient_relevance`
     - **Validates: Requirements 2.3, 4.1, 4.6**
@@ -140,7 +140,7 @@
     - 标定结果(中文模板,生产语料,10 组查询):相关 0.579~0.729、无关 0.360~0.480;0.50 落在空档中,确认为合适默认值,无需调整。
     - _Requirements: 3.7_
 
-- [ ] 9. 交付前本地全量校验
+- [x] 9. 交付前本地全量校验
   - Ensure all tests pass, ask the user if questions arise.
   - 复核受影响文件清单全部覆盖、无悬挂代码;确认未触动 schema(仍 1536 维)、未重嵌、未改 active 索引;部署按 `server-deployment-rules.md` 在 spec 完成后单独执行(本计划不含部署/上线任务)。
 
