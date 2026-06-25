@@ -14,7 +14,7 @@ description: |
 ## 使用场景
 
 - 用户要求检查 `dontbesilent2025/dbskill` 是否有新版本
-- 用户要求确认本地 `xhs-*` 是否覆盖上游 `/dbs-*`
+- 用户要求确认本地 `xhs-*` 是否覆盖上游 dbskill 能力
 - 用户要求重新同步知识原子库
 - 用户要求审计飞书和数据库中的 `dbskill_atom`
 
@@ -24,7 +24,7 @@ description: |
 
 1. 浏览上游 GitHub README，确认最新版本号和工具清单
 2. 对照 `.agents/skills/` 下的本地 skill
-3. 检查 `prompts.py` 是否覆盖 `/dbs-*` alias
+3. 检查本地 skill 的语义触发短语是否在能力上覆盖上游 dbskill 工具(本系统已废除斜杠命令,走 description 语义触发)
 4. 检查飞书 `dbskill 知识原子库` 记录数和字段结构
 5. 检查 Postgres `resources.type = "dbskill_atom"` 数量
 6. 抽样检查 `content_json.skills` 是否使用本地 `xhs-*`

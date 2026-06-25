@@ -20,8 +20,8 @@ description: |
 
 不要使用本 skill：
 - 单纯标题、开头、文案润色
-- 单纯账号定位，先用 `/xhs-positioning`
-- 单纯执行力卡点，先用 `/xhs-action`
+- 单纯账号定位，转入 `xhs-positioning`
+- 单纯执行力卡点，转入 `xhs-action`
 
 ---
 
@@ -59,7 +59,7 @@ description: |
 
 | 触发条件 | 推荐 |
 |---|---|
-| 需要验证商业方向 | 「用 `/xhs-diagnosis` 做商业诊断。」 |
-| 需要找市场参照 | 「用 `/xhs-benchmark` 找真对标。」 |
-| 需要沉淀决策 | 「用 `/xhs-decision` 立案。」 |
+| 需要验证商业方向 | 「下一步做商业诊断。」转入 `xhs-diagnosis` |
+| 需要找市场参照 | 「下一步找真对标。」转入 `xhs-benchmark` |
+| 需要沉淀决策 | 「把这个决策立案记录下来。」转入 `xhs-decision` |
 
