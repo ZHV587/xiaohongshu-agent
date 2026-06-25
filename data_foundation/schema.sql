@@ -197,8 +197,22 @@ create index if not exists idx_resource_embeddings_tenant_recent
   on resource_embeddings (tenant_id, created_at desc);
 create index if not exists idx_resource_embeddings_index
   on resource_embeddings (embedding_index_id, resource_id, resource_version);
+-- 1. Conditional upgrade block: drop old ivfflat index if it exists
+do $$
+begin
+    if exists (
+        select 1 from pg_indexes 
+        where indexname = 'idx_resource_embeddings_vector' 
+          and schemaname = current_schema()
+          and indexdef not ilike '%using hnsw%'
+    ) then
+        drop index idx_resource_embeddings_vector;
+    end if;
+end $$;
+
+-- 2. Create the HNSW index with high recall parameters
 create index if not exists idx_resource_embeddings_vector
-  on resource_embeddings using ivfflat (embedding public.vector_cosine_ops) with (lists = 100);
+  on resource_embeddings using hnsw (embedding public.vector_cosine_ops) with (m = 24, ef_construction = 128);
 
 create table if not exists sync_sources (
   id uuid primary key default gen_random_uuid(),
