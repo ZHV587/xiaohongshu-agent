@@ -220,3 +220,69 @@ class ResourceRepository(BaseRepository):
             source_updated_at=row.get("source_updated_at"),
             version=version,
         )
+
+    def check_permission(
+        self,
+        resource_id: str,
+        actor: RuntimeIdentityConfig,
+        permission: str = "write",
+        conn: Optional[Connection] = None,
+    ) -> None:
+        """Verify if the actor has the specified permission ('read' or 'write') on the resource.
+        Raises PermissionError if the actor does not have the permission.
+        """
+        try:
+            uuid.UUID(str(resource_id))
+        except (ValueError, TypeError, AttributeError):
+            raise PermissionError("Invalid UUID format")
+
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                if permission == "write":
+                    row = cursor.execute(
+                        """
+                        select 1 from resources r
+                        where r.id = %s
+                          and r.tenant_id = %s
+                          and (
+                            r.owner_open_id = %s
+                            or exists (
+                              select 1 from resource_permissions rp
+                              where rp.resource_id = r.id
+                                and rp.tenant_id = r.tenant_id
+                                and rp.subject_type = 'user'
+                                and rp.subject_id = %s
+                                and rp.permission in ('write', 'admin')
+                            )
+                          )
+                        """,
+                        (resource_id, actor.tenant_id, actor.open_id, actor.open_id)
+                    ).fetchone()
+                    if not row:
+                        raise PermissionError(f"Resource {resource_id} is not writable by actor")
+                elif permission == "read":
+                    row = cursor.execute(
+                        """
+                        select 1 from resources r
+                        where r.id = %s
+                          and r.tenant_id = %s
+                          and (
+                            r.owner_open_id = %s
+                            or r.visibility = 'team'
+                            or exists (
+                              select 1 from resource_permissions rp
+                              where rp.resource_id = r.id
+                                and rp.tenant_id = r.tenant_id
+                                and rp.subject_type = 'user'
+                                and rp.subject_id = %s
+                                and rp.permission in ('read', 'write', 'admin')
+                            )
+                          )
+                        """,
+                        (resource_id, actor.tenant_id, actor.open_id, actor.open_id)
+                    ).fetchone()
+                    if not row:
+                        raise PermissionError(f"Resource {resource_id} is not readable by actor")
+                else:
+                    raise ValueError(f"Unknown permission type: {permission}")
+
