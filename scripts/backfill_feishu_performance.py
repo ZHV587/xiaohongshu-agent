@@ -56,6 +56,9 @@ def backfill(*, dry_run: bool) -> dict[str, int]:
     tenant_id = default_tenant_id()
     stats = {"scanned": 0, "whitelisted": 0, "written": 0, "skipped_no_metric": 0, "errors": 0}
     conn = connect()
+    # autocommit:读迭代器的 SELECT 不滞留顶层事务,否则每条写入的 transaction() 只是
+    # savepoint、顶层事务永不提交 → conn.close() 时回滚(written 报告非零但库内为 0)。
+    conn.autocommit = True
     try:
         repo = ResourceRepository(conn)
         for row in _iter_feishu_base_records(conn, tenant_id):
