@@ -59,14 +59,18 @@ def build_knowledge_atom_retriever(
 
 必须使用现有底层检索能力，不允许绕过工具直连数据库、飞书或外部文件：
 1. 优先调用 semantic_search_resources(query, top_k=10) 做语义召回
-2. 如果语义结果不足、返回 keyword_fallback 或用户关键词很明确，调用 search_resources(query, limit=10) 补充全文召回
-3. 选出最相关的 3~8 个 resource_id；必要时调用 graph_expand(resource_ids, hops=1) 找相邻上下文
-4. 对最关键的 3~5 个 resource_id 调用 get_resource(resource_id) 精读正文
+2. 看返回的 mode：
+   - semantic：有相关依据，继续下一步。
+   - insufficient_relevance：库内无足够相关内容（结果为空，带 top_score/threshold），此时在 gaps 里明确说明“当前数据不足/缺少相关素材”，不要强行用 search_resources 凑依据，也不要编造证据。
+   - keyword_fallback：语义降级到全文，可用其结果但标注为降级。
+3. 若语义结果偏少但 mode=semantic、或用户关键词很明确，可调用 search_resources(query, limit=10) 补充全文召回
+4. 选出最相关的 3~8 个 resource_id；必要时调用 graph_expand(resource_ids, hops=1) 找相邻上下文
+5. 对最关键的 3~5 个 resource_id 调用 get_resource(resource_id) 精读正文
 
 返回格式：
 - evidence：3~5 条证据，每条包含 resource_id、title、summary、source_updated_at、indexed_at、why_relevant
-- retrieval_mode：semantic、keyword_fallback 或 mixed
-- gaps：如果证据不足，明确说明缺什么数据
+- retrieval_mode：semantic、insufficient_relevance、keyword_fallback 或 mixed
+- gaps：如果证据不足或检索返回 insufficient_relevance，明确说明缺什么数据,不要编造或强行凑
 
 只返回证据包和检索判断，不要写最终小红书文案，不要保存数据，不要同步飞书。""",
         "model": initial_model,

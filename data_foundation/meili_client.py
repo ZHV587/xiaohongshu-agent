@@ -49,9 +49,18 @@ class MeiliResourceIndex:
     def upsert(self, document: dict[str, Any]) -> None:
         self.client.index(self.index_uid).add_documents([document], primary_key="resource_id")
 
-    def search(self, query: str, *, tenant_id: str, limit: int) -> list[str]:
+    def search(self, query: str, *, tenant_id: str, limit: int) -> list[tuple[str, float]]:
+        # showRankingScore:让 Meili 返回 _rankingScore(0~1 归一化相关度),
+        # 贯通到 rank_evidence 作 BM25 口径排序依据;否则全文相关度信号丢失。
         result = self.client.index(self.index_uid).search(
             query,
-            opt_params={"filter": f'tenant_id = "{tenant_id}"', "limit": limit},
+            opt_params={
+                "filter": f'tenant_id = "{tenant_id}"',
+                "limit": limit,
+                "showRankingScore": True,
+            },
         )
-        return [hit["resource_id"] for hit in result.get("hits", [])]
+        return [
+            (hit["resource_id"], float(hit.get("_rankingScore") or 0.0))
+            for hit in result.get("hits", [])
+        ]

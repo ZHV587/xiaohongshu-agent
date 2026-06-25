@@ -254,7 +254,7 @@ def test_search_resources_integrates_ranking_fields(monkeypatch):
         def from_config(cls, cfg):
             return cls()
         def search(self, query, tenant_id, limit):
-            return ["res-1"]
+            return [("res-1", 0.8)]
         def ensure_index(self):
             pass
 

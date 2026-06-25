@@ -36,6 +36,8 @@ EDITABLE_KEYS = {
     "XHS_EMBEDDING_DIMENSIONS",
     "XHS_EMBEDDING_BATCH_SIZE",
     "XHS_EMBEDDING_TIMEOUT_SECONDS",
+    "XHS_EMBEDDING_QUERY_INSTRUCTION",
+    "XHS_EMBEDDING_RELEVANCE_FLOOR",
 }
 
 SECRET_KEYS = {
@@ -98,6 +100,22 @@ def _validate_updates(updates: dict[str, Any]) -> dict[str, str]:
             if dimensions != 1536:
                 raise ConfigValidationError(
                     "XHS_EMBEDDING_DIMENSIONS only supports 1536 with the current vector schema"
+                )
+        if key == "XHS_EMBEDDING_QUERY_INSTRUCTION" and sanitized_value.strip():
+            if "{query}" not in sanitized_value:
+                raise ConfigValidationError(
+                    "XHS_EMBEDDING_QUERY_INSTRUCTION must contain the {query} placeholder"
+                )
+        if key == "XHS_EMBEDDING_RELEVANCE_FLOOR" and sanitized_value.strip():
+            try:
+                floor = float(sanitized_value)
+            except ValueError as exc:
+                raise ConfigValidationError(
+                    "XHS_EMBEDDING_RELEVANCE_FLOOR must be a number in [0, 1]"
+                ) from exc
+            if not (0.0 <= floor <= 1.0):
+                raise ConfigValidationError(
+                    "XHS_EMBEDDING_RELEVANCE_FLOOR must be a number in [0, 1]"
                 )
         sanitized[key] = sanitized_value
     return sanitized

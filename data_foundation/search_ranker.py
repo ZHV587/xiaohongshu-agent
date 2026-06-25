@@ -4,12 +4,47 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any
 
+# 绝对相关度下限闸门默认值(仅作用于语义/余弦路径)。
+# 经验依据(生产实测,租户 default,Qwen3-Embedding-4B):
+#   - 相关查询"护肤"(语料内)加前缀后 top 余弦 ≈ 0.65
+#   - 无关查询"露营装备推荐"(语料外)加前缀后 top 余弦 ≈ 0.46
+# 默认取 0.50,落在 0.46(应拒) 与 0.65(应纳) 之间。
+# ⚠️ 标定口径警示:上述 0.46/0.65 是用标定期临时英文前缀测得,上线默认模板为中文,
+# 前缀文本不同会改变余弦分布。0.50 是初值,需在最终中文模板下用多组真实查询重新标定;
+# 阈值可经 XHS_EMBEDDING_RELEVANCE_FLOOR 配置覆盖(由 tools 层在查询路径从当前配置解析)。
+DEFAULT_RELEVANCE_FLOOR: float = 0.50
+
+# rank_evidence 最终加权配比(四者之和 == 1.0)。
+# 去归一化后 relevance 承载真实绝对相关度信号(且闸门已滤掉无关项),故提高其权重。
+WEIGHT_RELEVANCE: float = 0.70
+WEIGHT_FRESHNESS: float = 0.15
+WEIGHT_TYPE: float = 0.10
+WEIGHT_PERFORMANCE: float = 0.05
+
+_VALID_SCORE_KINDS = {"cosine", "bm25"}
+
+
+def _relevance_score(raw: float, score_kind: str, max_raw_score: float) -> float:
+    """relevance 口径分支。
+
+    - cosine:绝对余弦相似度,夹紧到 [0, 1],**不做候选集内归一化**(保留绝对相关度信号)。
+    - bm25:无固定上界,候选集内归一化(保留既有行为)。
+    """
+    if score_kind == "cosine":
+        return min(max(raw, 0.0), 1.0)
+    return raw / max_raw_score
+
+
 def rank_evidence(
     tenant_id: str,
     results: list[dict[str, Any]],
     performance_data: dict[str, list[dict[str, Any]]],
     limit: int = 10,
+    *,
+    score_kind: str,
 ) -> list[dict[str, Any]]:
+    if score_kind not in _VALID_SCORE_KINDS:
+        raise ValueError(f"score_kind must be one of {_VALID_SCORE_KINDS}, got {score_kind!r}")
     if not results:
         return []
 
@@ -24,8 +59,8 @@ def rank_evidence(
         resource_id = item["resource_id"]
         meta = item.get("metadata") or {}
 
-        # 1. Relevance Score (Normalized)
-        relevance = float(item.get("score") or 0.0) / max_raw_score
+        # 1. Relevance Score(按 score_kind 口径)
+        relevance = _relevance_score(float(item.get("score") or 0.0), score_kind, max_raw_score)
 
         # 2. Freshness Score
         source_updated_str = meta.get("source_updated_at")
@@ -61,7 +96,12 @@ def rank_evidence(
             p_score = math.tanh((likes + 2 * collects + 5 * comments) / 500.0)
 
         # Final Weighted Score
-        final_score = 0.6 * relevance + 0.2 * freshness + 0.1 * type_weight + 0.1 * p_score
+        final_score = (
+            WEIGHT_RELEVANCE * relevance
+            + WEIGHT_FRESHNESS * freshness
+            + WEIGHT_TYPE * type_weight
+            + WEIGHT_PERFORMANCE * p_score
+        )
 
         why = f"根据相关度得分归一化 {relevance:.2f}"
         if source_updated_str:

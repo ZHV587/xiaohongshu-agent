@@ -417,7 +417,7 @@ def test_search_tool_returns_structured_json(monkeypatch):
         yield repo
 
     fake_index = MagicMock()
-    fake_index.search.return_value = ["resource-1"]
+    fake_index.search.return_value = [("resource-1", 0.9)]
     monkeypatch.setattr(df_tools, "_repository", repository)
     monkeypatch.setenv("XHS_MEILI_URL", "http://127.0.0.1:7700")
     monkeypatch.setenv("XHS_MEILI_KEY", "k")
@@ -457,7 +457,7 @@ def test_semantic_search_tool_falls_back_to_fulltext_when_no_active_index(monkey
         yield repo
 
     fake_index = MagicMock()
-    fake_index.search.return_value = ["resource-9"]
+    fake_index.search.return_value = [("resource-9", 0.5)]
     monkeypatch.setattr(df_tools, "_repository", repository)
     monkeypatch.setenv("XHS_MEILI_URL", "http://127.0.0.1:7700")
     monkeypatch.setenv("XHS_MEILI_KEY", "k")
@@ -521,9 +521,10 @@ def test_semantic_search_tool_uses_active_index_historical_profile(monkeypatch, 
 
     captured = {}
 
-    def embed(query, *, config):
+    def embed(query, *, config, query_instruction):
         captured["query"] = query
         captured["config"] = config
+        captured["query_instruction"] = query_instruction
         return [0.1] * 1536
 
     monkeypatch.setattr(df_tools, "_repository", repository)
@@ -538,6 +539,8 @@ def test_semantic_search_tool_uses_active_index_historical_profile(monkeypatch, 
     assert captured["config"].base_url == "https://old.example/v1"
     assert captured["config"].api_key == "old-key"
     assert captured["config"].timeout_seconds == 11.0
+    # model-a 非 Qwen3 → 无指令前缀(检索期策略从当前配置解析,当前未显式配置)
+    assert captured["query_instruction"] is None
     assert [call[0] for call in repo.calls] == ["active_index", "semantic", "bulk_performance_metrics"]
 
 
@@ -574,6 +577,7 @@ def test_embed_query_sends_requested_dimensions(monkeypatch):
             dimensions=1536,
             timeout_seconds=13.0,
         ),
+        query_instruction=None,
     )
 
     assert len(vector) == 1536
@@ -584,6 +588,111 @@ def test_embed_query_sends_requested_dimensions(monkeypatch):
         "dimensions": 1536,
     }
     assert captured["timeout"] == 13.0
+
+
+def test_embed_query_injects_instruction_prefix_when_provided(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"embedding": [0.1] * 1536}]}
+
+    def post(url, **kwargs):
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(df_tools.httpx, "post", post)
+
+    df_tools._embed_query(
+        "露营装备",
+        config=EmbeddingProviderConfig(
+            base_url="https://e/v1", api_key="k", model="Qwen/Qwen3-Embedding-4B",
+            config_version="cfg", dimensions=1536,
+        ),
+        query_instruction="Instruct: 找小红书素材\nQuery: {query}",
+    )
+    # 指令前缀被注入,query 占位符被替换;裸 query 不再直接作为 input
+    assert captured["json"]["input"] == ["Instruct: 找小红书素材\nQuery: 露营装备"]
+
+
+def test_semantic_search_tool_returns_insufficient_relevance_below_floor(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    class _LowScoreRepo(_FakeRepository):
+        def semantic_rows(self, **kwargs):
+            self.calls.append(("semantic", kwargs))
+            return [{
+                "id": "resource-1", "title": "护肤", "summary": None, "type": "topic",
+                "visibility": "team", "score": 0.46, "chunk_index": 0, "chunk_text": "弱匹配",
+            }]
+
+    repo = _LowScoreRepo()
+    repo.active_index = SimpleNamespace(embedding_model="model-a", dimensions=1536, config_version="cfg")
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setattr(df_tools, "_embedding_query_config_for_index",
+                        lambda idx: EmbeddingProviderConfig(base_url="https://e/v1", api_key="k",
+                                                            model="model-a", config_version="cfg", dimensions=1536))
+    monkeypatch.setattr(df_tools, "_embed_query", lambda *a, **k: [0.1] * 1536)
+    monkeypatch.setattr("data_foundation.config.current_relevance_floor", lambda: 0.50)
+    monkeypatch.setattr("data_foundation.config.resolve_query_instruction", lambda model: None)
+
+    result = df_tools.semantic_search_resources.func("露营装备", top_k=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["mode"] == "insufficient_relevance"
+    assert result["results"] == []
+    assert result["top_score"] == 0.46
+    assert result["threshold"] == 0.50
+    # 未降级到全文(不调用 bulk_performance_metrics / readable_by_ids)
+    assert [c[0] for c in repo.calls] == ["active_index", "semantic"]
+
+
+def test_semantic_search_tool_floor_is_configurable(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    class _MidScoreRepo(_FakeRepository):
+        def semantic_rows(self, **kwargs):
+            self.calls.append(("semantic", kwargs))
+            return [{
+                "id": "resource-1", "title": "护肤", "summary": None, "type": "topic",
+                "visibility": "team", "score": 0.60, "chunk_index": 0, "chunk_text": "匹配",
+            }]
+
+    repo = _MidScoreRepo()
+    repo.active_index = SimpleNamespace(embedding_model="model-a", dimensions=1536, config_version="cfg")
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setattr(df_tools, "_embedding_query_config_for_index",
+                        lambda idx: EmbeddingProviderConfig(base_url="https://e/v1", api_key="k",
+                                                            model="model-a", config_version="cfg", dimensions=1536))
+    monkeypatch.setattr(df_tools, "_embed_query", lambda *a, **k: [0.1] * 1536)
+    monkeypatch.setattr("data_foundation.config.resolve_query_instruction", lambda model: None)
+
+    # 阈值 0.50:0.60 >= 0.50 → semantic
+    monkeypatch.setattr("data_foundation.config.current_relevance_floor", lambda: 0.50)
+    assert df_tools.semantic_search_resources.func("护肤", top_k=10, config=_Config())["mode"] == "semantic"
+
+    # 配置覆盖阈值到 0.70:0.60 < 0.70 → insufficient_relevance(按当前配置生效)
+    monkeypatch.setattr("data_foundation.config.current_relevance_floor", lambda: 0.70)
+    out = df_tools.semantic_search_resources.func("护肤", top_k=10, config=_Config())
+    assert out["mode"] == "insufficient_relevance"
+    assert out["threshold"] == 0.70
 
 
 def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch):

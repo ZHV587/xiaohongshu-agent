@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import os
 from typing import Literal, Mapping
 
+from data_foundation.search_ranker import DEFAULT_RELEVANCE_FLOOR
+
 
 EMBEDDING_REQUIRED_KEYS = (
     "XHS_EMBEDDING_BASE_URL",
@@ -16,7 +18,81 @@ EMBEDDING_CONFIG_KEYS = (
     "XHS_EMBEDDING_DIMENSIONS",
     "XHS_EMBEDDING_BATCH_SIZE",
     "XHS_EMBEDDING_TIMEOUT_SECONDS",
+    "XHS_EMBEDDING_QUERY_INSTRUCTION",
+    "XHS_EMBEDDING_RELEVANCE_FLOOR",
 )
+
+# 绝对相关度下限默认值(单一定义点在 search_ranker;顶部 import 复用,避免漂移)。
+
+# 模型感知查询指令默认模板(仅对 Qwen3 类非对称检索模型启用)。含 {query} 占位符。
+_DEFAULT_QUERY_INSTRUCTION = (
+    "Instruct: 给定一个内容创作检索查询,找出与之相关的小红书素材\nQuery: {query}"
+)
+
+
+def _is_asymmetric_model(model: str) -> bool:
+    """是否为需要查询指令前缀的非对称检索模型(当前:Qwen3-Embedding 系列)。"""
+    return "qwen3-embedding" in (model or "").lower()
+
+
+def query_instruction_template_valid(template: str | None) -> bool:
+    """显式指令模板必须含 {query} 占位符;空值视为"未配置"(合法)。"""
+    if not template:
+        return True
+    return "{query}" in template
+
+
+def _model_aware_query_instruction(model: str, explicit: str | None) -> str | None:
+    """解析查询指令模板:显式配置优先(须含 {query},否则忽略);
+    否则 Qwen3 类模型用默认模板;其他模型返回 None(裸文本,不硬套)。"""
+    if explicit and query_instruction_template_valid(explicit):
+        return explicit
+    if _is_asymmetric_model(model):
+        return _DEFAULT_QUERY_INSTRUCTION
+    return None
+
+
+def _current_embedding_values() -> dict[str, str]:
+    """读取**当前生效**的 embedding 配置原始值(配置中心当前快照或 env),只读不 bootstrap。
+
+    与 runtime_embedding_snapshot 的来源选择一致,但不触发空 history 时的 bootstrap 写盘,
+    用于解析检索期策略(query_instruction / relevance_floor)——这两者取当前配置,
+    不随 active index 的 config_version 历史回放。
+    """
+    center = _config_center()
+    if center is None:
+        return _embedding_values_from_environment()
+    history = center.history()
+    current = history[-1].values if history else {}
+    return _embedding_values(current)
+
+
+def current_query_instruction() -> str | None:
+    """当前显式 XHS_EMBEDDING_QUERY_INSTRUCTION(无效模板视为未配置,返回 None)。"""
+    explicit = _current_embedding_values().get("XHS_EMBEDDING_QUERY_INSTRUCTION", "").strip()
+    if explicit and query_instruction_template_valid(explicit):
+        return explicit
+    return None
+
+
+def resolve_query_instruction(model: str) -> str | None:
+    """查询路径解析入口:模型名取 active index(判定 Qwen3),显式覆盖取当前配置。"""
+    return _model_aware_query_instruction(model, current_query_instruction())
+
+
+def current_relevance_floor() -> float:
+    """当前 XHS_EMBEDDING_RELEVANCE_FLOOR;未配置或非法时回退 DEFAULT_RELEVANCE_FLOOR。"""
+    raw = _current_embedding_values().get("XHS_EMBEDDING_RELEVANCE_FLOOR", "").strip()
+    if not raw:
+        return DEFAULT_RELEVANCE_FLOOR
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_RELEVANCE_FLOOR
+    # 余弦相似度阈值的有效域 [0, 1];越界视为误配,回退默认。
+    if not (0.0 <= value <= 1.0):
+        return DEFAULT_RELEVANCE_FLOOR
+    return value
 
 
 class EmbeddingConfigError(ValueError):

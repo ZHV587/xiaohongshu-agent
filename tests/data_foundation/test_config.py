@@ -100,3 +100,85 @@ def test_embedding_snapshot_for_version_rejects_unavailable_env_history(monkeypa
 
     assert runtime_embedding_snapshot().version == "env-v1"
     assert embedding_snapshot_for_version("retired-v0") is None
+
+
+# --- retrieval-relevance-overhaul: 查询指令前缀与检索期策略读取器 ---
+
+from data_foundation.config import (  # noqa: E402
+    _model_aware_query_instruction,
+    current_query_instruction,
+    current_relevance_floor,
+    query_instruction_template_valid,
+    resolve_query_instruction,
+)
+from data_foundation.search_ranker import DEFAULT_RELEVANCE_FLOOR  # noqa: E402
+
+
+def test_model_aware_instruction_qwen3_gets_default_prefix():
+    instr = _model_aware_query_instruction("Qwen/Qwen3-Embedding-4B", None)
+    assert instr is not None
+    assert "{query}" in instr
+
+
+def test_model_aware_instruction_other_model_is_none():
+    assert _model_aware_query_instruction("text-embedding-3-small", None) is None
+
+
+def test_model_aware_instruction_explicit_overrides_default():
+    explicit = "Instruct: x\nQuery: {query}"
+    assert _model_aware_query_instruction("Qwen/Qwen3-Embedding-4B", explicit) == explicit
+
+
+def test_model_aware_instruction_ignores_invalid_explicit():
+    # 无 {query} 占位符的显式模板被忽略,回退到模型感知默认(Qwen3)
+    instr = _model_aware_query_instruction("Qwen/Qwen3-Embedding-4B", "no placeholder")
+    assert instr is not None and "{query}" in instr
+    # 非 Qwen3 模型 + 非法显式 → None
+    assert _model_aware_query_instruction("text-embedding-3-small", "no placeholder") is None
+
+
+def test_query_instruction_template_valid():
+    assert query_instruction_template_valid("a {query} b") is True
+    assert query_instruction_template_valid("") is True   # 空=未配置,合法
+    assert query_instruction_template_valid(None) is True
+    assert query_instruction_template_valid("no placeholder") is False
+
+
+def test_current_relevance_floor_env_default(monkeypatch):
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.delenv("XHS_EMBEDDING_RELEVANCE_FLOOR", raising=False)
+    assert current_relevance_floor() == DEFAULT_RELEVANCE_FLOOR
+
+
+def test_current_relevance_floor_env_override(monkeypatch):
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.setenv("XHS_EMBEDDING_RELEVANCE_FLOOR", "0.7")
+    assert current_relevance_floor() == 0.7
+
+
+def test_current_relevance_floor_invalid_falls_back(monkeypatch):
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    for bad in ("abc", "1.5", "-0.1"):
+        monkeypatch.setenv("XHS_EMBEDDING_RELEVANCE_FLOOR", bad)
+        assert current_relevance_floor() == DEFAULT_RELEVANCE_FLOOR
+
+
+def test_current_query_instruction_reads_env(monkeypatch):
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.setenv("XHS_EMBEDDING_QUERY_INSTRUCTION", "Instruct: y\nQuery: {query}")
+    assert current_query_instruction() == "Instruct: y\nQuery: {query}"
+    # 非法(无占位符)→ 视为未配置
+    monkeypatch.setenv("XHS_EMBEDDING_QUERY_INSTRUCTION", "bad")
+    assert current_query_instruction() is None
+
+
+def test_resolve_query_instruction_uses_current_explicit_and_model(monkeypatch):
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    monkeypatch.setenv("XHS_EMBEDDING_QUERY_INSTRUCTION", "Instruct: z\nQuery: {query}")
+    # 显式当前配置优先,即使模型非 Qwen3
+    assert resolve_query_instruction("text-embedding-3-small") == "Instruct: z\nQuery: {query}"

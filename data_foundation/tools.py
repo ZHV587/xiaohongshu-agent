@@ -63,11 +63,12 @@ def _embedding_query_config_for_index(active_index: Any) -> EmbeddingProviderCon
     return provider_config
 
 
-def _embed_query(query: str, *, config: EmbeddingProviderConfig) -> list[float]:
+def _embed_query(query: str, *, config: EmbeddingProviderConfig, query_instruction: str | None) -> list[float]:
+    text = query if not query_instruction else query_instruction.format(query=query)
     response = httpx.post(
         config.base_url.rstrip("/") + "/embeddings",
         headers={"Authorization": f"Bearer {config.api_key}"},
-        json={"model": config.model, "input": [query], "dimensions": config.dimensions},
+        json={"model": config.model, "input": [text], "dimensions": config.dimensions},
         timeout=config.timeout_seconds,
     )
     if response.status_code in {401, 403}:
@@ -129,9 +130,11 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
     over_fetch = min(want * 5, 200)
     try:
         index = MeiliResourceIndex.from_config(cfg)
-        ids = index.search(query.strip(), tenant_id=default_tenant_id(), limit=over_fetch)
+        hits = index.search(query.strip(), tenant_id=default_tenant_id(), limit=over_fetch)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"MEILI_QUERY_FAILED: {exc}"}
+    ids = [rid for rid, _ in hits]
+    score_by_id = {rid: score for rid, score in hits}
     with _repository() as repo:
         rows = repo.readable_rows_by_ids(
             tenant_id=default_tenant_id(),
@@ -144,11 +147,16 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
             resource_ids=valid_ids,
         )
     raw_results = _rows_to_payload(rows)
+    # 注入 Meili ranking 分数:_rows_to_payload 取的 PG 行不含 BM25 相关度,
+    # 用 Meili _rankingScore 覆盖,作为 score_kind="bm25" 的归一化依据。
+    for item in raw_results:
+        item["score"] = score_by_id.get(item["resource_id"], 0.0)
     ranked_results = rank_evidence(
         tenant_id=default_tenant_id(),
         results=raw_results,
         performance_data=perf_data,
         limit=want,
+        score_kind="bm25",
     )
     return {"ok": True, "results": ranked_results}
 
@@ -157,6 +165,7 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
 def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfig | None = None) -> dict[str, Any]:
     """Search readable resources by configured embedding provider and pgvector."""
     actor = actor_from_config(config)
+    from data_foundation.config import current_relevance_floor, resolve_query_instruction
     from data_foundation.search_ranker import rank_evidence
 
     def _fulltext_fallback(reason: str) -> dict[str, Any]:
@@ -178,7 +187,10 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
             return _fulltext_fallback("NO_ACTIVE_EMBEDDING_INDEX")
         try:
             query_config = _embedding_query_config_for_index(active_index)
-            embedding = _embed_query(query, config=query_config)
+            # 检索期策略从当前配置解析(不随 active index config_version 历史回放):
+            # 模型名取 active index(判定 Qwen3),显式覆盖取当前配置。
+            query_instruction = resolve_query_instruction(query_config.model)
+            embedding = _embed_query(query, config=query_config, query_instruction=query_instruction)
             results = semantic_search(
                 repo,
                 tenant_id=default_tenant_id(),
@@ -186,11 +198,6 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
                 embedding=embedding,
                 embedding_model=active_index.embedding_model,
                 top_k=top_k * 5,
-            )
-            valid_ids = [res.resource_id for res in results]
-            perf_data = repo.bulk_performance_metrics(
-                tenant_id=default_tenant_id(),
-                resource_ids=valid_ids,
             )
         except EmbeddingSearchUnavailable as exc:
             return _fulltext_fallback(exc.reason_code)
@@ -200,12 +207,33 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
         except ValueError as exc:
             # 向量校验失败(provider 忽略 dimensions 返回非预期维度、含 NaN 等):降级。
             return _fulltext_fallback(f"EMBEDDING_QUERY_INVALID_VECTOR: {exc}")
+
+        # --- 绝对相关度闸门:基于原始绝对余弦,在 rank_evidence 加权之前 ---
+        # 阈值取当前配置(不随历史回放)。低于阈值=库内无足够相关内容 → 明确"数据不足",
+        # 不返回弱相关结果、不降级到 BM25(避免误命中重新混入)。
+        floor = current_relevance_floor()
+        top_score = max((res.score for res in results), default=0.0)
+        if top_score < floor:
+            return {
+                "ok": True,
+                "mode": "insufficient_relevance",
+                "results": [],
+                "top_score": round(top_score, 4),
+                "threshold": floor,
+            }
+
+        valid_ids = [res.resource_id for res in results]
+        perf_data = repo.bulk_performance_metrics(
+            tenant_id=default_tenant_id(),
+            resource_ids=valid_ids,
+        )
     raw_results = _search_payload(results)
     ranked_results = rank_evidence(
         tenant_id=default_tenant_id(),
         results=raw_results,
         performance_data=perf_data,
         limit=top_k,
+        score_kind="cosine",
     )
     return {"ok": True, "mode": "semantic", "results": ranked_results}
 

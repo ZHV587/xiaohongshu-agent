@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -269,10 +270,20 @@ def build_pool_from_config(values: dict[str, str], *, force_discover: bool = Fal
         os.environ["LLM_PROVIDER"] = values["LLM_PROVIDER"]
     try:
         # 先探测每个网关的可用清单(一次),再按白名单序匹配,保证质量优先序。
-        gateway_available = {
-            gw_name: set(discover_models(base_url, api_key, force=force_discover) or [])
-            for gw_name, base_url, api_key in gateways
-        }
+        # 探测是阻塞 httpx.get(每个 _DISCOVER_TIMEOUT=5s),串行时 N 个网关全挂会
+        # 累加阻塞 N×5s,拖慢启动对齐/定时健康探测/配置 verify。改并发探测:墙钟
+        # 收敛到最慢的单个网关(≈5s),与网关数解耦。线程内只读 env、各自发请求,
+        # 写回各自缓存键(_DISCOVER_CACHE 按 (base_url,key) 分键),无共享写冲突。
+        gateway_available: dict[str, set[str]] = {}
+        if gateways:
+            with ThreadPoolExecutor(max_workers=len(gateways)) as executor:
+                future_to_name = {
+                    executor.submit(discover_models, base_url, api_key, force=force_discover): gw_name
+                    for gw_name, base_url, api_key in gateways
+                }
+                for future in as_completed(future_to_name):
+                    gw_name = future_to_name[future]
+                    gateway_available[gw_name] = set(future.result() or [])
         for model_id in whitelist:  # 白名单序 = 质量序
             for gw_name, base_url, api_key in gateways:
                 if model_id in gateway_available[gw_name]:

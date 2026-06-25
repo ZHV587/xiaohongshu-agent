@@ -150,3 +150,36 @@ def test_config_center_atomic_write_survives_mid_write_crash(tmp_path, monkeypat
     center.save(actor_open_id="ou_admin", updates={"LLM_API_KEY": "k3"})
     assert center.get_plain()["LLM_API_KEY"] == "k3"
     assert len(center.history()) == 2
+
+
+def _center(tmp_path):
+    return ConfigCenter(path=tmp_path / "config.enc", encryption_key=Fernet.generate_key().decode())
+
+
+def test_config_center_rejects_query_instruction_without_placeholder(tmp_path):
+    center = _center(tmp_path)
+    with pytest.raises(ConfigValidationError, match="{query}"):
+        center.save(actor_open_id="ou_admin", updates={"XHS_EMBEDDING_QUERY_INSTRUCTION": "no placeholder"})
+
+
+def test_config_center_accepts_valid_query_instruction(tmp_path):
+    center = _center(tmp_path)
+    saved = center.save(
+        actor_open_id="ou_admin",
+        updates={"XHS_EMBEDDING_QUERY_INSTRUCTION": "Instruct: x\nQuery: {query}"},
+    )
+    assert center.get_plain()["XHS_EMBEDDING_QUERY_INSTRUCTION"] == "Instruct: x\nQuery: {query}"
+    assert saved.version
+
+
+def test_config_center_rejects_out_of_range_relevance_floor(tmp_path):
+    center = _center(tmp_path)
+    for bad in ("1.5", "-0.1", "abc"):
+        with pytest.raises(ConfigValidationError, match=r"\[0, 1\]"):
+            center.save(actor_open_id="ou_admin", updates={"XHS_EMBEDDING_RELEVANCE_FLOOR": bad})
+
+
+def test_config_center_accepts_valid_relevance_floor(tmp_path):
+    center = _center(tmp_path)
+    center.save(actor_open_id="ou_admin", updates={"XHS_EMBEDDING_RELEVANCE_FLOOR": "0.55"})
+    assert center.get_plain()["XHS_EMBEDDING_RELEVANCE_FLOOR"] == "0.55"

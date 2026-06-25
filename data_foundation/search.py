@@ -47,6 +47,9 @@ def semantic_search(
     embedding_model: str,
     top_k: int = 10,
 ) -> list[ResourceSearchResult]:
+    # 返回的 ResourceSearchResult.score 为**绝对余弦相似度**(semantic_rows 内
+    # `1 - (embedding <=> vector)`,约 0~1),供工具层闸门与 rank_evidence(score_kind="cosine")
+    # 直接按绝对值使用,不做候选集内归一化。
     validate_embedding(embedding)
     embedding_model = embedding_model.strip()
     if not embedding_model:

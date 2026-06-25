@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    // 在这里添加你的 MCP 服务器。
+    // autoApprove 里列出的工具名会自动放行，无需每次确认。
+    // 用 ["*"] 可以自动批准该服务器的全部工具（权限最大）。
+    //
+    // 示例（飞书文档 MCP）：
+    // "aws-docs": {
+    //   "command": "uvx",
+    //   "args": ["awslabs.aws-documentation-mcp-server@latest"],
+    //   "env": { "FASTMCP_LOG_LEVEL": "ERROR" },
+    //   "disabled": false,
+    //   "autoApprove": ["*"]
+    // }
+  }
+}

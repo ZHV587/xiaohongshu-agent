@@ -28,17 +28,31 @@ def test_upsert_document_uses_resource_id_as_primary_key():
     assert kwargs.get("primary_key") == "resource_id"
 
 
-def test_search_returns_ordered_ids_with_tenant_filter():
+def test_search_returns_id_score_pairs_with_tenant_filter():
     client = MagicMock()
     index = client.index.return_value
-    index.search.return_value = {"hits": [{"resource_id": "a"}, {"resource_id": "b"}]}
+    index.search.return_value = {
+        "hits": [
+            {"resource_id": "a", "_rankingScore": 0.9},
+            {"resource_id": "b", "_rankingScore": 0.4},
+        ]
+    }
     idx = _index_with(client)
-    ids = idx.search("减脂", tenant_id="default", limit=10)
-    assert ids == ["a", "b"]
+    hits = idx.search("减脂", tenant_id="default", limit=10)
+    assert hits == [("a", 0.9), ("b", 0.4)]
     args, kwargs = index.search.call_args
     assert args[0] == "减脂"
     assert kwargs["opt_params"]["filter"] == 'tenant_id = "default"'
     assert kwargs["opt_params"]["limit"] == 10
+    assert kwargs["opt_params"]["showRankingScore"] is True
+
+
+def test_search_defaults_missing_ranking_score_to_zero():
+    client = MagicMock()
+    index = client.index.return_value
+    index.search.return_value = {"hits": [{"resource_id": "a"}]}
+    idx = _index_with(client)
+    assert idx.search("q", tenant_id="default", limit=5) == [("a", 0.0)]
 
 
 def test_from_config_reuses_underlying_client_for_same_config(monkeypatch):
