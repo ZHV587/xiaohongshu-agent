@@ -22,7 +22,7 @@ from data_foundation.performance_feedback import (
     save_performance_metric_resource,
 )
 from data_foundation.processors.embedding import EmbeddingProviderConfig, embedding_config_from_snapshot
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.search import semantic_search
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sync_service import sync_feishu_sources

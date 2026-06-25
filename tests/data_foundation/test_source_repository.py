@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 
 from data_foundation.source_repository import SourceRepository
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 def _register(
@@ -329,7 +329,7 @@ def test_finish_run_rolls_back_and_keeps_connection_usable_on_failure(migrated_c
     改 with transaction 后:异常自动 rollback,连接回到干净态可继续用。
     """
     repo = SourceRepository(migrated_conn)
-    source = _register(repo, tenant_id="tenant-a", external_id="s-rollback")
+    source = _register(repo, tenant_id="tenant-a", name="s-rollback")
     run_id = repo.start_run(source.id, tenant_id="tenant-a")
 
     real_execute = migrated_conn.execute

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from data_foundation.embedding_repository import VectorChunk
 from data_foundation.embedding_service import EmbeddingIndexProfile, EmbeddingIndexService
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 class _Rows:

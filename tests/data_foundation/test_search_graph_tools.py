@@ -11,7 +11,7 @@ from cryptography.fernet import Fernet
 
 from data_foundation.graph import expand_graph
 from data_foundation.processors.embedding import EmbeddingProviderConfig
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.search import _result_from_row, semantic_search
 
 

@@ -9,7 +9,22 @@ def test_apply_permission_filter_sql():
     repo = BaseRepository()
     sql_fragment = repo.readable_resource_where(actor)
     # The filter must force the tenant boundary strictly
-    assert sql_fragment == "(tenant_id = 'tenant_123' AND (owner_open_id = 'user_abc' OR visibility = 'team'))"
+    expected = (
+        "(tenant_id = 'tenant_123'\n"
+        "    and (\n"
+        "      owner_open_id = 'user_abc'\n"
+        "      or visibility = 'team'\n"
+        "      or exists (\n"
+        "        select 1 from resource_permissions rp\n"
+        "        where rp.resource_id = id\n"
+        "          and rp.tenant_id = tenant_id\n"
+        "          and rp.subject_type = 'user'\n"
+        "          and rp.subject_id = 'user_abc'\n"
+        "          and rp.permission in ('read', 'write', 'admin')\n"
+        "      )\n"
+        "    ))"
+    )
+    assert sql_fragment == expected
 
 def test_apply_permission_filter_sql_with_alias():
     actor = RuntimeIdentityConfig(tenant_id="tenant_123", open_id="user_abc")
@@ -17,7 +32,23 @@ def test_apply_permission_filter_sql_with_alias():
     
     # Test with table alias "r"
     sql_fragment_alias = repo.readable_resource_where(actor, alias="r")
-    assert sql_fragment_alias == "(r.tenant_id = 'tenant_123' AND (r.owner_open_id = 'user_abc' OR r.visibility = 'team'))"
+    expected = (
+        "(r.tenant_id = 'tenant_123'\n"
+        "    and (\n"
+        "      r.owner_open_id = 'user_abc'\n"
+        "      or r.visibility = 'team'\n"
+        "      or exists (\n"
+        "        select 1 from resource_permissions rp\n"
+        "        where rp.resource_id = r.id\n"
+        "          and rp.tenant_id = r.tenant_id\n"
+        "          and rp.subject_type = 'user'\n"
+        "          and rp.subject_id = 'user_abc'\n"
+        "          and rp.permission in ('read', 'write', 'admin')\n"
+        "      )\n"
+        "    ))"
+    )
+    assert sql_fragment_alias == expected
+
 
 def test_sql_injection_escaping():
     actor = RuntimeIdentityConfig(tenant_id="tenant' OR '1'='1", open_id="user' OR '1'='1")

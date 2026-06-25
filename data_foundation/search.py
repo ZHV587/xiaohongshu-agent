@@ -4,7 +4,7 @@ import math
 from typing import Any
 
 from data_foundation.models import ResourceSearchResult
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 def validate_embedding(embedding: list[float]) -> None:

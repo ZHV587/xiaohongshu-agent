@@ -89,7 +89,7 @@ def test_reason_code_prevents_active_state_even_when_status_is_enabled():
 def test_processor_state_helpers_do_not_import_database_layers():
     forbidden = {
         "data_foundation.db",
-        "data_foundation.repository",
+        "data_foundation.repositories",
         "data_foundation.outbox_worker",
         "data_foundation.sync_service",
     }

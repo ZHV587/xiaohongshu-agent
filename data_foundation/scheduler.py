@@ -14,11 +14,11 @@ from data_foundation.outbox_worker import process_outbox_batch
 from data_foundation.config import runtime_embedding_snapshot
 from data_foundation.processors.embedding import embedding_config_from_snapshot
 from data_foundation.processors.registry import default_processor_registry
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sources.base import SourceContext, SourceLease
 from data_foundation.sources.registry import default_source_registry
-from data_foundation.telemetry_repository import TelemetryRepository
+from data_foundation.repositories.telemetry import TelemetryRepository
 
 
 @dataclass(frozen=True)

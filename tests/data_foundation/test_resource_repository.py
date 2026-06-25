@@ -5,21 +5,6 @@ import data_foundation.db
 from psycopg.rows import dict_row
 from data_foundation.models import Resource, RuntimeIdentityConfig
 
-# Monkeypatch pgvector migrations to run on local Postgres
-def patched_apply_migrations(conn):
-    schema_sql = importlib.resources.files("data_foundation").joinpath("schema.sql").read_text(encoding="utf-8")
-    schema_sql = schema_sql.replace("create extension if not exists vector with schema public;", "")
-    schema_sql = schema_sql.replace("embedding public.vector(1536) not null", "embedding double precision[] not null")
-    schema_sql = re.sub(
-        r"create index if not exists idx_resource_embeddings_vector\s+on resource_embeddings using ivfflat[^;]+;",
-        "",
-        schema_sql
-    )
-    conn.execute(schema_sql)
-
-data_foundation.db._apply_migrations = patched_apply_migrations
-
-# Import ResourceRepository afterwards
 from data_foundation.repositories.resource import ResourceRepository
 
 def test_upsert_resource_inserts_correctly(migrated_conn):
@@ -159,8 +144,9 @@ def test_upsert_resource_updates_correctly(migrated_conn):
             "select count from resource_type_counts where tenant_id = %s and type = %s",
             ("test_tenant", "xhs_idea")
         ).fetchone()
-        assert copy_count is not None and copy_count["count"] == 0
+        assert copy_count is None
         assert idea_count is not None and idea_count["count"] == 1
+
 
 
 def test_upsert_resource_tenant_isolation(migrated_conn):

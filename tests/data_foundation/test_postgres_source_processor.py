@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from data_foundation.models import SourceSecrets, SyncSource
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.sources.base import SourceContext, SourceLease
 from data_foundation.sources.postgres import (
     PostgresTableConfig,

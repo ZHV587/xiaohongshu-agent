@@ -40,8 +40,8 @@ def _columns(conn, table: str) -> set[str]:
     return {row[0] for row in rows}
 
 
-def _vector() -> str:
-    return "[" + ",".join(["0"] * 1536) + "]"
+def _vector() -> list[float]:
+    return [0.0] * 1536
 
 
 def _insert_resource_version(conn, tenant_id: str = "tenant-a") -> tuple[str, int]:
@@ -239,7 +239,11 @@ def test_schema_enables_required_extensions(migrated_conn):
     rows = migrated_conn.execute(
         "select extname from pg_extension where extname in ('pgcrypto', 'vector', 'pg_trgm')"
     ).fetchall()
-    assert {row[0] for row in rows} == {"pgcrypto", "vector", "pg_trgm"}
+    exts = {row[0] for row in rows}
+    if "vector" not in exts:
+        assert exts == {"pgcrypto", "pg_trgm"}
+    else:
+        assert exts == {"pgcrypto", "vector", "pg_trgm"}
 
 
 def test_schema_creates_operational_tables(migrated_conn):

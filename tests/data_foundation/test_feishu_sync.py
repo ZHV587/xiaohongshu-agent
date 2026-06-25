@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 from data_foundation.feishu_sync import SyncResult, sync_base_rows, sync_wiki_documents
 from data_foundation.models import Resource
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 @dataclass

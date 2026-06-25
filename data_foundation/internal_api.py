@@ -14,7 +14,7 @@ from starlette.routing import Route
 from config_center import ConfigCenter, ConfigValidationError, latest_config_snapshot
 from data_foundation.db import connect
 from data_foundation.permissions import default_tenant_id
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.runtime_facts import module_fact, supervisor_runtime_fact, utc_now
 from models import build_pool_from_config
 from tools.lark_cli import lark_cli

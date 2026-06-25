@@ -144,17 +144,17 @@ class PerformanceRepository(BaseRepository):
         if actor is not None:
             target_where = self.readable_resource_where(actor, "target")
             metric_where = self.readable_resource_where(actor, "metric")
+            params = (resource_ids,)
         else:
-            clean_tenant = tenant_id.replace("'", "''")
-            target_where = f"target.tenant_id = '{clean_tenant}'"
-            metric_where = f"metric.tenant_id = '{clean_tenant}'"
+            target_where = "target.tenant_id = %s"
+            metric_where = "1=1"
+            params = (resource_ids, tenant_id)
 
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 rows = cursor.execute(
                     f"""
-                    SELECT 
-                        target.id as target_resource_id,
+                    SELECT target.id::text as target_resource_id,
                         metric.id,
                         metric.title,
                         metric.content_json,
@@ -174,7 +174,7 @@ class PerformanceRepository(BaseRepository):
                       AND {metric_where}
                     ORDER BY metric.updated_at DESC, metric.id DESC
                     """,
-                    (resource_ids,),
+                    params,
                 ).fetchall()
 
                 result: dict[str, list[dict[str, Any]]] = {str(rid): [] for rid in resource_ids}

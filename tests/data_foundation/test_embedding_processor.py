@@ -14,7 +14,7 @@ from data_foundation.processors.embedding import (
     chunk_text,
     embedding_config_from_env,
 )
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 def _embedding(first: float = 0.1) -> list[float]:

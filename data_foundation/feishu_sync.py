@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from data_foundation.outbox_requests import default_write_requests
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 logger = logging.getLogger(__name__)

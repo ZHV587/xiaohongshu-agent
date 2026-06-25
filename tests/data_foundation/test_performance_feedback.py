@@ -11,7 +11,7 @@ from data_foundation.performance_feedback import (
     get_resource_performance_payload,
     save_performance_metric_resource,
 )
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 @dataclass

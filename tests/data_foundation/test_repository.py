@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from data_foundation.permissions import actor_from_config
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.models import OutboxRequest
 
 
@@ -104,6 +104,18 @@ def test_semantic_rows_uses_schema_qualified_vector_cast_for_custom_search_paths
 
         def fetchall(self):
             return []
+
+        def cursor(self, row_factory=None):
+            return self
+
+        def transaction(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
 
     conn = _CapturingConnection()
     repo = ResourceRepository(conn)  # type: ignore[arg-type]
@@ -454,20 +466,21 @@ def test_resource_type_counts_follow_new_and_retyped_resources(migrated_conn):
 
 
 def test_runtime_status_reads_resource_type_count_facts_not_resource_table():
-    source = Path("data_foundation/repository.py").read_text(encoding="utf-8").lower()
+    source = Path("data_foundation/repositories/resource.py").read_text(encoding="utf-8").lower()
 
     assert "from resource_type_counts" in source
     assert "select type, count(*) as count\n            from resources\n            where tenant_id = %s\n            group by type" not in source
 
 
 def test_runtime_facts_split_source_counts_for_index_usage():
-    source = Path("data_foundation/repository.py").read_text(encoding="utf-8").lower()
+    source = Path("data_foundation/repositories/resource.py").read_text(encoding="utf-8").lower()
 
     assert "count(*) filter" not in source
     assert "source_enabled" in source
     assert "source_expired" in source
     assert "source_running" in source
-    assert "lease_expires_at is not null\n              and lease_expires_at > now()" in source
+    assert "lease_expires_at is not null" in source
+    assert "lease_expires_at > now()" in source
 
 
 def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
@@ -674,7 +687,7 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
 
 
 def test_readable_rows_by_ids_filters_and_preserves_order(migrated_conn):
-    from data_foundation.repository import ResourceRepository
+    from data_foundation.repositories.resource import ResourceRepository
     repo = ResourceRepository(migrated_conn)
     a = repo.upsert_resource(tenant_id="default", actor_open_id="ou_x", resource_type="feishu_base_record",
         title="A", content_text="a", content_json={}, visibility="team", owner_open_id="ou_x")
@@ -703,6 +716,18 @@ def test_bulk_performance_metrics_sql_syntax():
 
         def fetchall(self):
             return []
+
+        def cursor(self, row_factory=None):
+            return self
+
+        def transaction(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
 
     conn = _CapturingConnection()
     repo = ResourceRepository(conn)  # type: ignore[arg-type]

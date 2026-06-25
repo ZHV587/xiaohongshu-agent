@@ -8,7 +8,7 @@ import psycopg
 import pytest
 
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 
 
 def _vector(first: float = 0.1) -> list[float]:

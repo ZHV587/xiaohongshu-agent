@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from data_foundation.graph import expand_graph
-from data_foundation.repository import ResourceRepository
+from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.creation_memory import (
     save_generated_copy_resource,
     save_generated_topic_resource,
@@ -231,8 +231,18 @@ def test_save_user_feedback_validates_type_and_text():
         )
 
 
-def test_creation_memory_writes_real_resource_edges(migrated_conn):
+def test_creation_memory_writes_real_resource_edges(migrated_conn, monkeypatch):
+    from unittest.mock import MagicMock
+    
     repo = ResourceRepository(migrated_conn)
+    fake_graph = MagicMock()
+    monkeypatch.setenv("XHS_FALKOR_URL", "redis://127.0.0.1:6379")
+    monkeypatch.setenv("XHS_FALKOR_GRAPH", "xhs")
+    monkeypatch.setattr(
+        "data_foundation.falkor_client.FalkorResourceGraph.from_config",
+        classmethod(lambda cls, cfg: fake_graph),
+    )
+
     source = repo.upsert_resource(
         tenant_id="default",
         actor_open_id="ou_user",
@@ -256,6 +266,16 @@ def test_creation_memory_writes_real_resource_edges(migrated_conn):
         evidence=[{"resource_id": source.id, "summary": "清单型内容收藏高"}],
     )
 
+    fake_graph.expand.return_value = (
+        [
+            {"id": result["resource"]["resource_id"], "title": "露营别乱买", "type": "generated_copy"},
+            {"id": source.id, "title": "轻量露营样本", "type": "feishu_base_record"}
+        ],
+        [
+            {"source": result["resource"]["resource_id"], "target": source.id, "edge_type": "derived_from", "weight": 1.0}
+        ]
+    )
+
     graph = expand_graph(
         repo,
         tenant_id="default",
@@ -272,6 +292,7 @@ def test_creation_memory_writes_real_resource_edges(migrated_conn):
     assert [(edge.source_resource_id, edge.target_resource_id, edge.edge_type) for edge in graph.edges] == [
         (result["resource"]["resource_id"], source.id, "derived_from")
     ]
+
 
 
 def test_creation_memory_rolls_back_when_evidence_edge_is_invalid(migrated_conn):
