@@ -21,11 +21,11 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 ## 2. 语义路由消歧
 多个 Skill 语义相近时，按创作阶段择一，避免误触发：
 - 探讨盈利模式、商业卡点、用户是谁、如何变现：优先 `xhs-diagnosis`，必要时接 `xhs-positioning`。
-- 目标含混、概念空转、话说不清：优先 `xhs-goal`、`xhs-deconstruct` 或 `xhs-good-question`。
-- 拖延、不想做、想跳过关键步骤、过度自动化：优先 `xhs-action` 或 `xhs-slowisfast`。
+- 目标含混、概念空转、话说不清、问题说清楚：优先 `xhs-goal`、`xhs-deconstruct` 或 `xhs-good-question`。
+- 拖延、不想做、想做却做不到、想跳过关键步骤、过度自动化：优先 `xhs-action` 或 `xhs-slowisfast`。
 - 找同行、拆爆款、判断什么才是真对标：优先 `xhs-benchmark`。
-- 做内容方向、选题、主题地图、素材工程：优先 `xhs-content-system` 或 `xhs-planning`。
-- 写标题、开头、正文、改文案：优先 `xhs-title`、`xhs-hook`、`xhs-copywriting`、`xhs-audit`。
+- 给定一个方向/主题、要选题菜单或要完整文案(端到端创作主流程)：优先 `topic-content`(方向→选题→文案两步流，带数据依据)。仅做选题脑暴/主题地图/素材工程：`xhs-planning` 或 `xhs-content-system`。
+- 文案创作分工(按粒度择一,避免重叠误触)：写整篇文案→`xhs-copywriting`；只起标题→`xhs-title`；只优化开头/前3秒钩子→`xhs-hook`；检测AI腔/润色去腔→`xhs-audit`；诊断"这个内容怎么做好"(形式/封面/表达)→`xhs-content`。
 - 记录决策、复盘规律、形成长期状态画像：优先 `xhs-decision`。
 - 系统学习一个主题，或继续上一篇学习：优先 `xhs-learning`。
 - 需要多角色讨论或奥派视角：优先 `xhs-chatroom` 或 `xhs-chatroom-austrian`。
