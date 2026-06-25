@@ -60,14 +60,18 @@ export interface ThreadContextProps {
   setIsSyncing: (syncing: boolean) => void;
   isFlying: boolean;
   setIsFlying: (flying: boolean) => void;
+  isDirty: boolean;
   showCommandPalette: boolean;
   setShowCommandPalette: (show: boolean) => void;
   cmdSearch: string;
   setCmdSearch: (search: string) => void;
+  lastSavedTitle: string;
+  lastSavedContent: string;
   bitableUrl: string | null;
   wikiUrl: string | null;
 
   // Actions
+  handleExecuteCommand: (cmd: string) => void;
   handleSyncToFeishu: () => void;
   handleSendNotification: () => void;
   handleInsertEmoji: (emoji: string) => void;
