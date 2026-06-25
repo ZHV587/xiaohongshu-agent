@@ -25,16 +25,16 @@ test("right workbench is not left focusable in the mobile layout", () => {
 });
 
 test("command palette uses dialog semantics with labelled content", () => {
-  const thread = src("components", "thread", "index.tsx");
+  const commandPalette = src("components", "thread", "CommandPalette.tsx");
 
-  assert.match(thread, /@radix-ui\/react-dialog/);
-  assert.match(thread, /Dialog\.Title/);
-  assert.match(thread, /Dialog\.Description/);
-  assert.match(thread, /aria-modal="true"/);
+  assert.match(commandPalette, /@radix-ui\/react-dialog/);
+  assert.match(commandPalette, /Dialog\.Title/);
+  assert.match(commandPalette, /Dialog\.Description/);
+  assert.match(commandPalette, /aria-modal="true"/);
 });
 
 test("primary mobile controls preserve at least a 44px touch target", () => {
-  const thread = src("components", "thread", "index.tsx");
+  const commandPalette = src("components", "thread", "CommandPalette.tsx");
   const history = src("components", "thread", "history", "index.tsx");
   const chat = src("components", "thread", "ChatTimeline.tsx");
   const composer = src("components", "thread", "ComposerPanel.tsx");
@@ -47,7 +47,7 @@ test("primary mobile controls preserve at least a 44px touch target", () => {
   const sonner = src("components", "ui", "sonner.tsx");
   const globals = src("app", "globals.css");
 
-  assert.match(thread, /min-h-12/);
+  assert.match(commandPalette, /min-h-12/);
   assert.match(history, /min-h-11/);
   assert.match(chat, /min-h-11/);
   assert.match(composer, /min-h-11/);
@@ -67,15 +67,15 @@ test("browser providers pass an absolute same-origin api url to the LangGraph SD
 });
 
 test("phone preview does not include decorative social follow like or collect actions", () => {
-  const thread = src("components", "thread", "index.tsx");
+  const phoneSimulator = src("components", "thread", "PhoneSimulator.tsx");
   const context = src("components", "thread", "ThreadContext.tsx");
 
-  assert.doesNotMatch(thread, />\s*关注\s*<\/button>/);
+  assert.doesNotMatch(phoneSimulator, />\s*关注\s*<\/button>/);
   assert.doesNotMatch(
-    thread,
+    phoneSimulator,
     /likeCount|isLiked|showPlusOne|collectCount|isCollected/,
   );
-  assert.doesNotMatch(thread, /\bHeart\b|\bStar\b/);
+  assert.doesNotMatch(phoneSimulator, /\bHeart\b|\bStar\b/);
   assert.doesNotMatch(
     context,
     /likeCount|isLiked|showPlusOne|collectCount|isCollected/,

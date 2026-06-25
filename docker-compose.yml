@@ -24,12 +24,13 @@ networks:
 volumes:
   pgdata:
     external: true
+  pgdata_standby:
 
 services:
   pg:
     image: local/postgres16-pgvector:0.8.3
     container_name: xhs-pg
-    command: ["postgres"]
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10", "-c", "hot_standby=on"]
     networks: [xhs-net]
     restart: unless-stopped
     environment:
@@ -38,11 +39,26 @@ services:
       POSTGRES_PASSWORD: ${XHS_PG_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U xhs_user -d xhs_agent"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  pg-standby:
+    image: local/postgres16-pgvector:0.8.3
+    container_name: xhs-pg-standby
+    networks: [xhs-net]
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: replication_password
+    volumes:
+      - pgdata_standby:/var/lib/postgresql/data
+      - ./scripts/entrypoint-standby.sh:/usr/local/bin/entrypoint-standby.sh
+    entrypoint: ["/usr/local/bin/entrypoint-standby.sh"]
+    depends_on:
+      pg: {condition: service_healthy}
 
   redis:
     image: redis:7-alpine
