@@ -50,13 +50,13 @@ create index if not exists idx_resource_embeddings_vector
 ```
 
 ### 2.2 Test Environment Updates
-Update the monkeypatch regular expression in [conftest.py](file:///e:/小红书智能体/tests/data_foundation/conftest.py) to match both `ivfflat` and `hnsw` index creation strings, preventing failure on local Postgres test environments where `pgvector` extension is not present. We also strip the upgrade DO block to avoid syntax and transaction compatibility noise.
+Update the monkeypatch regular expression in [conftest.py](file:///e:/小红书智能体/tests/data_foundation/conftest.py) to match both `ivfflat` and `hnsw` index creation strings, preventing failure on local Postgres test environments where `pgvector` extension is not present. We also strip the upgrade DO block to avoid syntax and transaction compatibility noise using a non-greedy wildcard matching structure.
 
 ```python
 # tests/data_foundation/conftest.py
     # Remove the PL/pgSQL upgrade block
     schema_sql = re.sub(
-        r"do\s+\$\$\s*begin\s+if exists\s*\(\s*select 1 from pg_indexes[^;]+;\s*end if;\s*end\s+\$\$;",
+        r"do\s+\$\$.*?end\s+\$\$;",
         "",
         schema_sql,
         flags=re.IGNORECASE | re.DOTALL
