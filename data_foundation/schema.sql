@@ -374,6 +374,31 @@ create index if not exists idx_resource_outbox_tenant_recent
 create index if not exists idx_resource_outbox_tenant_status
   on resource_outbox (tenant_id, status);
 
+-- 3. 创建动态 Schema 隔离的通知函数
+create or replace function notify_resource_outbox_insert()
+returns trigger as $$
+begin
+    perform pg_notify('outbox_work_' || coalesce(current_schema(), 'public'), new.tenant_id);
+    return new;
+end;
+$$ language plpgsql;
+
+-- 4. 幂等性创建 INSERT 触发器
+drop trigger if exists trg_resource_outbox_notify_insert on resource_outbox;
+create trigger trg_resource_outbox_notify_insert
+  after insert on resource_outbox
+  for each row
+  when (new.status = 'pending')
+  execute function notify_resource_outbox_insert();
+
+-- 5. 幂等性创建 UPDATE 触发器
+drop trigger if exists trg_resource_outbox_notify_update on resource_outbox;
+create trigger trg_resource_outbox_notify_update
+  after update of status on resource_outbox
+  for each row
+  when (new.status = 'pending' and old.status <> 'pending')
+  execute function notify_resource_outbox_insert();
+
 create table if not exists service_error_aggregates (
   id uuid primary key default gen_random_uuid(),
   window_started_at timestamptz not null,
