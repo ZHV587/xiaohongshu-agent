@@ -16,12 +16,9 @@ description: |
 ## Phase 1：检索与分析
 
 1. 接收用户的选题方向
-2. 调用 `search_resources(query)` 检索相关素材
-3. 需要语义召回时调用 `semantic_search_resources(query)`
-4. 对高命中素材调用 `get_resource(resource_id)` 精读
-5. 需要关联扩展时调用 `graph_expand(resource_ids)`
+2. 按**主控 system prompt §6《检索与证据规约》**检索取证:语义优先检索 Postgres 底座→必要时关键词补召→对高命中素材 `get_resource` 精读→需要关联扩展时按需 `graph_expand`。检索口径、mode 处理、时效防伪以 §6 为准,本技能不重述。
 
-**数据不足时**：明确说「当前数据不足，建议先同步飞书资源」，不编造结论。
+**数据不足时**:按 §6 明说「当前数据不足,建议先同步飞书资源」,不编造结论。
 
 分析维度：
 - 选题角度：哪些切入点反复出现在高赞内容中

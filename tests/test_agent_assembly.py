@@ -364,7 +364,11 @@ def test_agent_import_does_not_update_lark_adapters(monkeypatch):
 
 
 def test_agent_registers_executor_subagents(monkeypatch):
-    """xhs-router 必须注册全部4个执行型子智能体，不多不少。"""
+    """xhs-router 必须注册全部执行型子智能体(已收敛为 2 个:重检索 + 风格提炼),不多不少。
+
+    thin 持久化子代理 topic-generator/copy-generator/state-manager 已移除,
+    落库/同步由主控用工具直调。
+    """
     _set_assembly_env(monkeypatch)
     monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
@@ -390,13 +394,18 @@ def test_agent_registers_executor_subagents(monkeypatch):
     assert names == EXECUTOR_SUBAGENT_NAMES
 
 
-def test_executor_subagents_have_persistence_tools(monkeypatch):
-    """每个执行型子智能体必须持有其负责的持久化工具。"""
+def test_knowledge_retriever_subagent_has_evidence_response_format(monkeypatch):
+    """重检索子代理必须以 EvidencePackage 作为 response_format,框架强制结构化证据输出。
+
+    替代原 test_executor_subagents_have_persistence_tools:thin 持久化子代理已移除,
+    落库/同步由主控直调工具,不再有 topic-generator/copy-generator/state-manager。
+    """
     _set_assembly_env(monkeypatch)
     monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import deepagents
+    from data_foundation.evidence import EvidencePackage
 
     captured_subagents = []
     real_create = deepagents.create_deep_agent
@@ -412,18 +421,14 @@ def test_executor_subagents_have_persistence_tools(monkeypatch):
     importlib.reload(agent_module)
 
     by_name = {s["name"]: s for s in captured_subagents}
+    # 恰 2 个子代理,且无 thin 持久化子代理残留
+    assert set(by_name) == {"knowledge-atom-retriever", "persona-distiller"}
+    assert "topic-generator" not in by_name
+    assert "copy-generator" not in by_name
+    assert "state-manager" not in by_name
 
-    topic = by_name["topic-generator"]
-    assert any(getattr(t, "name", "") == "save_generated_topic" for t in topic["tools"])
-    assert any(getattr(t, "name", "") == "sync_topic_to_feishu" for t in topic["tools"])
-
-    copy = by_name["copy-generator"]
-    assert any(getattr(t, "name", "") == "save_generated_copy" for t in copy["tools"])
-    assert any(getattr(t, "name", "") == "sync_copy_to_feishu" for t in copy["tools"])
-
-    state = by_name["state-manager"]
-    assert any(getattr(t, "name", "") == "save_session_snapshot" for t in state["tools"])
-    assert any(getattr(t, "name", "") == "sync_diagnosis_to_feishu" for t in state["tools"])
+    retriever = by_name["knowledge-atom-retriever"]
+    assert retriever.get("response_format") is EvidencePackage
 
 
 def test_knowledge_retriever_subagent_uses_data_foundation_retrieval_tools(monkeypatch):

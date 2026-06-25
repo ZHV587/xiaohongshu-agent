@@ -15,16 +15,11 @@ description: |
 
 ## Phase 1：检索与初筛
 
-接收到对标研究方向后，执行：
+接收到对标研究方向后,按**主控 system prompt §6《检索与证据规约》**检索取证:语义优先检索 Postgres 底座→必要时关键词补召→对高相关命中 `get_resource` 精读原文→需要关联案例时按需 `graph_expand`。检索口径、mode 处理、时效防伪以 §6 为准,本技能不重述。
 
-1. 调用 `search_resources(query)` 检索相关爆款素材
-2. 需要语义召回时补充调用 `semantic_search_resources(query)`
-3. 需要关联案例时调用 `graph_expand(resource_ids)`
-4. 对高相关命中调用 `get_resource(resource_id)` 精读原文
+**如果检索结果不足**:按 §6 明说「当前数据不足,建议先 `sync_feishu_resources` 同步飞书资源后再分析」,不凭空补充。
 
-**如果检索结果不足**：明确告诉用户「当前数据不足，建议先调用 `sync_feishu_resources` 同步飞书资源后再分析」。不要凭空补充内容。
-
-完成后暂停，列出初筛候选，等用户确认方向是否正确。
+完成后暂停,列出初筛候选,等用户确认方向是否正确。
 
 ---
 

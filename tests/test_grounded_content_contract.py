@@ -1,14 +1,17 @@
 """选题/文案契约回归测试。
 
-单一数据源边界(2026-06-22 skills 改造后):
+单一数据源边界(2026-06-25 retrieval-flow-consolidation 后):
+- **检索口径**(检索顺序、检索工具、mode 三态、时效/防伪)是 MAIN_SYSTEM_PROMPT §6
+  《检索与证据规约》的**唯一事实源**。各创作技能不再重述检索口径,只引用 §6。
 - **输出协议契约**(xhs_topics/xhs_copy fence + evidence schema)是 MAIN_SYSTEM_PROMPT 的
   唯一事实源 —— 前端 xhs-blocks.ts 与 content_rubric 硬依赖,渐进式披露下 agent 可能不读
-  skill,故协议常驻 prompt。SKILL.md 不再内嵌 JSON 块,只引用 prompt 的「输出协议」。
-- **工作流 know-how**(全套工具名、检索顺序、save_* 调用时机、效果反馈、风格沉淀)是
-  topic-content/SKILL.md 的唯一事实源,prompt 不重复。
-- **跨边界硬约束**(不编造、数据不足明示)两边都在:prompt 是每轮兜底,skill 是自包含。
+  skill,故协议常驻 prompt。SKILL.md 不内嵌 JSON 块,只引用 prompt 的「输出协议」。
+- **差异化工作流 know-how**(两步流、save_*/sync_* 落库时机、效果反馈、风格沉淀、质量检查)
+  是 topic-content/SKILL.md 的唯一事实源,prompt 不重复。
+- **跨边界硬约束**(不编造、数据不足明示)prompt 是每轮兜底,skill 自包含也带一份。
 
-故本测试按"各司其职"断言,不再要求两个文件各含全套(那是改造前的双份维护,已废除)。
+故本测试按"各司其职"断言:检索口径只校验 prompt §6,差异化工作流只校验 SKILL.md,
+不再要求 SKILL.md 自含全套检索口径(那是改造前的双份维护,已废除)。
 """
 from pathlib import Path
 
@@ -20,13 +23,16 @@ SKILL_CONTRACT = (
     ROOT / ".agents" / "skills" / "topic-content" / "SKILL.md"
 ).read_text(encoding="utf-8")
 
-# 工作流里应出现的工具名 —— 唯一源是 SKILL.md。
-WORKFLOW_TOOLS = {
+# 检索口径里的工具名 —— 唯一源是 MAIN_SYSTEM_PROMPT §6《检索与证据规约》。
+RETRIEVAL_TOOLS = {
     "search_resources",
     "semantic_search_resources",
     "graph_expand",
     "get_resource",
     "sync_feishu_resources",
+}
+# 差异化工作流的持久化/反馈工具 —— 唯一源是 topic-content/SKILL.md。
+WORKFLOW_TOOLS = {
     "save_generated_topic",
     "save_generated_copy",
     "save_user_feedback",
@@ -76,18 +82,35 @@ def test_prompt_points_to_skill_workflow():
     assert "SKILL.md" in MAIN_SYSTEM_PROMPT
 
 
-# ── 工作流 know-how:唯一源是 topic-content/SKILL.md ──
+# ── 检索口径:唯一源是 MAIN_SYSTEM_PROMPT §6《检索与证据规约》──
 
-def test_skill_owns_full_workflow_toolset():
+def test_prompt_owns_retrieval_protocol_as_single_source():
+    """检索顺序/工具/mode/时效防伪集中在 §6,是唯一事实源。"""
+    assert "检索与证据规约" in MAIN_SYSTEM_PROMPT
+    for tool in RETRIEVAL_TOOLS:
+        # §6 里工具名可能带调用签名(如 `search_resources(query, limit)`),用代码span前缀匹配
+        assert f"`{tool}" in MAIN_SYSTEM_PROMPT, tool
+    # mode 三态措辞只在 prompt
+    assert "semantic" in MAIN_SYSTEM_PROMPT
+    assert "insufficient_relevance" in MAIN_SYSTEM_PROMPT
+    assert "keyword_fallback" in MAIN_SYSTEM_PROMPT
+    # 时效防伪集中在 §6
+    assert "源端" in MAIN_SYSTEM_PROMPT and "本地索引" in MAIN_SYSTEM_PROMPT
+
+
+def test_skill_references_retrieval_protocol_not_restates_it():
+    """技能引用 §6,不重述检索口径,不出现 mode 字面量。"""
+    assert "检索与证据规约" in SKILL_CONTRACT  # 引用钩子
+    # mode 字面量只在 prompt §6,技能正文不重述(避免双份维护漂移)
+    assert "insufficient_relevance" not in SKILL_CONTRACT
+    assert "keyword_fallback" not in SKILL_CONTRACT
+
+
+# ── 差异化工作流 know-how:唯一源是 topic-content/SKILL.md ──
+
+def test_skill_owns_persistence_workflow_toolset():
     for tool in WORKFLOW_TOOLS:
         assert f"`{tool}`" in SKILL_CONTRACT, tool
-
-
-def test_skill_defines_retrieval_order_without_untracked_fallback():
-    assert "创作流程不得调用" in SKILL_CONTRACT
-    assert "`read_xhs_data`" in SKILL_CONTRACT and "`read_feishu_wiki`" in SKILL_CONTRACT
-    assert "关键词" in SKILL_CONTRACT and "semantic_search_resources" in SKILL_CONTRACT
-    assert "`sync_feishu_resources`" in SKILL_CONTRACT
 
 
 def test_skill_defines_creation_memory_persistence_timing():
@@ -106,9 +129,8 @@ def test_skill_defines_performance_feedback_loop():
     assert "不得猜" in SKILL_CONTRACT and "目标内容" in SKILL_CONTRACT
 
 
-def test_skill_forbids_fabricating_source_freshness():
-    assert "更新时间" in SKILL_CONTRACT
+def test_skill_records_source_freshness_fields():
+    """技能在记录证据时仍要带源端/索引时间字段,未知写"未知"(口径细则在 §6)。"""
     assert "未知" in SKILL_CONTRACT
-    assert "不得猜" in SKILL_CONTRACT
     assert "source_updated_at" in SKILL_CONTRACT
     assert "indexed_at" in SKILL_CONTRACT
