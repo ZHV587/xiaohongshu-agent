@@ -5,7 +5,9 @@ set -e
 CONTAINER_NAME="xhs-pg"
 DB_USER="xhs_user"
 DB_NAME="xhs_agent"
-BACKUP_DIR="./backups"
+# Ensure backups directory is relative to the script location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKUP_DIR="${SCRIPT_DIR}/../backups"
 
 # Ensure backup directory exists
 mkdir -p "$BACKUP_DIR"
