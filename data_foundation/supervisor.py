@@ -130,10 +130,16 @@ class BackgroundServiceSupervisor:
         from data_foundation.db import database_url
         
         logger = logging.getLogger(__name__)
-        db_url = database_url()
         
         while self.accepting_work:
             try:
+                try:
+                    db_url = database_url()
+                except RuntimeError as exc:
+                    logger.warning("Outbox listener disabled: %s", exc)
+                    await asyncio.sleep(5)
+                    continue
+                
                 async with await AsyncConnection.connect(db_url, autocommit=True) as conn:
                     async with conn.cursor(row_factory=dict_row) as cur:
                         await cur.execute("SELECT current_schema()")
