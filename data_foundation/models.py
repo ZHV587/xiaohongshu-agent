@@ -148,3 +148,10 @@ class ProcessorState:
     status: str
     config_version: str | None
     reason_code: str | None
+
+
+@dataclass(frozen=True)
+class RuntimeIdentityConfig:
+    tenant_id: str
+    open_id: str
+
