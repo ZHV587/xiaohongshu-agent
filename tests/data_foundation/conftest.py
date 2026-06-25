@@ -18,8 +18,16 @@ def patched_apply_migrations(conn):
     schema_sql = schema_sql.replace("create extension if not exists vector with schema public;", "")
     schema_sql = schema_sql.replace("embedding public.vector(1536) not null", "embedding double precision[] not null")
     schema_sql = schema_sql.replace("%s::public.vector", "%s::double precision[]")
+    # Remove the PL/pgSQL upgrade block
     schema_sql = re.sub(
-        r"create index if not exists idx_resource_embeddings_vector\s+on resource_embeddings using ivfflat[^;]+;",
+        r"do\s+\$\$.*?end\s+\$\$;",
+        "",
+        schema_sql,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+    # Remove the HNSW index creation statement
+    schema_sql = re.sub(
+        r"create index if not exists idx_resource_embeddings_vector\s+on resource_embeddings using (ivfflat|hnsw)[^;]+;",
         "",
         schema_sql
     )
@@ -112,6 +120,44 @@ def migrated_conn(database_url: str):
     schema = f"test_{uuid.uuid4().hex}"
     with psycopg.connect(database_url, autocommit=True, row_factory=hybrid_row_factory) as admin:
         admin.execute(f'create schema "{schema}"')
+        # Define cosine distance function in public schema if not exists
+        admin.execute("""
+            CREATE OR REPLACE FUNCTION public.cosine_distance(a double precision[], b double precision[])
+            RETURNS double precision AS $$
+            DECLARE
+                dot double precision := 0;
+                norm_a double precision := 0;
+                norm_b double precision := 0;
+                i integer;
+            BEGIN
+                FOR i IN 1..array_length(a, 1) LOOP
+                    dot := dot + a[i] * b[i];
+                    norm_a := norm_a + a[i] * a[i];
+                    norm_b := norm_b + b[i] * b[i];
+                END LOOP;
+                IF norm_a = 0 OR norm_b = 0 THEN
+                    RETURN 1.0;
+                END IF;
+                RETURN 1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b)));
+            END;
+            $$ LANGUAGE plpgsql IMMUTABLE STRICT;
+        """)
+        # Idempotently define <=> operator in public schema
+        res = admin.execute("""
+            SELECT 1 FROM pg_operator 
+            WHERE oprname = '<=>' 
+              AND oprleft = 'double precision[]'::regtype 
+              AND oprright = 'double precision[]'::regtype
+        """).fetchone()
+        if not res:
+            admin.execute("""
+                CREATE OPERATOR public.<=> (
+                    LEFTARG = double precision[],
+                    RIGHTARG = double precision[],
+                    FUNCTION = public.cosine_distance,
+                    COMMUTATOR = <=>
+                )
+            """)
     try:
         with psycopg.connect(database_url, row_factory=hybrid_row_factory) as conn:
             conn.execute(f'set search_path to "{schema}", public')
