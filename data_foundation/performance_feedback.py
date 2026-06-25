@@ -45,9 +45,15 @@ def save_performance_metric_resource(
             actor_open_id=actor_open_id,
             resource_id=target_resource_id,
         )
+        # 幂等:同一 target 已有 performance_metric 则复用其 id 原地更新,不新建第二条。
+        existing_id = repo.find_performance_metric_id(
+            tenant_id=tenant_id,
+            target_resource_id=target_resource_id,
+        )
         resource = repo.upsert_resource(
             tenant_id=tenant_id,
             actor_open_id=actor_open_id,
+            resource_id=existing_id,
             resource_type="performance_metric",
             title=title,
             summary=_summary(score, cleaned_metrics),

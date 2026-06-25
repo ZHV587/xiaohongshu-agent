@@ -87,15 +87,32 @@ def test_bm25_relevance_is_candidate_set_normalized():
     assert rel["b"] == 0.5     # 2.0 / 4.0
 
 
-def test_rank_evidence_incorporates_performance_tanh_score():
+def test_rank_evidence_incorporates_performance_log_score():
+    """效果分对数归一化(去饱和):engagement=500 → log10(501)/log10(1+1e6)。"""
+    import math
+    from data_foundation.search_ranker import P_SCORE_LOG_CAP
+
     raw_results = [_doc("res-1", "爆款文案1", 0.5, rtype="generated_copy")]
     performance_data = {
         "res-1": [{"metrics": {"likes": 200, "collects": 100, "comments": 20}}]
-        # (200 + 2*100 + 5*20) / 500 = 1.0 → tanh(1) ≈ 0.7616
+        # engagement = 200 + 2*100 + 5*20 = 500
     }
     res = rank_evidence("default", raw_results, performance_data=performance_data, limit=10, score_kind="cosine")
     assert len(res) == 1
-    assert abs(res[0]["rank_signals"]["performance"] - 0.7616) < 0.001
+    expected = math.log10(1.0 + 500) / math.log10(1.0 + P_SCORE_LOG_CAP)
+    assert abs(res[0]["rank_signals"]["performance"] - expected) < 0.0001
+
+
+def test_rank_evidence_performance_not_saturated_for_viral():
+    """万级与十万级爆款效果分不同(旧 tanh 会都 ≈1.0)。"""
+    r1 = rank_evidence("default", [_doc("a", "爆款A", 0.5)],
+                       {"a": [{"metrics": {"likes": 10_000}}]}, score_kind="cosine")
+    r2 = rank_evidence("default", [_doc("b", "爆款B", 0.5)],
+                       {"b": [{"metrics": {"likes": 300_000}}]}, score_kind="cosine")
+    p1 = r1[0]["rank_signals"]["performance"]
+    p2 = r2[0]["rank_signals"]["performance"]
+    assert p1 < p2 <= 1.0
+    assert p1 < 1.0  # 万级未饱和到上界
 
 
 def test_empty_results_returns_empty():

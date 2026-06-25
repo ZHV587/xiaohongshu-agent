@@ -4,7 +4,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from data_foundation.feishu_metrics import extract_performance_metrics
 from data_foundation.outbox_requests import default_write_requests
+from data_foundation.performance_feedback import save_performance_metric_resource
 from data_foundation.repositories.resource import ResourceRepository
 
 
@@ -57,7 +59,7 @@ def sync_base_rows(
             }
             if row.get("external_updated_at") is not None:
                 mapping["external_updated_at"] = row.get("external_updated_at")
-            repo.upsert_resource(
+            resource = repo.upsert_resource(
                 tenant_id=tenant_id,
                 actor_open_id=actor_open_id,
                 resource_type="feishu_base_record",
@@ -75,6 +77,23 @@ def sync_base_rows(
                 outbox_requests=default_write_requests(),
             )
             imported += 1
+            # 笔记级表的效果列接通:抽取 → 幂等写 performance_metric + measured_by。
+            # 复用回填同一抽取/写入路径(单一事实源)。失败不阻断 base record 落库。
+            metrics = extract_performance_metrics(table_id, table_name, fields)
+            if metrics and resource is not None:
+                try:
+                    save_performance_metric_resource(
+                        repo,
+                        tenant_id=tenant_id,
+                        actor_open_id=actor_open_id,
+                        target_resource_id=resource.id,
+                        metrics=metrics,
+                        channel="xiaohongshu",
+                    )
+                except Exception as perf_exc:  # noqa: BLE001 - 不阻断 base record 落库
+                    logger.warning(
+                        "performance metric attach failed for %s: %s", external_id, perf_exc
+                    )
         except Exception as exc:
             message = f"base_record {external_id}: {type(exc).__name__}: {exc}"
             logger.exception("Feishu Base sync failed for %s", external_id)

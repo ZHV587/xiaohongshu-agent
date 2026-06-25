@@ -21,6 +21,12 @@ WEIGHT_FRESHNESS: float = 0.15
 WEIGHT_TYPE: float = 0.10
 WEIGHT_PERFORMANCE: float = 0.05
 
+# 效果分对数归一化上界(明文常量)。tanh(.../500) 对对标爆款(万级)恒饱和到 ≈1.0、
+# 爆款间无区分;改对数归一化使 10²~10⁶ 量级单调可分。
+# log10(1+1e2)/log10(1+1e6)=0.33;1e4→0.67;1e6→1.0,跨 4 个数量级仍单调。
+P_SCORE_LOG_CAP: float = 1_000_000.0
+_P_SCORE_LOG_DENOM: float = math.log10(1.0 + P_SCORE_LOG_CAP)
+
 _VALID_SCORE_KINDS = {"cosine", "bm25"}
 
 
@@ -93,7 +99,10 @@ def rank_evidence(
             likes = float(metrics.get("likes", 0))
             collects = float(metrics.get("collects", 0))
             comments = float(metrics.get("comments", 0))
-            p_score = math.tanh((likes + 2 * collects + 5 * comments) / 500.0)
+            # 对数归一化(去饱和):engagement 复用既有权重口径,跨数量级单调可分。
+            engagement = likes + 2 * collects + 5 * comments
+            if engagement > 0:
+                p_score = min(math.log10(1.0 + engagement) / _P_SCORE_LOG_DENOM, 1.0)
 
         # Final Weighted Score
         final_score = (

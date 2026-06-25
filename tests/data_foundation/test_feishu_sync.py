@@ -268,3 +268,116 @@ def test_sync_wiki_documents_upserts_docs_without_direct_embedding_writes(migrat
     )
     assert replay == SyncResult(imported=1, errors=[])
     assert repo.debug_counts() == counts_after_change
+
+
+# ── 同步期效果接通(feishu-performance-metrics)──
+
+_WHITELIST_TABLE = "tbl24vSVeLvz45ig"  # 🧲单篇采集库
+
+
+@dataclass
+class _PerfRecordingRepository:
+    """支持 feishu_base_record 落库 + performance_metric 幂等写入路径的假仓库。"""
+
+    base_resource: Resource
+    upserts: list[dict] = field(default_factory=list)
+    edges: list[dict] = field(default_factory=list)
+    fail_metric: bool = False
+
+    def unit_of_work(self):
+        return nullcontext()
+
+    def upsert_resource(self, **kwargs):
+        self.upserts.append(kwargs)
+        rtype = kwargs.get("resource_type")
+        if rtype == "performance_metric":
+            return Resource(
+                id="metric-1", tenant_id="default", type="performance_metric",
+                title=kwargs["title"], summary=None, content_text="", content_json={},
+                status="active", visibility="team", owner_open_id="ou_sync",
+                created_at=None, updated_at=None, version=1,
+            )
+        return self.base_resource
+
+    def upsert_mapping(self, **mapping):
+        return None
+
+    def mark_mapping_failed(self, **_kwargs):
+        return None
+
+    def writable_resource_metadata(self, **kwargs):
+        return {"visibility": "team", "owner_open_id": "ou_sync"}
+
+    def find_performance_metric_id(self, **kwargs):
+        return None
+
+    def add_edge(self, **kwargs):
+        if self.fail_metric:
+            raise RuntimeError("simulated edge failure")
+        self.edges.append(kwargs)
+
+
+def _base_record() -> Resource:
+    return Resource(
+        id="feishu-rec-1", tenant_id="default", type="feishu_base_record",
+        title="爆款", summary=None, content_text="", content_json={},
+        status="active", visibility="team", owner_open_id="ou_sync",
+        created_at=None, updated_at=None, version=1,
+    )
+
+
+def _metric_types(repo):
+    return [u.get("resource_type") for u in repo.upserts]
+
+
+def test_sync_base_rows_attaches_performance_metric_for_whitelist_table():
+    repo = _PerfRecordingRepository(_base_record())
+    result = sync_base_rows(
+        repo, tenant_id="default", actor_open_id="ou_sync", app_token="base1",
+        rows=[{
+            "record_id": "rec1", "table_id": _WHITELIST_TABLE, "table_name": "🧲单篇采集库",
+            "fields": {"标题": "爆款", "点赞数": 199000, "收藏数": 205000, "评论数": 4711},
+        }],
+    )
+    assert result.imported == 1
+    assert "performance_metric" in _metric_types(repo)
+    assert len(repo.edges) == 1
+    assert repo.edges[0]["edge_type"] == "measured_by"
+    assert repo.edges[0]["source_resource_id"] == "feishu-rec-1"
+
+
+def test_sync_base_rows_no_metric_for_non_whitelist_table():
+    repo = _PerfRecordingRepository(_base_record())
+    result = sync_base_rows(
+        repo, tenant_id="default", actor_open_id="ou_sync", app_token="base1",
+        rows=[{
+            "record_id": "rec1", "table_id": "tblZgH0SF0AfYIpV", "table_name": "💬评论采集库",
+            "fields": {"标题": "评论", "点赞数": 100},
+        }],
+    )
+    assert result.imported == 1
+    assert _metric_types(repo) == ["feishu_base_record"]  # 仅 base record
+    assert repo.edges == []
+
+
+def test_sync_base_rows_no_metric_when_no_effect_columns():
+    repo = _PerfRecordingRepository(_base_record())
+    sync_base_rows(
+        repo, tenant_id="default", actor_open_id="ou_sync", app_token="base1",
+        rows=[{"record_id": "rec1", "table_id": _WHITELIST_TABLE, "fields": {"标题": "无效果列"}}],
+    )
+    assert _metric_types(repo) == ["feishu_base_record"]
+    assert repo.edges == []
+
+
+def test_metric_failure_does_not_block_base_record():
+    repo = _PerfRecordingRepository(_base_record(), fail_metric=True)
+    result = sync_base_rows(
+        repo, tenant_id="default", actor_open_id="ou_sync", app_token="base1",
+        rows=[{
+            "record_id": "rec1", "table_id": _WHITELIST_TABLE,
+            "fields": {"标题": "爆款", "点赞数": 199000},
+        }],
+    )
+    assert result.imported == 1  # base record 仍入库,效果写入失败不阻断
+    assert result.errors == []

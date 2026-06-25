@@ -43,6 +43,9 @@ class RecordingRepository:
         self.writable_kwargs = kwargs
         return {"visibility": "team", "owner_open_id": kwargs["actor_open_id"]}
 
+    def find_performance_metric_id(self, **kwargs):
+        return None
+
     def performance_rows(self, **kwargs):
         self.performance_kwargs = kwargs
         return [{

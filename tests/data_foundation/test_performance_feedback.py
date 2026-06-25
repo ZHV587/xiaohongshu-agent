@@ -48,6 +48,9 @@ class RecordingRepository:
         self.writable_kwargs = kwargs
         return self.target
 
+    def find_performance_metric_id(self, **kwargs):
+        return getattr(self, "existing_metric_id", None)
+
     def performance_rows(self, **kwargs):
         return [
             {
@@ -271,3 +274,73 @@ def test_get_resource_performance_filters_unreadable_metric(migrated_conn):
     )
 
     assert result["metrics"] == []
+
+
+class _StatefulRepo:
+    """模拟真实幂等:按 target 复用既有 metric,边按 (source,target,edge_type) 去重。"""
+
+    def __init__(self):
+        self.metric_by_target: dict[str, str] = {}
+        self.metric_content: dict[str, dict] = {}
+        self.edges: set[tuple[str, str, str]] = set()
+        self.edge_weight: dict[tuple[str, str, str], float] = {}
+        self._seq = 0
+        self.target = {"visibility": "team", "owner_open_id": "ou_feishu"}
+
+    def unit_of_work(self):
+        return nullcontext()
+
+    def writable_resource_metadata(self, **kwargs):
+        return self.target
+
+    def find_performance_metric_id(self, *, tenant_id, target_resource_id, conn=None):
+        return self.metric_by_target.get(target_resource_id)
+
+    def upsert_resource(self, **kwargs):
+        rid = kwargs.get("resource_id")
+        target = kwargs["content_json"]["target_resource_id"]
+        if rid is None:
+            self._seq += 1
+            rid = f"metric-{self._seq}"
+        self.metric_by_target[target] = rid
+        self.metric_content[rid] = dict(kwargs["content_json"])
+        return SimpleNamespace(id=rid, type=kwargs["resource_type"], title=kwargs["title"], version=1)
+
+    def add_edge(self, **kwargs):
+        key = (kwargs["source_resource_id"], kwargs["target_resource_id"], kwargs["edge_type"])
+        self.edges.add(key)
+        self.edge_weight[key] = kwargs["weight"]
+
+
+def test_save_performance_metric_is_idempotent_per_target():
+    repo = _StatefulRepo()
+    for likes in (100, 5000, 99999):  # 同一 target 反复回填,数值变化
+        save_performance_metric_resource(
+            repo,
+            tenant_id="default",
+            actor_open_id="ou_feishu",
+            target_resource_id="feishu-rec-1",
+            metrics={"likes": likes, "collects": 10},
+        )
+    # 幂等:恰 1 条 metric、1 条边,末次数值覆盖
+    assert len(repo.metric_by_target) == 1
+    assert len([rid for rid in repo.metric_content]) == 1
+    assert len(repo.edges) == 1
+    only_rid = repo.metric_by_target["feishu-rec-1"]
+    assert repo.metric_content[only_rid]["metrics"]["likes"] == 99999
+    # metric 继承 target 的 visibility/owner(R7.1)
+    assert repo.target["visibility"] == "team"
+
+
+def test_two_targets_get_two_metrics():
+    repo = _StatefulRepo()
+    save_performance_metric_resource(
+        repo, tenant_id="default", actor_open_id="ou_feishu",
+        target_resource_id="rec-1", metrics={"likes": 1},
+    )
+    save_performance_metric_resource(
+        repo, tenant_id="default", actor_open_id="ou_feishu",
+        target_resource_id="rec-2", metrics={"likes": 2},
+    )
+    assert len(repo.metric_by_target) == 2
+    assert len(repo.edges) == 2

@@ -647,6 +647,33 @@ class ResourceRepository(BaseRepository):
                     raise PermissionError("Resource not found or not writable")
                 return dict(row)
 
+    def find_performance_metric_id(
+        self,
+        *,
+        tenant_id: str,
+        target_resource_id: str,
+        conn: Optional[Connection] = None,
+    ) -> str | None:
+        """按目标资源查既有 performance_metric id(幂等写入用)。无则 None。
+
+        与 PerformanceRepository.save_performance 的查重口径一致:
+        content_json->>'target_resource_id' 唯一定位某目标的效果指标。
+        """
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    select id::text as id
+                    from resources
+                    where tenant_id = %s
+                      and type = 'performance_metric'
+                      and content_json->>'target_resource_id' = %s
+                    limit 1
+                    """,
+                    (tenant_id, target_resource_id),
+                ).fetchone()
+                return None if row is None else row["id"]
+
     def _lock_mapping(self, tenant_id: str, mapping: dict[str, Any] | None, cursor: Cursor) -> None:
         if mapping is None:
             return
