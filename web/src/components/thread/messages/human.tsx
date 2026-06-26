@@ -8,6 +8,20 @@ import { BranchSwitcher, CommandBar } from "./shared";
 import { MultimodalPreview } from "@/components/thread/MultimodalPreview";
 import { isBase64ContentBlock } from "@/lib/multimodal-utils";
 
+/** 卡片动作回传(采纳/出选题)带 ```json``` 数据,给 agent 用但不该在聊天里露裸 JSON。
+ *  命中则返回简洁中文摘要,渲染成动作 chip;普通消息返回 null 照常渲染。 */
+function summarizeCardAction(text: string): string | null {
+  if (!text || !text.includes("```json")) return null;
+  if (/采纳收录这\s*\d+\s*条/.test(text) || text.includes("adopt_online_notes")) {
+    const m = text.match(/采纳收录这\s*(\d+)\s*条/);
+    return m ? `🍠 采纳收录 ${m[1]} 条线上笔记` : "🍠 采纳收录线上笔记";
+  }
+  if (text.includes("出一个选题") || text.includes("基于它")) {
+    return "✨ 基于选中的笔记出选题";
+  }
+  return null;
+}
+
 function EditableContent({
   value,
   setValue,
@@ -111,9 +125,15 @@ export function HumanMessage({
             )}
             {/* Render text if present, otherwise fallback to file/image name */}
             {contentString ? (
-              <p className="bg-muted text-foreground ml-auto w-fit rounded-3xl px-4 py-2 text-right whitespace-pre-wrap">
-                {contentString}
-              </p>
+              summarizeCardAction(contentString) ? (
+                <span className="bg-coral ml-auto inline-flex w-fit items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs">
+                  {summarizeCardAction(contentString)}
+                </span>
+              ) : (
+                <p className="bg-muted text-foreground ml-auto w-fit rounded-3xl px-4 py-2 text-right whitespace-pre-wrap">
+                  {contentString}
+                </p>
+              )
             ) : null}
           </div>
         )}

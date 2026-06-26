@@ -53,13 +53,18 @@ const HIDDEN: ToolRenderSpec = { aura: "hidden" };
 const DEFAULT: ToolRenderSpec = {
   aura: {
     running: "正在处理…",
-    done: ({ name }) => `已完成 ${name || "工具"} 指令执行`,
+    done: () => "已完成一步处理",
     logs: ({ name }) => [
-      `[SYSTEM] 启动底层工具 [${name || "unknown"}] 并发送参数中...`,
-      "[SYSTEM] 指令执行成功，返回结果已成功注入上下文。",
+      `[SYSTEM] 启动工具 [${name || "unknown"}] 并发送参数中...`,
+      "[SYSTEM] 指令执行成功，返回结果已注入上下文。",
     ],
   },
 };
+
+// 检索/取证类:统一"检索中→已检索"措辞
+const retrieval = (running: string, done: string): ToolRenderSpec => ({
+  aura: { running, done: () => done },
+});
 
 /** 工具名 → 渲染声明。新增工具卡片只改这里。 */
 export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
@@ -71,6 +76,27 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
   adopt_online_notes: {
     aura: { running: "正在采纳收录到库 + 飞书…", done: () => "已采纳收录" },
   },
+
+  // ── 检索 / 取证 ──────────────────────────────
+  semantic_search_resources: retrieval("正在语义检索数据底座…", "已检索到相关素材"),
+  search_resources: retrieval("正在关键词检索数据底座…", "已检索到相关素材"),
+  get_resource: retrieval("正在精读笔记原文…", "已精读笔记"),
+  graph_expand: retrieval("正在扩展关联图谱…", "已扩展关联上下文"),
+  get_resource_performance: retrieval("正在查历史效果数据…", "已读取历史效果"),
+  get_data_foundation_status: retrieval("正在核对数据底座状态…", "已核对底座状态"),
+
+  // ── 落库 / 同步(数据库 + 飞书镜像)──────────────
+  save_generated_topic: { aura: { running: "正在保存选题到数据库…", done: () => "已保存选题" } },
+  save_generated_copy: { aura: { running: "正在保存文案到数据库…", done: () => "已保存文案" } },
+  save_user_feedback: { aura: { running: "正在记录修改意见…", done: () => "已记录修改意见" } },
+  save_performance_metric: { aura: { running: "正在写入效果数据…", done: () => "已写入效果数据" } },
+  save_session_snapshot: { aura: { running: "正在保存会话快照…", done: () => "已保存快照" } },
+  sync_feishu_resources: { aura: { running: "正在同步飞书资源…", done: () => "已同步飞书资源" } },
+  sync_topic_to_feishu: { aura: { running: "正在同步选题到飞书…", done: () => "已同步飞书(选题)" } },
+  sync_copy_to_feishu: { aura: { running: "正在同步文案到飞书…", done: () => "已同步飞书(文案)" } },
+  sync_diagnosis_to_feishu: { aura: { running: "正在同步诊断到飞书…", done: () => "已同步飞书(诊断)" } },
+  send_review_notification: { aura: { running: "正在发送飞书群审核通知…", done: () => "已发送审核通知" } },
+  execute_lark_command: { aura: { running: "正在执行飞书操作…", done: () => "已执行飞书操作" } },
 
   // 读爆款库:思考链一步 + 终端日志(带条数)
   read_xhs_data: {

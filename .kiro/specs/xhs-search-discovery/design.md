@@ -112,7 +112,7 @@ def search_xhs_online(keyword: str, days: int = 7, page_size: int = 20, config=N
 - 分组:`📚 我们已收录(N)` + `🔥 线上实时发现(N)`,各带计数;加载 skeleton-shimmer;hover 微抬升。
 - 批量:线上组顶部「全选 / 采纳选中(k)」。
 
-**勾选 → 采纳**:用户勾选后点「采纳选中」→ 前端 `submitText` 回传**选中笔记的精简 payload(JSON,仅卡片级字段、不含全文)** → 主控调 `adopt_online_notes`。前端把该回传 HumanMessage 渲染为简洁动作 chip(「采纳 N 条线上笔记」),不暴露裸 JSON。**采纳路径取 agent 工具 + HITL**(非前端直连 internal API)——遵 README 架构铁律:飞书写操作由 Agent tools 发起并经 HITL 确认,`internal-client.ts` 仅用于读/配置/鉴权。
+**勾选 → 采纳**:用户勾选后点「采纳选中」→ 前端 `submitText` 回传**选中笔记的精简 payload(JSON,仅卡片级字段、不含全文)** → 主控调 `adopt_online_notes`。前端 `human.tsx` 的 `summarizeCardAction` 识别此类动作回传(含 ```json``` 块),渲染成简洁动作 chip(「🍠 采纳收录 N 条线上笔记」/「✨ 基于选中的笔记出选题」),**不暴露裸 JSON**(数据照传给 agent,仅显示层折叠)。**采纳路径取 agent 工具 + HITL**(非前端直连 internal API)——遵 README 架构铁律:飞书写操作由 Agent tools 发起并经 HITL 确认,`internal-client.ts` 仅用于读/配置/鉴权。
 
 ### Component 4:采纳收录工具 `adopt_online_notes`(入库 + 飞书一体)
 
@@ -242,8 +242,9 @@ def adopt_online_notes(notes: list[dict], sync_feishu: bool = True, config=None)
 | `web/src/components/thread/history/FeishuConfigPage.tsx` | 采集库表 id 配置项 | 改 |
 | `web/src/lib/tool-display.ts` | 搜索/采纳工具的进行中/完成文案(注:卡片渲染**不**走 tool-display,见 ai.tsx) | 改 |
 | `web/src/components/thread/messages/search-cards.tsx` | 新增细致搜索卡片(本地/线上分组、勾选采纳、已收录禁用、每卡「✨出选题」) | 新增 |
-| `web/src/lib/tool-render.tsx` | **新增工具渲染注册表**(`TOOL_RENDERERS`+`resolveToolRender`+`ToolResultCards`):每个工具的思考链/卡片/进行中表现的唯一事实源 | 新增 |
+| `web/src/lib/tool-render.tsx` | **新增工具渲染注册表**(`TOOL_RENDERERS`+`resolveToolRender`+`ToolResultCards`):每个工具的思考链/卡片/进行中表现的唯一事实源;已覆盖全业务工具(检索/落库/同步/采纳)中文文案,未注册工具优雅降级为中文"已完成一步处理"(不露英文名) | 新增 |
 | `web/src/components/thread/messages/ai.tsx` | **真问题G 修复**:`AssistantMessage` 用 `ToolResultCards` 从 `precedingTools[].result` 渲染搜索卡片(活路径);`ThinkingAura` 改读 `resolveToolRender` | 改 |
+| `web/src/components/thread/messages/human.tsx` | `summarizeCardAction`:采纳/出选题回传渲染成动作 chip,不露裸 JSON | 改 |
 | `web/src/components/thread/messages/tool-calls.tsx` | 移除死的 `SearchCards`/`ToolResult` 搜索分支 | 改 |
 | 存量回填 | 经 bot 同步链路 re-sync 570 行补封面/原文链接(已跑:205 封面 / 457 原文) | 已执行 |
 | tests(后端 + 前端) | 上述单元/属性/集成测试 | 新增/改 |
