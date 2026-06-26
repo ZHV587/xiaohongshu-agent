@@ -235,6 +235,21 @@ function EditActionCard({
 
       {Object.entries(editResponse.edited_action.args).map(
         ([key, value], idx) => {
+          // 笔记数组(如 adopt 的 notes):只读友好摘要,不暴露裸 JSON / 不可逐字编辑
+          if (isNoteArray(value)) {
+            return (
+              <div
+                className="flex h-full w-full flex-col items-start gap-[6px] px-[1px]"
+                key={`allow-edit-args--${key}-${idx}`}
+              >
+                <p className="min-w-fit text-sm font-medium">
+                  {prettifyText(key)}
+                </p>
+                <NoteListSummary notes={value} />
+              </div>
+            );
+          }
+
           const stringValue =
             typeof value === "string" || typeof value === "number"
               ? value.toString()
