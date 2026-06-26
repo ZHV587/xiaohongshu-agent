@@ -9,6 +9,7 @@ table_id / table_name，沉淀到 Postgres 后由 agent 统一检索。
 """
 import os
 import json
+import re
 import shlex
 import hashlib
 from typing import Any
@@ -16,21 +17,19 @@ from typing import Any
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 
-# 噪声列剔除：只砍掉确定对“分析爆款 + 写文案”无价值、且占体积的列
-# （附件/图片/链接/封面/采集系统字段等）。不再用窄白名单，避免把不同表的
-# 有效业务字段误删（21 张表字段结构各异）。
+# 噪声列剔除（收窄版）：只按列名砍掉确定无价值的文本/系统列。
+# 关键修正：移除了 图片/封面/链接/网址/域名 —— 这些其中的【文本】列(如「封面链接」
+# 小红书 CDN 直链、「原文链接」markdown、「图片链接」「视频链接」)是卡片展示必需,
+# 此前被一并丢弃是本地数据缺口的根因。附件【对象】列(含 file_token,有时效、非直链)
+# 改由 _is_attachment_value 按【值形状】剔除,从而精准放行「封面链接」、剔除「封面」附件。
 _EXCLUDE_COLUMN_KEYWORDS = (
-    "图片",
     "附件",
-    "封面",
-    "链接",
-    "网址",
-    "域名",
     "二维码",
     "头像",
     "logo",
     "trace",
     "提示词",
+    "设置",
 )
 
 
@@ -38,13 +37,77 @@ def _is_noise_column(name: str) -> bool:
     return any(kw in name for kw in _EXCLUDE_COLUMN_KEYWORDS)
 
 
+def _is_attachment_value(value: Any) -> bool:
+    """按值形状识别飞书附件对象列:非空 list,且元素均为含 file_token 的 dict。
+
+    附件对象(如「封面」)只有带时效的 tmp_url、无公网直链,对卡片无用;而「封面链接」
+    是文本 CDN 直链,值是字符串 → 不命中此判定,得以保留。
+    """
+    if not isinstance(value, list) or not value:
+        return False
+    return all(isinstance(item, dict) and "file_token" in item for item in value)
+
+
 def _filter_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    """剔除噪声列,保留其余业务字段;同时丢掉空值。"""
+    """剔除噪声列(按列名 + 附件值形状),保留其余业务字段;同时丢掉空值。"""
     return {
         name: value
         for name, value in fields.items()
-        if value not in (None, "", [], {}) and not _is_noise_column(name)
+        if value not in (None, "", [], {})
+        and not _is_noise_column(name)
+        and not _is_attachment_value(value)
     }
+
+
+# 封面/原文链接归一化(供同步落库与发现卡片 hydrate 共用)。
+_COVER_FIELD_CANDIDATES = ("封面链接", "图片链接", "封面图链接", "首图链接")
+_NOTE_URL_FIELD_CANDIDATES = ("原文链接", "笔记链接", "链接", "笔记地址")
+_MARKDOWN_LINK_RE = re.compile(r"\((https?://[^)\s]+)\)")
+_BARE_URL_RE = re.compile(r"https?://[^\s)]+")
+
+
+def _coerce_text(value: Any) -> str:
+    """飞书文本列可能是 str,或 [{'text': ..., 'type': 'text'}] 富文本片段数组。"""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [seg.get("text", "") for seg in value if isinstance(seg, dict)]
+        return "".join(parts)
+    return ""
+
+
+def _extract_url(value: Any) -> str:
+    """从文本/markdown/富文本中提取第一个 http(s) URL;取不到返回原始文本。"""
+    text = _coerce_text(value).strip()
+    if not text:
+        return ""
+    md = _MARKDOWN_LINK_RE.search(text)
+    if md:
+        return md.group(1)
+    bare = _BARE_URL_RE.search(text)
+    if bare:
+        return bare.group(0)
+    return text
+
+
+def extract_cover_url(fields: dict[str, Any]) -> str:
+    """从一行字段里取归一化封面 URL(优先「封面链接」等文本直链列)。"""
+    for key in _COVER_FIELD_CANDIDATES:
+        if key in fields:
+            url = _extract_url(fields[key])
+            if url:
+                return url
+    return ""
+
+
+def extract_note_url(fields: dict[str, Any]) -> str:
+    """从一行字段里取归一化原文链接(从「原文链接」markdown 提取 URL)。"""
+    for key in _NOTE_URL_FIELD_CANDIDATES:
+        if key in fields:
+            url = _extract_url(fields[key])
+            if url:
+                return url
+    return ""
 
 
 def _snapshot_id(fields: dict[str, Any]) -> str:

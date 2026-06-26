@@ -34,6 +34,10 @@ assert.throws(
 
 assert.equal(embeddingConfigKeys.has("XHS_EMBEDDING_API_KEY"), true);
 assert.deepEqual(
+  assertAllowedConfigKeys({ FEISHU_BITABLE_COLLECT_TABLE_ID: "tbl24vSVeLvz45ig" }),
+  { FEISHU_BITABLE_COLLECT_TABLE_ID: "tbl24vSVeLvz45ig" },
+);
+assert.deepEqual(
   assertAllowedConfigKeys({ XHS_BACKEND_APPLY_MODE: "manual" }),
   { XHS_BACKEND_APPLY_MODE: "manual" },
 );

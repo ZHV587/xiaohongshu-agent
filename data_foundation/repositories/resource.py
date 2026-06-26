@@ -674,7 +674,33 @@ class ResourceRepository(BaseRepository):
                 ).fetchone()
                 return None if row is None else row["id"]
 
-    def _lock_mapping(self, tenant_id: str, mapping: dict[str, Any] | None, cursor: Cursor) -> None:
+    def existing_mapping_external_ids(
+        self,
+        *,
+        tenant_id: str,
+        system: str,
+        external_type: str,
+        external_ids: list[str],
+        conn: Optional[Connection] = None,
+    ) -> set[str]:
+        """返回 external_ids 中已存在 mapping 的子集(用于跨源去重 / 采纳幂等判断)。"""
+        ids = [str(x) for x in external_ids if x]
+        if not ids:
+            return set()
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                rows = cursor.execute(
+                    """
+                    select external_id
+                    from resource_mappings
+                    where tenant_id = %s and system = %s and external_type = %s
+                      and external_id = any(%s)
+                    """,
+                    (tenant_id, system, external_type, ids),
+                ).fetchall()
+                return {str(row["external_id"]) for row in rows}
+
+
         if mapping is None:
             return
         lock_key = "|".join(

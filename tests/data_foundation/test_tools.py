@@ -271,3 +271,62 @@ def test_search_resources_integrates_ranking_fields(monkeypatch):
     assert "why_selected" in result["results"][0]
     assert "rank_signals" in result["results"][0]
 
+
+
+def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+
+    def _readable_rows(tenant_id, actor_open_id, resource_ids):
+        return [
+            {
+                "id": "res-1",
+                "type": "feishu_base_record",
+                "title": "秋冬护肤",
+                "summary": "s",
+                "visibility": "team",
+                "updated_at": None,
+                "source_updated_at": None,
+                "content_json": {
+                    "fields": {
+                        "标题": "秋冬护肤攻略",
+                        "正文": "正文内容",
+                        "博主": "护肤老师",
+                        "封面链接": "http://sns-webpic-qc.xhscdn.com/a.jpg",
+                        "原文链接": "[查看原文](http://xhslink.com/o/abc)",
+                        "话题标签": "护肤,秋冬",
+                        "点赞数": 3000,
+                        "收藏数": 1500,
+                    }
+                },
+            }
+        ]
+    repo.readable_rows_by_ids = _readable_rows
+
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+    import data_foundation.engine_config as engine_config
+    monkeypatch.setattr(engine_config, "meili_config_from_env", lambda: type("Cfg", (), {"state": "enabled"})())
+
+    class MockIndex:
+        @classmethod
+        def from_config(cls, cfg):
+            return cls()
+        def search(self, query, tenant_id, limit):
+            return [("res-1", 0.8)]
+
+    import data_foundation.meili_client as meili_client
+    monkeypatch.setattr(meili_client, "MeiliResourceIndex", MockIndex)
+
+    result = df_tools.search_local_note_cards.func(keyword="护肤", config=identity_config("ou_user"))
+
+    assert result["ok"] is True
+    assert len(result["results"]) == 1
+    card = result["results"][0]
+    # 细致字段(rank_evidence 路径拿不到的)
+    assert card["cover_url"] == "http://sns-webpic-qc.xhscdn.com/a.jpg"
+    assert card["note_url"] == "http://xhslink.com/o/abc"
+    assert card["likes"] == 3000 and card["collects"] == 1500
+    assert card["tags"] == ["护肤", "秋冬"]
+    assert card["source"] == "local"
+    assert card["already_local"] is True

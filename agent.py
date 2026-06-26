@@ -25,6 +25,8 @@ from rubric_model import RegistryRoutedChatModel
 from subagents_executor import build_executor_subagents
 from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
+from tools.redfox_search import search_xhs_online
+from tools.online_adopt import adopt_online_notes
 from tools.lark_mcp import load_lark_mcp_tools
 
 
@@ -57,7 +59,7 @@ content_rubric_activator = ContentRubricActivator()
 
 agent = create_deep_agent(
     model=initial_model,
-    tools=data_foundation_tools + feishu_action_tools + load_lark_mcp_tools(),
+    tools=data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes] + load_lark_mcp_tools(),
     system_prompt=MAIN_SYSTEM_PROMPT,
     skills=["/skills/"],
     subagents=build_executor_subagents(model_registry, initial_model, backend),
@@ -68,6 +70,7 @@ agent = create_deep_agent(
         "sync_topic_to_feishu": True,
         "sync_diagnosis_to_feishu": True,
         "send_review_notification": True,
+        "adopt_online_notes": True,
     },
     checkpointer=True,
     middleware=[

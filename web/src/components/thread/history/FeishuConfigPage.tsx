@@ -14,6 +14,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
     FEISHU_APP_SECRET: "",
     FEISHU_BITABLE_APP_TOKEN: "",
     FEISHU_BITABLE_TABLE_ID: "",
+    FEISHU_BITABLE_COLLECT_TABLE_ID: "",
     FEISHU_WIKI_SPACE_ID: "",
   });
   const [wikiSpaceName, setWikiSpaceName] = useState("小红书爆单手册");
@@ -143,7 +144,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="bitable-table-id" className="text-xs font-medium text-charcoal-light">Bitable Table ID (数据表 ID)</Label>
+                    <Label htmlFor="bitable-table-id" className="text-xs font-medium text-charcoal-light">Bitable Table ID (草稿/选题主表)</Label>
                     <Input
                       id="bitable-table-id"
                       type="text"
@@ -153,8 +154,19 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                       className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
                     />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="bitable-collect-table-id" className="text-xs font-medium text-charcoal-light">爆款采集库 Table ID (线上笔记采纳写入)</Label>
+                    <Input
+                      id="bitable-collect-table-id"
+                      type="text"
+                      value={configs.FEISHU_BITABLE_COLLECT_TABLE_ID || ""}
+                      onChange={(e) => setConfigs({ ...configs, FEISHU_BITABLE_COLLECT_TABLE_ID: e.target.value })}
+                      placeholder="tbl24vSVeLvz45ig"
+                      className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
+                    />
+                  </div>
                 </div>
-                <p className="text-[10px] text-gray-400">App Token 位于表格 URL 中 `base/` 后面的一长串字符，Table ID 对应具体数据表的子 ID。</p>
+                <p className="text-[10px] text-gray-400">App Token 位于表格 URL 中 `base/` 后面的一长串字符，Table ID 对应具体数据表的子 ID。采集库表 ID 独立于草稿表，用于线上笔记“采纳收录”的镜像写入(默认 tbl24vSVeLvz45ig)。</p>
               </div>
 
               <div className="space-y-4 pt-4 border-t border-border/30">

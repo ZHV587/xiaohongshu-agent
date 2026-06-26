@@ -112,6 +112,51 @@ def _rows_to_payload(rows: list[Any]) -> list[dict[str, Any]]:
 
 
 @tool
+def search_local_note_cards(keyword: str, limit: int = 12, config: RunnableConfig | None = None) -> dict[str, Any]:
+    """检索本地已收录笔记,返回细致卡片字段(封面/互动/标签)用于发现面板展示。
+
+    与 search_resources(证据链)分离:本工具 hydrate content_json 输出统一卡片形状,
+    不影响 rank_evidence / EvidencePackage。
+    """
+    actor = actor_from_config(config)
+    from data_foundation.engine_config import meili_config_from_env
+    from data_foundation.meili_client import MeiliResourceIndex
+    from data_foundation.local_cards import dedupe_by_note_url, hydrate_note_card
+
+    cfg = meili_config_from_env()
+    if cfg.state != "enabled":
+        return {"ok": False, "error": "MEILI_UNAVAILABLE", "results": []}
+    want = min(max(int(limit), 1), 30)
+    over_fetch = min(want * 5, 200)
+    try:
+        index = MeiliResourceIndex.from_config(cfg)
+        hits = index.search(keyword.strip(), tenant_id=default_tenant_id(), limit=over_fetch)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"MEILI_QUERY_FAILED: {exc}", "results": []}
+    ids = [rid for rid, _ in hits]
+    score_by_id = {rid: score for rid, score in hits}
+    with _repository() as repo:
+        rows = repo.readable_rows_by_ids(
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            resource_ids=ids,
+        )
+    cards: list[dict[str, Any]] = []
+    for row in rows:
+        content_json = dict(row["content_json"]) if row.get("content_json") is not None else {}
+        card = hydrate_note_card(
+            str(row["id"]),
+            row["type"],
+            content_json,
+            score=score_by_id.get(str(row["id"]), 0.0),
+        )
+        if card is not None:
+            cards.append(card)
+    cards = dedupe_by_note_url(cards)
+    return {"ok": True, "results": cards[:want]}
+
+
+@tool
 def search_resources(query: str, limit: int = 10, config: RunnableConfig | None = None) -> dict[str, Any]:
     """Search readable resources by full-text (Meilisearch) and return summaries only."""
     actor = actor_from_config(config)
@@ -449,6 +494,7 @@ def save_session_snapshot(
 
 data_foundation_tools = [
     search_resources,
+    search_local_note_cards,
     semantic_search_resources,
     graph_expand,
     get_resource,

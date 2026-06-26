@@ -50,19 +50,64 @@ def test_read_xhs_data_aggregates_all_tables(mock_lark_cli):
 
 
 @patch("tools.lark_cli.lark_cli")
-def test_read_xhs_data_drops_noise_columns(mock_lark_cli):
+def test_read_xhs_data_keeps_link_columns_drops_attachments(mock_lark_cli):
+    """收窄修正:放行「封面链接」「原文链接」「图片链接」等文本直链列;
+    仅剔除附件【对象】列(含 file_token)与提示词/设置等系统/噪声列。"""
     mock_lark_cli.func.side_effect = [
         _table_list_resp([{"table_id": "tblA", "name": "笔记"}]),
         json.dumps({"data": {"has_more": False, "items": [
-            {"record_id": "rec1", "fields": {"标题": "x", "封面": "img_url", "图片附件": "a.png", "正文": "body"}},
+            {"record_id": "rec1", "fields": {
+                "标题": "x",
+                "正文": "body",
+                "封面链接": "http://sns-webpic-qc.xhscdn.com/abc.jpg",
+                "原文链接": "[查看原文](http://xhslink.com/o/abc)",
+                "图片链接": "http://img.example.com/1.png",
+                # 附件对象列(含 file_token)→ 按值形状剔除
+                "封面": [{"file_token": "tok1", "name": "c.png", "type": "image/png"}],
+                "图片附件": [{"file_token": "tok2", "name": "a.png"}],
+                "提示词": "请写一篇...",
+                "⚙️设置": "系统列",
+            }},
         ]}}),
     ]
     with patch.dict(os.environ, {"FEISHU_BITABLE_APP_TOKEN": "app_tok"}):
         res = read_xhs_data.func()
     fields = res["sync_rows"][0]["fields"]
+    # 文本直链列被放行
+    assert fields["封面链接"] == "http://sns-webpic-qc.xhscdn.com/abc.jpg"
+    assert fields["原文链接"] == "[查看原文](http://xhslink.com/o/abc)"
+    assert fields["图片链接"] == "http://img.example.com/1.png"
     assert "标题" in fields and "正文" in fields
-    # 噪声列被剔除
-    assert "封面" not in fields and "图片附件" not in fields
+    # 附件对象列与系统/噪声列被剔除
+    assert "封面" not in fields
+    assert "图片附件" not in fields
+    assert "提示词" not in fields
+    assert "⚙️设置" not in fields
+
+
+def test_extract_cover_url_prefers_text_direct_link():
+    from tools.feishu_bitable import extract_cover_url
+    assert extract_cover_url({"封面链接": "http://cdn/x.jpg"}) == "http://cdn/x.jpg"
+    # 富文本片段数组
+    assert extract_cover_url({"图片链接": [{"type": "text", "text": "http://cdn/y.png"}]}) == "http://cdn/y.png"
+    # 无封面列
+    assert extract_cover_url({"标题": "x"}) == ""
+
+
+def test_extract_note_url_from_markdown():
+    from tools.feishu_bitable import extract_note_url
+    assert extract_note_url({"原文链接": "[查看原文](http://xhslink.com/o/abc)"}) == "http://xhslink.com/o/abc"
+    # 裸 URL
+    assert extract_note_url({"笔记链接": "http://xhslink.com/o/def"}) == "http://xhslink.com/o/def"
+    assert extract_note_url({"标题": "x"}) == ""
+
+
+def test_is_attachment_value_shape():
+    from tools.feishu_bitable import _is_attachment_value
+    assert _is_attachment_value([{"file_token": "t", "name": "a.png"}]) is True
+    assert _is_attachment_value("http://cdn/x.jpg") is False
+    assert _is_attachment_value([]) is False
+    assert _is_attachment_value([{"text": "x"}]) is False
 
 
 @patch("tools.lark_cli.lark_cli")

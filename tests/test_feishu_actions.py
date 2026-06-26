@@ -165,3 +165,44 @@ def test_sync_diagnosis_to_feishu_calls_lark_cli(mock_lark_cli, monkeypatch):
         assert result["record_id"] == "rec_diag"
         assert "table=tbl_diag" in result["redirect_url"]
 
+
+
+@patch("tools.feishu_actions.lark_cli")
+def test_create_online_note_record_maps_columns_to_collect_table(mock_lark_cli, monkeypatch):
+    from tools.feishu_actions import create_online_note_record
+
+    monkeypatch.setenv("FEISHU_BITABLE_APP_TOKEN", "base_token")
+    monkeypatch.delenv("FEISHU_BITABLE_COLLECT_TABLE_ID", raising=False)  # 用默认 tbl24vSVeLvz45ig
+    mock_lark_cli.func.return_value = json.dumps(
+        {"code": 0, "data": {"record": {"record_id": "rec_x"}}}, ensure_ascii=False
+    )
+    note = {
+        "title": "秋冬护肤", "summary": "摘要", "author": "护肤老师",
+        "cover_url": "http://cdn/a.jpg", "note_url": "http://xhslink.com/o/abc",
+        "tags": ["护肤", "秋冬"], "created_at": "2026-06-20",
+        "likes": 3000, "collects": 1500, "comments": 300, "shares": 200,
+    }
+    result = create_online_note_record(note, config=identity_config("ou_user"))
+    assert result["ok"] is True
+    assert result["record_id"] == "rec_x"
+    assert result["table_id"] == "tbl24vSVeLvz45ig"  # 默认采集库,非草稿表
+    # 校验下发到 lark-cli 的列映射
+    sent = mock_lark_cli.func.call_args[0][0]
+    assert "--table-id tbl24vSVeLvz45ig" in sent
+    payload = json.loads(sent.split("--json ", 1)[1].strip().strip("'"))
+    fields = payload["fields"]
+    assert fields["标题"] == "秋冬护肤"
+    assert fields["封面链接"] == "http://cdn/a.jpg"
+    assert fields["原文链接"] == "http://xhslink.com/o/abc"
+    assert fields["点赞数"] == 3000 and fields["收藏数"] == 1500
+    assert fields["采集平台"] == "线上实时"
+    assert "#护肤" in fields["话题标签"]
+
+
+def test_create_online_note_record_requires_app_token(monkeypatch):
+    from tools.feishu_actions import create_online_note_record
+
+    monkeypatch.delenv("FEISHU_BITABLE_APP_TOKEN", raising=False)
+    result = create_online_note_record({"title": "x"}, config=identity_config("ou_user"))
+    assert result["ok"] is False
+    assert "FEISHU_BITABLE_APP_TOKEN" in result["error"]

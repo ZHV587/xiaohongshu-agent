@@ -257,6 +257,66 @@ def sync_diagnosis_to_feishu(
     }
 
 
+DEFAULT_COLLECT_TABLE_ID = "tbl24vSVeLvz45ig"  # 🧲单篇采集库(§8 笔记级白名单)
+
+
+def create_online_note_record(
+    note: dict[str, Any],
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """把一条线上笔记写入飞书爆款采集库(`FEISHU_BITABLE_COLLECT_TABLE_ID`)。
+
+    列名与 §8 COLUMN_TO_METRIC 反向对齐(点赞数/收藏数/评论数/转发数);其余列用明文默认,
+    可经 XHS_COLLECT_FIELD_* 覆盖。**不复用** FEISHU_BITABLE_TABLE_ID(草稿/选题表)。
+    去重由调用方(adopt 编排)按 Postgres mapping 保证,此函数只负责写。
+    """
+    app_token = os.environ.get("FEISHU_BITABLE_APP_TOKEN")
+    table_id = os.environ.get("FEISHU_BITABLE_COLLECT_TABLE_ID", DEFAULT_COLLECT_TABLE_ID)
+    if not app_token or not table_id:
+        return {"ok": False, "error": "FEISHU_BITABLE_APP_TOKEN and FEISHU_BITABLE_COLLECT_TABLE_ID are required"}
+
+    f = lambda key, default: os.environ.get(key, default)  # noqa: E731
+    tags = note.get("tags") or []
+    tags_text = " ".join(f"#{t.lstrip('#')}" for t in tags if str(t).strip()) if isinstance(tags, list) else str(tags)
+    fields_payload: dict[str, Any] = {
+        f("XHS_COLLECT_FIELD_TITLE", "标题"): str(note.get("title") or ""),
+        f("XHS_COLLECT_FIELD_BODY", "正文"): str(note.get("summary") or ""),
+        f("XHS_COLLECT_FIELD_AUTHOR", "博主"): str(note.get("author") or ""),
+        f("XHS_COLLECT_FIELD_COVER", "封面链接"): str(note.get("cover_url") or ""),
+        f("XHS_COLLECT_FIELD_NOTE_URL", "原文链接"): str(note.get("note_url") or ""),
+        f("XHS_COLLECT_FIELD_TAGS", "话题标签"): tags_text,
+        f("XHS_COLLECT_FIELD_PUBLISHED", "发布时间"): str(note.get("created_at") or ""),
+        f("XHS_COLLECT_FIELD_PLATFORM", "采集平台"): "线上实时",
+        "点赞数": int(note.get("likes") or 0),
+        "收藏数": int(note.get("collects") or 0),
+        "评论数": int(note.get("comments") or 0),
+        "转发数": int(note.get("shares") or 0),
+    }
+    # 丢空值,避免给飞书写空串触发类型校验
+    fields_payload = {k: v for k, v in fields_payload.items() if v not in ("", None)}
+
+    command = shlex.join([
+        "base",
+        "+record-create",
+        "--base-token",
+        app_token,
+        "--table-id",
+        table_id,
+        "--json",
+        json.dumps({"fields": fields_payload}, ensure_ascii=False),
+    ])
+    parsed = _parse_lark_json(lark_cli.func(command, config=config))
+    if not parsed["ok"]:
+        return parsed
+    data = parsed["data"]
+    record_id = (
+        data.get("data", {}).get("record", {}).get("record_id")
+        or data.get("data", {}).get("record_id")
+        or ""
+    )
+    return {"ok": True, "record_id": record_id, "table_id": table_id}
+
+
 feishu_action_tools = [
     sync_copy_to_feishu,
     send_review_notification,

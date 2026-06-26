@@ -30,6 +30,24 @@ export function getToolDisplay(
   }
 
   switch (name) {
+    case "search_xhs_online":
+      return {
+        hidden: false,
+        running: "正在搜索小红书线上实时笔记…",
+        done: "已找到线上实时笔记",
+      };
+    case "search_local_note_cards":
+      return {
+        hidden: false,
+        running: "正在检索我们已收录的笔记…",
+        done: "已找到本地已收录笔记",
+      };
+    case "adopt_online_notes":
+      return {
+        hidden: false,
+        running: "正在采纳收录到库 + 飞书…",
+        done: "已采纳收录",
+      };
     case "read_xhs_data":
       return {
         hidden: false,
