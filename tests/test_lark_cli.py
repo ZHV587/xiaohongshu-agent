@@ -96,13 +96,15 @@ def test_lark_cli_uses_runtime_identity_for_user_token(mock_run, mock_get_uat):
     assert "{\"ok\": true}" in res
     mock_get_uat.assert_called_once_with("ou_user_1")
     env = mock_run.call_args.kwargs["env"]
-    assert env["LARK_USER_ACCESS_TOKEN"] == "uat-user-token"
+    # v1.0.58:用户令牌走 LARKSUITE_CLI_ 前缀,且需同时带 app 凭证上下文
     assert env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] == "uat-user-token"
-    assert env["LARK_DEFAULT_AS"] == "user"
-    assert env["LARKSUITE_CLI_DEFAULT_AS"] == "user"
-    # v1.0.58:app 身份由 config.json 提供;绝不注入 LARK_APP_* 凭证 env(否则 CLI 误判缺 token)
-    assert "LARK_APP_ID" not in env
-    assert "LARK_APP_SECRET" not in env
+    assert env["LARKSUITE_CLI_APP_ID"] == "cli_mock_app"
+    assert env["LARKSUITE_CLI_APP_SECRET"] == "cli_mock_secret"
+    # LARK_ 前缀被 v1.0.58 忽略,不再注入
+    assert "LARK_USER_ACCESS_TOKEN" not in env
+    # 命令追加 --as user
+    cmd = mock_run.call_args.args[0]
+    assert "--as" in cmd and cmd[cmd.index("--as") + 1] == "user"
 
 
 @patch("tools.lark_cli.get_uat")

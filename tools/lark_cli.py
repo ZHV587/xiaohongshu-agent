@@ -221,13 +221,17 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         if not token:
             return "Please authorize Feishu access first. Please log in again using the UI panel to grant permissions."
 
-        # 用户身份:注入真实 UAT(lark-cli 的"环境凭证模式"正需要一个 access token)。
-        # 不注入 LARK_APP_ID/SECRET —— app 身份由 config.json 提供;注入 app 凭证会让
-        # v1.0.58 误判为缺 token。
-        run_env["LARK_USER_ACCESS_TOKEN"] = token
+        # 用户身份(v1.0.58):经 env 注入用户令牌走 LARKSUITE_CLI_ 前缀(LARK_ 前缀被忽略),
+        # 且 user-token 路径**要求**同时给 LARKSUITE_CLI_APP_ID/SECRET 提供 app 上下文
+        # (缺则报 "blocked by env: ... APP_ID is missing")。与 bot 模式(纯 config.json、
+        # 不带 app env)正好相反。
+        app_id = os.environ.get("FEISHU_APP_ID")
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
         run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
-        run_env["LARK_DEFAULT_AS"] = "user"
-        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
+        if app_id:
+            run_env["LARKSUITE_CLI_APP_ID"] = app_id
+        if app_secret:
+            run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
 
         if "--as" not in clean_args:
             clean_args.extend(["--as", "user"])
