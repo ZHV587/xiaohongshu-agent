@@ -103,4 +103,11 @@ def adopt_online_notes(
     finally:
         conn.close()
 
-    return {"ok": True, "results": results, "errors": errors}
+    adopted_count = sum(1 for r in results if r.get("adopted"))
+    next_step = (
+        f"已收录 {adopted_count} 条到库(已进检索)。可基于这批 + 本地相关内容出选题:"
+        "按 topic-content 流程检索取证后产出带 resource_id 依据的选题卡。"
+        if adopted_count
+        else None
+    )
+    return {"ok": True, "results": results, "errors": errors, "next_step": next_step}

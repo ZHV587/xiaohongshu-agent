@@ -118,6 +118,8 @@ def test_adopt_writes_db_metric_and_feishu(patched):
     r = res["results"][0]
     assert r["adopted"] is True
     assert r["feishu_synced"] is True
+    # 采纳后带出选题衔接引导
+    assert res.get("next_step") and "选题" in res["next_step"]
     # 入库 1 条 note + 1 条 metric
     types = sorted(v["type"] for v in repo.resources.values())
     assert types == ["performance_metric", "xhs_online_note"]
