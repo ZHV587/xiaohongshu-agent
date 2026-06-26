@@ -89,6 +89,8 @@ export default function useInterruptedActions({
       thread.submit(
         {},
         {
+          streamSubgraphs: true,
+          streamResumable: true,
           command: {
             resume: {
               decisions,

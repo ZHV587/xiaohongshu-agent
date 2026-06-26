@@ -25,6 +25,8 @@ export interface ToolRenderSpec {
   aura: AuraSpec;
   /** 富卡片渲染(独立于思考链,直接把结果渲染成卡片);无则不渲染卡片。 */
   card?: (result: unknown) => ReactNode;
+  /** 业务显示名:用于 HITL 审批标题等"让用户确认"的场景(中文、面向用户)。 */
+  title?: string;
 }
 
 function parse(result: unknown): Record<string, unknown> | null {
@@ -75,6 +77,7 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
   // 采纳收录:思考链一步
   adopt_online_notes: {
     aura: { running: "正在采纳收录到库 + 飞书…", done: () => "已采纳收录" },
+    title: "采纳收录线上笔记到数据库 + 飞书爆款采集库",
   },
 
   // ── 检索 / 取证 ──────────────────────────────
@@ -86,17 +89,17 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
   get_data_foundation_status: retrieval("正在核对数据底座状态…", "已核对底座状态"),
 
   // ── 落库 / 同步(数据库 + 飞书镜像)──────────────
-  save_generated_topic: { aura: { running: "正在保存选题到数据库…", done: () => "已保存选题" } },
-  save_generated_copy: { aura: { running: "正在保存文案到数据库…", done: () => "已保存文案" } },
+  save_generated_topic: { aura: { running: "正在保存选题到数据库…", done: () => "已保存选题" }, title: "保存选题到数据库" },
+  save_generated_copy: { aura: { running: "正在保存文案到数据库…", done: () => "已保存文案" }, title: "保存文案到数据库" },
   save_user_feedback: { aura: { running: "正在记录修改意见…", done: () => "已记录修改意见" } },
-  save_performance_metric: { aura: { running: "正在写入效果数据…", done: () => "已写入效果数据" } },
+  save_performance_metric: { aura: { running: "正在写入效果数据…", done: () => "已写入效果数据" }, title: "写入效果数据" },
   save_session_snapshot: { aura: { running: "正在保存会话快照…", done: () => "已保存快照" } },
-  sync_feishu_resources: { aura: { running: "正在同步飞书资源…", done: () => "已同步飞书资源" } },
-  sync_topic_to_feishu: { aura: { running: "正在同步选题到飞书…", done: () => "已同步飞书(选题)" } },
-  sync_copy_to_feishu: { aura: { running: "正在同步文案到飞书…", done: () => "已同步飞书(文案)" } },
-  sync_diagnosis_to_feishu: { aura: { running: "正在同步诊断到飞书…", done: () => "已同步飞书(诊断)" } },
-  send_review_notification: { aura: { running: "正在发送飞书群审核通知…", done: () => "已发送审核通知" } },
-  execute_lark_command: { aura: { running: "正在执行飞书操作…", done: () => "已执行飞书操作" } },
+  sync_feishu_resources: { aura: { running: "正在同步飞书资源…", done: () => "已同步飞书资源" }, title: "同步资源到飞书" },
+  sync_topic_to_feishu: { aura: { running: "正在同步选题到飞书…", done: () => "已同步飞书(选题)" }, title: "同步选题到飞书多维表格" },
+  sync_copy_to_feishu: { aura: { running: "正在同步文案到飞书…", done: () => "已同步飞书(文案)" }, title: "同步文案到飞书多维表格" },
+  sync_diagnosis_to_feishu: { aura: { running: "正在同步诊断到飞书…", done: () => "已同步飞书(诊断)" }, title: "同步诊断到飞书多维表格" },
+  send_review_notification: { aura: { running: "正在发送飞书群审核通知…", done: () => "已发送审核通知" }, title: "发送飞书群审核通知" },
+  execute_lark_command: { aura: { running: "正在执行飞书操作…", done: () => "已执行飞书操作" }, title: "执行飞书操作" },
 
   // 读爆款库:思考链一步 + 终端日志(带条数)
   read_xhs_data: {
@@ -155,6 +158,45 @@ export function resolveToolRender(
   if (path.includes("/skills/")) return HIDDEN;
   if (name && TOOL_RENDERERS[name]) return TOOL_RENDERERS[name];
   return DEFAULT;
+}
+
+/** HITL 审批等"让用户确认"场景的工具业务名(中文、面向用户)。
+ *  优先取注册表 title;create_online_note_record 等非展示工具也在此兜底;
+ *  未知工具回退到"执行操作",绝不暴露英文工具名。 */
+const EXTRA_TITLES: Record<string, string> = {
+  create_online_note_record: "写入笔记到飞书爆款采集库",
+  sync_online_note_to_feishu: "同步线上笔记到飞书爆款采集库",
+};
+
+export function toolDisplayName(name?: string): string {
+  if (!name) return "执行操作";
+  const spec = TOOL_RENDERERS[name];
+  if (spec?.title) return spec.title;
+  if (EXTRA_TITLES[name]) return EXTRA_TITLES[name];
+  return "执行操作";
+}
+
+/** HITL 参数字段的中文标签(面向用户确认);未知字段回退原 key。 */
+const FIELD_LABELS: Record<string, string> = {
+  notes: "笔记",
+  note: "笔记",
+  title: "标题",
+  body: "正文",
+  content: "内容",
+  topic: "选题",
+  topics: "选题",
+  tags: "话题标签",
+  table_id: "目标表",
+  app_token: "多维表格",
+  record_id: "记录",
+  resource_id: "资源",
+  summary: "摘要",
+  reason: "原因",
+  message: "说明",
+};
+
+export function fieldLabel(key: string): string {
+  return FIELD_LABELS[key] ?? key;
 }
 
 export interface ToolCallLike {

@@ -7,9 +7,10 @@ import useInterruptedActions from "../hooks/use-interrupted-actions";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useQueryState } from "nuqs";
-import { constructOpenInStudioURL, buildDecisionFromState } from "../utils";
+import { buildDecisionFromState } from "../utils";
 import { Decision, HITLRequest, DecisionType, ActionRequest } from "../types";
 import { useStreamContext } from "@/providers/stream-context";
+import { toolDisplayName } from "@/lib/tool-render";
 
 interface ThreadActionsViewProps {
   interrupt: Interrupt<HITLRequest>;
@@ -40,7 +41,7 @@ function ButtonGroup({
         size="sm"
         onClick={handleShowState}
       >
-        State
+        运行状态
       </Button>
       <Button
         variant="outline"
@@ -51,7 +52,7 @@ function ButtonGroup({
         size="sm"
         onClick={handleShowDescription}
       >
-        Description
+        操作说明
       </Button>
     </div>
   );
@@ -77,7 +78,7 @@ function getDecisionStatus(
 }
 
 function getActionTitle(action?: ActionRequest) {
-  return action?.name ?? "Unknown interrupt";
+  return toolDisplayName(action?.name);
 }
 
 export function ThreadActionsView({
@@ -88,7 +89,6 @@ export function ThreadActionsView({
 }: ThreadActionsViewProps) {
   const stream = useStreamContext();
   const [threadId] = useQueryState("threadId");
-  const [apiUrl] = useQueryState("apiUrl");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [addressedActions, setAddressedActions] = useState<
     Map<number, Decision>
@@ -152,21 +152,6 @@ export function ThreadActionsView({
     setAddressedActions(new Map());
   }, [interrupt]);
 
-  const handleOpenInStudio = () => {
-    if (!apiUrl) {
-      toast.error("Error", {
-        description: "Please set the LangGraph deployment URL in settings.",
-        duration: 5000,
-        richColors: true,
-        closeButton: true,
-      });
-      return;
-    }
-
-    const studioUrl = constructOpenInStudioURL(apiUrl, threadId ?? undefined);
-    window.open(studioUrl, "_blank");
-  };
-
   const handleApproveAll = useCallback(() => {
     if (!hasMultipleActions) return;
 
@@ -178,6 +163,8 @@ export function ThreadActionsView({
       stream.submit(
         {},
         {
+          streamSubgraphs: true,
+          streamResumable: true,
           command: {
             resume: { decisions: allDecisions },
           },
@@ -225,6 +212,8 @@ export function ThreadActionsView({
       stream.submit(
         {},
         {
+          streamSubgraphs: true,
+          streamResumable: true,
           command: {
             resume: { decisions: allDecisions },
           },
@@ -320,16 +309,6 @@ export function ThreadActionsView({
           {threadId && <ThreadIdCopyable threadId={threadId} />}
         </div>
         <div className="flex flex-row items-center justify-start gap-2">
-          {apiUrl && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex items-center gap-1 bg-white"
-              onClick={handleOpenInStudio}
-            >
-              Studio
-            </Button>
-          )}
           <ButtonGroup
             handleShowState={() => handleShowSidePanel(true, false)}
             handleShowDescription={() => handleShowSidePanel(false, true)}
@@ -346,7 +325,7 @@ export function ThreadActionsView({
           onClick={handleResolve}
           disabled={actionsDisabled}
         >
-          Mark as Resolved
+          忽略此操作
         </Button>
         {hasMultipleActions && allAllowApprove && (
           <Button
@@ -355,7 +334,7 @@ export function ThreadActionsView({
             onClick={handleApproveAll}
             disabled={actionsDisabled}
           >
-            Approve All
+            全部批准
           </Button>
         )}
       </div>
@@ -412,7 +391,7 @@ export function ThreadActionsView({
               disabled={currentIndex === 0}
               onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
             >
-              Previous
+              上一项
             </Button>
             <Button
               variant="outline"
@@ -424,7 +403,7 @@ export function ThreadActionsView({
                 )
               }
             >
-              Next
+              下一项
             </Button>
           </div>
           <Button
@@ -433,15 +412,15 @@ export function ThreadActionsView({
             onClick={handleSubmitAll}
           >
             {submittingAll
-              ? "Submitting..."
-              : `Submit all ${actionRequests.length} decisions`}
+              ? "提交中..."
+              : `提交全部 ${actionRequests.length} 项决定`}
           </Button>
         </div>
       )}
 
       {!hasMultipleActions && streamFinished && (
         <p className="text-base font-medium text-green-600">
-          Successfully finished Graph invocation.
+          已完成处理。
         </p>
       )}
     </div>
