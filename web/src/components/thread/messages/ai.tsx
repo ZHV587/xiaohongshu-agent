@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { useStreamContext } from "@/providers/stream-context";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/langgraph-sdk/react";
@@ -15,9 +15,9 @@ import { useArtifact } from "../artifact-hooks";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { TopicCards } from "./topic-cards";
 import { CopyCard } from "./copy-card";
-import { resolveToolRender, ToolResultCards } from "@/lib/tool-render";
+import { resolveToolRender, ToolResultCards, type AuraSpec } from "@/lib/tool-render";
 import type { AssistantBlock } from "../types";
-import { LoaderCircle, ChevronDown } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
 function CustomComponent({
   message,
@@ -85,144 +85,66 @@ export function ThinkingAura({
   toolCalls: { name: string; args?: any; result?: any }[];
   status?: "running" | "done";
 }) {
-  const [isExpanded, setIsExpanded] = useState(status === "running");
-  const [mountedTime, setMountedTime] = useState<Date | null>(null);
-  const [displayedLogs, setDisplayedLogs] = useState<string[]>([]);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    setMountedTime(new Date());
-  }, []);
-
-  useEffect(() => {
-    if (status === "running") {
-      setIsExpanded(true);
-    }
-  }, [status]);
-
-  // Auto-scroll the terminal logs box to the bottom as new logs stream in
-  useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTo({
-        top: containerRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-    }
-  }, [displayedLogs.length]);
-
   const visibleCalls = useMemo(() => {
-    return (toolCalls || []).filter(tc => {
+    return (toolCalls || []).filter((tc) => {
       if (!tc.name) return false;
       const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
-      if (spec.aura === "hidden") return false;  // skills 内部噪音等,不展示
-      if (spec.card) return false;               // 有专属富卡片的工具不在思考链里重复
+      if (spec.aura === "hidden") return false; // skills 内部噪音等,不展示
+      if (spec.card) return false; // 有专属富卡片的工具不在思考链里重复
       return true;
     });
   }, [toolCalls]);
 
-  // Memoize targetLogs to prevent reference mutation on every render and avoid React effect reset loops
-  const targetLogs = useMemo(() => {
-    const logs: string[] = [];
-    let seconds = 0;
-    
-    const formatOffsetTime = (offsetSeconds: number) => {
-      if (!mountedTime) return "00:00:00";
-      const t = new Date(mountedTime.getTime() + offsetSeconds * 1000);
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
-    };
+  if (visibleCalls.length === 0) return null;
 
-    visibleCalls.forEach((tc) => {
-      const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
-      if (spec.aura === "hidden") return;
-      const lines = spec.aura.logs?.({ result: tc.result, name: tc.name }) ?? [];
-      lines.forEach((line, idx) => {
-        logs.push(`[${formatOffsetTime(seconds + idx)}] ${line}`);
-      });
-      seconds += Math.max(lines.length, 1) + 1;
-    });
-
-    return logs;
-  }, [visibleCalls, mountedTime]);
-
-  // Stream logs effect
-  useEffect(() => {
-    if (status === "done") {
-      setDisplayedLogs(targetLogs);
-      return;
-    }
-
-    let timer: NodeJS.Timeout;
-    const streamNext = () => {
-      setDisplayedLogs((prev) => {
-        if (prev.length < targetLogs.length) {
-          timer = setTimeout(streamNext, 350); 
-          return [...prev, targetLogs[prev.length]];
-        }
-        return prev;
-      });
-    };
-
-    if (displayedLogs.length < targetLogs.length) {
-      timer = setTimeout(streamNext, 150);
-    }
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [displayedLogs.length, status, targetLogs]);
-
-  if (!toolCalls || toolCalls.length === 0 || visibleCalls.length === 0) return null;
-
-  const steps: { label: string; isDone: boolean; key: string }[] = [];
-  visibleCalls.forEach((tc, idx) => {
-    const isLast = idx === visibleCalls.length - 1;
-    const isStepDone = status === "done" || !isLast;
+  // 真实状态驱动:工具有了 result 即为完成,否则进行中。与后端实际进度严格一致,
+  // 不再用定时器演假日志/假时间戳,也不再按"是不是最后一步"硬判完成。
+  const steps = visibleCalls.map((tc, idx) => {
     const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
-    if (spec.aura === "hidden") return;
-    steps.push({
+    const aura = spec.aura as Exclude<AuraSpec, "hidden">;
+    const isDone = tc.result != null;
+    return {
       key: `${tc.name || "tool"}-${idx}`,
-      label: isStepDone ? spec.aura.done({ result: tc.result, name: tc.name }) : spec.aura.running,
-      isDone: isStepDone,
-    });
+      label: isDone
+        ? aura.done({ result: tc.result, name: tc.name })
+        : aura.running,
+      isDone,
+    };
   });
 
-  if (status === "running") {
-    steps.push({
-      key: "running-loader",
-      label: "正在分析选题规律并撰写小红书笔记...",
-      isDone: false,
-    });
-  }
+  const anyRunning = steps.some((s) => !s.isDone) || status === "running";
 
   return (
-    <div className="mr-auto flex flex-col gap-2 py-2 w-full max-w-[460px] select-none">
-      <div className="bg-white border border-coral-light/60 p-3.5 rounded-2xl shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="relative flex h-2 w-2">
-              {status === "running" && (
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral opacity-75"></span>
+    <div className="mr-auto flex w-full max-w-[460px] flex-col gap-2 py-1 select-none">
+      <div className="rounded-2xl border border-coral-light/50 bg-white/80 px-3.5 py-2.5 shadow-xs">
+        <div className="mb-1.5 flex items-center gap-2">
+          <div className="relative flex h-2 w-2">
+            {anyRunning && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral opacity-75" />
+            )}
+            <span
+              className={cn(
+                "relative inline-flex h-2 w-2 rounded-full",
+                anyRunning ? "bg-coral" : "bg-green-500",
               )}
-              <span className={cn("relative inline-flex rounded-full h-2 w-2", status === "running" ? "bg-coral" : "bg-green-500")}></span>
-            </div>
-            <span className="text-xs font-bold text-charcoal font-display">思考轨迹 (Thinking Aura)</span>
+            />
           </div>
-          <button
-            type="button"
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="text-[10px] text-coral hover:text-coral-hover font-semibold flex items-center gap-0.5 cursor-pointer border-none bg-transparent outline-none"
-          >
-            <span>{isExpanded ? "收起分析详情" : "展开分析详情"}</span>
-            <ChevronDown className={cn("size-3 transition-transform", isExpanded && "rotate-180")} />
-          </button>
+          <span className="font-display text-xs font-bold text-charcoal">
+            思考轨迹
+          </span>
         </div>
 
-        <div className="space-y-2 text-xs">
+        <div className="space-y-1.5 text-xs">
           {steps.map((step) => (
-            <div key={step.key} className={cn("flex items-center gap-2", step.isDone ? "text-green-600" : "text-coral font-semibold")}>
+            <div
+              key={step.key}
+              className={cn(
+                "flex items-center gap-2",
+                step.isDone ? "text-charcoal-light" : "text-coral font-medium",
+              )}
+            >
               {step.isDone ? (
-                <span className="text-green-500 font-bold">✓</span>
+                <span className="font-bold text-green-500">✓</span>
               ) : (
                 <LoaderCircle className="size-3.5 animate-spin text-coral" />
               )}
@@ -230,20 +152,6 @@ export function ThinkingAura({
             </div>
           ))}
         </div>
-
-        {isExpanded && displayedLogs.length > 0 && (
-          <div 
-            ref={containerRef}
-            className="border-t border-oats-dark pt-2.5 mt-2 space-y-2 text-[9px] text-gray-400 font-mono bg-oats-light/40 p-2.5 rounded-xl border border-coral-light/20 max-h-32 overflow-y-auto custom-scrollbar"
-          >
-            {displayedLogs.map((line, index) => (
-              <div key={index} className="animate-in fade-in-0 slide-in-from-left-1 duration-200">
-                <span className="text-coral font-bold">{line.substring(0, 10)}</span>
-                {line.substring(10)}
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
