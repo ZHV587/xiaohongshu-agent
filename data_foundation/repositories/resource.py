@@ -700,7 +700,7 @@ class ResourceRepository(BaseRepository):
                 ).fetchall()
                 return {str(row["external_id"]) for row in rows}
 
-
+    def _lock_mapping(self, tenant_id: str, mapping: dict[str, Any] | None, cursor: Cursor) -> None:
         if mapping is None:
             return
         lock_key = "|".join(

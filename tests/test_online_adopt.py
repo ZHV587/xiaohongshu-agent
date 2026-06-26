@@ -92,6 +92,24 @@ def test_adopt_requires_notes(patched):
     assert res["ok"] is False
 
 
+def test_real_repository_exposes_mapping_methods():
+    """回归护栏:adopt/sync 依赖的真实 ResourceRepository mapping 方法必须存在。
+
+    (历史 bug:编辑曾误删 _lock_mapping 签名,使 mapping-based upsert 在运行期才炸,
+    单测因用 FakeRepo 未覆盖。此处对真类做结构断言,确保不再回归。)
+    """
+    from data_foundation.repositories.resource import ResourceRepository
+
+    for name in (
+        "_lock_mapping",
+        "_resource_id_for_mapping",
+        "_upsert_mapping",
+        "upsert_mapping",
+        "existing_mapping_external_ids",
+    ):
+        assert hasattr(ResourceRepository, name), f"ResourceRepository missing {name}"
+
+
 def test_adopt_writes_db_metric_and_feishu(patched):
     repo = patched
     with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "rec_1"}) as mock_feishu:
