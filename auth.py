@@ -196,28 +196,35 @@ async def on_thread_create_run(ctx: Auth.types.AuthContext, value: dict) -> dict
 # 私有记忆 namespace 的第二段标识(backends._user_memory_namespace 产出 (identity, _MARKER))
 _USER_MEMORY_MARKER = "user-memories"
 
+# 团队共享 store 根(全员可读写):团队记忆 ("xhs-team-memory",) 与风格沉淀 ("xhs-shared",)。
+# 只有首段命中这里的 namespace 才放行;其余一切都按私有领地处理(见 on_store)。
+_SHARED_STORE_ROOTS = frozenset({"xhs-team-memory", "xhs-shared"})
+
 
 @auth.on.store
 async def on_store(ctx: Auth.types.AuthContext, value: dict) -> None:
-    """store 访问控制。
+    """store 访问控制(对私有领地按 default-deny 收窄,而非按标记放行)。
 
-    - /shared、/memories(namespace ("xhs-shared",))、/skills:团队共享,放行。
-    - /user-memories(namespace (open_id, "user-memories")):私有记忆,**强制**把
-      namespace 首段钉成当前认证用户身份 —— 否则用户经 BFF 直调 /store/* 指定他人
-      namespace(如 ("ou_victim","user-memories"))即可越权读写他人私有记忆。
-      namespace 隔离只约束 agent 自身工具(永远用当前身份),不约束 Store 原生 HTTP API,
-      故必须在 auth 层兜住。
+    - 团队共享根(("xhs-team-memory",)/("xhs-shared",) 及其子空间):放行,全员共享。
+    - 其余一切——包括他人/裸 open_id 的**祖先前缀**(如 ("ou_victim",))、含
+      "user-memories" 标记的任意形态、以及 ListNamespaces 的 **None 全量前缀**——
+      一律强制收窄到当前认证用户自己的 (identity, "user-memories")。
+
+    为什么不能"只在含 marker 时改写"(旧实现的漏洞):LangGraph 的 Search/ListNamespaces
+    按**前缀**匹配。攻击者经 BFF 直调 `/store/items/search {"namespace_prefix":["ou_victim"]}`
+    时 namespace=("ou_victim",) 不含 marker → 旧实现放行 → 前缀命中 ("ou_victim","user-memories")
+    整棵子树,泄露他人全部私有记忆;`prefix=None` 更能枚举全员。故判据必须是"是否落在已知
+    共享根",落不到就强制钉成自己的私有分区——杜绝任何祖先前缀越权读取/枚举。
 
     LangGraph store 操作(Get/Search/Put/Delete/ListNamespaces)的 value 均含可变
     `namespace`(官方:auth handler 可改 namespace 强制访问控制)。这里原地改写。
     """
     namespace = value.get("namespace")
-    # ListNamespaces 的 namespace 是 prefix,可能为 None;其余操作必有 namespace。
-    if isinstance(namespace, (tuple, list)) and _USER_MEMORY_MARKER in namespace:
-        # 私有记忆 namespace 恒为两段 (open_id, "user-memories")(见 backends._user_memory_namespace)。
-        # 无论客户端传什么(颠倒顺序、塞他人 open_id、加额外段),一律规范化为当前用户的
-        # (identity, "user-memories") —— 杜绝任何越权到他人分区的可能。
-        value["namespace"] = (ctx.user.identity, _USER_MEMORY_MARKER)
+    ns_seq = namespace if isinstance(namespace, (tuple, list)) else None
+    if ns_seq and ns_seq[0] in _SHARED_STORE_ROOTS:
+        return None  # 团队共享根(含其子空间),放行
+    # 其余(None / 空 / 裸 open_id 祖先前缀 / 含 marker 的任意形态)一律钉成自己的私有分区。
+    value["namespace"] = (ctx.user.identity, _USER_MEMORY_MARKER)
     return None
 
 

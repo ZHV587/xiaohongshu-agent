@@ -99,7 +99,7 @@ async def test_on_store_normalizes_tampered_user_memory_namespace(monkeypatch):
 
 @pytest.mark.anyio
 async def test_on_store_leaves_shared_namespace_untouched(monkeypatch):
-    """团队共享 namespace(/shared、/memories → ("xhs-shared",))不受影响,保持共享。"""
+    """团队共享 namespace(/shared → ("xhs-shared",))不受影响,保持共享。"""
     ctx = _FakeCtx("ou_alice")
     value = {"namespace": ("xhs-shared",), "key": "xhs-style.md"}
     await auth_mod.on_store(ctx, value)
@@ -107,9 +107,35 @@ async def test_on_store_leaves_shared_namespace_untouched(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_on_store_handles_none_prefix_namespace(monkeypatch):
-    """ListNamespaces 的 prefix 可能为 None,不得崩溃。"""
+async def test_on_store_leaves_team_memory_namespace_untouched(monkeypatch):
+    """团队记忆 namespace(("xhs-team-memory",) 及其子空间)放行,保持全员共享。"""
+    ctx = _FakeCtx("ou_alice")
+    value = {"namespace": ("xhs-team-memory",), "key": "AGENTS.md"}
+    await auth_mod.on_store(ctx, value)
+    assert value["namespace"] == ("xhs-team-memory",)
+    sub = {"namespace": ("xhs-team-memory", "team")}
+    await auth_mod.on_store(ctx, sub)
+    assert sub["namespace"] == ("xhs-team-memory", "team")
+
+
+@pytest.mark.anyio
+async def test_on_store_scopes_ancestor_prefix_to_self(monkeypatch):
+    """P0 安全回归:按受害者**裸 open_id 祖先前缀** search/list 必须被收窄到自己。
+
+    旧实现只在 namespace 字面含 "user-memories" 时改写,裸前缀 ("ou_victim",) 不含 marker
+    → 放行 → LangGraph 前缀匹配命中 ("ou_victim","user-memories") 整棵子树,泄露他人私有记忆。
+    """
+    ctx = _FakeCtx("ou_alice")
+    value = {"namespace": ("ou_victim",)}
+    await auth_mod.on_store(ctx, value)
+    assert value["namespace"] == ("ou_alice", "user-memories")
+    assert "ou_victim" not in value["namespace"]
+
+
+@pytest.mark.anyio
+async def test_on_store_scopes_none_prefix_to_self(monkeypatch):
+    """P0 安全回归:ListNamespaces 的 None 全量前缀必须被收窄到自己,杜绝枚举全员分区。"""
     ctx = _FakeCtx("ou_alice")
     value = {"namespace": None}
     await auth_mod.on_store(ctx, value)
-    assert value["namespace"] is None
+    assert value["namespace"] == ("ou_alice", "user-memories")

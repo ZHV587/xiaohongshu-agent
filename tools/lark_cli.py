@@ -153,10 +153,16 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     if not args:
         return "Error: Command cannot be empty."
 
-    # 1) Security block blacklist
-    sub_cmd = args[0].lower()
-    if sub_cmd in _BLACKLIST_COMMANDS:
-        return f"Error: Command service '{sub_cmd}' is disallowed for security reasons."
+    # 1) Security block blacklist —— 位置无关的全 token 扫描。
+    # 注意:不能只查 args[0]。lark_cli 在身份解析阶段会剥离 `--as <bot|user>`,
+    # 攻击者可把命令写成 `--as bot auth logout`:此时 args[0]=="--as" 不在黑名单 → 放行,
+    # 剥离后 clean_args==["auth","logout"] 却真的执行了 auth。任何 value-taking flag
+    # (--as/--format/...)前缀都能这样把真正的服务子命令挤出 0 号位。故改为扫描所有 token:
+    # 只要任一 token 命中黑名单即拒。合法飞书业务命令的服务名恒为 im/base/wiki/drive 等,
+    # 绝不会是 auth/config;字段值经引号成单 token(如 --text "重新认证"),不会裸出 auth/config。
+    for token in args:
+        if token.lower() in _BLACKLIST_COMMANDS:
+            return f"Error: Command service '{token.lower()}' is disallowed for security reasons."
 
     # 2) Identity resolution
     # Get user identity from runtime config

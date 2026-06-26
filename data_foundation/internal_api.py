@@ -219,7 +219,7 @@ async def internal_feishu_chats(request: Request) -> JSONResponse:
     if not get_uat(actor.open_id):
         return _json_error(401, "Unauthorized: Feishu token invalid or expired.")
     try:
-        raw = lark_cli("im +chat-list", config=identity_config(actor.open_id))
+        raw = lark_cli.func("im +chat-list", config=identity_config(actor.open_id))
         if raw.startswith("Error"):
             return _json_error(500, raw)
         data = json.loads(raw)
@@ -246,7 +246,7 @@ async def internal_feishu_wiki_space(request: Request) -> JSONResponse:
 
     try:
         command = shlex.join(["wiki", "spaces", "get", "--space-id", fallback_space_id])
-        raw = lark_cli(command, config=identity_config(actor.open_id))
+        raw = lark_cli.func(command, config=identity_config(actor.open_id))
         if raw.startswith("Error") or "error" in raw.lower() or raw.startswith("⚠️"):
             return _json_ok(fallback)
         data = json.loads(raw)

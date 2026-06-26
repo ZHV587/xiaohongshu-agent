@@ -163,9 +163,11 @@ def test_internal_chats_filters_group_chats(monkeypatch):
 
     monkeypatch.setattr(internal_api, "get_uat", lambda open_id: "token")
     monkeypatch.setattr(internal_api, "identity_config", lambda open_id: {"user": open_id})
+    # 生产调用是 lark_cli.func(...)(lark_cli 是 StructuredTool,非可调用对象)。
+    # 测试替身必须 patch .func,否则替成裸 lambda 会让 `lark_cli(...)` 这种错误调用恒绿。
     monkeypatch.setattr(
-        internal_api,
-        "lark_cli",
+        internal_api.lark_cli,
+        "func",
         lambda command, config=None: '{"data":{"chats":[{"chat_mode":"group","chat_id":"oc_1","name":"群"},{"chat_mode":"p2p","chat_id":"ou_1","name":"人"}]}}',
     )
 

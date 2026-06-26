@@ -37,6 +37,19 @@ def test_lark_cli_blacklist(mock_run):
     mock_run.assert_not_called()
 
 
+@patch("tools.lark_cli.subprocess.run")
+def test_lark_cli_blacklist_not_bypassable_by_as_prefix(mock_run):
+    """P0 安全回归:黑名单不得被 `--as <bot|user>` 前缀绕过。
+
+    旧实现只查 args[0],而身份解析阶段会剥离 `--as bot`,使 `--as bot auth logout` 的
+    args[0]=="--as" 逃过黑名单、剥离后真的执行 auth。改为位置无关全 token 扫描后必须拦下。
+    """
+    for cmd in ("--as bot auth logout", "--as user config set --brand lark", "--format json auth status"):
+        res = lark_cli.func(cmd)
+        assert "disallowed" in res, f"未拦截: {cmd!r}"
+    mock_run.assert_not_called()
+
+
 class _MockServerInfoWithoutIdentity:
     user = object()
 

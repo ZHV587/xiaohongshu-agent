@@ -42,7 +42,7 @@ def handle_chats(args):
     try:
         command = "im +chat-list"
         config = identity_config(open_id)
-        cli_resp = lark_cli(command, config=config)
+        cli_resp = lark_cli.func(command, config=config)
         if cli_resp.startswith("Error"):
             print(json.dumps({"ok": False, "error": cli_resp}))
             sys.exit(1)
@@ -115,7 +115,7 @@ def handle_wiki_space(args):
     try:
         config = identity_config(open_id)
         cmd = shlex.join(["wiki", "spaces", "get", "--space-id", fallback_space_id])
-        cli_resp = lark_cli(cmd, config=config)
+        cli_resp = lark_cli.func(cmd, config=config)
         
         if cli_resp.startswith("Error") or "error" in cli_resp.lower() or cli_resp.startswith("⚠️"):
             # Fallback if API fails or scope missing
