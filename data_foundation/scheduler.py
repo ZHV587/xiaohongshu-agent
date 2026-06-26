@@ -289,7 +289,7 @@ class Scheduler:
             )
             result = await asyncio.wait_for(
                 processor.sync(
-                    SourceContext(source=public_source, secrets=secrets, actor_open_id=self.config.instance_id),
+                    SourceContext(source=public_source, secrets=secrets, actor_open_id=self.config.instance_id, as_bot=True),
                     _SourceLease(
                         self.source_repo,
                         source_id=source.id,

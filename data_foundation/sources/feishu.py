@@ -126,7 +126,9 @@ def _default_base_loader(context: SourceContext) -> dict[str, Any]:
     from tools.feishu_bitable import read_xhs_data
     from tools.runtime_identity import identity_config
 
-    # 用当前 actor 的身份(UAT)读多维表,而不是 config=None 退回无 token 的 bot。
+    # 后台自动同步走 bot(应用身份,config.json 提供凭证);手动(前端交互)走用户 UAT。
+    if getattr(context, "as_bot", False):
+        return read_xhs_data.func(config=None)
     actor = getattr(context, "actor_open_id", "") or ""
     config = identity_config(actor) if actor else None
     return read_xhs_data.func(config=config)
@@ -136,6 +138,8 @@ def _default_wiki_loader(context: SourceContext) -> dict[str, Any]:
     from tools.feishu_wiki import read_feishu_wiki
     from tools.runtime_identity import identity_config
 
+    if getattr(context, "as_bot", False):
+        return read_feishu_wiki.func(config=None)
     actor = getattr(context, "actor_open_id", "") or ""
     config = identity_config(actor) if actor else None
     return read_feishu_wiki.func(config=config)

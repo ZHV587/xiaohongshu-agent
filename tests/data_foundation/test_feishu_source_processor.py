@@ -239,3 +239,35 @@ def test_default_loaders_pass_actor_identity_not_bot(monkeypatch):
     assert actor_open_id_from_config(captured["base_config"]) == "ou_actor_123"
     assert captured["wiki_config"] is not None
     assert actor_open_id_from_config(captured["wiki_config"]) == "ou_actor_123"
+
+
+def test_default_loaders_use_bot_when_as_bot(monkeypatch):
+    """后台自动同步(as_bot=True)走 bot:loader 传 config=None(应用身份),不带用户 UAT。"""
+    from data_foundation.sources import feishu as feishu_mod
+
+    captured = {}
+
+    def fake_read_xhs_data_func(config=None):
+        captured["base_config"] = config
+        return {"sync_rows": [], "app_token": "a", "table_id": "t"}
+
+    def fake_read_wiki_func(config=None):
+        captured["wiki_config"] = config
+        return {"documents": [], "wiki_space_id": "s"}
+
+    monkeypatch.setattr("tools.feishu_bitable.read_xhs_data.func", fake_read_xhs_data_func)
+    monkeypatch.setattr("tools.feishu_wiki.read_feishu_wiki.func", fake_read_wiki_func)
+
+    ctx = SourceContext(
+        source=_source("feishu_base"),
+        secrets=SourceSecrets(credentials={}),
+        actor_open_id="scheduler-instance-xyz",  # 调度实例 ID,非真实用户
+        as_bot=True,
+    )
+
+    feishu_mod._default_base_loader(ctx)
+    feishu_mod._default_wiki_loader(ctx)
+
+    # bot 身份:config=None,lark_cli 据此走 --as bot(应用凭证由 config.json 提供)
+    assert captured["base_config"] is None
+    assert captured["wiki_config"] is None

@@ -11,6 +11,9 @@ class SourceContext:
     source: SyncSource
     secrets: SourceSecrets
     actor_open_id: str
+    # 身份意图:后台无人值守自动同步走 bot(应用身份,自刷新);
+    # 前端交互触发的手动同步走 actor 的 UAT(用户身份)。默认 False(UAT)。
+    as_bot: bool = False
 
 
 @dataclass(frozen=True)
