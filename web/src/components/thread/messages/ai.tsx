@@ -311,12 +311,12 @@ export function AssistantMessage({
   blocks = [],
   isLoading,
   handleRegenerate,
-  isThinkingOnly = false,
+  isLastGroup = false,
 }: {
   blocks?: AssistantBlock[];
   isLoading: boolean;
   handleRegenerate: (parentCheckpoint: Checkpoint | null | undefined) => void;
-  isThinkingOnly?: boolean;
+  isLastGroup?: boolean;
 }) {
   const thread = useStreamContext();
   const threadInterrupt = thread.interrupt;
@@ -332,11 +332,12 @@ export function AssistantMessage({
   const meta = primary ? thread.getMessagesMetadata(primary) : undefined;
   const parentCheckpoint = meta?.firstSeenState?.parent_checkpoint;
   const primaryContent = primary ? getContentString(primary.content ?? []) : "";
-  const isLastMessage = primary
+  const primaryIsLastMessage = primary
     ? thread.messages[thread.messages.length - 1]?.id === primary.id
     : false;
+  // 中断弹窗(HITL)绑定到"当前活跃组":最后一组即当前暂停点,纯工具调用后也能正确显示
+  const showInterruptHere = primaryIsLastMessage || isLastGroup;
 
-  // 最后一个 tools 块在仍加载且本回合还没出文本时显示"运行中"
   const lastBlockIdx = blocks.length - 1;
 
   return (
@@ -344,7 +345,8 @@ export function AssistantMessage({
       <div className="flex w-full flex-col gap-2">
         {blocks.map((block, i) => {
           if (block.kind === "tools") {
-            const running = isThinkingOnly && isLoading && i === lastBlockIdx;
+            // 末尾 tools 块在最后一组且仍加载时为"运行中"(含多轮工具的后续轮次)
+            const running = isLoading && isLastGroup && i === lastBlockIdx;
             return (
               <Fragment key={`tools-${i}`}>
                 <ThinkingAura
@@ -363,7 +365,7 @@ export function AssistantMessage({
 
         <Interrupt
           interrupt={threadInterrupt}
-          isLastMessage={isLastMessage}
+          isLastMessage={showInterruptHere}
           hasNoAIOrToolMessages={hasNoAIOrToolMessages}
         />
 

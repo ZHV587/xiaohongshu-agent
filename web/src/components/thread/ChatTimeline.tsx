@@ -259,7 +259,7 @@ export function ChatTimeline() {
                     blocks={group.blocks}
                     isLoading={isLoading}
                     handleRegenerate={handleRegenerate}
-                    isThinkingOnly={group.isThinkingOnly}
+                    isLastGroup={isLast}
                   />
                 );
               })}
