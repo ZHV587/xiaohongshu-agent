@@ -1,12 +1,13 @@
 // web/src/components/thread/messages/search-cards.tsx
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Heart, Star, MessageCircle, Share2, Flame, ExternalLink, Check, BookmarkCheck } from "lucide-react";
+import { Heart, Star, MessageCircle, Share2, Flame, ExternalLink, Check, BookmarkCheck, Sparkles } from "lucide-react";
 import { useThreadActions } from "@/lib/thread-actions-context";
 import { cn } from "@/lib/utils";
 
 export interface NoteCard {
   note_id: string;
+  resource_id?: string;
   title?: string;
   summary?: string;
   author?: string;
@@ -81,11 +82,13 @@ function Card({
   selectable,
   selected,
   onToggle,
+  onGenTopic,
 }: {
   note: NoteCard;
   selectable: boolean;
   selected: boolean;
   onToggle: () => void;
+  onGenTopic: () => void;
 }) {
   const collected = note.already_local === true;
   return (
@@ -139,7 +142,7 @@ function Card({
             <span>时效 {note.scores.recency ?? 0}</span>
           </div>
         ) : null}
-        <div className="mt-0.5 flex items-center justify-between">
+        <div className="mt-0.5 flex flex-wrap items-center justify-between gap-2">
           {note.note_url ? (
             <a
               href={note.note_url}
@@ -150,22 +153,31 @@ function Card({
               查看原文 <ExternalLink className="size-3" />
             </a>
           ) : <span />}
-          {selectable && (
-            collected ? (
-              <span className="text-[11px] text-charcoal-light">已在库中</span>
-            ) : (
-              <button
-                type="button"
-                onClick={onToggle}
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                  selected ? "border-coral bg-coral text-white" : "border-border bg-white text-charcoal hover:border-coral",
-                )}
-              >
-                {selected ? <><Check className="size-3" /> 已选</> : "选择"}
-              </button>
-            )
-          )}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onGenTopic}
+              className="inline-flex items-center gap-1 rounded-full border border-coral/40 bg-coral-light/30 px-2.5 py-1 text-[11px] font-medium text-coral transition-colors hover:bg-coral hover:text-white"
+            >
+              <Sparkles className="size-3" /> 出选题
+            </button>
+            {selectable && (
+              collected ? (
+                <span className="text-[11px] text-charcoal-light">已在库中</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    selected ? "border-coral bg-coral text-white" : "border-border bg-white text-charcoal hover:border-coral",
+                  )}
+                >
+                  {selected ? <><Check className="size-3" /> 已选</> : "选择"}
+                </button>
+              )
+            )}
+          </div>
         </div>
       </div>
     </motion.div>
@@ -236,6 +248,35 @@ export function SearchCards({ toolName, data }: { toolName: string; data: Search
     setSelected(new Set());
   };
 
+  const genTopic = (note: NoteCard) => {
+    const payload = {
+      note_id: note.note_id,
+      resource_id: note.resource_id,   // 本地有;线上无
+      title: note.title,
+      summary: note.summary,
+      author: note.author,
+      author_fans: note.author_fans,
+      cover_url: note.cover_url,
+      note_url: note.note_url,
+      likes: note.likes,
+      collects: note.collects,
+      comments: note.comments,
+      shares: note.shares,
+      interactive: note.interactive,
+      created_at: note.created_at,
+      tags: note.tags,
+      source: note.source,
+    };
+    submitText(
+      "我选这篇笔记,基于它帮我出一个选题。请分析它的角度/痛点/钩子,产出 1 个可执行的小红书选题" +
+        "(一句话角度 + 预期爆点),并说明依据;本地笔记引用其 resource_id,线上笔记(无 resource_id)" +
+        "在角度里注明(线上实时:note_url)并提示我采纳收录后可作正式依据。出选题只展示,我认可了再落库。\n\n" +
+        "笔记数据:\n```json\n" +
+        JSON.stringify(payload, null, 2) +
+        "\n```",
+    );
+  };
+
   return (
     <div className="mx-auto my-2 flex max-w-3xl flex-col gap-2.5">
       <div className="flex items-center justify-between px-1">
@@ -267,6 +308,7 @@ export function SearchCards({ toolName, data }: { toolName: string; data: Search
             selectable={isOnline}
             selected={selected.has(note.note_id)}
             onToggle={() => toggle(note.note_id)}
+            onGenTopic={() => genTopic(note)}
           />
         ))}
       </div>
