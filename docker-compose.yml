@@ -122,6 +122,10 @@ services:
       POSTGRES_URI: "postgres://xhs_user:${XHS_PG_PASSWORD}@pg:5432/langgraph?sslmode=disable"
       REDIS_URI: "redis://redis:6379"
       N_JOBS_PER_WORKER: "10"
+      # 允许阻塞 I/O:飞书集成依赖 lark-cli 阻塞式子进程(subprocess.run 读管道触发
+      # langgraph blockbuster 的 os.read 拦截)。重活(后台同步)已走 asyncio.to_thread,
+      # 不会实质占用共享事件循环;关掉 dev 安全网以支持子进程 CLI 集成。
+      LANGGRAPH_ALLOW_BLOCKING: "true"
       # 业务数据底座 + 引擎:服务名互连(覆盖 .env 里的 127.0.0.1)
       XHS_DATABASE_URL: "postgresql://xhs_user:${XHS_PG_PASSWORD}@pg:5432/xhs_agent"
       XHS_MEILI_URL: "http://meili:7700"
