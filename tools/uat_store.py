@@ -173,20 +173,24 @@ def _refresh_user_token(open_id: str, refresh_token: str) -> dict | None:
         }, timeout=15)
         
         # 飞书授权失效（如 refresh_token 过期）一般返回 400
+        # 安全:OAuth token 端点的响应体(含错误体)可能回带 access_token/refresh_token,
+        # 一律不打印 resp.text / data —— 只记状态码与错误类型(守 CLAUDE.md「日志不得打印 token」)。
         if resp.status_code == 400:
-            logger.error(f"Feishu OAuth explicitly rejected refresh token for user {open_id}: {resp.text}")
+            logger.error("Feishu OAuth explicitly rejected refresh token for user %s (status 400)", open_id)
             raise TokenInvalidError("Refresh token is invalid or expired.")
-            
+
         if resp.status_code != 200:
-            logger.error(f"Feishu refresh token API returned status {resp.status_code}: {resp.text}")
+            logger.error("Feishu refresh token API returned status %s for user %s", resp.status_code, open_id)
             return None
-            
+
         data = resp.json()
         uat = data.get("access_token")
         new_refresh = data.get("refresh_token")
         expires_in = data.get("expires_in", 7200)
         if not uat or not new_refresh:
-            logger.error(f"Feishu refresh token response invalid: {data}")
+            logger.error(
+                "Feishu refresh token response missing access_token/refresh_token for user %s", open_id
+            )
             return None
         return {
             "user_access_token": uat,

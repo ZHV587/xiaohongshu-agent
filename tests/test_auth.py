@@ -23,7 +23,9 @@ def _make_jwt(sub: str, name: str, secret: str, expired: bool = False) -> str:
 
 @pytest.mark.anyio
 async def test_auth_no_secret_mock_allowed(monkeypatch):
+    # mock 模式必须显式 opt-in(无密钥 + XHS_AUTH_ALLOW_MOCK=true)
     monkeypatch.setattr(auth_mod, "_JWT_SECRET", "")
+    monkeypatch.setattr(auth_mod, "_ALLOW_MOCK_AUTH", True)
     monkeypatch.setenv("XHS_DEV_FALLBACK_USER", "fallback_bob")
 
     # mock token is allowed
@@ -34,6 +36,21 @@ async def test_auth_no_secret_mock_allowed(monkeypatch):
     # fallback works when token is missing
     res2 = await auth_mod.authenticate({})
     assert res2["identity"] == "fallback_bob"
+
+
+@pytest.mark.anyio
+async def test_auth_no_secret_without_optin_fails_closed(monkeypatch):
+    """P1 安全回归:无 XHS_JWT_SECRET 且未显式开 mock 时,必须 fail-closed(401),
+    绝不因密钥恰好为空就放行 mock-user-* —— 杜绝生产漏配密钥静默 fail-open。"""
+    monkeypatch.setattr(auth_mod, "_JWT_SECRET", "")
+    monkeypatch.setattr(auth_mod, "_ALLOW_MOCK_AUTH", False)
+    monkeypatch.setenv("XHS_DEV_FALLBACK_USER", "fallback_bob")
+
+    with pytest.raises(Exception):
+        await auth_mod.authenticate({"authorization": "Bearer mock-user-alice"})
+    # 连兜底用户也不放行
+    with pytest.raises(Exception):
+        await auth_mod.authenticate({})
 
 
 @pytest.mark.anyio

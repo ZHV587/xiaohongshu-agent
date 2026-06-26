@@ -544,6 +544,43 @@ def test_semantic_search_tool_uses_active_index_historical_profile(monkeypatch, 
     assert [call[0] for call in repo.calls] == ["active_index", "semantic", "bulk_performance_metrics"]
 
 
+def test_semantic_search_empty_candidates_falls_back_to_fulltext(monkeypatch):
+    """P1 回归:active index 存在但语义候选集为空(典型:刚 save 后 embedding 还没补,
+    而 meili 已可命中),必须降级到全文,**不得**误报 insufficient_relevance。"""
+    from data_foundation import tools as df_tools
+
+    repo = _FakeRepository()
+    repo.active_index = SimpleNamespace(
+        embedding_model="model-a", dimensions=1536, config_version="v1",
+    )
+    # 语义候选为空
+    monkeypatch.setattr(repo, "semantic_rows", lambda **kw: [])
+
+    @contextmanager
+    def repository():
+        yield repo
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+    monkeypatch.setattr(
+        df_tools, "_embedding_query_config_for_index",
+        lambda idx: SimpleNamespace(model="model-a", base_url="x", api_key="k",
+                                    dimensions=1536, timeout_seconds=10, state="enabled"),
+    )
+    monkeypatch.setattr(df_tools, "_embed_query", lambda *a, **k: [0.1] * 1536)
+    # 全文降级路径:让 search_resources 返回有结果
+    monkeypatch.setattr(
+        df_tools.search_resources, "func",
+        lambda query, limit=10, config=None: {"ok": True, "results": [{"resource_id": "r-fts"}]},
+    )
+
+    result = df_tools.semantic_search_resources.func("露营", top_k=10, config=_Config())
+
+    assert result["ok"] is True
+    assert result["mode"] == "keyword_fallback"
+    assert result["fallback_reason"] == "NO_SEMANTIC_CANDIDATES"
+    assert result["results"] == [{"resource_id": "r-fts"}]
+
+
 def test_embed_query_sends_requested_dimensions(monkeypatch):
     from data_foundation import tools as df_tools
 

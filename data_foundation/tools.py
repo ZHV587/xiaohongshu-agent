@@ -254,11 +254,17 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
             # 向量校验失败(provider 忽略 dimensions 返回非预期维度、含 NaN 等):降级。
             return _fulltext_fallback(f"EMBEDDING_QUERY_INVALID_VECTOR: {exc}")
 
+        # 候选集为空:active index 存在但目标资源尚未被 embed(典型:刚 save_generated_*
+        # 后台 reconcile 还没补 embedding,而 meili_index 已在同一 cycle 投递可命中)。
+        # 这是"引擎暂时没话说",不是"库内无相关内容" → 降级到全文,别误报数据不足。
+        if not results:
+            return _fulltext_fallback("NO_SEMANTIC_CANDIDATES")
+
         # --- 绝对相关度闸门:基于原始绝对余弦,在 rank_evidence 加权之前 ---
-        # 阈值取当前配置(不随历史回放)。低于阈值=库内无足够相关内容 → 明确"数据不足",
-        # 不返回弱相关结果、不降级到 BM25(避免误命中重新混入)。
+        # 阈值取当前配置(不随历史回放)。候选**非空但全部低于阈值**=库内确有内容但都不够相关
+        # → 明确"数据不足",不返回弱相关结果、不降级到 BM25(避免误命中重新混入)。
         floor = current_relevance_floor()
-        top_score = max((res.score for res in results), default=0.0)
+        top_score = max(res.score for res in results)
         if top_score < floor:
             return {
                 "ok": True,

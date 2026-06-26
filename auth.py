@@ -4,9 +4,10 @@
   1) 真飞书 OAuth:前端 Next.js 在飞书登录回调里用飞书 open_id 签发 HS256 JWT,
      经 Authorization: Bearer <jwt> 传入。本模块用共享密钥 XHS_JWT_SECRET 验签,
      取 payload.sub(飞书 open_id)作身份,payload.name 作显示名。
-  2) 本地 mock(仅当未配置 JWT 密钥时):token 形如 "mock-user-A" 直接当身份,
-     方便单机/脚本调试(verify_1b3.py 等)。
-  3) 兜底用户:未带 token 时用 XHS_DEV_FALLBACK_USER。上云务必置空 → 无 token 返 401。
+  2) 本地 mock(仅当 **无 XHS_JWT_SECRET 且显式 XHS_AUTH_ALLOW_MOCK=true** 时):
+     token 形如 "mock-user-A" 直接当身份,方便单机/脚本调试。**必须显式开启** ——
+     无密钥但未开 mock 开关时一律 fail-closed 返 401,杜绝生产漏配密钥静默放行。
+  3) 兜底用户:mock 模式下未带 token 时用 XHS_DEV_FALLBACK_USER。上云务必置空。
 
 隔离模型(对应设计):
   - thread(会话)/ 其 /drafts → 按 user 隔离:owner metadata + search/read filter
@@ -32,6 +33,12 @@ auth = Auth()
 
 # 与前端 Next.js 共享的 JWT 签名密钥。配置后启用真飞书 OAuth 身份校验
 _JWT_SECRET = os.environ.get("XHS_JWT_SECRET", "")
+
+# mock/dev 身份模式必须**显式 opt-in**,绝不因密钥恰好为空而默认开启。
+# 历史教训(P1):旧实现把"_JWT_SECRET 为空"直接当作 mock 模式 —— 生产若因
+# .env 未加载到/漏配 XHS_JWT_SECRET,鉴权会**静默 fail-open**,`Bearer mock-user-<任意>`
+# 即可冒充任意人。改为 fail-closed:无密钥时除非显式 XHS_AUTH_ALLOW_MOCK=true,否则一律拒绝。
+_ALLOW_MOCK_AUTH = os.environ.get("XHS_AUTH_ALLOW_MOCK", "").strip().lower() == "true"
 
 
 def _b64url_decode(seg: str) -> bytes:
@@ -110,18 +117,23 @@ def _resolve_identity(raw: str | None) -> tuple[str | None, str | None]:
         if not sub:
             return None, None
         return sub, payload.get("name") or sub
-    else:
-        # Mock/开发模式: 未配置 XHS_JWT_SECRET
-        if token and token.startswith("mock-user-"):
-            ident = token[len("mock-user-"):]
-            return ident, ident
 
-        # 兜底用户
-        fallback = os.environ.get("XHS_DEV_FALLBACK_USER", "").strip()
-        if fallback:
-            return fallback, fallback
-
+    # 无 JWT 密钥:仅当**显式** XHS_AUTH_ALLOW_MOCK=true 才进 mock/dev 模式;
+    # 否则 fail-closed 返回无身份(authenticate 会 401),杜绝生产漏配密钥时静默放行。
+    if not _ALLOW_MOCK_AUTH:
         return None, None
+
+    # Mock/开发模式(显式开启)
+    if token and token.startswith("mock-user-"):
+        ident = token[len("mock-user-"):]
+        return ident, ident
+
+    # 兜底用户
+    fallback = os.environ.get("XHS_DEV_FALLBACK_USER", "").strip()
+    if fallback:
+        return fallback, fallback
+
+    return None, None
 
 
 
