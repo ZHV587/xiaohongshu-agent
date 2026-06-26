@@ -65,13 +65,15 @@ description: |
 
 ---
 
-## Phase 4：持久化
+## Phase 4：持久化（用户选定后才入库）
 
-选题卡片确认后：
-1. 调用 `save_generated_topic(direction, topics, evidence)` 持久化到数据库
-2. 调用 `sync_topic_to_feishu(direction, topics)` 同步飞书多维表格
+**出选题只展示,不自动落库。** 3~5 张卡片里多数不会被采用,全落库会把库塞满垃圾选题(违背"用户选择性入库"铁律)。
 
-返回：数据库 resource_id + 飞书表格链接。
+只有当用户**明确选定/保留**某些选题(说"用第 2 个""保留 2 和 4""存档")后:
+1. 调用 `save_generated_topic(direction, topics=[用户选定/保留的那些], evidence)` —— **只存用户选中的,没选的丢弃**
+2. 调用 `sync_topic_to_feishu(direction, topics=同上)` 同步飞书多维表格
+
+返回：数据库 resource_id + 飞书表格链接。生成但未被选中的选题不写库、不同步。
 
 ---
 

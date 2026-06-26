@@ -118,10 +118,12 @@ description: |
    - 依赖的内容单元（resource_id列表）
    - 建议内容形式（图文/视频）
 
-3. 调用 `save_generated_topic(direction, topics, evidence)` 持久化到数据库
+3. **出选题只展示,不自动落库**。把 3~5 个选题卡呈现给用户挑选。**绝不在生成阶段调 `save_generated_topic`/`sync_topic_to_feishu`**——多数选题不会被选中,全落库会把库塞满垃圾选题(违背"用户选择性入库"铁律)。
 
-4. 调用 `sync_topic_to_feishu(direction, topics)` 同步飞书多维表格
-   > ⚠️ 此步骤会触发**审批确认**弹窗，批准后才写入飞书
+4. **用户选定/保留某些选题后**,才持久化被选中的那些:
+   - `save_generated_topic(direction, topics=[用户选定的], evidence)` —— 只存用户选中的,没选的丢弃
+   - `sync_topic_to_feishu(direction, topics=同上)` 同步飞书
+   > ⚠️ 飞书写入会触发**审批确认**弹窗,批准后才写入
 
 ---
 
