@@ -15,17 +15,19 @@
 - **A〔高·真硬伤,已修〕本地检索不吐细致字段**:`search_resources`/`semantic_search_resources` 经 `rank_evidence` 只返回 `resource_id/title/summary/score/metadata`(metadata 仅 `type/visibility/source_updated_at/indexed_at`),**不含 `content_json` 的封面链接/互动明细/话题标签**。即使本地补全了库(Component 1),本地卡片仍拿不到细致内容。→ 新增**发现专用**本地检索(Component 2'),复用召回后 hydrate `content_json` 输出细致卡片字段;**不动** `rank_evidence`/`EvidencePackage` 证据链(出选题下一步仍用旧路径)。
 - **B〔自审误判,维持原设计〕采纳路径**:初稿曾考虑"前端直连 internal API 落库"以省 token。**自审推翻**:`README` 架构铁律——"飞书写操作不经 frontend business API,由 Agent tools 发起并经 HITL 确认";`internal-client.ts` 先例仅用于**读/配置/鉴权**(chats/uat/status/config/health),不可用于业务写。→ 维持 `submitText → agent → adopt_online_notes 工具 → 飞书写经 HITL`;仅优化:回传**精简字段**(非全文)、前端把该回传消息渲染为简洁动作 chip(不露裸 JSON)。
 - **C〔中·真问题,已修〕跨源去重**:同一笔记可能同时存在 `feishu_base_record`(本地已收录)与 `xhs_online_note`(线上),检索/卡片会重复。→ 以 `note_url`(原文链接)为跨源自然键去重;**本地优先**,线上结果若已在本地则标「已收录」且不可再采纳。
-- **D〔中·真问题,已修〕飞书表去重**:按 Postgres 内 `note_id` 幂等无法对上飞书侧已有采集行(飞书自增 record_id 与我们的 note_id 不同源)。→ 写采集库前用 `base +record-search` 按 `原文链接` 查存量,命中则更新/跳过;首次创建后把飞书 `record_id` 回写 Postgres mapping 供后续幂等。
+- **D〔中·真问题,实现与初稿不同(据实)〕飞书表去重**:初稿设想"`base +record-search` 按原文链接查存量→命中 update"。**实现时未采用**:代码库无证据表明 lark-cli v1.0.58 支持 `record-search`/`record-update`(只验证过 `record-create`/`record-list`/`table-list`),不愿凭未验证能力下手。**实际做法**:用 Postgres mapping `system="feishu_collect", external_type="xhs_note", external_id=note_id` 作幂等键——adopt 编排在写飞书前查该 mapping,已同步则跳过(`feishu_synced="skipped"`),未同步则 `record-create` 后回写该 mapping。**能保证"我方重复采纳不产生飞书重复行"**;**未覆盖**飞书侧由其它途径(如官方采集)已存在的同链接行的去重——那需 record-search 能力,留待核实 lark-cli 后再加。诚实标注此边界。
 - **E〔已验证非问题〕ToolMessage 序列化**:LangGraph `msg_content_output` 对非 str/list 返回值做 `json.dumps(..., ensure_ascii=False)`,前端 `JSON.parse` 可直接解析(现有 `read_xhs_data` 返回 dict + 前端 `extractRowCount` JSON.parse 已在生产验证)。→ 工具返回 dict 即可,无需手工 dumps。
 - **NEW〔中·真问题,已修〕采集库表 id 与草稿表不同**:`FEISHU_BITABLE_TABLE_ID` 是用户配置的**草稿/选题主表**(`sync_copy/topic/diagnosis` 写它);爆款采集库是 `tbl24vSVeLvz45ig`(§8 metrics 白名单)。二者不同源,写采集库须用**独立配置键** `FEISHU_BITABLE_COLLECT_TABLE_ID`,默认 `tbl24vSVeLvz45ig`,不可复用草稿表键。
 - **F〔低·实现时细化〕卡片视觉规格**(间距/字号/移动端/暗色)留待实现细化,不阻塞设计。
+- **G〔高·真硬伤,已修〕搜索卡片接在死渲染路径(实测发现)**:初稿前端通道事实写错(见上),把 `SearchCards` 接到了 `tool-calls.tsx` 的 `<ToolResult>`,而 `ToolResult` 在 `groupMessages` 架构下永不被渲染 → 搜索结果退化成 `ThinkingAura` 的普通工具步骤,卡片完全不显示(选题卡因走 ai 文本的 ` ```xhs_topics ``` ` 代码块,是活路径,所以能显示——正好对照印证)。**只过构建/lint 抓不到,是运行期渲染分发问题**。→ 修复:抽出**工具渲染注册表** `web/src/lib/tool-render.tsx`(`TOOL_RENDERERS` + `resolveToolRender` + `ToolResultCards`)作"每个工具怎么展示"的唯一事实源;`AssistantMessage` 用 `ToolResultCards` 从 `precedingTools[].result` 渲染富卡片(活路径,不受 `isThinkingOnly` 限制);`ThinkingAura` 改读 `resolveToolRender`(搜索工具 `aura:"hidden"` 且有 `card`,故不在思考链重复);移除 `ToolResult` 里的死分支。**教训**:前端渲染链结论必须读 `groupMessages` 实际分发后才能下,不能凭"ToolMessage→ToolResult"想当然。
 
 ## 调研事实(已验证)
 
 - **红狐 API 可用**:`POST https://redfox.hk/story/api/xhs/search/search`,头 `X-API-KEY`,入参 `{keyword,pageNum,pageSize,startDate,endDate,source}`,返回 `{code:2000,data:{articles[],relatedSearches,latestHotArticles}}`。每条笔记含 `title/desc/authorId/authorNickname/authorFans/createTime/shareInfoLink/cover/interactiveCount/likedCount/collectedCount/commentsCount/sharedCount/topicsName/relevanceScore/popularityScore/recencyScore/totalScore`。互动收录门槛 1000+,每日 7 点更新昨日数据,仅近 30 天。
 - **本地数据缺口的根因**:`tools/feishu_bitable.py` 的 `_EXCLUDE_COLUMN_KEYWORDS`(含 `封面/链接/网址/域名/图片/附件/...`)在同步时**主动丢弃**了封面/原文链接等列。lark-cli `record-list` 实际返回 **57 个业务列(完整,无漏)**,缺的 6 列是 `not_support` 系统设置列(无值)。
 - **封面图取法**:`封面`(附件)是飞书附件对象 `[{file_token,...}]`(需换 URL、有时效);但 `封面链接`(文本)是**小红书 CDN 直链** `http://sns-webpic-qc.xhscdn.com/...`(公网稳定,拿来即用)。→ 封面用 `封面链接`,绕开附件对象。`原文链接` 是 `[查看原文](http://xhslink.com/o/...)`(markdown,提取 URL)。
-- **前端数据通道**:`web` 已渲染 `ToolMessage`(`ai.tsx` 的 `isToolResult` → `<ToolResult>`),并经 `@/lib/tool-display` 按工具名定制展示。→ 搜索结果走 search 工具的 ToolMessage 渲染,agent 文本只留摘要。
+- **前端数据通道(已据实修正)**:面板渲染链是 `ChatTimeline` → `groupMessages()` → `AssistantMessage`。**关键事实**:`groupMessages` 把所有 tool 消息**折叠进 `group.toolCalls[].result`**,`AssistantMessage` 只接收 `group.aiMessage`(永远是 `ai` 类型),因此 `isToolResult`/`<ToolResult>` 分支**在本 UI 永不触发(死路径)**。→ 富工具卡片**必须从 `precedingTools[].result` 渲染**(在 `AssistantMessage` 内),而非 `ToolResult`。`ThinkingAura`(思考链)默认把每个非 skill 工具渲染成一步,故有专属卡片的工具(搜索)要从思考链里排除。agent 文本只留摘要。
+  ⚠️ 初稿这条曾错写成"`ai.tsx` 的 `isToolResult` → `<ToolResult>`",据此把 `SearchCards` 接到了死路径 → 搜索卡片不显示(见自审 G)。
 - **卡片动作机制**:卡片按钮经 `useThreadActions().submitText` 发消息给主控继续(选题卡选择即此模式)。
 - **设计语言**:暖色系 `coral`(珊瑚红)/`oats`(燕麦)/`charcoal`,圆角 `rounded-xl/2xl`,`shadow-xs`,framer-motion 动效,skeleton-shimmer。已有"小红书笔记卡片"(PhoneSimulator)与"飞书写入卡片"(RightInspector)先例。
 - **飞书写工具现状**:`feishu_actions.py` 的 `sync_*_to_feishu` 全写草稿/选题/诊断表,**没有**写爆款采集库的工具。
@@ -123,19 +125,18 @@ def adopt_online_notes(notes: list[dict], sync_feishu: bool = True, config=None)
 **流程**(每条笔记):
 1. **入 Postgres**:`upsert_resource(type="xhs_online_note", ...)`,`content_json` 存全部线上字段;`mapping` 用 `system="redfox", external_id=note_id` 保证**幂等去重**(同一笔记重复采纳更新不堆叠)。owner = 当前用户。走 outbox(meili 索引 + 排队 embedding → 进语义检索复利)。
 2. **接效果指标**:互动数(likes/collects/comments/shares)→ `save_performance_metric_resource(target=该 resource)`(复用 §8 框架,幂等)。
-3. **同步飞书爆款采集库**(`sync_feishu=True` 时):新工具 `sync_online_note_to_feishu` 写 `FEISHU_BITABLE_COLLECT_TABLE_ID`(默认 `tbl24vSVeLvz45ig`,**独立于草稿表** `FEISHU_BITABLE_TABLE_ID`),列映射(标题/正文/点赞数/收藏数/评论数/转发数/博主/发布时间/封面链接/原文链接/话题标签/采集平台=线上实时);**去重(真问题D)**:写前用 `base +record-search` 按 `原文链接` 查存量,命中则更新该飞书 record(不新建)、未命中则创建并把飞书 `record_id` 回写 Postgres mapping(`system="feishu_collect", external_id=feishu_record_id`)供后续幂等;飞书写经 `interrupt_on` HITL 审批。
+3. **同步飞书爆款采集库**(`sync_feishu=True` 时):`create_online_note_record` 写 `FEISHU_BITABLE_COLLECT_TABLE_ID`(默认 `tbl24vSVeLvz45ig`,**独立于草稿表** `FEISHU_BITABLE_TABLE_ID`),列映射(标题/正文/点赞数/收藏数/评论数/转发数/博主/发布时间/封面链接/原文链接/话题标签/采集平台=线上实时);**去重(真问题D,实际做法)**:adopt 编排写飞书前查 `feishu_collect` mapping(external_id=note_id),已同步→跳过,未同步→ `record-create` 后回写 mapping。`record-search`/`record-update` 因 lark-cli 能力未核实**未采用**(见自审 D);飞书写由整工具 `adopt_online_notes` 经 `interrupt_on` HITL 审批。
 4. **权威性**:数据库先写成功;飞书失败保留库记录并明确报告同步失败(沿用既有"数据库权威、飞书镜像"原则)。
 
-**返回**:每条 `{note_id, adopted: True, resource_id, feishu_synced: bool|"failed"}`,供前端把卡片标记「已收录」。
+**返回**:每条 `{note_id, adopted: True, resource_id, feishu_synced: bool|"skipped"|"failed"}`,供前端把卡片标记「已收录」;整体附 `next_step` 引导出选题。
 
-### Component 5:飞书爆款采集库同步工具 `sync_online_note_to_feishu`
+### Component 5:飞书爆款采集库写入 `create_online_note_record`(普通函数,非 @tool)
 
-新增于 `tools/feishu_actions.py`:
-- 目标表:`FEISHU_BITABLE_COLLECT_TABLE_ID`(爆款采集库,默认 `tbl24vSVeLvz45ig`)。**不复用** `FEISHU_BITABLE_TABLE_ID`(后者是草稿/选题主表,`sync_copy/topic/diagnosis` 用它)。配置键加入 `config-store.ts` 白名单与飞书配置页。
-- 列映射(写入,与 §8 的 `COLUMN_TO_METRIC` 反向对齐):标题/正文/点赞数/收藏数/评论数/转发数/博主/发布时间/封面链接/原文链接/话题标签/采集平台。
-- **幂等去重(真问题D)**:`原文链接` 为跨系统自然键。写前 `base +record-search` 查存量 → 命中 `+record-update`,未命中 `+record-create` 后回写飞书 record_id 到 Postgres mapping。
+新增于 `tools/feishu_actions.py`(供 `adopt_online_notes` 编排调用,HITL 在 adopt 工具边界统一拦):
+- 目标表:`FEISHU_BITABLE_COLLECT_TABLE_ID`(爆款采集库,默认 `tbl24vSVeLvz45ig`)。**不复用** `FEISHU_BITABLE_TABLE_ID`。配置键加入 `config-store.ts` 白名单与飞书配置页。
+- 列映射:标题/正文/博主/封面链接/原文链接/话题标签/发布时间/采集平台 + 点赞数/收藏数/评论数/转发数(与 §8 `COLUMN_TO_METRIC` 对齐);列名经服务器只读探测确认与采集库实际列一致。
+- 只负责 `base +record-create` 写;**去重在 adopt 编排层**按 `feishu_collect` mapping 保证(见 Component 4)。
 - `lark-cli base` 命令,经 lark_cli wrapper;采纳是用户交互 → **用户 UAT 身份**(非 bot)。
-- HITL:`adopt_online_notes`/`sync_online_note_to_feishu` 纳入 `interrupt_on`。
 
 ## Data Models
 
@@ -178,7 +179,7 @@ def adopt_online_notes(notes: list[dict], sync_feishu: bool = True, config=None)
 **Validates: Requirements 4.1, 4.2**
 
 ### Property 5:采纳幂等(双侧)
-对同一 note_id/note_url 采纳 N 次 ⟹ Postgres 恰 1 条 `xhs_online_note` + 1 条 `measured_by` + 飞书采集库恰 1 条(按 `原文链接` search 后 update,不新建)。
+对同一 note_id 采纳 N 次 ⟹ Postgres 恰 1 条 `xhs_online_note` + 1 条 `measured_by` + 飞书采集库恰 1 条(adopt 编排按 `feishu_collect` mapping:已同步则跳过 create,不新建)。
 **Validates: Requirements 4.3, 5.3**
 
 ### Property 6:跨源去重(真问题C)
@@ -217,10 +218,11 @@ def adopt_online_notes(notes: list[dict], sync_feishu: bool = True, config=None)
   - `search_local_note_cards`:hydrate `content_json` → 细致字段映射正确、按 note_url 内部去重;**断言 `rank_evidence`/`search_resources` 返回结构未变**(回归保护证据链)。
   - `search_xhs_online`:mock 红狐响应 → 字段映射正确;非 2000/超时 → 降级 `ok=False`;`already_local` 按本地 note_url 集合正确标记。
   - `adopt_online_notes`:幂等(同 note_id 调 2 次 = 1 资源 1 边)、入库+效果指标、飞书失败不回滚库。
-  - `sync_online_note_to_feishu`:列映射正确;`原文链接` record-search 命中 → update 不新建、未命中 → create 后回写 record_id(按 note_url 幂等)。
+  - `create_online_note_record`:列映射正确(标题/封面链接/原文链接/点赞数...);默认写 `tbl24vSVeLvz45ig`、缺 app_token 报错。
+  - `adopt_online_notes` 编排:`feishu_collect` mapping 幂等(已同步→skipped、未同步→create 后回写 mapping)。
 - **Property-based(hypothesis)**:任意红狐响应形状 → 映射不抛错、数值非负;采纳幂等不变量;跨源去重不变量(同 note_url 不出双卡)。
-- **前端**:`tool-display` 为两个 search 工具渲染卡片;勾选 → submitText 精简 payload 正确;`already_local` 卡禁用采纳。
-- **集成**:本地补全 re-sync 后封面链接入库;本地检索 → 细致卡片;线上检索 → 卡片 → 采纳 → 库+飞书(record-search 去重)(smoke,服务器)。
+- **前端**:搜索卡片从 `precedingTools[].result` 在 `AssistantMessage` 渲染(真问题G);勾选 → submitText 精简 payload 正确;`already_local` 卡禁用采纳;每卡「✨出选题」回传单篇。
+- **集成(服务器,部分已跑/部分待浏览器验证)**:本地补全 re-sync 后封面/原文链接入库(✅570/205/457);本地检索 → 细致卡片(✅工具层);线上检索 → 卡片 → 采纳 → 库+飞书(⚠️卡片渲染与采纳待浏览器实跑)。
 
 ## 受影响文件清单
 
@@ -230,15 +232,20 @@ def adopt_online_notes(notes: list[dict], sync_feishu: bool = True, config=None)
 | `tools/redfox_search.py` | 新增 `search_xhs_online` 工具(红狐 API)+ `already_local` 跨源比对 | 新增 |
 | `data_foundation/local_cards.py` | 新增 `search_local_note_cards`(召回 + hydrate content_json,真问题A) | 新增 |
 | `data_foundation/online_notes.py` | 新增 `adopt_online_notes_resource`(入库 + 效果指标,幂等) | 新增 |
-| `tools/feishu_actions.py` | 新增 `sync_online_note_to_feishu`(写采集库 + record-search 去重 + record_id 回写) | 改 |
-| `data_foundation/tools.py` 或 `agent.py` | 注册 `search_local_note_cards`/`search_xhs_online`/`adopt_online_notes` + `interrupt_on` | 改 |
-| `prompts.py` | §6 检索第一步加"双路 + 线上瞬态 + 采纳才落库"编排;§5 加搜索卡片摘要约定 | 改 |
-| `.env` / docker-compose | `REDFOX_API_KEY` + `FEISHU_BITABLE_COLLECT_TABLE_ID`(默认 tbl24vSVeLvz45ig)配置 + 容器注入 | 改 |
+| `tools/feishu_actions.py` | 新增 `create_online_note_record`(写采集库列映射;去重由 adopt 编排按 mapping 保证,**未用** record-search/update,见下) | 改 |
+| `tools/online_adopt.py` | 新增 `adopt_online_notes` 工具(编排入库+效果指标+飞书镜像,feishu_collect mapping 幂等);返回 `next_step` 衔接出选题 | 新增 |
+| `agent.py` | 注册 `search_xhs_online`/`adopt_online_notes`;`search_local_note_cards` 在 data_foundation/tools;`interrupt_on` 加 `adopt_online_notes` | 改 |
+| `prompts.py` | §6.5 发现式搜索 + 双源出选题 + 采纳衔接;§6/§5 约定 | 改 |
+| `.agents/skills/topic-content,xhs-planning,xhs-content-system/SKILL.md` | 出选题只展示不落库、选中才存;单篇原文→单选题快路;双源(线上趋势) | 改 |
+| `.env` / docker-compose | `REDFOX_API_KEY` + `FEISHU_BITABLE_COLLECT_TABLE_ID`(默认 tbl24vSVeLvz45ig)+ 容器注入(env_file 透传) | 改 |
 | `web/src/lib/server/config-store.ts` | 白名单加 `FEISHU_BITABLE_COLLECT_TABLE_ID` | 改 |
 | `web/src/components/thread/history/FeishuConfigPage.tsx` | 采集库表 id 配置项 | 改 |
-| `web/src/lib/tool-display.ts` | 为 `search_xhs_online`/`search_local_note_cards` 注册卡片渲染 | 改 |
-| `web/src/components/thread/messages/search-cards.tsx` | 新增细致搜索卡片组件(本地/线上分组、勾选、采纳、已收录禁用) | 新增 |
-| 存量回填脚本 | 复用/扩展 backfill,re-sync 506 条补字段 | 改 |
+| `web/src/lib/tool-display.ts` | 搜索/采纳工具的进行中/完成文案(注:卡片渲染**不**走 tool-display,见 ai.tsx) | 改 |
+| `web/src/components/thread/messages/search-cards.tsx` | 新增细致搜索卡片(本地/线上分组、勾选采纳、已收录禁用、每卡「✨出选题」) | 新增 |
+| `web/src/lib/tool-render.tsx` | **新增工具渲染注册表**(`TOOL_RENDERERS`+`resolveToolRender`+`ToolResultCards`):每个工具的思考链/卡片/进行中表现的唯一事实源 | 新增 |
+| `web/src/components/thread/messages/ai.tsx` | **真问题G 修复**:`AssistantMessage` 用 `ToolResultCards` 从 `precedingTools[].result` 渲染搜索卡片(活路径);`ThinkingAura` 改读 `resolveToolRender` | 改 |
+| `web/src/components/thread/messages/tool-calls.tsx` | 移除死的 `SearchCards`/`ToolResult` 搜索分支 | 改 |
+| 存量回填 | 经 bot 同步链路 re-sync 570 行补封面/原文链接(已跑:205 封面 / 457 原文) | 已执行 |
 | tests(后端 + 前端) | 上述单元/属性/集成测试 | 新增/改 |
 
 ## Dependencies
@@ -246,8 +253,18 @@ def adopt_online_notes(notes: list[dict], sync_feishu: bool = True, config=None)
 - 红狐 API(REDFOX_API_KEY)。复用:§8 效果指标框架(save_performance_metric)、lark_cli(bot/UAT)、upsert_resource 幂等、前端 ToolMessage/tool-display 渲染、coral/oats 设计系统。
 - 无新第三方依赖(HTTP 用现有 httpx/urllib);无 schema 迁移(`xhs_online_note` 复用 resources 表)。
 
-## 范围外(下一步)
+## 出选题衔接(已实现的扩展,超出初稿"独立能力"范围)
 
-- 用本地+线上数据**出选题**(把采纳后的内容接入选题证据链 EvidencePackage)。
-- 泛化词先推细分词的交互增强。
-- 线上检索结果的自动定时采集(本步只做对话触发的手动采纳)。
+初稿把出选题列为"范围外/下一步";实现中按用户要求做了衔接,据实记录:
+
+- **采纳即可出选题(零额外开发)**:采纳的 `xhs_online_note` 走 outbox 进 meili/embedding,落库即成为 `semantic_search_resources`/`search_resources`/`rank_evidence` 的证据(visibility=team 可读、带 `performance_metric` 互动分)。所以"采纳后出选题就能引用线上内容"在结构上天然通。
+- **双源出选题(B,选定)**:出选题时主控可额外调 `search_xhs_online(方向)` 拉线上实时热门作**趋势信号**(瞬态、不落库);正式 evidence 仍须库内 `resource_id`,纯线上趋势的选题注明 `(线上实时:note_url)` 并提示采纳后才作正式依据。守"采纳才落库 + 依据须 resource_id"两铁律。
+- **单篇原文→单选题(用户指定的最短路)**:搜索卡片每张加「✨出选题」按钮 → `submitText` 回传这一篇(本地带 resource_id、线上带 note_url)→ topic-content 走"单篇→1 选题"快路,分析这一篇产 1 个选题。
+- **出选题不自动落库(用户铁律,已修)**:topic-content/xhs-planning/xhs-content-system 三技能改为"出选题只展示,**选中才存**那一个",杜绝 3~5 个垃圾选题被无差别落库。与"采纳才落库"同源。
+
+## 范围外(仍未做)
+
+- 选题卡上结构化展示"线上趋势信号区块"+ 从选题卡一键采纳那条线上笔记(需扩 `xhs_topics` 协议 + 改 topic-cards.tsx)。
+- 飞书侧"他途已存在同链接行"的去重(需核实 lark-cli `record-search` 能力)。
+- 泛化词先推细分词的交互增强;线上检索结果的自动定时采集(本步只做对话触发的手动采纳)。
+- **浏览器端实跑验证**:搜索卡片/出选题按钮的真实渲染与交互(真问题G 修复后)尚需在 `124.221.173.80:9091` 用眼确认,不能只凭构建/lint。

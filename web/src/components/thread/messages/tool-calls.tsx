@@ -5,9 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, LoaderCircle, Check } from "lucide-react";
 import { useStreamContext } from "@/providers/stream-context";
 import { getToolDisplay, extractRowCount } from "@/lib/tool-display";
-import { SearchCards, type SearchToolResult } from "./search-cards";
-
-const SEARCH_TOOL_NAMES = new Set(["search_xhs_online", "search_local_note_cards"]);
 
 // 进行中状态条：仅当该 tool_call 还没有对应的 ToolResult 时显示
 export function ToolCalls({
@@ -68,11 +65,6 @@ export function ToolResult({ message }: { message: ToolMessage }) {
   const rowCount = extractRowCount(message.name, message.content);
   const display = getToolDisplay(message.name, undefined, rowCount);
   if (display.hidden) return null;
-
-  // 搜索发现工具:直接渲染细致卡片网格(不走折叠 chip)。
-  if (message.name && SEARCH_TOOL_NAMES.has(message.name) && isJson) {
-    return <SearchCards toolName={message.name} data={parsed as SearchToolResult} />;
-  }
 
   const rawStr =
     typeof message.content === "string"

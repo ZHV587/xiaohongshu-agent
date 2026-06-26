@@ -121,3 +121,24 @@ def test_map_article_handles_missing_fields():
     assert card["likes"] == 0
     assert card["tags"] == []
     assert card["scores"]["total"] == 0.0
+
+
+@patch.object(rfs, "_mark_already_local", lambda notes: None)
+def test_related_searches_dicts_and_page_size_cap(monkeypatch):
+    monkeypatch.setenv("REDFOX_API_KEY", "ak_test")
+    payload = {
+        "code": 2000,
+        "data": {
+            "articles": [{"title": f"n{i}", "shareInfoLink": f"http://xhslink.com/o/id{i}"} for i in range(50)],
+            "relatedSearches": [
+                {"keyword": "护肤分享", "articleCount": 12309},
+                {"keyword": "抗老", "articleCount": 6139},
+            ],
+        },
+    }
+    with patch("tools.redfox_search.httpx.post", return_value=_resp(payload)):
+        res = search_xhs_online.func(keyword="护肤", page_size=5)
+    assert res["ok"] is True
+    assert len(res["results"]) == 5  # 截断到 page_size,即使 API 返回 50 条
+    assert res["related_searches"] == ["护肤分享", "抗老"]  # 取 keyword,不吐裸 dict
+

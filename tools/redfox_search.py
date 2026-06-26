@@ -166,15 +166,21 @@ def search_xhs_online(
 
     data = body.get("data") or {}
     articles = data.get("articles") or []
-    results = [_map_article(item) for item in articles if isinstance(item, dict)]
+    want = min(max(int(page_size), 1), 50)
+    results = [_map_article(item) for item in articles if isinstance(item, dict)][:want]
     _mark_already_local(results)
 
     related = data.get("relatedSearches") or []
-    related_searches = [str(s).strip() for s in related if str(s).strip()] if isinstance(related, list) else []
+    related_searches: list[str] = []
+    if isinstance(related, list):
+        for item in related:
+            kw = item.get("keyword") if isinstance(item, dict) else item
+            if kw and str(kw).strip():
+                related_searches.append(str(kw).strip())
 
     return {
         "ok": True,
         "keyword": keyword,
         "results": results,
-        "related_searches": related_searches,
+        "related_searches": related_searches[:8],
     }

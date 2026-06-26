@@ -18,6 +18,7 @@ import { useArtifact } from "../artifact-hooks";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { TopicCards } from "./topic-cards";
 import { CopyCard } from "./copy-card";
+import { resolveToolRender, ToolResultCards } from "@/lib/tool-render";
 import { LoaderCircle, ChevronDown } from "lucide-react";
 
 function CustomComponent({
@@ -138,9 +139,9 @@ export function ThinkingAura({
   const visibleCalls = useMemo(() => {
     return (toolCalls || []).filter(tc => {
       if (!tc.name) return false;
-      const path = tc.args ? String(tc.args.file_path ?? tc.args.path ?? tc.args.filename ?? "") : "";
-      if (path.includes("/skills/")) return false;
-      if (tc.name === "read_file" || tc.name === "write_file" || tc.name === "edit_file") return false;
+      const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
+      if (spec.aura === "hidden") return false;  // skills 内部噪音等,不展示
+      if (spec.card) return false;               // 有专属富卡片的工具不在思考链里重复
       return true;
     });
   }, [toolCalls]);
@@ -158,36 +159,13 @@ export function ThinkingAura({
     };
 
     visibleCalls.forEach((tc) => {
-      if (tc.name === "read_xhs_data") {
-        logs.push(`[${formatOffsetTime(seconds)}] [SYSTEM] 正在连接飞书多维表格 API 网关...`);
-        logs.push(`[${formatOffsetTime(seconds + 1)}] [SYSTEM] 企业自建应用凭证校验成功 (ID: cli_a9714...)`);
-        logs.push(`[${formatOffsetTime(seconds + 2)}] [SYSTEM] 正在读取多维表格数据 (TABLE_ID: tbl24vSVe...)`);
-        logs.push(`[${formatOffsetTime(seconds + 3)}] [SYSTEM] 数据读取完毕，正在过滤空行及无效列...`);
-        let countText = "10";
-        if (tc.result) {
-          try {
-            const resObj = typeof tc.result === "string" ? JSON.parse(tc.result) : tc.result;
-            if (resObj && Array.isArray(resObj.rows)) {
-              countText = String(resObj.rows.length);
-            }
-          } catch (err) {
-            console.warn("JSON parse warning", err);
-          }
-        }
-        logs.push(`[${formatOffsetTime(seconds + 4)}] [SYSTEM] 成功加载并分析了 ${countText} 条小红书爆款记录！`);
-        seconds += 5;
-      } else if (tc.name === "task") {
-        logs.push(`[${formatOffsetTime(seconds)}] [ANALYST] 调起爆款数据分析子智能体 (baokuan-analyst)...`);
-        logs.push(`[${formatOffsetTime(seconds + 1)}] [ANALYST] 正在对互动量（点赞数、收藏数）进行排序及分位数计算...`);
-        logs.push(`[${formatOffsetTime(seconds + 2)}] [ANALYST] 分析发现：高赞笔记中 70% 采用“数字+痛点+解决方案”的标题结构`);
-        logs.push(`[${formatOffsetTime(seconds + 3)}] [ANALYST] 词频统计：#露营装备 (42%), #新手避坑 (38%), #亲子出游 (20%)`);
-        logs.push(`[${formatOffsetTime(seconds + 4)}] [ANALYST] 选题规则构建完成，正在输出精炼后的选题建议...`);
-        seconds += 5;
-      } else {
-        logs.push(`[${formatOffsetTime(seconds)}] [SYSTEM] 启动底层工具 [${tc.name || "unknown"}] 并发送参数中...`);
-        logs.push(`[${formatOffsetTime(seconds + 1)}] [SYSTEM] 指令执行成功，返回结果已成功注入上下文。`);
-        seconds += 2;
-      }
+      const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
+      if (spec.aura === "hidden") return;
+      const lines = spec.aura.logs?.({ result: tc.result, name: tc.name }) ?? [];
+      lines.forEach((line, idx) => {
+        logs.push(`[${formatOffsetTime(seconds + idx)}] ${line}`);
+      });
+      seconds += Math.max(lines.length, 1) + 1;
     });
 
     return logs;
@@ -226,37 +204,13 @@ export function ThinkingAura({
   visibleCalls.forEach((tc, idx) => {
     const isLast = idx === visibleCalls.length - 1;
     const isStepDone = status === "done" || !isLast;
-
-    if (tc.name === "read_xhs_data") {
-      let countText = "";
-      if (tc.result) {
-        try {
-          const resObj = typeof tc.result === "string" ? JSON.parse(tc.result) : tc.result;
-          if (resObj && Array.isArray(resObj.rows)) {
-            countText = ` (${resObj.rows.length} 条爆款数据)`;
-          }
-        } catch (e) {
-          console.debug(e);
-        }
-      }
-      steps.push({
-        key: `read_xhs_data-${idx}`,
-        label: isStepDone ? `已成功解析飞书多维表格${countText}` : "正在读取飞书多维表格数据...",
-        isDone: isStepDone,
-      });
-    } else if (tc.name === "task") {
-      steps.push({
-        key: `task-${idx}`,
-        label: isStepDone ? "已完成爆款数据深度分析" : "正在分析选题规律...",
-        isDone: isStepDone,
-      });
-    } else {
-      steps.push({
-        key: `other-${idx}`,
-        label: isStepDone ? `已完成 ${tc.name} 指令执行` : `正在执行 ${tc.name} 指令...`,
-        isDone: isStepDone,
-      });
-    }
+    const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
+    if (spec.aura === "hidden") return;
+    steps.push({
+      key: `${tc.name || "tool"}-${idx}`,
+      label: isStepDone ? spec.aura.done({ result: tc.result, name: tc.name }) : spec.aura.running,
+      isDone: isStepDone,
+    });
   });
 
   if (status === "running") {
@@ -373,6 +327,9 @@ export function AssistantMessage({
             status={isThinkingOnly && isLoading ? "running" : "done"}
           />
         )}
+
+        {/* 工具富卡片(搜索发现等):注册表驱动,独立于思考链,流式/完成都展示 */}
+        <ToolResultCards tools={precedingTools} />
 
         {!isThinkingOnly && (
           isToolResult ? (
