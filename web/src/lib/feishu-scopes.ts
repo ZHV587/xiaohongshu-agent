@@ -3,6 +3,9 @@
 // 由应用已开通 scope 自动筛选生成(token_types 含 user 的相关域),避免挨个踩缺权限的坑。
 // 如需新增域,在此维护即可,登录路由会自动请求。
 export const FEISHU_OAUTH_SCOPES: string[] = [
+  // offline_access:飞书 v2 OAuth 只有带此 scope 才返回 refresh_token。
+  // 缺它则只发短时 access_token,过期后 UAT 无法刷新、被删,用户需反复重新登录。
+  "offline_access",
   "base:app:copy",
   "base:app:create",
   "base:app:read",
