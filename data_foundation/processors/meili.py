@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from psycopg import Connection
 from psycopg.rows import dict_row
 
@@ -43,16 +45,23 @@ class MeiliProcessor:
         # 确保索引 settings(filterable/searchable)就位,且只在本实例首次写入前调一次。
         # Meili update settings 幂等;这保证容器/数据卷重建后 settings 自动恢复,
         # 不依赖部署期手动 ensure_index(否则 search 的 tenant_id filter 会因未声明 filterable 而失败)。
+        # meilisearch 客户端是同步阻塞 I/O(requests 系)。本方法是 async 且跑在
+        # asyncio.wait_for(outbox_timeout) 之下:若直接在事件循环线程阻塞 socket,
+        # wait_for 的超时回调跑不动 → 超时形同虚设,Meili 卡顿会冻死整个调度 cycle。
+        # 故 ensure_index/upsert 一律 asyncio.to_thread 卸到工作线程。
         if not self._index_ensured:
-            self.index.ensure_index()
+            await asyncio.to_thread(self.index.ensure_index)
             self._index_ensured = True
         await lease.assert_owned()
-        self.index.upsert({
-            "resource_id": row["id"],
-            "tenant_id": row["tenant_id"],
-            "type": row["type"],
-            "title": row["title"],
-            "summary": row["summary"],
-            "content_text": row["content_text"],
-        })
+        await asyncio.to_thread(
+            self.index.upsert,
+            {
+                "resource_id": row["id"],
+                "tenant_id": row["tenant_id"],
+                "type": row["type"],
+                "title": row["title"],
+                "summary": row["summary"],
+                "content_text": row["content_text"],
+            },
+        )
         return ProcessResult(status="succeeded")

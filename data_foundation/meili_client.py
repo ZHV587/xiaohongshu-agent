@@ -24,7 +24,9 @@ def _get_client(config: MeiliConfig) -> Any:
     with _cache_lock:
         client = _client_cache.get(key)
         if client is None:
-            client = meilisearch.Client(config.url, config.api_key)
+            # timeout(秒):防 Meili 卡顿时工作线程无限阻塞。即便已 asyncio.to_thread 卸到线程,
+            # 无超时的 hung socket 会永久占用线程、积压重试也卡住,故必须有硬上限。
+            client = meilisearch.Client(config.url, config.api_key, timeout=30)
             _client_cache[key] = client
         return client
 

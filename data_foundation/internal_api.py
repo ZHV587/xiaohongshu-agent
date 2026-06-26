@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -157,9 +158,12 @@ async def internal_config_post(request: Request) -> JSONResponse:
         # 构池验证(force 探测):白名单内无任一模型被网关探测确认可用 → 400、不落库。
         # 配置中心永远只存能构出非空池的完整模型配置。验证即构池,save 后 reload
         # 复用刚填的探测缓存(不再 force),零额外探测、0 延迟生效。
+        # build_pool_from_config 内含阻塞 httpx 网关探测(每网关 ~5s),绝不能在事件循环线程
+        # 直接跑 —— 否则 admin 存配置时整个 langgraph(N_WORKERS=1)的进行中对话/SSE 流冻结。
+        # 一律 await asyncio.to_thread 卸到工作线程。
         if should_apply:
             try:
-                build_pool_from_config(merged, force_discover=True)
+                await asyncio.to_thread(build_pool_from_config, merged, force_discover=True)
             except Exception as exc:  # noqa: BLE001
                 return _json_error(400, f"模型配置无可用模型,未保存:{exc}")
 
@@ -169,7 +173,8 @@ async def internal_config_post(request: Request) -> JSONResponse:
         if should_apply:
             from agent import model_registry  # 延迟 import:同进程单例(N_WORKERS=1)
 
-            reloaded = model_registry.reload_from_config(snapshot)
+            # reload_from_config 内部再次 build_pool_from_config(同样阻塞探测),同样卸到线程。
+            reloaded = await asyncio.to_thread(model_registry.reload_from_config, snapshot)
 
         payload = {"ok": True, "version": snapshot.version, "changed_keys": snapshot.changed_keys}
         if reloaded is not None:

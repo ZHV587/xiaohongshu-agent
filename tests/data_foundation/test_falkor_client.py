@@ -43,7 +43,7 @@ def test_from_config_reuses_underlying_db_for_same_config(monkeypatch):
 
     class _FakeDB:
         @classmethod
-        def from_url(cls, url):
+        def from_url(cls, url, **kwargs):
             created.append(url)
             inst = MagicMock()
             return inst

@@ -230,7 +230,7 @@ def test_build_pool_from_config_quality_order(monkeypatch):
         models_mod, "discover_models",
         lambda url, key, **kw: ["gpt-4o", "claude-sonnet-4-6", "claude-opus-4-8"],
     )
-    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}")
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key, **kw: f"M:{mid}")
     pool = build_pool_from_config({
         "LLM_BASE_URL": "https://gw1/v1", "LLM_API_KEY": "k",
         "LLM_QUALITY_MODELS": "claude-opus-4-8,claude-sonnet-4-6,gpt-4o",

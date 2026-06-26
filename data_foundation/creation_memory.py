@@ -3,10 +3,30 @@ from __future__ import annotations
 from contextlib import nullcontext
 from typing import Any
 
+from data_foundation.models import RuntimeIdentityConfig
 from data_foundation.outbox_requests import default_write_requests
 
 DERIVED_EDGE = "derived_from"
 FEEDBACK_EDGE = "feedback_on"
+
+
+def _actor_can_read(repo: Any, *, tenant_id: str, actor_open_id: str, target_resource_id: str) -> bool:
+    """校验 actor 是否对 target 有读权限。
+
+    P1 安全:用户提交的 evidence[].resource_id / 反馈 target_resource_id 是不可信输入,
+    生产 add_edge 只校 tenant、不校 actor 权限 —— 否则用户可建边到他人私有资源(graph_ingest
+    materialize 后经图遍历暴露其存在)。故在边写入前,于编排层对每个用户提供的 target 做读权限闸门。
+    repo 无 check_permission(测试假仓)时放行,真实 ResourceRepository 强制校验。
+    """
+    check = getattr(repo, "check_permission", None)
+    if not callable(check):
+        return True
+    actor = RuntimeIdentityConfig(tenant_id=tenant_id, open_id=actor_open_id)
+    try:
+        check(target_resource_id, actor, permission="read", conn=getattr(repo, "conn", None))
+        return True
+    except PermissionError:
+        return False
 
 
 def save_generated_topic_resource(
@@ -36,8 +56,8 @@ def save_generated_topic_resource(
             owner_open_id=actor_open_id,
             outbox_requests=default_write_requests(),
         )
-        _link_evidence(repo, tenant_id=tenant_id, generated_id=resource.id, evidence=cleaned_evidence)
-    return _payload(resource, cleaned_evidence)
+        _link_evidence(repo, tenant_id=tenant_id, actor_open_id=actor_open_id, generated_id=resource.id, evidence=cleaned_evidence)
+        return _payload(resource, cleaned_evidence)
 
 
 def save_generated_copy_resource(
@@ -82,8 +102,8 @@ def save_generated_copy_resource(
             owner_open_id=actor_open_id,
             outbox_requests=default_write_requests(),
         )
-        _link_evidence(repo, tenant_id=tenant_id, generated_id=resource.id, evidence=cleaned_evidence)
-    return _payload(resource, cleaned_evidence)
+        _link_evidence(repo, tenant_id=tenant_id, actor_open_id=actor_open_id, generated_id=resource.id, evidence=cleaned_evidence)
+        return _payload(resource, cleaned_evidence)
 
 
 def save_user_feedback_resource(
@@ -121,13 +141,19 @@ def save_user_feedback_resource(
             outbox_requests=default_write_requests(),
         )
         if target_resource_id:
-            repo.add_edge(
-                tenant_id=tenant_id,
-                source_resource_id=resource.id,
+            # 仅当 actor 对 target 有读权限才建反馈边(防越权连到他人私有资源)。
+            # revision_request 已强制要求 target,但其权限同样需校验。
+            if _actor_can_read(
+                repo, tenant_id=tenant_id, actor_open_id=actor_open_id,
                 target_resource_id=target_resource_id,
-                edge_type=FEEDBACK_EDGE,
-                weight=1.0,
-            )
+            ):
+                repo.add_edge(
+                    tenant_id=tenant_id,
+                    source_resource_id=resource.id,
+                    target_resource_id=target_resource_id,
+                    edge_type=FEEDBACK_EDGE,
+                    weight=1.0,
+                )
     return _payload(resource, [])
 
 
@@ -166,14 +192,22 @@ def _link_evidence(
     repo: Any,
     *,
     tenant_id: str,
+    actor_open_id: str,
     generated_id: str,
     evidence: list[dict[str, str]],
 ) -> None:
     for item in evidence:
+        target = item["resource_id"]
+        # evidence resource_id 是用户/LLM 提供的不可信输入:只对 actor 可读的 target 建 derived_from
+        # 边,跳过无权读的(防越权连到他人私有资源),与 _clean_evidence「丢坏的、继续」一致。
+        if not _actor_can_read(
+            repo, tenant_id=tenant_id, actor_open_id=actor_open_id, target_resource_id=target,
+        ):
+            continue
         repo.add_edge(
             tenant_id=tenant_id,
             source_resource_id=generated_id,
-            target_resource_id=item["resource_id"],
+            target_resource_id=target,
             edge_type=DERIVED_EDGE,
             weight=1.0,
         )

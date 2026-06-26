@@ -29,13 +29,18 @@ class SchedulerConfig:
     config_version: str | None = None
     tenant_limit: int = 20
     outbox_batch_size: int = 20
-    lease_seconds: int = 60
+    # 租约 TTL 必须 > 单任务硬超时(source/outbox 均 120s),否则一个 60–120s 的慢同步在
+    # loader 跑完后 assert_owned→renew 时,60s 租约早已过期 → SOURCE_LEASE_LOST、刚拉的数据
+    # 全扔、该区间同步按构造必败。取 180s(1.5× 超时)留足余量:慢任务跑完仍持有租约可续期,
+    # 真正卡死(>180s)的才让租约过期、由 recover_expired/recover_stale_runs 回收重试。
+    lease_seconds: int = 180
     stale_run_seconds: int = 3600
     retention_days: int = 90
     retention_batch_size: int = 100
     chunker_version: str = "v1"
     # 单个 source 同步 / 单批 outbox 处理的硬超时:防某租户飞书 HTTP 挂起冻结整轮 cycle。
-    # 超时后该租户记 failed,租约自然过期由 recover_stale_runs 回收,循环继续下个租户。
+    # 超时后该租户记 failed,租约自然过期由 recover_expired/recover_stale_runs 回收,循环继续。
+    # 不变量:lease_seconds 必须 > 这两个 timeout(见上),保证慢任务不会中途丢租约。
     source_timeout_seconds: float = 120.0
     outbox_timeout_seconds: float = 120.0
 

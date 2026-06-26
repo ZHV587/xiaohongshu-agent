@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from psycopg import Connection
 from psycopg.rows import dict_row
 
@@ -47,10 +49,19 @@ class GraphProcessor:
             (item.tenant_id, resource_id),
         ).fetchall()
         await lease.assert_owned()
-        self.graph.merge_node({"id": node["id"], "tenant_id": node["tenant_id"],
-                               "type": node["type"], "title": node["title"]})
+        # falkordb/redis 客户端是同步阻塞 socket I/O。与 meili 同理(见 meili.py 注释):
+        # 在 async + asyncio.wait_for(outbox_timeout) 下直接阻塞会让超时失效、Falkor 卡顿冻死
+        # 整个调度 cycle。故所有图写入 asyncio.to_thread 卸到工作线程。
+        await asyncio.to_thread(
+            self.graph.merge_node,
+            {"id": node["id"], "tenant_id": node["tenant_id"],
+             "type": node["type"], "title": node["title"]},
+        )
         for e in edges:
-            self.graph.merge_edge(source_id=e["source_resource_id"], target_id=e["target_resource_id"],
-                                  edge_type=e["edge_type"], weight=float(e["weight"] or 1.0),
-                                  properties=dict(e["properties"] or {}))
+            await asyncio.to_thread(
+                self.graph.merge_edge,
+                source_id=e["source_resource_id"], target_id=e["target_resource_id"],
+                edge_type=e["edge_type"], weight=float(e["weight"] or 1.0),
+                properties=dict(e["properties"] or {}),
+            )
         return ProcessResult(status="succeeded")

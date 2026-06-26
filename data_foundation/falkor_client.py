@@ -23,7 +23,10 @@ def _get_db(url: str) -> Any:
     with _cache_lock:
         db = _db_cache.get(url)
         if db is None:
-            db = falkordb.FalkorDB.from_url(url)
+            # socket_timeout/socket_connect_timeout(秒):redis-py 默认 None=无限阻塞。
+            # 防 Falkor 卡顿/网络分区时工作线程永久阻塞(即便已 to_thread,无超时仍会占死线程
+            # 并卡住整个 outbox 重试)。给硬上限,卡死的连接抛超时后由 outbox 重试回收。
+            db = falkordb.FalkorDB.from_url(url, socket_timeout=30, socket_connect_timeout=10)
             _db_cache[url] = db
         return db
 

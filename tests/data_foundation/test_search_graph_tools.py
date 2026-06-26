@@ -738,7 +738,7 @@ def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch)
     source_updated_at = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)
     indexed_at = datetime(2026, 6, 19, 12, 30, tzinfo=timezone.utc)
     resource = SimpleNamespace(
-        id="resource-1",
+        id="11111111-1111-1111-1111-111111111111",
         type="topic",
         title="露营装备",
         summary=None,
@@ -760,3 +760,23 @@ def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch)
     assert result["resource"]["source_updated_at"] == source_updated_at.isoformat()
     assert result["resource"]["indexed_at"] == indexed_at.isoformat()
     assert "updated_at" not in result["resource"]
+
+
+def test_get_resource_tool_rejects_non_uuid_without_db_hit(monkeypatch):
+    """P1 回归:LLM 传幻觉 id/标题(非 UUID)时返回 not found,不得让 22P02 invalid uuid
+    冒泡;且不应触达 repo(where r.id=%s 会在 PG 侧 cast 崩)。"""
+    from data_foundation import tools as df_tools
+
+    called = {"hit": False}
+
+    @contextmanager
+    def repository():
+        called["hit"] = True
+        yield SimpleNamespace(get_resource=lambda *_a: None)
+
+    monkeypatch.setattr(df_tools, "_repository", repository)
+
+    for bad in ("generated-1", "露营装备", "", "not-a-uuid"):
+        result = df_tools.get_resource.func(bad, config=_Config())
+        assert result == {"ok": False, "error": "Resource not found or not permitted"}
+    assert called["hit"] is False  # 非法 id 在进 repo 前就被挡下

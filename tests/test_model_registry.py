@@ -81,7 +81,7 @@ def test_registry_reload_from_config_snapshot(monkeypatch):
     monkeypatch.setattr(
         models_mod,
         "_build_chat_model",
-        lambda model_id, base_url, api_key: FakeListChatModel(responses=[model_id]),
+        lambda model_id, base_url, api_key, **kw: FakeListChatModel(responses=[model_id]),
     )
 
     registry = ModelRegistry()
@@ -126,7 +126,7 @@ def test_registry_reload_keeps_old_pool_when_all_down(monkeypatch):
 
     monkeypatch.setattr(
         models_mod, "_build_chat_model",
-        lambda model_id, base_url, api_key: FakeListChatModel(responses=[model_id]),
+        lambda model_id, base_url, api_key, **kw: FakeListChatModel(responses=[model_id]),
     )
 
     # 第一次:探测到 gpt-4o,正常构池
@@ -147,7 +147,7 @@ def test_registry_current_version(monkeypatch):
     import models as models_mod
     monkeypatch.setattr(
         models_mod, "_build_chat_model",
-        lambda model_id, base_url, api_key: FakeListChatModel(responses=[model_id]),
+        lambda model_id, base_url, api_key, **kw: FakeListChatModel(responses=[model_id]),
     )
     monkeypatch.setattr(models_mod, "discover_models", lambda b, a, **kw: ["gpt-4o"])
     registry = ModelRegistry()

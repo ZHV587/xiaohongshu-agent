@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import httpx
+import psycopg
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
@@ -228,10 +230,10 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
         return _fulltext_fallback("EMPTY_QUERY")
 
     with _repository() as repo:
-        active_index = repo.active_embedding_index(default_tenant_id())
-        if active_index is None:
-            return _fulltext_fallback("NO_ACTIVE_EMBEDDING_INDEX")
         try:
+            active_index = repo.active_embedding_index(default_tenant_id())
+            if active_index is None:
+                return _fulltext_fallback("NO_ACTIVE_EMBEDDING_INDEX")
             query_config = _embedding_query_config_for_index(active_index)
             # 检索期策略从当前配置解析(不随 active index config_version 历史回放):
             # 模型名取 active index(判定 Qwen3),显式覆盖取当前配置。
@@ -253,6 +255,10 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
         except ValueError as exc:
             # 向量校验失败(provider 忽略 dimensions 返回非预期维度、含 NaN 等):降级。
             return _fulltext_fallback(f"EMBEDDING_QUERY_INVALID_VECTOR: {exc}")
+        except (psycopg.Error, KeyError) as exc:
+            # pgvector/PG 查询级故障(向量维度不符、扩展缺失、事务 abort、瞬时错误)或
+            # provider 响应缺 embedding 键:按设计契约降级到全文,不让工具硬崩。
+            return _fulltext_fallback(f"EMBEDDING_QUERY_DB_ERROR: {type(exc).__name__}")
 
         # 候选集为空:active index 存在但目标资源尚未被 embed(典型:刚 save_generated_*
         # 后台 reconcile 还没补 embedding,而 meili_index 已在同一 cycle 投递可命中)。
@@ -275,10 +281,14 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
             }
 
         valid_ids = [res.resource_id for res in results]
-        perf_data = repo.bulk_performance_metrics(
-            tenant_id=default_tenant_id(),
-            resource_ids=valid_ids,
-        )
+        try:
+            perf_data = repo.bulk_performance_metrics(
+                tenant_id=default_tenant_id(),
+                resource_ids=valid_ids,
+            )
+        except psycopg.Error:
+            # 效果指标只是排序加权增强项,查询失败不该让已拿到的语义结果崩;退化为无表现分。
+            perf_data = {rid: [] for rid in valid_ids}
     raw_results = _search_payload(results)
     ranked_results = rank_evidence(
         tenant_id=default_tenant_id(),
@@ -294,6 +304,12 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
 def get_resource(resource_id: str, config: RunnableConfig | None = None) -> dict[str, Any]:
     """Read one resource body after tenant and permission filtering."""
     actor = actor_from_config(config)
+    # resources.id 是 uuid 列,where r.id=%s 对非 UUID 串会抛 22P02 invalid uuid 并冒泡。
+    # LLM 常传幻觉 id/标题(如 "generated-1"),按契约应返回 not found 而非把 SQL 错误回给模型。
+    try:
+        uuid.UUID(str(resource_id))
+    except (ValueError, TypeError, AttributeError):
+        return {"ok": False, "error": "Resource not found or not permitted"}
     with _repository() as repo:
         resource = repo.get_resource(default_tenant_id(), actor, resource_id)
     if resource is None:

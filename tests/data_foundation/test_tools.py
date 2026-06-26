@@ -181,6 +181,58 @@ def test_save_user_feedback_tool_persists_revision_request(monkeypatch):
     assert repo.edge["edge_type"] == "feedback_on"
 
 
+def test_save_generated_topic_skips_edge_to_unreadable_evidence(monkeypatch):
+    """P1 安全回归:用户提供的 evidence 指向 actor 无权读的资源时,不得建 derived_from 边
+    (防越权连到他人私有资源 → graph_ingest 暴露其存在)。"""
+    from data_foundation import tools as df_tools
+
+    class _AclRepo(RecordingRepository):
+        def check_permission(self, resource_id, actor, permission="write", conn=None):
+            if resource_id == "11111111-1111-1111-1111-111111111111":  # 受害者私有资源
+                raise PermissionError("not readable")
+            # 其余(本人可读)放行
+
+    repo = _AclRepo()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_generated_topic.func(
+        direction="露营",
+        topics=["轻量化装备清单"],
+        evidence=[
+            {"resource_id": "22222222-2222-2222-2222-222222222222"},  # 可读
+            {"resource_id": "11111111-1111-1111-1111-111111111111"},  # 不可读
+        ],
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    linked = {e["target_resource_id"] for e in repo.edges}
+    assert "22222222-2222-2222-2222-222222222222" in linked
+    assert "11111111-1111-1111-1111-111111111111" not in linked  # 越权边被跳过
+
+
+def test_save_user_feedback_skips_edge_to_unreadable_target(monkeypatch):
+    """P1 安全回归:反馈 target 指向 actor 无权读的资源时,不得建 feedback_on 边。"""
+    from data_foundation import tools as df_tools
+
+    class _AclRepo(RecordingRepository):
+        def check_permission(self, resource_id, actor, permission="write", conn=None):
+            raise PermissionError("not readable")
+
+    repo = _AclRepo()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_user_feedback.func(
+        feedback="想抄这条",
+        target_resource_id="11111111-1111-1111-1111-111111111111",
+        feedback_type="revision_request",
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert repo.edges == []  # 越权边被跳过
+
+
 def test_save_session_snapshot_tool_persists_for_current_actor(monkeypatch):
     from data_foundation import tools as df_tools
 

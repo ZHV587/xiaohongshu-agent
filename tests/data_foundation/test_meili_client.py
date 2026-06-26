@@ -61,7 +61,7 @@ def test_from_config_reuses_underlying_client_for_same_config(monkeypatch):
     created = []
 
     class _FakeClient:
-        def __init__(self, url, key):
+        def __init__(self, url, key, timeout=None):
             created.append((url, key))
 
     monkeypatch.setattr(mc.meilisearch, "Client", _FakeClient)

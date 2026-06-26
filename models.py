@@ -82,9 +82,15 @@ def discover_models(base_url: str, api_key: str, *, force: bool = False) -> list
     return result
 
 
-def _build_chat_model(model_id: str, base_url: str, api_key: str) -> BaseChatModel:
-    """按铁律一构造模型实例:provider=openai + 网关 base_url/key。"""
-    provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: str | None = None) -> BaseChatModel:
+    """按铁律一构造模型实例:provider=openai + 网关 base_url/key。
+
+    provider 显式传入(线程安全);为 None 时回退读 env LLM_PROVIDER。
+    历史 P1:旧实现靠临时改进程级 os.environ["LLM_PROVIDER"] 来传 provider,非线程安全 ——
+    admin reload 线程与 health probe 线程并发构池时 provider 值会串,可能把错误的客户端类型
+    装进在用的服务池。改为显式参数,杜绝跨线程全局态竞争。
+    """
+    provider = (provider if provider is not None else os.environ.get("LLM_PROVIDER", "openai")).strip().lower()
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
         return ChatAnthropic(
@@ -265,38 +271,31 @@ def build_pool_from_config(values: dict[str, str], *, force_discover: bool = Fal
     whitelist = [m.strip() for m in values.get("LLM_QUALITY_MODELS", "").split(",") if m.strip()]
     pool: list[ModelCandidate] = []
 
-    old_provider = os.environ.get("LLM_PROVIDER")
-    if values.get("LLM_PROVIDER"):
-        os.environ["LLM_PROVIDER"] = values["LLM_PROVIDER"]
-    try:
-        # 先探测每个网关的可用清单(一次),再按白名单序匹配,保证质量优先序。
-        # 探测是阻塞 httpx.get(每个 _DISCOVER_TIMEOUT=5s),串行时 N 个网关全挂会
-        # 累加阻塞 N×5s,拖慢启动对齐/定时健康探测/配置 verify。改并发探测:墙钟
-        # 收敛到最慢的单个网关(≈5s),与网关数解耦。线程内只读 env、各自发请求,
-        # 写回各自缓存键(_DISCOVER_CACHE 按 (base_url,key) 分键),无共享写冲突。
-        gateway_available: dict[str, set[str]] = {}
-        if gateways:
-            with ThreadPoolExecutor(max_workers=len(gateways)) as executor:
-                future_to_name = {
-                    executor.submit(discover_models, base_url, api_key, force=force_discover): gw_name
-                    for gw_name, base_url, api_key in gateways
-                }
-                for future in as_completed(future_to_name):
-                    gw_name = future_to_name[future]
-                    gateway_available[gw_name] = set(future.result() or [])
-        for model_id in whitelist:  # 白名单序 = 质量序
-            for gw_name, base_url, api_key in gateways:
-                if model_id in gateway_available[gw_name]:
-                    pool.append(ModelCandidate(
-                        gateway_name=gw_name,
-                        model_id=model_id,
-                        model=_build_chat_model(model_id, base_url, api_key),
-                    ))
-    finally:
-        if old_provider is None:
-            os.environ.pop("LLM_PROVIDER", None)
-        else:
-            os.environ["LLM_PROVIDER"] = old_provider
+    # provider 从配置快照显式解析(不改进程级 os.environ —— 杜绝并发构池跨线程串值,见 _build_chat_model)。
+    provider = (values.get("LLM_PROVIDER") or os.environ.get("LLM_PROVIDER") or "openai")
+    # 先探测每个网关的可用清单(一次),再按白名单序匹配,保证质量优先序。
+    # 探测是阻塞 httpx.get(每个 _DISCOVER_TIMEOUT=5s),串行时 N 个网关全挂会
+    # 累加阻塞 N×5s,拖慢启动对齐/定时健康探测/配置 verify。改并发探测:墙钟
+    # 收敛到最慢的单个网关(≈5s),与网关数解耦。线程内只读 env、各自发请求,
+    # 写回各自缓存键(_DISCOVER_CACHE 按 (base_url,key) 分键),无共享写冲突。
+    gateway_available: dict[str, set[str]] = {}
+    if gateways:
+        with ThreadPoolExecutor(max_workers=len(gateways)) as executor:
+            future_to_name = {
+                executor.submit(discover_models, base_url, api_key, force=force_discover): gw_name
+                for gw_name, base_url, api_key in gateways
+            }
+            for future in as_completed(future_to_name):
+                gw_name = future_to_name[future]
+                gateway_available[gw_name] = set(future.result() or [])
+    for model_id in whitelist:  # 白名单序 = 质量序
+        for gw_name, base_url, api_key in gateways:
+            if model_id in gateway_available[gw_name]:
+                pool.append(ModelCandidate(
+                    gateway_name=gw_name,
+                    model_id=model_id,
+                    model=_build_chat_model(model_id, base_url, api_key, provider=provider),
+                ))
 
     if not pool:
         raise RuntimeError("无法从配置中心构造模型池:白名单内无任一模型被网关探测确认可用")
