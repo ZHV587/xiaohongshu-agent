@@ -38,11 +38,11 @@
   - 单元 + hypothesis:同 note_id 采纳 2 次 = 1 资源 1 边;飞书失败不回滚库
   - _Requirements: 4.2, 4.3, 4.4, 4.5_
 
-- [x] 6. 飞书爆款采集库同步工具 `sync_online_note_to_feishu`(自然键去重)
-  - 在 `tools/feishu_actions.py` 新增工具:目标表 `FEISHU_BITABLE_COLLECT_TABLE_ID`(默认 `tbl24vSVeLvz45ig`),列映射(标题/正文/点赞/收藏/评论/转发/博主/发布时间/封面链接/原文链接/话题标签/采集平台)
-  - 去重:`base +record-search` 按 `原文链接` 查存量 → 命中 `+record-update`,未命中 `+record-create` 后回写飞书 record_id 到 Postgres mapping(`system="feishu_collect"`)
+- [x] 6. 飞书爆款采集库写入 `create_online_note_record`(mapping 幂等)
+  - 在 `tools/feishu_actions.py` 新增**普通函数** `create_online_note_record`(非 @tool,供 adopt 编排调用):目标表 `FEISHU_BITABLE_COLLECT_TABLE_ID`(默认 `tbl24vSVeLvz45ig`),列映射(标题/正文/点赞/收藏/评论/转发/博主/发布时间/封面链接/原文链接/话题标签/采集平台)
+  - 去重(**实际做法,见 design 自审 D**):`record-search`/`record-update` 因 lark-cli v1.0.58 能力未核实**未采用**;改由 adopt 编排按 Postgres mapping `system="feishu_collect", external_id=note_id` 保证:已同步→跳过,未同步→ `record-create` 后回写 mapping
   - 用户 UAT 身份(非 bot);失败保留库记录并报告
-  - 单元测试:列映射、record-search 命中 update / 未命中 create + 回写、按 note_url 幂等
+  - 单元测试:列映射、默认表、缺 app_token 报错;adopt 编排 mapping 幂等(skipped/create+回写)
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
 - [x] 7. 工具注册 + HITL + 编排提示词
@@ -58,12 +58,13 @@
   - 重写相关 allowlist 测试
   - _Requirements: 5.5_
 
-- [x] 9. 前端细致卡片组件 + 工具渲染注册
-  - `web/src/lib/tool-display.ts`:为 `search_xhs_online`/`search_local_note_cards` 注册卡片渲染映射
+- [x] 9. 前端细致卡片组件 + 工具渲染链(真问题G)
+  - **新建工具渲染注册表** `web/src/lib/tool-render.tsx`(`TOOL_RENDERERS` + `resolveToolRender` + `ToolResultCards`)= 工具展示唯一事实源:把 `search_xhs_online`/`search_local_note_cards` 等映射到卡片渲染器,其余工具映射到中文步骤文案
+  - **修复渲染死路径(真问题G)**:`groupMessages` 把 tool 消息折进 `group.toolCalls[].result`,原 `ToolResult` 分支永不渲染;改 `ai.tsx` 用 `ToolResultCards` 从 `precedingTools[].result` 渲染搜索卡(活路径),`tool-calls.tsx` 删死分支
   - 新建 `web/src/components/thread/messages/search-cards.tsx`:本地组 + 线上组分组、计数、skeleton-shimmer、hover 抬升;细致卡片(封面/标题/博主/互动 chips/标签 pills/来源徽章/线上三维评分/查看原文)
-  - 线上卡:勾选框 + 「采纳收录」单按钮 + 顶部「全选/采纳选中(k)」;`already_local`/已采纳卡灰标「已收录」禁用;采纳点击经 `submitText` 回传精简 payload,并把回传消息渲染为简洁动作 chip
+  - 线上卡:勾选框 + 「采纳收录」单按钮 + 顶部「全选/采纳选中(k)」;每张卡「✨出选题」按钮(单篇→单选题);`already_local`/已采纳卡灰标「已收录」禁用;采纳/出选题点击经 `submitText` 回传精简 payload,`human.tsx` 的 `summarizeCardAction` 把回传(含 ```json```)渲染为简洁动作 chip(不露裸 JSON)
   - 跨源去重在合并展示层兜底(按 note_url),以工具层 `already_local` 为准
-  - 前端测试:渲染、勾选 payload、already_local 禁用
+  - 前端测试:渲染、勾选 payload、already_local 禁用、注册表解析
   - _Requirements: 3.1, 3.2, 3.3, 3.5, 4.1, 6.1, 6.2_
 
 - [x] 10. 集成验证与部署
@@ -105,9 +106,30 @@ graph TD
 }
 ```
 
+## 后续增量(已完成,超原 spec 范围)
+
+下列工作在主 10 个任务之外、应用户后续追加需求完成并已上线,登记备查:
+
+- [x] A. 出选题衔接(双源 + 单篇→单选题 + 选中才落库)
+  - 三个 skill(`topic-content`/`xhs-planning`/`xhs-content-system`)改造:**选中才落库**(出选题阶段只展示不调 `save_generated_topic`/`sync_topic_to_feishu`,用户选中某个才存那一个);**双源出选题**(可额外调 `search_xhs_online` 拉线上趋势信号,正式 evidence 仍须库内 resource_id,纯线上趋势注明 note_url);**单篇→单选题**(搜索卡「✨出选题」回传单篇 → topic-content 快路)
+  - `adopt_online_notes` 返回加 `next_step` 引导;`prompts.py` §6.5 加采纳→出选题桥接
+  - 铁律对齐:与"采纳才落库"同源的"选中才落库",杜绝垃圾选题无差别入库
+
+- [x] B. 思考链全工具中文文案
+  - `tool-render.tsx` 注册表补全全业务工具中文步骤文案(`semantic_search_resources`/`get_resource`/`save_*`/`sync_*`/`graph_expand`/`execute_lark_command` 等);`DEFAULT` 降级为"已完成一步处理"(不再暴露英文工具名);`ThinkingAura` 改读 `resolveToolRender`
+
+- [x] C. 动作 chip + HITL 弹窗摘要(不露裸 JSON)
+  - `human.tsx` 的 `summarizeCardAction` 把采纳/出选题回传(含 ```json```)渲染成简洁 chip(🍠采纳收录 N 条 / ✨基于选中的笔记出选题)
+  - `agent-inbox/components/inbox-item-input.tsx` 的 `ArgsRenderer` 加 `isNoteArray`/`NoteListSummary`:adopt 的 notes 数组渲染成"共 N 篇笔记" + 标题列表而非裸 JSON
+
+- [x] D. 红狐检索修复
+  - `related_searches` 取 keyword 字段;`page_size` 截断;此前未提交的修复一并上线
+
+> 诚实缺口:以上 UI 改动均过 tsc/lint/单测 + 部署,但**卡片真实渲染/思考链清爽度/chip/HITL 弹窗效果未做浏览器实跑验证**(待用户在 `124.221.173.80:9091` 飞书登录后肉眼确认)。
+
 ## Notes
 
 - 铁律:根本性修复不打补丁,相关测试一并重写;明文配置;中文为主场景;飞书写经 Agent tool + HITL(不经 frontend business API)。
 - 不动 `rank_evidence`/EvidencePackage 证据链(任务 3 须有回归断言)。
-- 范围外(下一步):用本地+线上数据出选题;泛词先推细分词;线上结果定时自动采集。
-- 部署遵 `docs/deployment/server-deployment-rules.md`;env 变更只需 `up -d`,代码变更需 `langgraph build`。
+- 范围外(更激进 B,未做):选题卡内嵌"线上趋势区块 + 一键采纳"(需扩 `xhs_topics` 协议 + 改 `topic-cards.tsx`);泛词先推细分词;线上结果定时自动采集。
+- 部署遵 `docs/deployment/server-deployment-rules.md`;env 变更只需 `up -d`,代码变更需 `langgraph build`,web 变更需 `up -d --build web`。

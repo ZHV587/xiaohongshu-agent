@@ -21,6 +21,46 @@ function ResetButton({ handleReset }: { handleReset: () => void }) {
   );
 }
 
+function isNoteArray(value: unknown): value is Record<string, unknown>[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (x) =>
+        x != null &&
+        typeof x === "object" &&
+        ("title" in x || "note_url" in x || "note_id" in x),
+    )
+  );
+}
+
+/** 笔记数组(如 adopt 的 notes)友好摘要,避免 HITL 弹窗里堆裸 JSON。 */
+function NoteListSummary({ notes }: { notes: Record<string, unknown>[] }) {
+  return (
+    <div className="flex w-full flex-col gap-1.5 rounded-xl bg-zinc-100 p-3">
+      <p className="text-[13px] font-semibold text-black">共 {notes.length} 篇笔记</p>
+      <ul className="flex flex-col gap-1">
+        {notes.slice(0, 8).map((n, i) => {
+          const title = String(n.title ?? n.note_id ?? "(无标题)");
+          const author = n.author ? `@${String(n.author)}` : "";
+          const inter = n.interactive ?? n.likes;
+          return (
+            <li key={i} className="flex items-center gap-2 text-[12px] text-gray-700">
+              <span className="text-coral">{i + 1}.</span>
+              <span className="line-clamp-1 flex-1">{title}</span>
+              {author && <span className="shrink-0 text-gray-400">{author}</span>}
+              {inter != null && <span className="shrink-0 text-gray-400">🔥{String(inter)}</span>}
+            </li>
+          );
+        })}
+        {notes.length > 8 && (
+          <li className="text-[12px] text-gray-400">…还有 {notes.length - 8} 篇</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
 function ArgsRenderer({ args }: { args: Record<string, unknown> }) {
   return (
     <div className="flex w-full flex-col items-start gap-6">
@@ -38,9 +78,13 @@ function ArgsRenderer({ args }: { args: Record<string, unknown> }) {
             <p className="text-sm leading-[18px] text-wrap text-gray-600">
               {prettifyText(key)}
             </p>
-            <span className="w-full max-w-full rounded-xl bg-zinc-100 p-3 text-[13px] leading-[18px] text-black">
-              <MarkdownText>{stringValue}</MarkdownText>
-            </span>
+            {isNoteArray(value) ? (
+              <NoteListSummary notes={value} />
+            ) : (
+              <span className="w-full max-w-full rounded-xl bg-zinc-100 p-3 text-[13px] leading-[18px] text-black">
+                <MarkdownText>{stringValue}</MarkdownText>
+              </span>
+            )}
           </div>
         );
       })}
