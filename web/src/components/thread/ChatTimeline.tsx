@@ -18,7 +18,7 @@ import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { BRAND } from "@/lib/brand";
 import { useThread } from "./ThreadContext";
-import { MessageGroup, AssistantBlock, ToolEntry } from "./types";
+import { MessageGroup, ToolEntry } from "./types";
 import { ComposerPanel } from "./ComposerPanel";
 
 const DO_NOT_RENDER_ID_PREFIX = "do-not-render-";

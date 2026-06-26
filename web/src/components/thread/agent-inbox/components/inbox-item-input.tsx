@@ -244,7 +244,7 @@ function EditActionCard({
                 key={`allow-edit-args--${key}-${idx}`}
               >
                 <p className="min-w-fit text-sm font-medium">
-                  {prettifyText(key)}
+                  {fieldLabel(key)}
                 </p>
                 <NoteListSummary notes={value} />
               </div>
