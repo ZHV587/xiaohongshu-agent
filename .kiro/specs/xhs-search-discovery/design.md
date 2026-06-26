@@ -60,7 +60,7 @@ graph TD
 
 - **收窄 `_EXCLUDE_COLUMN_KEYWORDS`**:移除 `封面/链接/网址/域名/图片`,放行封面链接/原文链接/封面链接/图片链接/视频链接/域名等文本字段。**保留过滤**真正无用项:`附件`(附件对象,有 file_token 替代直链)、`提示词`、`二维码`、`头像`、`logo`、`trace`、`⚙️`/`设置`(not_support 系统列)。
 - **封面归一化**:落库时把 `封面链接` 作为统一封面 URL 字段;`原文链接` 提取 markdown 中的 URL。
-- **存量回填**:对现有 506 条 `feishu_base_record` re-sync(经已修好的 bot 同步链路),补齐放行字段。幂等(按 external_id)。
+- **存量回填**:对现有 `feishu_base_record` re-sync(经已修好的 bot 同步链路),补齐放行字段。幂等(按 external_id)。**已执行**:re-sync 570 行,补到 205 条封面链接 / 457 条原文链接(并非每条都有这两列)。
 
 **约束**:不改飞书侧;只改我们同步时的字段过滤 + 回填。
 
@@ -97,7 +97,7 @@ def search_xhs_online(keyword: str, days: int = 7, page_size: int = 20, config=N
 
 ### Component 3:数据通道 + 前端细致卡片
 
-**数据通道**:本地/线上检索工具的结构化结果作为 **ToolMessage** 进入消息流。前端 `@/lib/tool-display` 为 `search_xhs_online` 与 `search_local_note_cards` 注册专用渲染 → 渲染细致卡片网格。**主控 AI 文本只输出摘要**(如"本地 N 条 + 线上 M 条,已在面板展示,勾选要收录的"),不重复全量数据。
+**数据通道**:本地/线上检索工具的结构化结果作为 **ToolMessage** 进入消息流。前端经**工具渲染注册表** `web/src/lib/tool-render.tsx`(`TOOL_RENDERERS`:`search_xhs_online`/`search_local_note_cards` → `aura:"hidden"` + `card: SearchCards`)在 `AssistantMessage` 用 `ToolResultCards` 从 `precedingTools[].result` 渲染细致卡片网格(见自审 G)。`tool-display.ts` 仅保留 `ToolCalls` 进行中/完成 chip 文案,**不渲染卡片**。**主控 AI 文本只输出摘要**(如"本地 N 条 + 线上 M 条,已在面板展示,勾选要收录的"),不重复全量数据。
 
 **跨源去重(真问题C)**:面板合并本地组 + 线上组前,按 `note_url`(原文链接)归一化做跨源去重。**本地优先**:线上结果若其 `note_url` 已存在于本地组,则该线上卡标「📚已收录」徽章、禁用采纳勾选(不重复入库)。去重在工具层(线上工具可选携带"已在本地"标记)或前端合并层完成;以工具层为准(线上工具返回时即比对本地 `note_url` 集合,打 `already_local: bool`)。
 
@@ -108,7 +108,7 @@ def search_xhs_online(keyword: str, days: int = 7, page_size: int = 20, config=N
 - 话题标签 pills(oats/sky 底)。
 - 评分徽章(线上):相关性/热度/时效(复用红狐三维)。
 - `查看原文 ↗`(note_url)。
-- **操作区(仅线上卡)**:勾选框 + 单个 `采纳收录` 按钮(coral 主按钮);已入库显示灰标「已收录」。
+- **操作区**:**每张卡**(本地+线上)右下角有「✨出选题」按钮(基于这一篇出 1 个选题,见「出选题衔接」);**仅线上卡**额外有勾选框 + `采纳收录`(coral 主按钮),`already_local`/已入库显示灰标「已收录」并禁用采纳。
 - 分组:`📚 我们已收录(N)` + `🔥 线上实时发现(N)`,各带计数;加载 skeleton-shimmer;hover 微抬升。
 - 批量:线上组顶部「全选 / 采纳选中(k)」。
 
@@ -157,7 +157,7 @@ def adopt_online_notes(notes: list[dict], sync_feishu: bool = True, config=None)
 
 ### `xhs_online_note` resource(落库)
 - `type="xhs_online_note"`,`content_json` = 上述全部字段 + 原始红狐响应子集 + `note_url`(跨源去重键)。
-- `mapping`: `system="redfox"`, `external_type="xhs_note"`, `external_id=note_id`(幂等键);同步飞书后追加 `system="feishu_collect", external_id=飞书 record_id`(供飞书侧幂等)。
+- `mapping`: `system="redfox"`, `external_type="xhs_note"`, `external_id=note_id`(幂等键);同步飞书成功后另加一条 `system="feishu_collect", external_type="xhs_note", external_id=note_id`(**按 note_id**,作飞书侧"我方是否已同步"的幂等标记;不存飞书自增 record_id,因未用 record-search/update,见自审 D)。
 - 互动数 → `performance_metric` + `measured_by` 边(§8 口径)。
 
 ## Correctness Properties
