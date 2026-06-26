@@ -52,6 +52,48 @@ _IS_WINDOWS = platform.system() == "Windows"
 _BLACKLIST_COMMANDS = {"auth", "config"}
 _cli_lock = threading.RLock()
 
+# lark-cli v1.0.58 的 app 身份(bot/user 都需要)从 ~/.lark-cli/config.json 读取,
+# **不读** LARK_APP_ID/SECRET 环境变量。注入这两个 env 反而让 CLI 切到"环境凭证模式"、
+# 期待现成 access token 而忽略 config → bot 取不到 token。故:用 FEISHU_APP_ID/SECRET
+# 非交互生成 config.json,运行时只靠它 + 显式 --as,绝不注入 LARK_APP_* 凭证 env。
+_lark_config_ready = False
+_lark_config_lock = threading.Lock()
+
+
+def _ensure_lark_config() -> None:
+    """确保 ~/.lark-cli/config.json 存在(幂等)。无 app 凭证或已就绪则跳过。
+
+    这是内部基础设施(非 agent 触发),直接调 lark-cli config init,绕过工具层黑名单。
+    """
+    global _lark_config_ready
+    if _lark_config_ready:
+        return
+    with _lark_config_lock:
+        if _lark_config_ready:
+            return
+        app_id = os.environ.get("FEISHU_APP_ID")
+        app_secret = os.environ.get("FEISHU_APP_SECRET")
+        if not app_id or not app_secret:
+            return
+        home = os.environ.get("HOME") or os.path.expanduser("~")
+        config_path = os.path.join(home, ".lark-cli", "config.json")
+        if os.path.exists(config_path):
+            _lark_config_ready = True
+            return
+        executable = "lark-cli.cmd" if _IS_WINDOWS else "lark-cli"
+        try:
+            subprocess.run(
+                [executable, "config", "init", "--app-id", app_id, "--app-secret-stdin", "--brand", "feishu"],
+                input=app_secret,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                shell=False,
+            )
+            _lark_config_ready = True
+        except Exception as exc:  # noqa: BLE001 - 不阻断;后续命令会暴露真实错误
+            logger.warning(f"lark-cli config init failed: {exc}")
+
 _cached_brand = None
 
 def get_lark_brand() -> str:
@@ -179,39 +221,27 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         if not token:
             return "Please authorize Feishu access first. Please log in again using the UI panel to grant permissions."
 
-        # Populate both LARK_ and LARKSUITE_CLI_ prefixed variables for user token to ensure compatibility
+        # 用户身份:注入真实 UAT(lark-cli 的"环境凭证模式"正需要一个 access token)。
+        # 不注入 LARK_APP_ID/SECRET —— app 身份由 config.json 提供;注入 app 凭证会让
+        # v1.0.58 误判为缺 token。
         run_env["LARK_USER_ACCESS_TOKEN"] = token
         run_env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] = token
         run_env["LARK_DEFAULT_AS"] = "user"
         run_env["LARKSUITE_CLI_DEFAULT_AS"] = "user"
-
-        # App credentials must be provided for the CLI to authenticate the user token session
-        app_id = os.environ.get("FEISHU_APP_ID")
-        app_secret = os.environ.get("FEISHU_APP_SECRET")
-        if app_id:
-            run_env["LARK_APP_ID"] = app_id
-            run_env["LARKSUITE_CLI_APP_ID"] = app_id
-        if app_secret:
-            run_env["LARK_APP_SECRET"] = app_secret
-            run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
 
         if "--as" not in clean_args:
             clean_args.extend(["--as", "user"])
     elif server_mode and not force_bot:
         return "Please authorize Feishu access first. Current server request has no Feishu user identity."
     else:
-        # CLI fallback or forced bot
+        # CLI 降级 / 强制 bot:app 身份完全由 config.json 提供(_ensure_lark_config 保证)。
+        # **不注入任何 LARK_APP_* 凭证 env** —— 否则 v1.0.58 切到环境凭证模式、取不到 bot token。
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")
         if not app_id or not app_secret:
             return "Error: Bot credentials (FEISHU_APP_ID/SECRET) not configured."
-
-        run_env["LARK_APP_ID"] = app_id
-        run_env["LARKSUITE_CLI_APP_ID"] = app_id
-        run_env["LARK_APP_SECRET"] = app_secret
-        run_env["LARKSUITE_CLI_APP_SECRET"] = app_secret
-        run_env["LARK_DEFAULT_AS"] = "bot"
-        run_env["LARKSUITE_CLI_DEFAULT_AS"] = "bot"
+        if "--as" not in clean_args:
+            clean_args.extend(["--as", "bot"])
 
 
     # Append --yes parameter if approved by human
@@ -229,6 +259,7 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
     if _IS_WINDOWS:
         executable = "lark-cli.cmd"
 
+    _ensure_lark_config()  # 保证 app 身份配置就绪(bot/user 共同前置)
     cmd = [executable] + clean_args
 
     with _cli_lock:

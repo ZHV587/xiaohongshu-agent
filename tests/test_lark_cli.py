@@ -14,6 +14,16 @@ def mock_env():
     }):
         yield
 
+
+@pytest.fixture(autouse=True)
+def skip_lark_config_provisioning():
+    """命令执行类用例:置就绪标志跳过 config.json provisioning(真函数遇标志提前返回),
+    避免额外 subprocess.run 干扰断言。_ensure_lark_config 自身的用例会自行复位标志。"""
+    import tools.lark_cli as lc
+    lc._lark_config_ready = True
+    yield
+    lc._lark_config_ready = False
+
 def test_lark_cli_empty_command():
     # 测试空命令的情况
     assert "Error" in lark_cli.func("")
@@ -90,6 +100,60 @@ def test_lark_cli_uses_runtime_identity_for_user_token(mock_run, mock_get_uat):
     assert env["LARKSUITE_CLI_USER_ACCESS_TOKEN"] == "uat-user-token"
     assert env["LARK_DEFAULT_AS"] == "user"
     assert env["LARKSUITE_CLI_DEFAULT_AS"] == "user"
+    # v1.0.58:app 身份由 config.json 提供;绝不注入 LARK_APP_* 凭证 env(否则 CLI 误判缺 token)
+    assert "LARK_APP_ID" not in env
+    assert "LARK_APP_SECRET" not in env
+
+
+@patch("tools.lark_cli.get_uat")
+@patch("tools.lark_cli.subprocess.run")
+def test_lark_cli_bot_mode_uses_config_not_app_env(mock_run, mock_get_uat):
+    """CLI 降级/无用户身份 → bot 分支:追加 --as bot,且不注入 LARK_APP_* 凭证 env。"""
+    mock_resp = MagicMock()
+    mock_resp.stdout = "{\"ok\": true, \"identity\": \"bot\"}"
+    mock_resp.stderr = ""
+    mock_resp.returncode = 0
+    mock_run.return_value = mock_resp
+
+    res = lark_cli.func("base +table-list --base-token V8xxx", config=None)
+
+    assert "\"identity\": \"bot\"" in res
+    mock_get_uat.assert_not_called()
+    cmd = mock_run.call_args.args[0]
+    assert "--as" in cmd and cmd[cmd.index("--as") + 1] == "bot"
+    env = mock_run.call_args.kwargs["env"]
+    assert "LARK_APP_ID" not in env
+    assert "LARK_APP_SECRET" not in env
+
+
+@patch("tools.lark_cli.subprocess.run")
+def test_ensure_lark_config_runs_init_when_missing(mock_run):
+    import tools.lark_cli as lc
+    mock_run.return_value = MagicMock(returncode=0, stdout="OK", stderr="")
+    lc._lark_config_ready = False
+    try:
+        with patch("tools.lark_cli.os.path.exists", return_value=False):
+            lc._ensure_lark_config()
+        assert mock_run.called
+        args, kwargs = mock_run.call_args
+        cmd = args[0]
+        assert cmd[1:3] == ["config", "init"]
+        assert "--app-secret-stdin" in cmd
+        assert kwargs["input"] == "cli_mock_secret"  # secret 走 stdin,不进 argv
+    finally:
+        lc._lark_config_ready = False
+
+
+@patch("tools.lark_cli.subprocess.run")
+def test_ensure_lark_config_skips_when_present(mock_run):
+    import tools.lark_cli as lc
+    lc._lark_config_ready = False
+    try:
+        with patch("tools.lark_cli.os.path.exists", return_value=True):
+            lc._ensure_lark_config()
+        mock_run.assert_not_called()
+    finally:
+        lc._lark_config_ready = False
 
 
 @patch("tools.lark_cli.subprocess.run")
@@ -111,9 +175,9 @@ def test_lark_cli_successful_run(mock_run):
     
     expected_bin = "lark-cli.cmd" if platform.system() == "Windows" else "lark-cli"
     
-    # 校验调用参数：自动拼装，加上 --format json，且 shell=False
+    # 校验调用参数：无用户身份 → bot fallback,追加 --as bot,再加 --format json,shell=False
     mock_run.assert_called_once_with(
-        [expected_bin, "im", "status", "--format", "json"],
+        [expected_bin, "im", "status", "--as", "bot", "--format", "json"],
         env=ANY,
         capture_output=True,
         text=True,
@@ -136,7 +200,7 @@ def test_lark_cli_strip_prefix(mock_run):
     expected_bin = "lark-cli.cmd" if platform.system() == "Windows" else "lark-cli"
     
     mock_run.assert_called_once_with(
-        [expected_bin, "im", "+messages-send", "--chat-id", "123", "--format", "json"],
+        [expected_bin, "im", "+messages-send", "--chat-id", "123", "--format", "json", "--as", "bot"],
         env=ANY,
         capture_output=True,
         text=True,
@@ -171,7 +235,7 @@ def test_lark_cli_exit_10_approved(mock_run):
     
     expected_bin = "lark-cli.cmd" if platform.system() == "Windows" else "lark-cli"
     mock_run.assert_called_once_with(
-        [expected_bin, "im", "+messages-send", "--chat-id", "1", "--yes", "--format", "json"],
+        [expected_bin, "im", "+messages-send", "--chat-id", "1", "--as", "bot", "--yes", "--format", "json"],
         env=ANY,
         capture_output=True,
         text=True,
