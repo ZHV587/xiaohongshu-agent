@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useStreamContext } from "@/providers/stream-context";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/langgraph-sdk/react";
@@ -116,43 +117,105 @@ export function ThinkingAura({
 
   return (
     <div className="mr-auto flex w-full max-w-[460px] flex-col gap-2 py-1 select-none">
-      <div className="rounded-2xl border border-coral-light/50 bg-white/80 px-3.5 py-2.5 shadow-xs">
-        <div className="mb-1.5 flex items-center gap-2">
+      <motion.div
+        layout
+        transition={{ layout: { duration: 0.3, ease: [0.4, 0, 0.2, 1] } }}
+        className="overflow-hidden rounded-2xl border border-coral-light/50 bg-gradient-to-b from-white to-oats-light/30 px-4 py-3 shadow-xs"
+      >
+        <div className="mb-2.5 flex items-center gap-2">
           <div className="relative flex h-2 w-2">
             {anyRunning && (
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-coral opacity-75" />
             )}
             <span
               className={cn(
-                "relative inline-flex h-2 w-2 rounded-full",
+                "relative inline-flex h-2 w-2 rounded-full transition-colors duration-500",
                 anyRunning ? "bg-coral" : "bg-green-500",
               )}
             />
           </div>
-          <span className="font-display text-xs font-bold text-charcoal">
+          <span className="font-display text-xs font-bold tracking-tight text-charcoal">
             思考轨迹
           </span>
+          {anyRunning && (
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0.4, 1, 0.4] }}
+              transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+              className="text-[10px] font-medium text-coral/70"
+            >
+              思考中
+            </motion.span>
+          )}
         </div>
 
-        <div className="space-y-1.5 text-xs">
-          {steps.map((step) => (
-            <div
-              key={step.key}
-              className={cn(
-                "flex items-center gap-2",
-                step.isDone ? "text-charcoal-light" : "text-coral font-medium",
-              )}
-            >
-              {step.isDone ? (
-                <span className="font-bold text-green-500">✓</span>
-              ) : (
-                <LoaderCircle className="size-3.5 animate-spin text-coral" />
-              )}
-              <span>{step.label}</span>
-            </div>
-          ))}
+        {/* 时间线:节点串在一条竖线上,连续呈现真实推理轨迹 */}
+        <div className="relative">
+          <motion.span
+            layout
+            className="absolute top-1 bottom-1 left-[6.5px] w-px bg-gradient-to-b from-coral-light/70 via-coral-light/40 to-coral-light/5"
+          />
+          <motion.div layout className="flex flex-col gap-2.5">
+            <AnimatePresence initial={false}>
+              {steps.map((step) => (
+                <motion.div
+                  key={step.key}
+                  layout
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
+                  className="relative flex items-start gap-2.5"
+                >
+                  <span className="relative z-10 mt-px flex size-3.5 shrink-0 items-center justify-center rounded-full bg-white">
+                    <AnimatePresence mode="wait" initial={false}>
+                      {step.isDone ? (
+                        <motion.span
+                          key="done"
+                          initial={{ scale: 0, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 520, damping: 26 }}
+                          className="flex size-3.5 items-center justify-center rounded-full bg-green-500 text-[8px] font-bold text-white"
+                        >
+                          ✓
+                        </motion.span>
+                      ) : (
+                        <motion.span
+                          key="run"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="relative flex size-3.5 items-center justify-center"
+                        >
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral/40" />
+                          <LoaderCircle className="relative size-3.5 animate-spin text-coral" />
+                        </motion.span>
+                      )}
+                    </AnimatePresence>
+                  </span>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                      key={step.label}
+                      initial={{ opacity: 0, y: 3 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -3 }}
+                      transition={{ duration: 0.2 }}
+                      className={cn(
+                        "text-xs leading-relaxed",
+                        step.isDone
+                          ? "text-charcoal-light"
+                          : "font-medium text-coral",
+                      )}
+                    >
+                      {step.label}
+                    </motion.span>
+                  </AnimatePresence>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </motion.div>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -167,7 +230,11 @@ function AiContent({ message }: { message: Message }) {
     return <CustomComponent message={message} thread={thread} />;
   }
   return (
-    <>
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: "easeOut" }}
+    >
       <div className="flex flex-col gap-3 py-1">
         {parseXhsBlocks(contentString).map((seg, i) => {
           if (seg.kind === "topics") {
@@ -211,7 +278,7 @@ function AiContent({ message }: { message: Message }) {
         })}
       </div>
       <CustomComponent message={message} thread={thread} />
-    </>
+    </motion.div>
   );
 }
 
