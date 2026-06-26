@@ -33,12 +33,6 @@ export interface SearchToolResult {
   related_searches?: string[];
 }
 
-const SEARCH_TOOL_NAMES = new Set(["search_xhs_online", "search_local_note_cards"]);
-
-export function isSearchTool(name: string | undefined): boolean {
-  return !!name && SEARCH_TOOL_NAMES.has(name);
-}
-
 function fmt(n?: number): string {
   const v = n ?? 0;
   if (v >= 10000) return `${(v / 10000).toFixed(1)}w`;
@@ -56,7 +50,6 @@ function CoverImage({ url, title }: { url?: string; title?: string }) {
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={url}
       alt={title || "封面"}
