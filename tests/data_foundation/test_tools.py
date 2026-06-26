@@ -181,6 +181,29 @@ def test_save_user_feedback_tool_persists_revision_request(monkeypatch):
     assert repo.edge["edge_type"] == "feedback_on"
 
 
+def test_save_session_snapshot_tool_persists_for_current_actor(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_session_snapshot.func(
+        project_name="露营账号",
+        title="账号定位诊断",
+        content="目标人群、卖点、内容方向……",
+        metadata={"phase": "diagnosis"},
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert repo.upsert["tenant_id"] == "default"
+    assert repo.upsert["actor_open_id"] == "ou_user"
+    assert repo.upsert["resource_type"] == "session_snapshot"
+    assert repo.upsert["title"] == "[露营账号] 账号定位诊断"
+    # outbox 副作用必须被显式投递(P0 回归:default_write_requests 曾因缺 import 抛 NameError)
+    assert repo.upsert["outbox_requests"] is not None
+
+
 def test_save_performance_metric_tool_persists_for_current_actor(monkeypatch):
     from data_foundation import tools as df_tools
 

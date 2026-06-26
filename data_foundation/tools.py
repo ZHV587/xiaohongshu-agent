@@ -16,6 +16,7 @@ from data_foundation.creation_memory import (
 from data_foundation.config import embedding_snapshot_for_version
 from data_foundation.db import connect
 from data_foundation.graph import expand_graph as expand_graph_query
+from data_foundation.outbox_requests import default_write_requests
 from data_foundation.permissions import actor_from_config, default_tenant_id
 from data_foundation.performance_feedback import (
     get_resource_performance_payload,
