@@ -1,15 +1,12 @@
-import { parsePartialJson } from "@langchain/core/output_parsers";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useStreamContext } from "@/providers/stream-context";
-import { AIMessage, Checkpoint, Message } from "@langchain/langgraph-sdk";
+import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { getContentString } from "../utils";
 import { BranchSwitcher, CommandBar } from "./shared";
 import { MarkdownText } from "../markdown-text";
 import { LoadExternalComponent } from "@langchain/langgraph-sdk/react-ui";
 import { cn } from "@/lib/utils";
-import { ToolCalls, ToolResult } from "./tool-calls";
-import { MessageContentComplex } from "@langchain/core/messages";
 import { Fragment } from "react/jsx-runtime";
 import { isAgentInboxInterruptSchema } from "@/lib/agent-inbox-interrupt";
 import { ThreadView } from "../agent-inbox";
@@ -19,6 +16,7 @@ import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { TopicCards } from "./topic-cards";
 import { CopyCard } from "./copy-card";
 import { resolveToolRender, ToolResultCards } from "@/lib/tool-render";
+import type { AssistantBlock } from "../types";
 import { LoaderCircle, ChevronDown } from "lucide-react";
 
 function CustomComponent({
@@ -47,30 +45,6 @@ function CustomComponent({
       ))}
     </Fragment>
   );
-}
-
-function parseAnthropicStreamedToolCalls(
-  content: MessageContentComplex[],
-): AIMessage["tool_calls"] {
-  const toolCallContents = content.filter((c) => c.type === "tool_use" && c.id);
-
-  return toolCallContents.map((tc) => {
-    const toolCall = tc as Record<string, any>;
-    let json: Record<string, any> = {};
-    if (toolCall?.input) {
-      try {
-        json = parsePartialJson(toolCall.input) ?? {};
-      } catch {
-        // Pass
-      }
-    }
-    return {
-      name: toolCall.name ?? "",
-      id: toolCall.id ?? "",
-      args: json,
-      type: "tool_call",
-    };
-  });
 }
 
 interface InterruptProps {
@@ -276,162 +250,144 @@ export function ThinkingAura({
 }
 
 
+/** 渲染一条 ai 文本消息的内容(选题/文案卡片、Markdown、流式占位、自定义 UI)。
+ *  每条 ai 消息独立渲染,绝不被同回合后续消息覆盖。 */
+function AiContent({ message }: { message: Message }) {
+  const thread = useStreamContext();
+  const contentString = getContentString(message.content ?? []);
+  if (!contentString.length) {
+    return <CustomComponent message={message} thread={thread} />;
+  }
+  return (
+    <>
+      <div className="flex flex-col gap-3 py-1">
+        {parseXhsBlocks(contentString).map((seg, i) => {
+          if (seg.kind === "topics") {
+            return (
+              <div key={i} className="flex flex-col gap-2 relative">
+                <TopicCards data={seg.data} />
+                {seg.isPending && (
+                  <div className="border border-border/60 bg-white/60 backdrop-blur-xs text-charcoal-light inline-flex w-fit items-center gap-2 rounded-xl px-3.5 py-2 text-xs shadow-xs animate-pulse">
+                    <LoaderCircle className="text-coral size-3.5 animate-spin" />
+                    <span>正在精炼选题规律...</span>
+                  </div>
+                )}
+              </div>
+            );
+          }
+          if (seg.kind === "copy") {
+            return (
+              <div key={i} className="flex flex-col gap-2 relative">
+                <CopyCard data={seg.data} />
+                {seg.isPending && (
+                  <div className="border border-border/60 bg-white/60 backdrop-blur-xs text-charcoal-light inline-flex w-fit items-center gap-2 rounded-xl px-3.5 py-2 text-xs shadow-xs animate-pulse">
+                    <LoaderCircle className="text-coral size-3.5 animate-spin" />
+                    <span>正在生成爆款文案排版...</span>
+                  </div>
+                )}
+              </div>
+            );
+          }
+          if (seg.kind === "pending") {
+            return (
+              <div
+                key={i}
+                className="border-border bg-card text-muted-foreground inline-flex w-fit items-center gap-2 rounded-xl border px-3.5 py-2 text-sm"
+              >
+                <LoaderCircle className="text-primary size-3.5 animate-spin" />
+                {seg.lang === "xhs_topics" ? "正在整理选题…" : "正在生成文案…"}
+              </div>
+            );
+          }
+          return <MarkdownText key={i}>{seg.text}</MarkdownText>;
+        })}
+      </div>
+      <CustomComponent message={message} thread={thread} />
+    </>
+  );
+}
+
 export function AssistantMessage({
-  message,
+  blocks = [],
   isLoading,
   handleRegenerate,
-  precedingTools = [],
   isThinkingOnly = false,
 }: {
-  message: Message | undefined;
+  blocks?: AssistantBlock[];
   isLoading: boolean;
   handleRegenerate: (parentCheckpoint: Checkpoint | null | undefined) => void;
-  precedingTools?: { id?: string; name: string; args?: any; result?: any }[];
   isThinkingOnly?: boolean;
 }) {
-  const content = message?.content ?? [];
-  const contentString = getContentString(content);
   const thread = useStreamContext();
-  const isLastMessage =
-    thread.messages[thread.messages.length - 1].id === message?.id;
+  const threadInterrupt = thread.interrupt;
   const hasNoAIOrToolMessages = !thread.messages.find(
     (m) => m.type === "ai" || m.type === "tool",
   );
-  const meta = message ? thread.getMessagesMetadata(message) : undefined;
-  const threadInterrupt = thread.interrupt;
 
+  // 操作区(分支切换/重生成/复制)绑定到回合内最后一条 ai 文本消息
+  const aiMessages = blocks
+    .filter((b): b is { kind: "ai"; message: Message } => b.kind === "ai")
+    .map((b) => b.message);
+  const primary = aiMessages.length ? aiMessages[aiMessages.length - 1] : undefined;
+  const meta = primary ? thread.getMessagesMetadata(primary) : undefined;
   const parentCheckpoint = meta?.firstSeenState?.parent_checkpoint;
-  const anthropicStreamedToolCalls = Array.isArray(content)
-    ? parseAnthropicStreamedToolCalls(content)
-    : undefined;
+  const primaryContent = primary ? getContentString(primary.content ?? []) : "";
+  const isLastMessage = primary
+    ? thread.messages[thread.messages.length - 1]?.id === primary.id
+    : false;
 
-  const hasToolCalls =
-    message &&
-    "tool_calls" in message &&
-    message.tool_calls &&
-    message.tool_calls.length > 0;
-  const toolCallsHaveContents =
-    hasToolCalls &&
-    message.tool_calls?.some(
-      (tc) => tc.args && Object.keys(tc.args).length > 0,
-    );
-  const hasAnthropicToolCalls = !!anthropicStreamedToolCalls?.length;
-  const isToolResult = message?.type === "tool";
+  // 最后一个 tools 块在仍加载且本回合还没出文本时显示"运行中"
+  const lastBlockIdx = blocks.length - 1;
 
   return (
     <div className="group mr-auto flex w-full items-start gap-2">
       <div className="flex w-full flex-col gap-2">
-        {precedingTools && precedingTools.length > 0 && (
-          <ThinkingAura
-            toolCalls={precedingTools}
-            status={isThinkingOnly && isLoading ? "running" : "done"}
-          />
+        {blocks.map((block, i) => {
+          if (block.kind === "tools") {
+            const running = isThinkingOnly && isLoading && i === lastBlockIdx;
+            return (
+              <Fragment key={`tools-${i}`}>
+                <ThinkingAura
+                  toolCalls={block.tools}
+                  status={running ? "running" : "done"}
+                />
+                {/* 工具富卡片(搜索发现等):注册表驱动,与思考链同位、流式/完成都展示 */}
+                <ToolResultCards tools={block.tools} />
+              </Fragment>
+            );
+          }
+          return (
+            <AiContent key={block.message.id || `ai-${i}`} message={block.message} />
+          );
+        })}
+
+        <Interrupt
+          interrupt={threadInterrupt}
+          isLastMessage={isLastMessage}
+          hasNoAIOrToolMessages={hasNoAIOrToolMessages}
+        />
+
+        {primary && (
+          <div
+            className={cn(
+              "mr-auto flex items-center gap-2 transition-opacity",
+              "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
+            )}
+          >
+            <BranchSwitcher
+              branch={meta?.branch}
+              branchOptions={meta?.branchOptions}
+              onSelect={(branch) => thread.setBranch(branch)}
+              isLoading={isLoading}
+            />
+            <CommandBar
+              content={primaryContent}
+              isLoading={isLoading}
+              isAiMessage={true}
+              handleRegenerate={() => handleRegenerate(parentCheckpoint)}
+            />
+          </div>
         )}
-
-        {/* 工具富卡片(搜索发现等):注册表驱动,独立于思考链,流式/完成都展示 */}
-        <ToolResultCards tools={precedingTools} />
-
-        {!isThinkingOnly && (
-          isToolResult ? (
-          <>
-            <ToolResult message={message} />
-            <Interrupt
-              interrupt={threadInterrupt}
-              isLastMessage={isLastMessage}
-              hasNoAIOrToolMessages={hasNoAIOrToolMessages}
-            />
-          </>
-        ) : (
-          <>
-            {contentString.length > 0 && (
-              <div className="flex flex-col gap-3 py-1">
-                {parseXhsBlocks(contentString).map((seg, i) => {
-                  if (seg.kind === "topics") {
-                    return (
-                      <div key={i} className="flex flex-col gap-2 relative">
-                        <TopicCards data={seg.data} />
-                        {seg.isPending && (
-                          <div className="border border-border/60 bg-white/60 backdrop-blur-xs text-charcoal-light inline-flex w-fit items-center gap-2 rounded-xl px-3.5 py-2 text-xs shadow-xs animate-pulse">
-                            <LoaderCircle className="text-coral size-3.5 animate-spin" />
-                            <span>正在精炼选题规律...</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-                  if (seg.kind === "copy") {
-                    return (
-                      <div key={i} className="flex flex-col gap-2 relative">
-                        <CopyCard data={seg.data} />
-                        {seg.isPending && (
-                          <div className="border border-border/60 bg-white/60 backdrop-blur-xs text-charcoal-light inline-flex w-fit items-center gap-2 rounded-xl px-3.5 py-2 text-xs shadow-xs animate-pulse">
-                            <LoaderCircle className="text-coral size-3.5 animate-spin" />
-                            <span>正在生成爆款文案排版...</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-                  if (seg.kind === "pending") {
-                    return (
-                      <div
-                        key={i}
-                        className="border-border bg-card text-muted-foreground inline-flex w-fit items-center gap-2 rounded-xl border px-3.5 py-2 text-sm"
-                      >
-                        <LoaderCircle className="text-primary size-3.5 animate-spin" />
-                        {seg.lang === "xhs_topics" ? "正在整理选题…" : "正在生成文案…"}
-                      </div>
-                    );
-                  }
-                  return <MarkdownText key={i}>{seg.text}</MarkdownText>;
-                })}
-              </div>
-            )}
-
-            <>
-              {(hasToolCalls && toolCallsHaveContents && (
-                <ToolCalls toolCalls={message.tool_calls} />
-              )) ||
-                (hasAnthropicToolCalls && (
-                  <ToolCalls toolCalls={anthropicStreamedToolCalls} />
-                )) ||
-                (hasToolCalls && (
-                  <ToolCalls toolCalls={message.tool_calls} />
-                ))}
-            </>
-
-            {message && (
-              <CustomComponent
-                message={message}
-                thread={thread}
-              />
-            )}
-            <Interrupt
-              interrupt={threadInterrupt}
-              isLastMessage={isLastMessage}
-              hasNoAIOrToolMessages={hasNoAIOrToolMessages}
-            />
-            <div
-              className={cn(
-                "mr-auto flex items-center gap-2 transition-opacity",
-                "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
-              )}
-            >
-              <BranchSwitcher
-                branch={meta?.branch}
-                branchOptions={meta?.branchOptions}
-                onSelect={(branch) => thread.setBranch(branch)}
-                isLoading={isLoading}
-              />
-              <CommandBar
-                content={contentString}
-                isLoading={isLoading}
-                isAiMessage={true}
-                handleRegenerate={() => handleRegenerate(parentCheckpoint)}
-              />
-            </div>
-          </>
-        ))}
       </div>
     </div>
   );

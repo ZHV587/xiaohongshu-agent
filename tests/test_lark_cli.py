@@ -269,35 +269,3 @@ def test_lark_cli_generic_exception(mock_run):
     res = lark_cli.func("im status")
     assert "Error executing Lark CLI" in res
     assert "Binary not found" in res
-
-def test_auto_update_lark_cli():
-    with patch("threading.Thread") as mock_thread, \
-         patch("tools.lark_cli.subprocess.run") as mock_run:
-        
-        mock_thread_instance = MagicMock()
-        mock_thread.return_value = mock_thread_instance
-        
-        from tools.lark_cli import auto_update_lark_cli
-        auto_update_lark_cli()
-        
-        mock_thread.assert_called_once()
-        args, kwargs = mock_thread.call_args
-        assert kwargs.get("daemon") is True
-        mock_thread_instance.start.assert_called_once()
-
-def test_run_lark_cli_update_success():
-    from tools.lark_cli import _run_lark_cli_update
-    with patch("tools.lark_cli.subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = "[OK] lark-cli is up to date"
-        mock_run.return_value.stderr = ""
-        
-        _run_lark_cli_update()
-        
-        mock_run.assert_called_once_with(
-            ["lark-cli", "update"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            shell=True
-        )

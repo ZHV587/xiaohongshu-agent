@@ -186,7 +186,6 @@ def test_content_rubric_activator_registered_immediately_after_rubric(monkeypatc
         return real_create(*args, **kwargs)
 
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
     deepagents.create_deep_agent = _capturing_create_deep_agent
     try:
         import agent as agent_module
@@ -202,7 +201,6 @@ def test_content_rubric_activator_registered_immediately_after_rubric(monkeypatc
 
 def test_agent_exposes_shared_model_registry(monkeypatch):
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import agent as agent_mod
@@ -223,7 +221,6 @@ def test_agent_exposes_shared_model_registry(monkeypatch):
 
 def test_agent_registers_data_foundation_tools(monkeypatch):
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import agent as agent_module
@@ -259,7 +256,6 @@ def test_agent_does_not_expose_raw_feishu_readers(monkeypatch):
         return real_create(*args, **kwargs)
 
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
     deepagents.create_deep_agent = _capturing_create_deep_agent
     try:
         import agent as agent_module
@@ -276,7 +272,6 @@ def test_agent_does_not_expose_raw_feishu_readers(monkeypatch):
 
 def test_agent_registers_feishu_action_tools(monkeypatch):
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import agent as agent_module
@@ -299,7 +294,6 @@ def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
         return real_create(*args, **kwargs)
 
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
     deepagents.create_deep_agent = _capturing_create_deep_agent
     try:
         import agent as agent_module
@@ -319,7 +313,6 @@ def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
 
 def test_agent_does_not_import_scheduler_daemon_entrypoint(monkeypatch):
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import data_foundation.scheduler as scheduler
@@ -335,32 +328,23 @@ def test_agent_does_not_import_scheduler_daemon_entrypoint(monkeypatch):
     assert not hasattr(scheduler, "start_background_services")
 
 
-def test_agent_import_does_not_update_lark_adapters(monkeypatch):
-    """导入 agent 不应触发飞书适配器的自更新。"""
-    import importlib
-    import sys
+def test_lark_adapter_auto_update_functions_are_gone(monkeypatch):
+    """禁止恢复运行时/导入期的飞书适配器自更新。
 
+    历史:agent.py 启动期曾调用 auto_update_lark_skills()/auto_update_lark_cli(),
+    后经 b91f034 删调用点(import 须无网络副作用)。这两个函数 + lark-cli update 后台
+    更新均为死代码,且复活会破坏两条铁律:
+    - auto_update_lark_skills 写镜像烘焙路径(容器重建即丢)且拉 main 与钉死 CLI 错配;
+    - auto_update_lark_cli/lark-cli update 升级二进制会打穿专门适配 v1.0.58 的鉴权层。
+    skill 同版同步改由显式脚本 scripts/sync_lark_skills.py 在源码层完成(build 前提交)。
+    本测试钉死这三个函数不得重新出现在 tools.lark_cli。
+    """
     import tools.lark_cli as lark_cli
 
-    update_calls = []
-
-    def _record_update(name):
-        def _update():
-            update_calls.append(name)
-
-        return _update
-
-    _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "false")
-    monkeypatch.setattr(lark_cli, "auto_update_lark_skills", _record_update("skills"))
-    monkeypatch.setattr(lark_cli, "auto_update_lark_cli", _record_update("cli"))
-    monkeypatch.delitem(sys.modules, "agent", raising=False)
-
-    import agent as agent_module
-
-    importlib.reload(agent_module)
-
-    assert update_calls == []
+    for forbidden in ("auto_update_lark_skills", "auto_update_lark_cli", "_run_lark_cli_update"):
+        assert not hasattr(lark_cli, forbidden), (
+            f"{forbidden} 已废弃,不得恢复:见 scripts/sync_lark_skills.py 的同版同步方案"
+        )
 
 
 def test_agent_registers_executor_subagents(monkeypatch):
@@ -370,7 +354,6 @@ def test_agent_registers_executor_subagents(monkeypatch):
     落库/同步由主控用工具直调。
     """
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import deepagents
@@ -401,7 +384,6 @@ def test_knowledge_retriever_subagent_has_evidence_response_format(monkeypatch):
     落库/同步由主控直调工具,不再有 topic-generator/copy-generator/state-manager。
     """
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import deepagents
@@ -434,7 +416,6 @@ def test_knowledge_retriever_subagent_has_evidence_response_format(monkeypatch):
 def test_knowledge_retriever_subagent_uses_data_foundation_retrieval_tools(monkeypatch):
     """知识检索子智能体必须复用底层检索能力,不能另起一套数据通道。"""
     _set_assembly_env(monkeypatch)
-    monkeypatch.setenv("DISABLE_AUTO_UPDATE", "true")
 
     import importlib
     import deepagents

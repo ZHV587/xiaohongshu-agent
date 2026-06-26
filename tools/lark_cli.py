@@ -1,7 +1,6 @@
 import os
 import shlex
 import subprocess
-import urllib.request
 import logging
 import threading
 import platform
@@ -13,38 +12,11 @@ from tools.uat_store import get_uat
 
 logger = logging.getLogger(__name__)
 
-def auto_update_lark_skills():
-    """从飞书 CLI 官方仓库自动下载最新的 SKILL.md 文件并覆盖本地。
-    支持超时和网络异常降级，不阻塞服务/命令行启动。
-    """
-    skills = ["lark-shared", "lark-im", "lark-base"]
-    base_url = "https://raw.githubusercontent.com/larksuite/cli/main/skills/{}/SKILL.md"
-    # tools/lark_cli.py 的父目录即项目根目录
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    for skill in skills:
-        target_dir = os.path.join(project_root, ".agents", "skills", skill)
-        os.makedirs(target_dir, exist_ok=True)
-        target_file = os.path.join(target_dir, "SKILL.md")
-        url = base_url.format(skill)
-        try:
-            # 使用 urllib 发起请求，设置 3 秒超时
-            with urllib.request.urlopen(url, timeout=3.0) as response:
-                content = response.read()
-                if content:
-                    existing_content = b""
-                    if os.path.exists(target_file):
-                        with open(target_file, "rb") as f:
-                            existing_content = f.read()
-                    if content != existing_content:
-                        with open(target_file, "wb") as f:
-                            f.write(content)
-                        logger.info(f"Successfully auto-updated skill {skill} from GitHub.")
-                    else:
-                        logger.info(f"Skill {skill} is already up to date. Skipping write to prevent watchfiles reload.")
-        except Exception as e:
-            # 异常静默降级，使用本地缓存文件，不阻塞进程启动
-            logger.warning(f"Failed to auto-update skill {skill} (using local cached file): {e}")
+# lark skill 文件(lark-base/im/shared)与 lark-cli 二进制一同在**镜像构建期**从
+# larksuite/cli 的 v1.0.58 tag 拉取并烘焙进镜像(见 langgraph.json dockerfile_lines),
+# 与钉死的 CLI 同版,绝不运行时自更新。运行时改写烘焙路径既违反不可变镜像(容器重建即丢)、
+# 又会让 skill 漂移到与钉死 CLI 不配套的上游版本。升级走"改 langgraph.json 的版本 pin
+# → langgraph build → docker compose up -d --build",CLI 与 skill 原子同升、可审计可回滚。
 
 _IS_WINDOWS = platform.system() == "Windows"
 
@@ -305,30 +277,3 @@ def lark_cli(command: str, yes: bool = False, config: RunnableConfig = None) -> 
         return output[:10 * 1024 * 1024] + "\n... (truncated due to excessive size)"
     return output
 
-
-def _run_lark_cli_update():
-    """在后台线程中执行 lark-cli update"""
-    logger.info("Starting background check and update for lark-cli...")
-    try:
-        # 在 Windows 上使用 shell=True 保证能识别全局 npm 包装路径
-        result = subprocess.run(
-            ["lark-cli", "update"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            shell=True
-        )
-        if result.returncode == 0:
-            logger.info(f"lark-cli background update completed: {result.stdout.strip()}")
-        else:
-            logger.warning(f"lark-cli background update returned non-zero code {result.returncode}: {result.stderr.strip()}")
-    except subprocess.TimeoutExpired:
-        logger.warning("lark-cli background update timed out after 60 seconds.")
-    except Exception as e:
-        logger.warning(f"Failed to auto-update lark-cli in background: {e}")
-
-
-def auto_update_lark_cli():
-    """启动后台守护线程自动更新 lark-cli"""
-    thread = threading.Thread(target=_run_lark_cli_update, daemon=True)
-    thread.start()

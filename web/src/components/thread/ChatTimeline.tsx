@@ -18,7 +18,7 @@ import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { BRAND } from "@/lib/brand";
 import { useThread } from "./ThreadContext";
-import { MessageGroup } from "./types";
+import { MessageGroup, AssistantBlock, ToolEntry } from "./types";
 import { ComposerPanel } from "./ComposerPanel";
 
 const DO_NOT_RENDER_ID_PREFIX = "do-not-render-";
@@ -27,81 +27,82 @@ function groupMessages(messages: Message[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   let currentGroup: MessageGroup | null = null;
 
+  const startAssistant = (msg: Message) => {
+    if (currentGroup) groups.push(currentGroup);
+    currentGroup = {
+      id: msg.id || Math.random().toString(),
+      type: "assistant",
+      blocks: [],
+    };
+  };
+
+  // 取末尾 tools 块复用(保持连续工具活动聚合在同一思考链);末尾不是 tools 则新建
+  const trailingToolsBlock = (): ToolEntry[] => {
+    const blocks = currentGroup!.blocks!;
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === "tools") return last.tools;
+    const tools: ToolEntry[] = [];
+    blocks.push({ kind: "tools", tools });
+    return tools;
+  };
+
+  // 跨所有 tools 块按 tool_call_id 找,回填结果到正确步骤(支持交错)
+  const findToolById = (id?: string): ToolEntry | undefined => {
+    if (!id || !currentGroup?.blocks) return undefined;
+    for (const b of currentGroup.blocks) {
+      if (b.kind === "tools") {
+        const hit = b.tools.find((t) => t.id === id);
+        if (hit) return hit;
+      }
+    }
+    return undefined;
+  };
+
   for (const msg of messages) {
     if (msg.id?.startsWith(DO_NOT_RENDER_ID_PREFIX)) {
       continue;
     }
 
     if (msg.type === "human") {
-      if (currentGroup) {
-        groups.push(currentGroup);
-      }
+      if (currentGroup) groups.push(currentGroup);
       currentGroup = {
         id: msg.id || Math.random().toString(),
         type: "human",
         humanMessage: msg,
       };
     } else if (msg.type === "ai") {
-      const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
+      const hasToolCalls = !!(msg.tool_calls && msg.tool_calls.length > 0);
       const textContent = typeof msg.content === "string" ? msg.content : "";
+      const hasText = textContent.trim().length > 0;
 
+      if (!currentGroup || currentGroup.type !== "assistant") {
+        startAssistant(msg);
+      }
+
+      // 文本先入块(reasoning 在前),保证每条 ai 文本独立、永不被覆盖
+      if (hasText || !hasToolCalls) {
+        currentGroup!.blocks!.push({ kind: "ai", message: msg });
+      }
+
+      // 工具调用聚合进(文本之后的)tools 块
       if (hasToolCalls) {
-        if (!currentGroup || currentGroup.type !== "assistant") {
-          if (currentGroup) {
-            groups.push(currentGroup);
-          }
-          currentGroup = {
-            id: msg.id || Math.random().toString(),
-            type: "assistant",
-            toolCalls: [],
-          };
-        }
-        currentGroup.toolCalls = currentGroup.toolCalls || [];
+        const tools = trailingToolsBlock();
         msg.tool_calls!.forEach((tc) => {
-          if (!currentGroup!.toolCalls!.some((item) => item.id === tc.id)) {
-            currentGroup!.toolCalls!.push({
-              id: tc.id,
-              name: tc.name,
-              args: tc.args,
-            });
+          if (!tools.some((item) => item.id === tc.id)) {
+            tools.push({ id: tc.id, name: tc.name, args: tc.args });
           }
         });
       }
-
-      if (textContent.trim().length > 0 || !hasToolCalls) {
-        if (!currentGroup || currentGroup.type !== "assistant") {
-          if (currentGroup) {
-            groups.push(currentGroup);
-          }
-          currentGroup = {
-            id: msg.id || Math.random().toString(),
-            type: "assistant",
-          };
-        }
-        currentGroup.aiMessage = msg;
-        currentGroup.isThinkingOnly = false;
-      }
     } else if (msg.type === "tool") {
       if (!currentGroup || currentGroup.type !== "assistant") {
-        if (currentGroup) {
-          groups.push(currentGroup);
-        }
-        currentGroup = {
-          id: msg.id || Math.random().toString(),
-          type: "assistant",
-          toolCalls: [],
-        };
+        startAssistant(msg);
       }
-      currentGroup.toolCalls = currentGroup.toolCalls || [];
-      const toolCallId = msg.tool_call_id;
-      const existingCall = currentGroup.toolCalls.find(
-        (tc) => tc.id === toolCallId,
-      );
-      if (existingCall) {
-        existingCall.result = msg.content;
+      const existing = findToolById(msg.tool_call_id);
+      if (existing) {
+        existing.result = msg.content;
       } else {
-        currentGroup.toolCalls.push({
-          id: toolCallId,
+        trailingToolsBlock().push({
+          id: msg.tool_call_id,
           name: msg.name || "unknown",
           result: msg.content,
         });
@@ -110,7 +111,10 @@ function groupMessages(messages: Message[]): MessageGroup[] {
   }
 
   if (currentGroup) {
-    if (currentGroup.type === "assistant" && !currentGroup.aiMessage) {
+    if (
+      currentGroup.type === "assistant" &&
+      !currentGroup.blocks?.some((b) => b.kind === "ai")
+    ) {
       currentGroup.isThinkingOnly = true;
     }
     groups.push(currentGroup);
@@ -252,10 +256,9 @@ export function ChatTimeline() {
                 ) : (
                   <AssistantMessage
                     key={group.id}
-                    message={group.aiMessage}
+                    blocks={group.blocks}
                     isLoading={isLoading}
                     handleRegenerate={handleRegenerate}
-                    precedingTools={group.toolCalls}
                     isThinkingOnly={group.isThinkingOnly}
                   />
                 );
@@ -263,7 +266,6 @@ export function ChatTimeline() {
               {hasNoAIOrToolMessages && !!stream.interrupt && (
                 <AssistantMessage
                   key="interrupt-msg"
-                  message={undefined}
                   isLoading={isLoading}
                   handleRegenerate={handleRegenerate}
                 />
