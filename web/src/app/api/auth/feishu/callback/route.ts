@@ -23,6 +23,21 @@ function getActualOrigin(req: NextRequest): string {
   return `${protocol}://${actualHost}`;
 }
 
+// cookie Secure 标志须按**实际对外协议**判定,而非 req.nextUrl.protocol —— 部署里 TLS 在上游
+// 终止、到达 Next 的是明文 http,用 req.nextUrl.protocol 会让 7 天身份 JWT 不带 Secure、可被嗅探。
+function isSecureRequest(req: NextRequest): boolean {
+  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.startsWith("https:");
+  return (req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "")) === "https";
+}
+
+// 只接受站内绝对路径,挡掉开放重定向:"/foo" 放行;"//evil.com"(协议相对)、"/\evil.com"、
+// 含控制字符的一律退回 "/"。否则认证后可被跳到钓鱼站。
+function safeNextPath(value: string | undefined): string {
+  if (!value || !value.startsWith("/")) return "/";
+  if (value.startsWith("//") || value.startsWith("/\\")) return "/";
+  return value;
+}
+
 function fail(req: NextRequest, msg: string) {
   // 失败时回首页并带上错误,前端可 toast 提示。
   const origin = getActualOrigin(req);
@@ -48,7 +63,7 @@ export async function GET(req: NextRequest) {
 
   const [savedState, savedNext] = stateCookie.split("|");
   if (state !== savedState) return fail(req, "state 校验失败，请重试");
-  const next = savedNext && savedNext.startsWith("/") ? savedNext : "/";
+  const next = safeNextPath(savedNext);
 
   // 1) 授权码换 user_access_token(v2 接口,JSON 体)
   let userToken: string;
@@ -137,7 +152,7 @@ export async function GET(req: NextRequest) {
   res.cookies.set(AUTH_COOKIE, jwt, {
     httpOnly: true,
     sameSite: "strict",
-    secure: req.nextUrl.protocol === "https:",
+    secure: isSecureRequest(req),
     maxAge: 7 * 24 * 3600,
     path: "/",
   });

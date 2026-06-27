@@ -165,16 +165,30 @@ def test_no_active_index_always_keyword_fallback(query):
 
 
 def test_rank_evidence_tolerates_non_numeric_metrics():
-    """P2 回归:performance_metric 含字符串等脏值(如 "1.2万")时,rank_evidence 不得崩,
-    脏值按 0 计、排序照常完成。"""
+    """回归:performance_metric 含真正不可解析的脏值(None/乱码)时,rank_evidence 不得崩,
+    脏值按 0 计、排序照常完成。(带单位的 "1.2万" 现在会被正确解析,见 test_rank_evidence_parses_unit_metrics。)"""
     items = _items([0.9, 0.8])
     dirty_perf = {
-        "r0": [{"metrics": {"likes": "1.2万", "collects": None, "comments": "abc"}}],
+        "r0": [{"metrics": {"likes": "乱码", "collects": None, "comments": "abc"}}],
         "r1": [{"metrics": {"likes": 100, "collects": 5, "comments": 2}}],
     }
     ranked = rank_evidence("default", items, performance_data=dirty_perf, limit=10, score_kind="cosine")
     assert len(ranked) == 2  # 没崩
     by_id = {r["resource_id"]: r for r in ranked}
-    # r0 脏值按 0 计 → performance 信号为 0;r1 正常数值 → performance 信号 > 0
+    # r0 全脏值 → performance 信号为 0;r1 正常数值 → performance 信号 > 0
     assert by_id["r0"]["rank_signals"]["performance"] == 0.0
     assert by_id["r1"]["rank_signals"]["performance"] > 0.0
+
+
+def test_rank_evidence_parses_unit_metrics():
+    """C-2 回归:带中文单位的爆款数值("1.2万")必须被正确解析为大数,贡献高 performance 信号,
+    而非旧行为里被丢成 0(导致爆款效果排序反转)。"""
+    items = _items([0.9, 0.9])
+    perf = {
+        "r0": [{"metrics": {"likes": "1.2万"}}],   # 爆款:12000
+        "r1": [{"metrics": {"likes": "8000"}}],     # 平庸:8000
+    }
+    ranked = rank_evidence("default", items, performance_data=perf, limit=10, score_kind="cosine")
+    by_id = {r["resource_id"]: r for r in ranked}
+    # 爆款(万级)的 performance 信号必须 > 平庸笔记,而非被丢成 0 反转
+    assert by_id["r0"]["rank_signals"]["performance"] > by_id["r1"]["rank_signals"]["performance"]

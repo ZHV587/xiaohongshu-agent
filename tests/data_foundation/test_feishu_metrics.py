@@ -32,6 +32,14 @@ def test_missing_and_empty_and_invalid_columns_skipped():
     assert metrics == {"likes": 50}  # 空/非数值/负值均跳过
 
 
+def test_chinese_unit_counts_parsed_not_dropped():
+    """C-2 回归:抓取来的爆款表常把点赞存成 "1.2万"/"10w+" 文本,必须解析为大数而非丢弃 ——
+    否则最高价值的爆款效果分被丢成缺失,排序反转。"""
+    fields = {"点赞数": "1.2万", "收藏数": "10w+", "评论数": "999+", "转发数": "1,234"}
+    metrics = extract_performance_metrics(_WHITELIST_TABLE, "🧲单篇采集库", fields)
+    assert metrics == {"likes": 12000, "collects": 100000, "comments": 999, "shares": 1234}
+
+
 def test_all_columns_absent_returns_none():
     assert extract_performance_metrics(_WHITELIST_TABLE, "x", {"标题": "t", "正文": "b"}) is None
     assert extract_performance_metrics(_WHITELIST_TABLE, "x", {}) is None

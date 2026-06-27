@@ -59,7 +59,10 @@ def semantic_search(
         actor_open_id=actor_open_id,
         embedding=embedding,
         embedding_model=embedding_model,
-        top_k=min(max(int(top_k), 1), 20),
+        # 上限 100(不是 20):工具层传 top_k*5 做去重 + rerank 的候选头寸,若这里砍回 20,
+        # top_k≥4 时 5× over-fetch 完全失效、去重后欠填。工具层已对**最终**结果另做 [1,20] clamp,
+        # 这里只约束候选池规模,放到 100 让 over-fetch 真正生效,同时仍有界。
+        top_k=min(max(int(top_k), 1), 100),
     )
     best_by_resource: dict[str, ResourceSearchResult] = {}
     for row in rows:

@@ -10,8 +10,9 @@
 """
 from __future__ import annotations
 
-import math
 from typing import Any
+
+from data_foundation.metric_parse import parse_count
 
 # 笔记级表 id 白名单(按 table_id 精确匹配,不依赖易变中文表名)。
 # 仅这些表的记录抽取笔记效果;评论级/词库/选题分类等表不抽。
@@ -35,22 +36,13 @@ COLUMN_TO_METRIC: dict[str, str] = {
 
 
 def _coerce_non_negative_number(value: Any) -> int | float | None:
-    """把飞书字段值解析为有限非负数;不可解析/负值/非数值 → None(跳过该 metric)。"""
-    if isinstance(value, bool):  # bool 是 int 子类,显式排除避免 True→1
-        return None
-    if isinstance(value, (int, float)):
-        number = float(value)
-    elif isinstance(value, str):
-        text = value.strip().replace(",", "")
-        if not text:
-            return None
-        try:
-            number = float(text)
-        except ValueError:
-            return None
-    else:
-        return None
-    if not math.isfinite(number) or number < 0:
+    """把飞书字段值解析为有限非负数;不可解析/负值/非数值 → None(跳过该 metric)。
+
+    经 parse_count 统一处理,支持 "1.2万"/"10w+" 等中文计数单位(否则爆款数值被丢成 None,
+    效果排序对最高价值笔记反转)。整数值返回 int 以保持既有写入形态。
+    """
+    number = parse_count(value)
+    if number is None:
         return None
     return int(number) if number.is_integer() else number
 

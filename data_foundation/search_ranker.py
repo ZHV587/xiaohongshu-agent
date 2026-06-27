@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any
 
+from data_foundation.metric_parse import parse_count
+
 # 绝对相关度下限闸门默认值(仅作用于语义/余弦路径)。
 # 经验依据(生产实测,租户 default,Qwen3-Embedding-4B):
 #   - 相关查询"护肤"(语料内)加前缀后 top 余弦 ≈ 0.65
@@ -31,18 +33,14 @@ _VALID_SCORE_KINDS = {"cosine", "bm25"}
 
 
 def _safe_float(value: Any) -> float:
-    """把 metrics 值安全转 float;非数值(字符串如 "1.2万"、None、畸形)一律按 0 计。
+    """把 metrics 值安全转 float;非数值/负值一律按 0 计,支持 "1.2万"/"10w+" 等单位。
 
-    历史迁移/手工写入的 performance_metric 可能含非数值,直接 float() 会抛 ValueError
-    把整个 rank_evidence 排序拖崩。这里吞掉转换失败,保证脏数据不中断检索。
+    历史迁移/手工写入的 performance_metric 可能含非数值或带单位文本,直接 float() 会抛 ValueError
+    把整个 rank_evidence 排序拖崩,或把 "1.2万" 当 0 反转爆款效果分。经 metric_parse.parse_count
+    统一解析(与 ingestion 同一口径),解析失败按 0 计,保证脏数据不中断检索。
     """
-    if isinstance(value, bool):  # bool 是 int 子类,显式排除以免 True→1.0 误计
-        return 0.0
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return result if math.isfinite(result) else 0.0
+    number = parse_count(value)
+    return number if number is not None else 0.0
 
 
 def _relevance_score(raw: float, score_kind: str, max_raw_score: float) -> float:

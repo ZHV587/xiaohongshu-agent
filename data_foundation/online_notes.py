@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 from typing import Any
 
+from data_foundation.metric_parse import parse_count_int
 from data_foundation.outbox_requests import default_write_requests
 from data_foundation.performance_feedback import save_performance_metric_resource
 
@@ -29,11 +30,8 @@ def find_adopted_note_ids(repo: Any, *, tenant_id: str, note_ids: list[str]) -> 
 
 
 def _clean_int(value: Any) -> int:
-    try:
-        number = int(float(value))
-    except (TypeError, ValueError):
-        return 0
-    return number if number > 0 else 0
+    # 经 parse_count_int 统一解析,支持 "1.2万"/"10w+" 等单位(线上笔记效果指标)。
+    return parse_count_int(value)
 
 
 def _metrics_from_note(note: dict[str, Any]) -> dict[str, int]:

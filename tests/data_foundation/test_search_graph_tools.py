@@ -138,7 +138,7 @@ def test_search_result_metadata_distinguishes_source_and_index_freshness():
     assert "updated_at" not in result.metadata
 
 
-@pytest.mark.parametrize(("requested", "expected"), [(-2, 1), (0, 1), (8, 8), (99, 20)])
+@pytest.mark.parametrize(("requested", "expected"), [(-2, 1), (0, 1), (8, 8), (99, 99), (150, 100)])
 def test_semantic_search_clamps_limit(requested, expected):
     repo = _FakeRepository()
 

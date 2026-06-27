@@ -19,13 +19,30 @@ def test_ensure_index_sets_filterable_and_searchable():
 def test_upsert_document_uses_resource_id_as_primary_key():
     client = MagicMock()
     idx = _index_with(client)
+    index = client.index.return_value
+    index.add_documents.return_value = MagicMock(task_uid=7)
+    index.wait_for_task.return_value = MagicMock(status="succeeded")
     idx.upsert({"resource_id": "r1", "tenant_id": "default", "type": "feishu_base_record",
                 "title": "t", "summary": None, "content_text": "body"})
-    index = client.index.return_value
     args, kwargs = index.add_documents.call_args
     assert args[0] == [{"resource_id": "r1", "tenant_id": "default", "type": "feishu_base_record",
                         "title": "t", "summary": None, "content_text": "body"}]
     assert kwargs.get("primary_key") == "resource_id"
+    # C-1:必须等待 Meili 任务终态(否则 outbox 在文档实际入库前就被标 succeeded)
+    index.wait_for_task.assert_called_once_with(7, timeout_in_ms=30000)
+
+
+def test_upsert_raises_when_meili_task_not_succeeded():
+    """C-1 回归:Meili 端任务失败时 upsert 必须抛出,让 outbox 重试,而非假性 succeeded。"""
+    import pytest
+    client = MagicMock()
+    idx = _index_with(client)
+    index = client.index.return_value
+    index.add_documents.return_value = MagicMock(task_uid=9)
+    index.wait_for_task.return_value = MagicMock(status="failed", error={"code": "x"})
+    with pytest.raises(RuntimeError):
+        idx.upsert({"resource_id": "r1", "tenant_id": "default", "type": "t",
+                    "title": "t", "summary": None, "content_text": "b"})
 
 
 def test_search_returns_id_score_pairs_with_tenant_filter():

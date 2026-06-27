@@ -49,7 +49,18 @@ class MeiliResourceIndex:
         index.update_searchable_attributes(self.SEARCHABLE)
 
     def upsert(self, document: dict[str, Any]) -> None:
-        self.client.index(self.index_uid).add_documents([document], primary_key="resource_id")
+        # add_documents 是**异步入队**:返回 TaskInfo 即返回,Meili 端任务可能稍后才应用甚至失败。
+        # 若不等待,outbox 会在文档实际入库前就被标 succeeded —— 任务失败时 PG 说成功、Meili 里没有,
+        # 且无 reconcile 重推 → 永久静默空洞。故等任务终态并校验,失败抛出让 outbox 重试。
+        index = self.client.index(self.index_uid)
+        info = index.add_documents([document], primary_key="resource_id")
+        task = index.wait_for_task(info.task_uid, timeout_in_ms=30000)
+        status = getattr(task, "status", None)
+        if status != "succeeded":
+            raise RuntimeError(
+                f"Meili add_documents task not succeeded: status={status} "
+                f"error={getattr(task, 'error', None)}"
+            )
 
     def search(self, query: str, *, tenant_id: str, limit: int) -> list[tuple[str, float]]:
         # showRankingScore:让 Meili 返回 _rankingScore(0~1 归一化相关度),

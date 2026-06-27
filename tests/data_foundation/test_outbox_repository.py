@@ -53,6 +53,33 @@ def test_enqueue_is_idempotent(migrated_conn):
     assert migrated_conn.execute("select count(*) from resource_outbox").fetchone()["count"] == 1
 
 
+def test_requeue_succeeded_resets_only_given_topics(migrated_conn):
+    """C-1 恢复入口:引擎数据卷丢失后,把 meili/graph 已 succeeded 的行重置回 pending 重推,
+    且不碰其他 topic(embedding 走自己的 reconcile)与非 succeeded 行。"""
+    repo = OutboxRepository(migrated_conn)
+    meili = repo.enqueue(tenant_id="t1", topic="meili_index", dedupe_key="m1", payload={})
+    graph = repo.enqueue(tenant_id="t1", topic="graph_ingest", dedupe_key="g1", payload={})
+    emb = repo.enqueue(tenant_id="t1", topic="embedding_generate", dedupe_key="e1", payload={})
+    pending_meili = repo.enqueue(tenant_id="t1", topic="meili_index", dedupe_key="m2", payload={})
+    # 把前三个标 succeeded,第四个保持 pending
+    for item in (meili, graph, emb):
+        migrated_conn.execute(
+            "update resource_outbox set status='succeeded' where id=%s", (item.id,)
+        )
+
+    n = repo.requeue_succeeded(topics=["meili_index", "graph_ingest"])
+
+    assert n == 2  # 只重置 meili+graph 的 succeeded,不含 embedding
+    def status(i):
+        return migrated_conn.execute(
+            "select status from resource_outbox where id=%s", (i,)
+        ).fetchone()["status"]
+    assert status(meili.id) == "pending"
+    assert status(graph.id) == "pending"
+    assert status(emb.id) == "succeeded"      # 其他 topic 不动
+    assert status(pending_meili.id) == "pending"  # 本就 pending,不受影响
+
+
 def test_same_dedupe_key_can_exist_in_different_tenants(migrated_conn):
     repo = OutboxRepository(migrated_conn)
 

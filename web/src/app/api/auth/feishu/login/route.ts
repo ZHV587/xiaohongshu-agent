@@ -39,10 +39,10 @@ export async function GET(req: NextRequest) {
   authorizeUrl.searchParams.set("scope", scopes.join(" "));
 
   const res = NextResponse.redirect(authorizeUrl.toString());
-  res.cookies.set(STATE_COOKIE, `${state}|${next.startsWith("/") ? next : "/"}`, {
+  res.cookies.set(STATE_COOKIE, `${state}|${safeNextPath(next)}`, {
     httpOnly: true,
     sameSite: "lax",
-    secure: req.nextUrl.protocol === "https:",
+    secure: isSecureRequest(req),
     maxAge: 600, // 10 分钟内完成授权
     path: "/",
   });
@@ -55,4 +55,17 @@ function getActualOrigin(req: NextRequest): string {
   const protocol = req.headers.get("x-forwarded-proto") || "http";
   const actualHost = host.split(",")[0].trim();
   return `${protocol}://${actualHost}`;
+}
+
+// 与 callback 一致:Secure 按实际对外协议判定(TLS 上游终止时 req.nextUrl 是 http)。
+function isSecureRequest(req: NextRequest): boolean {
+  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.startsWith("https:");
+  return (req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "")) === "https";
+}
+
+// 只接受站内绝对路径,挡掉开放重定向(//evil.com / /\evil.com)。
+function safeNextPath(value: string | undefined): string {
+  if (!value || !value.startsWith("/")) return "/";
+  if (value.startsWith("//") || value.startsWith("/\\")) return "/";
+  return value;
 }

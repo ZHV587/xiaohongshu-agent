@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from data_foundation.metric_parse import parse_count_int
 from tools.feishu_bitable import extract_cover_url, extract_note_url
 
 NOTE_CARD_TYPES = ("feishu_base_record", "xhs_online_note")
@@ -41,11 +42,8 @@ def _first(fields: dict[str, Any], names: tuple[str, ...]) -> str:
 
 
 def _to_int(value: Any) -> int:
-    try:
-        n = int(float(str(value).replace(",", "").strip()))
-    except (TypeError, ValueError):
-        return 0
-    return n if n > 0 else 0
+    # 经 parse_count_int 统一解析,支持 "1.2万"/"10w+" 等单位(卡片互动数展示用)。
+    return parse_count_int(value)
 
 
 def _metric(fields: dict[str, Any], key: str) -> int:

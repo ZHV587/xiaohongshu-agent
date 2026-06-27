@@ -48,6 +48,41 @@ class OutboxRepository:
         self.conn.commit()
         return self._item_from_row(row)
 
+    def requeue_succeeded(self, *, topics: list[str], tenant_id: str | None = None) -> int:
+        """把指定 topic 已 succeeded 的 outbox 行重置回 pending,供引擎数据卷丢失后重推。
+
+        为什么需要:Meili/Falkor 写是"PG 标 succeeded + 引擎入库"两段,引擎数据卷丢失重建后
+        引擎里空了,但 outbox 早已 succeeded、upsert_resource 对未变内容也不再 enqueue →
+        检索/图谱永久残缺无人重推。本方法是运维恢复入口:重置 succeeded→pending,worker 重新
+        把现存资源推回引擎(processor 读的是当前资源行,幂等)。tenant_id 为 None 表示全租户。
+        """
+        if not topics:
+            return 0
+        params: list[Any] = [topics]
+        tenant_clause = ""
+        if tenant_id is not None:
+            tenant_clause = "and tenant_id = %s"
+            params.append(tenant_id)
+        rows = self.conn.execute(
+            f"""
+            update resource_outbox
+            set status = 'pending',
+                next_attempt_at = now(),
+                attempts = 0,
+                lease_owner = null,
+                lease_expires_at = null,
+                error_code = null,
+                error_summary = null
+            where status = 'succeeded'
+              and topic = any(%s)
+              {tenant_clause}
+            returning id
+            """,
+            tuple(params),
+        ).fetchall()
+        self.conn.commit()
+        return len(rows)
+
     def discover_ready_tenants(self, *, limit: int) -> list[str]:
         rows = self.conn.execute(
             """
