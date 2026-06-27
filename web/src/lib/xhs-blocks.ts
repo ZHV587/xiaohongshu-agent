@@ -17,11 +17,19 @@ export interface CopySegment {
   data: { title: string; body: string; tags: string[]; evidence: SourceEvidence[] };
   isPending?: boolean;
 }
+export interface PanelAction {
+  label: string;
+  text: string;
+}
+export interface PanelSegment {
+  kind: "panel";
+  data: { actions: PanelAction[] };
+}
 export interface PendingSegment { kind: "pending"; lang: "xhs_topics" | "xhs_copy" }
-export type Segment = TextSegment | TopicsSegment | CopySegment | PendingSegment;
+export type Segment = TextSegment | TopicsSegment | CopySegment | PanelSegment | PendingSegment;
 
-// 匹配 ```xhs_topics ... ``` 或 ```xhs_copy ... ```（含语言行后的换行）
-const FENCE_RE = /```(xhs_topics|xhs_copy)\s*\n([\s\S]*?)```/g;
+// 匹配 ```xhs_topics ... ```, ```xhs_copy ... ``` 或 ```xhs_panel ... ```（含语言行后的换行）
+const FENCE_RE = /```(xhs_topics|xhs_copy|xhs_panel)\s*\n([\s\S]*?)```/g;
 
 /**
  * 把内容字符串切成有序片段。
@@ -50,9 +58,12 @@ export function parseXhsBlocks(content: string): Segment[] {
       if (lang === "xhs_topics") {
         const partialData = parsePartialXhsTopics(inner);
         segments.push({ kind: "topics", data: partialData, isPending: true });
-      } else {
+      } else if (lang === "xhs_copy") {
         const partialData = parsePartialXhsCopy(inner);
         segments.push({ kind: "copy", data: partialData, isPending: true });
+      } else if (lang === "xhs_panel") {
+        const partialData = parsePartialXhsPanel(inner);
+        segments.push({ kind: "panel", data: partialData });
       }
       lastIndex = m.index + full.length;
     }
@@ -60,7 +71,7 @@ export function parseXhsBlocks(content: string): Segment[] {
 
   // 处理未闭合流式文本检测
   const rest = content.slice(lastIndex);
-  const openRe = /```(xhs_topics|xhs_copy)\b/g;
+  const openRe = /```(xhs_topics|xhs_copy|xhs_panel)\b/g;
   let lastOpen: RegExpExecArray | null = null;
   let mm: RegExpExecArray | null;
   while ((mm = openRe.exec(rest)) !== null) lastOpen = mm;
@@ -75,9 +86,12 @@ export function parseXhsBlocks(content: string): Segment[] {
       if (lang === "xhs_topics") {
         const partialData = parsePartialXhsTopics(afterOpen);
         segments.push({ kind: "topics", data: partialData, isPending: true });
-      } else {
+      } else if (lang === "xhs_copy") {
         const partialData = parsePartialXhsCopy(afterOpen);
         segments.push({ kind: "copy", data: partialData, isPending: true });
+      } else if (lang === "xhs_panel") {
+        const partialData = parsePartialXhsPanel(afterOpen);
+        segments.push({ kind: "panel", data: partialData });
       }
     } else {
       // 虽包含闭合标记但主正则未匹配上（JSON 暂时非法），依然用增量解析降噪
@@ -87,9 +101,12 @@ export function parseXhsBlocks(content: string): Segment[] {
       if (lang === "xhs_topics") {
         const partialData = parsePartialXhsTopics(inner);
         segments.push({ kind: "topics", data: partialData, isPending: true });
-      } else {
+      } else if (lang === "xhs_copy") {
         const partialData = parsePartialXhsCopy(inner);
         segments.push({ kind: "copy", data: partialData, isPending: true });
+      } else if (lang === "xhs_panel") {
+        const partialData = parsePartialXhsPanel(inner);
+        segments.push({ kind: "panel", data: partialData });
       }
     }
   } else {
@@ -100,7 +117,7 @@ export function parseXhsBlocks(content: string): Segment[] {
   return segments;
 }
 
-function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | null {
+function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | PanelSegment | null {
   let obj: any;
   try {
     obj = JSON.parse(inner.trim());
@@ -120,12 +137,30 @@ function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | nu
     }
     return null;
   }
-  if (obj && typeof obj.title === "string" && typeof obj.body === "string") {
-    const tags = Array.isArray(obj.tags) ? obj.tags.filter((t: unknown) => typeof t === "string") : [];
-    return {
-      kind: "copy",
-      data: { title: obj.title, body: obj.body, tags, evidence: parseEvidence(obj.evidence) },
-    };
+  if (lang === "xhs_copy") {
+    if (obj && typeof obj.title === "string" && typeof obj.body === "string") {
+      const tags = Array.isArray(obj.tags) ? obj.tags.filter((t: unknown) => typeof t === "string") : [];
+      return {
+        kind: "copy",
+        data: { title: obj.title, body: obj.body, tags, evidence: parseEvidence(obj.evidence) },
+      };
+    }
+    return null;
+  }
+  if (lang === "xhs_panel") {
+    if (obj && Array.isArray(obj.actions)) {
+      const actions = obj.actions.flatMap((act: any): PanelAction[] => {
+        if (act && typeof act.label === "string" && typeof act.text === "string") {
+          return [{ label: act.label, text: act.text }];
+        }
+        return [];
+      });
+      return {
+        kind: "panel",
+        data: { actions }
+      };
+    }
+    return null;
   }
   return null;
 }
@@ -264,3 +299,34 @@ function parsePartialXhsTopics(inner: string) {
     evidence: [],
   };
 }
+
+// 增量容错 JSON 字段解析器 - 提取 Panel
+function parsePartialXhsPanel(inner: string) {
+  const actions: PanelAction[] = [];
+  const cleanString = (str: string) => {
+    try {
+      return JSON.parse(`"${str.replace(/\n/g, "\\n")}"`);
+    } catch {
+      return str
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\")
+        .replace(/\\t/g, "\t");
+    }
+  };
+
+  const actionsSegmentMatch = /"actions"\s*:\s*\[([\s\S]*?)(?:\]|$)/.exec(inner);
+  if (actionsSegmentMatch) {
+    const actionsContent = actionsSegmentMatch[1];
+    const objRe = /\{\s*"label"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"\s*,\s*"text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"\s*\}/g;
+    let match;
+    while ((match = objRe.exec(actionsContent)) !== null) {
+      actions.push({
+        label: cleanString(match[1]),
+        text: cleanString(match[2]),
+      });
+    }
+  }
+  return { actions };
+}
+

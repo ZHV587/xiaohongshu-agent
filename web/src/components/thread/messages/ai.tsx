@@ -16,9 +16,11 @@ import { useArtifact } from "../artifact-hooks";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { TopicCards } from "./topic-cards";
 import { CopyCard } from "./copy-card";
+import { PanelCard } from "./panel-card";
 import { resolveToolRender, ToolResultCards, type AuraSpec } from "@/lib/tool-render";
 import type { AssistantBlock } from "../types";
 import { LoaderCircle } from "lucide-react";
+
 
 function CustomComponent({
   message,
@@ -334,6 +336,15 @@ function AiContent({ message }: { message: Message }) {
                   </div>
                 )}
               </div>
+            );
+          }
+          if (seg.kind === "panel") {
+            return (
+              <PanelCard
+                key={i}
+                data={seg.data}
+                messageId={message.id}
+              />
             );
           }
           if (seg.kind === "pending") {
