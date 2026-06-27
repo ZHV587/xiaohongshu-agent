@@ -81,40 +81,88 @@ function Interrupt({
 
 export function ThinkingAura({
   toolCalls,
+  messageId,
   status = "done",
 }: {
   toolCalls: { name: string; args?: any; result?: any }[];
+  messageId?: string;
   status?: "running" | "done";
 }) {
-  const visibleCalls = useMemo(() => {
-    return (toolCalls || []).filter((tc) => {
-      if (!tc.name) return false;
-      const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
-      if (spec.aura === "hidden") return false; // 仅过滤真噪音(skills 内部读写等)
-      // 有专属富卡片的工具(搜索发现)仍进思考链:一步状态文案("已找到 N 条"),
-      // 与下方卡片网格不重复,保证思考链完整连续。
-      return true;
+  const stream = useStreamContext();
+  const isLoading = stream.isLoading;
+
+  const steps = useMemo(() => {
+    // 1. 解析可见工具步骤
+    const toolSteps = (toolCalls || [])
+      .filter((tc) => tc.name && tc.name !== "dispatch_thinking_step" && resolveToolRender(tc.name, tc.args as Record<string, unknown>).aura !== "hidden")
+      .map((tc, idx) => {
+        const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
+        const aura = spec.aura as Exclude<AuraSpec, "hidden">;
+
+        // 异常判定铁律：检测业务级报错
+        const hasError =
+          tc.result &&
+          (tc.result.ok === false ||
+            tc.result.error ||
+            (typeof tc.result === "object" && "error" in tc.result));
+        const isDone = tc.result != null;
+
+        let labelText = "";
+        if (isDone) {
+          if (hasError) {
+            const errorMsg =
+              tc.result.error ||
+              (typeof tc.result === "object" && tc.result.error) ||
+              "未知异常";
+            labelText = `执行失败: ${errorMsg}`;
+          } else {
+            labelText = aura.done({ result: tc.result, name: tc.name });
+          }
+        } else {
+          labelText = aura.running;
+        }
+
+        return {
+          key: `${tc.name || "tool"}-${idx}`,
+          label: labelText,
+          status: isDone ? (hasError ? ("failed" as const) : ("done" as const)) : ("running" as const),
+        };
+      });
+
+    // 2. 提取当前 message 轮次的 customEvents (绑定 parent_message_id 过滤隔离)
+    // 只有在当前 messageId 是整个 thread 的最后一条 AI 消息（或者当前正在加载的 AI 消息）时，才合并展示 customEvents。
+    const aiMsgs = (stream.messages || []).filter((m) => m.type === "ai");
+    const isLatestAiMessage = messageId && aiMsgs.length > 0 && aiMsgs[aiMsgs.length - 1].id === messageId;
+
+    const customSteps = isLatestAiMessage
+      ? (stream.values.customEvents || []).map((e) => ({
+          key: e.payload.id,
+          label: e.payload.label,
+          status: e.payload.status,
+        }))
+      : [];
+
+    const merged = [...toolSteps, ...customSteps];
+
+    // 3. 中止流兼容：若全局停止了加载，把所有依然是 running 的自定义步骤变更为 interrupted
+    return merged.map((s) => {
+      if (s.status === "running" && !isLoading) {
+        const cleanLabel = s.label.startsWith("正在")
+          ? s.label.replace("正在", "已中断:")
+          : `已中断: ${s.label}`;
+        return {
+          ...s,
+          status: "interrupted" as const,
+          label: cleanLabel,
+        };
+      }
+      return s;
     });
-  }, [toolCalls]);
+  }, [toolCalls, stream.values.customEvents, stream.messages, messageId, isLoading]);
 
-  if (visibleCalls.length === 0) return null;
+  if (steps.length === 0) return null;
 
-  // 真实状态驱动:工具有了 result 即为完成,否则进行中。与后端实际进度严格一致,
-  // 不再用定时器演假日志/假时间戳,也不再按"是不是最后一步"硬判完成。
-  const steps = visibleCalls.map((tc, idx) => {
-    const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
-    const aura = spec.aura as Exclude<AuraSpec, "hidden">;
-    const isDone = tc.result != null;
-    return {
-      key: `${tc.name || "tool"}-${idx}`,
-      label: isDone
-        ? aura.done({ result: tc.result, name: tc.name })
-        : aura.running,
-      isDone,
-    };
-  });
-
-  const anyRunning = steps.some((s) => !s.isDone) || status === "running";
+  const anyRunning = steps.some((s) => s.status === "running") || status === "running";
 
   return (
     <div className="mr-auto flex w-full max-w-[460px] flex-col gap-2 py-1 select-none">
@@ -170,7 +218,7 @@ export function ThinkingAura({
                 >
                   <span className="relative z-10 mt-px flex size-3.5 shrink-0 items-center justify-center rounded-full bg-white">
                     <AnimatePresence mode="wait" initial={false}>
-                      {step.isDone ? (
+                      {step.status === "done" && (
                         <motion.span
                           key="done"
                           initial={{ scale: 0, opacity: 0 }}
@@ -180,7 +228,8 @@ export function ThinkingAura({
                         >
                           ✓
                         </motion.span>
-                      ) : (
+                      )}
+                      {step.status === "running" && (
                         <motion.span
                           key="run"
                           initial={{ opacity: 0 }}
@@ -190,6 +239,28 @@ export function ThinkingAura({
                         >
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral/40" />
                           <LoaderCircle className="relative size-3.5 animate-spin text-coral" />
+                        </motion.span>
+                      )}
+                      {step.status === "failed" && (
+                        <motion.span
+                          key="failed"
+                          initial={{ scale: 0, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 520, damping: 26 }}
+                          className="flex size-3.5 items-center justify-center rounded-full bg-rose-500 text-[8px] font-bold text-white"
+                        >
+                          ✗
+                        </motion.span>
+                      )}
+                      {step.status === "interrupted" && (
+                        <motion.span
+                          key="interrupted"
+                          initial={{ scale: 0, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 520, damping: 26 }}
+                          className="flex size-3.5 items-center justify-center rounded-full bg-gray-400 text-[8px] font-bold text-white"
+                        >
+                          –
                         </motion.span>
                       )}
                     </AnimatePresence>
@@ -202,10 +273,11 @@ export function ThinkingAura({
                       exit={{ opacity: 0, y: -3 }}
                       transition={{ duration: 0.2 }}
                       className={cn(
-                        "text-xs leading-relaxed",
-                        step.isDone
-                          ? "text-charcoal-light"
-                          : "font-medium text-coral",
+                        "text-xs leading-relaxed transition-colors",
+                        step.status === "running" && "text-charcoal/60 font-medium",
+                        step.status === "done" && "text-charcoal-light",
+                        step.status === "failed" && "text-rose-600 font-semibold",
+                        step.status === "interrupted" && "text-gray-400",
                       )}
                     >
                       {step.label}
@@ -329,6 +401,8 @@ export function AssistantMessage({
   const showThinkingPlaceholder =
     isLastGroup && isLoading && !hasVisibleTools && !hasAiText;
 
+  const resolvedMessageId = blocks.find((b) => b.kind === "ai")?.message?.id || (isLastGroup ? thread.messages[thread.messages.length - 1]?.id : undefined);
+
   return (
     <div className="group mr-auto flex w-full items-start gap-2">
       <div className="flex w-full flex-col gap-2">
@@ -340,6 +414,7 @@ export function AssistantMessage({
               <Fragment key={`tools-${i}`}>
                 <ThinkingAura
                   toolCalls={block.tools}
+                  messageId={(block as any).message?.id || resolvedMessageId}
                   status={running ? "running" : "done"}
                 />
                 {/* 工具富卡片(搜索发现等):注册表驱动,与思考链同位、流式/完成都展示 */}
