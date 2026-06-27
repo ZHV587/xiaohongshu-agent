@@ -9,7 +9,20 @@ import {
   type RemoveUIMessage,
 } from "@langchain/langgraph-sdk/react-ui";
 
-export type StateType = { messages: Message[]; ui?: UIMessage[] };
+export type ThinkingStepEvent = {
+  type: "thinking_step";
+  payload: {
+    id: string;
+    label: string;
+    status: "running" | "done" | "failed" | "interrupted";
+  };
+};
+
+export type StateType = {
+  messages: Message[];
+  ui?: UIMessage[];
+  customEvents?: ThinkingStepEvent[]; // 新增自定义状态事件存储
+};
 
 export const useTypedStream = useStream<
   StateType,
@@ -19,7 +32,7 @@ export const useTypedStream = useStream<
       ui?: (UIMessage | RemoveUIMessage)[] | UIMessage | RemoveUIMessage;
       context?: Record<string, unknown>;
     };
-    CustomEventType: UIMessage | RemoveUIMessage;
+    CustomEventType: UIMessage | RemoveUIMessage | ThinkingStepEvent;
   }
 >;
 

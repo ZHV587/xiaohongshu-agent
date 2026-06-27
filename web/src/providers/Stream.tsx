@@ -15,6 +15,7 @@ import {
   isStreamUiEvent,
   reduceUiMessages,
   useTypedStream,
+  type ThinkingStepEvent,
 } from "./stream-context";
 
 async function sleep(ms = 4000) {
@@ -73,6 +74,20 @@ const StreamSession = ({
         options.mutate((prev) => {
           const ui = reduceUiMessages(prev.ui, event);
           return { ...prev, ui };
+        });
+      } else if (event && (event as any).type === "thinking_step") {
+        const stepEvent = event as ThinkingStepEvent;
+        options.mutate((prev) => {
+          const currentEvents = prev.customEvents ?? [];
+          // 如果已存在该 ID 的步骤，更新它；否则追加到列表中
+          const index = currentEvents.findIndex((e) => e.payload.id === stepEvent.payload.id);
+          const nextEvents = [...currentEvents];
+          if (index > -1) {
+            nextEvents[index] = stepEvent;
+          } else {
+            nextEvents.push(stepEvent);
+          }
+          return { ...prev, customEvents: nextEvents };
         });
       }
     },
