@@ -30,7 +30,7 @@ function groupMessages(messages: Message[]): MessageGroup[] {
   const startAssistant = (msg: Message) => {
     if (currentGroup) groups.push(currentGroup);
     currentGroup = {
-      id: msg.id || Math.random().toString(),
+      id: msg.id || `assistant-${groups.length}`,
       type: "assistant",
       blocks: [],
     };
@@ -66,7 +66,7 @@ function groupMessages(messages: Message[]): MessageGroup[] {
     if (msg.type === "human") {
       if (currentGroup) groups.push(currentGroup);
       currentGroup = {
-        id: msg.id || Math.random().toString(),
+        id: msg.id || `human-${groups.length}`,
         type: "human",
         humanMessage: msg,
       };

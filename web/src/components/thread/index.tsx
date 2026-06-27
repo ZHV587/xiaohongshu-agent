@@ -122,19 +122,8 @@ export function Thread() {
       .catch(() => {});
   }, []);
 
-  // Load autosaved draft on mount
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("xhs_autosave_draft");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.title) setDraftTitle(parsed.title);
-        if (parsed.content) setDraftContent(parsed.content);
-      }
-    } catch (e) {
-      console.error("加载本地草稿失败", e);
-    }
-  }, []);
+  // 草稿加载已并入下方按 threadId 的"会话切换重置"effect(每会话独立草稿键,
+  // 杜绝全局键跨会话串草稿)。
 
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedContent, setLastSavedContent] = useState("");
@@ -160,10 +149,10 @@ export function Thread() {
     }
   }, [messages]);
 
-  // Autosave to localStorage and track changes
+  // Autosave to localStorage and track changes(按会话键,避免跨会话串草稿)
   useEffect(() => {
     localStorage.setItem(
-      "xhs_autosave_draft",
+      `xhs_autosave_draft_${threadId ?? "new"}`,
       JSON.stringify({ title: draftTitle, content: draftContent }),
     );
     if (
@@ -174,7 +163,7 @@ export function Thread() {
     } else {
       setIsDirty(false);
     }
-  }, [draftTitle, draftContent, lastSavedContent, lastSavedTitle]);
+  }, [threadId, draftTitle, draftContent, lastSavedContent, lastSavedTitle]);
 
   // 自适应高度 Editor text area auto grow
   useEffect(() => {
@@ -473,6 +462,33 @@ export function Thread() {
     }
     prevMessageLength.current = messages.length;
   }, [messages]);
+
+  // 会话切换:重置会话级本地状态 + 载入该会话独立草稿,杜绝跨会话内容丢失/串台。
+  // 跳过"新建对话刚拿到 id"(null→id)这种非切换场景,避免清掉正在流式生成的内容。
+  const prevThreadIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevThreadIdRef.current;
+    prevThreadIdRef.current = threadId;
+    if (prev === null && threadId != null) return; // 新建对话首次拿到 id,非切换
+    prevMessageLength.current = 0;
+    setFirstTokenReceived(false);
+    setInput("");
+    setContentBlocks([]);
+    setIsEditingText(false);
+    setIsDirty(false);
+    setLastSavedContent("");
+    setLastSavedTitle("");
+    try {
+      const saved = localStorage.getItem(`xhs_autosave_draft_${threadId ?? "new"}`);
+      const parsed = saved ? JSON.parse(saved) : null;
+      setDraftTitle(parsed?.title ?? "");
+      setDraftContent(parsed?.content ?? "");
+    } catch {
+      setDraftTitle("");
+      setDraftContent("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
