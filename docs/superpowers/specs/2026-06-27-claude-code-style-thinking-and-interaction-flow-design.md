@@ -131,6 +131,16 @@ export const useTypedStream = useStream<
 
 ---
 
+### Component 6: 前端 UI 状态流设计（UX States Coverage）
+
+#### ⚠️【铁律一】：点击即时响应（Pending State）。当用户点击卡片的【保存】或面板的任何快捷气泡按钮时，该组件必须立刻在本地设置 `isSubmitting=true`，显示局部旋转加载动画并禁用所有兄弟按钮，直至服务端数据流建立并接收到首个事件后才解除。
+
+#### ⚠️【铁律二】：异常捕获与断线错误态（Connection/Error State）。如果 LangGraph Stream 流非正常中断（捕获到 onError）或服务端返回 500，必须在时间线最末尾渲染 `ErrorCard`，并提供 `[🔄 重新连接]` 或 `[↩️ 撤销重试]` 的中文交互。
+
+#### ⚠️【铁律三】：首字骨架屏闪烁（TTFT Skeleton）。在发送消息后到大模型吐出首个正文 Token 的“思考空档期”，正文区域必须呈现柔和的微闪烁骨架屏（Skeleton Loader），在首字到达时淡出。
+
+---
+
 ## 3. 验证计划
 
 ### 自动化测试
