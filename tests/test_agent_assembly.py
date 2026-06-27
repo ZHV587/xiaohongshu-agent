@@ -455,4 +455,4 @@ def test_main_prompt_has_routing_and_cleansing_rules(monkeypatch):
     prompt = agent_module.MAIN_SYSTEM_PROMPT
     assert "关键词清洗" in prompt
     assert "search_local_note_cards(keyword, limit=10)" in prompt
-    assert "search_xhs_online(keyword, limit=10)" in prompt
+    assert "search_xhs_online(keyword, page_size=10)" in prompt
