@@ -117,14 +117,24 @@ export function ThreadActionsView({
       return interrupt;
     }
 
+    // 采纳:笔记数据走 state(selected_notes)直传,不在工具参数里;
+    // 为"让用户确认流程"在审批弹窗展示它(注入 notes 仅供展示,不影响 approve/reject 决定)。
+    let action = currentAction;
+    if (currentAction.name === "adopt_online_notes") {
+      const sel = (stream.values as { selected_notes?: unknown })?.selected_notes;
+      if (Array.isArray(sel) && sel.length > 0) {
+        action = { ...currentAction, args: { ...currentAction.args, notes: sel } };
+      }
+    }
+
     return {
       ...interrupt,
       value: {
-        action_requests: [currentAction],
+        action_requests: [action],
         review_configs: [matchingConfig],
       },
     };
-  }, [interrupt, currentAction, matchingConfig]);
+  }, [interrupt, currentAction, matchingConfig, stream.values]);
 
   const {
     approveAllowed,

@@ -238,12 +238,11 @@ export function SearchCards({ toolName, data }: { toolName: string; data: Search
       created_at: n.created_at,
       tags: n.tags,
     }));
+    // 选中的笔记经 graph state(selected_notes)直传工具,绝不进对话文本/不经 LLM 转写。
+    // 消息只是触发指令 + 给 HITL/思考链一个可读意图。
     submitText(
-      `采纳收录这 ${picked.length} 条线上笔记到我们的数据库和飞书爆款采集库。\n\n` +
-        "请调用 adopt_online_notes 工具,notes 参数为:\n" +
-        "```json\n" +
-        JSON.stringify(payload, null, 2) +
-        "\n```",
+      `采纳收录选中的 ${picked.length} 条线上笔记到数据库和飞书爆款采集库,请调用 adopt_online_notes。`,
+      { selected_notes: payload },
     );
     setSelected(new Set());
   };

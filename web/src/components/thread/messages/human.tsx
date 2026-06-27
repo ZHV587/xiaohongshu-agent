@@ -8,15 +8,15 @@ import { BranchSwitcher, CommandBar } from "./shared";
 import { MultimodalPreview } from "@/components/thread/MultimodalPreview";
 import { isBase64ContentBlock } from "@/lib/multimodal-utils";
 
-/** 卡片动作回传(采纳/出选题)带 ```json``` 数据,给 agent 用但不该在聊天里露裸 JSON。
- *  命中则返回简洁中文摘要,渲染成动作 chip;普通消息返回 null 照常渲染。 */
+/** 卡片动作回传渲染成简洁 chip,不在聊天里露裸 JSON / 冗长指令。
+ *  采纳:数据走 state 直传,消息只是触发指令;出选题仍带 ```json``` 笔记。 */
 function summarizeCardAction(text: string): string | null {
-  if (!text || !text.includes("```json")) return null;
-  if (/采纳收录这\s*\d+\s*条/.test(text) || text.includes("adopt_online_notes")) {
-    const m = text.match(/采纳收录这\s*(\d+)\s*条/);
+  if (!text) return null;
+  if (text.includes("adopt_online_notes") || /采纳收录(?:选中的)?\s*\d+\s*条/.test(text)) {
+    const m = text.match(/采纳收录(?:选中的)?\s*(\d+)\s*条/);
     return m ? `🍠 采纳收录 ${m[1]} 条线上笔记` : "🍠 采纳收录线上笔记";
   }
-  if (text.includes("出一个选题") || text.includes("基于它")) {
+  if (text.includes("```json") && (text.includes("出一个选题") || text.includes("基于它"))) {
     return "✨ 基于选中的笔记出选题";
   }
   return null;

@@ -9,10 +9,11 @@
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from data_foundation.db import connect
 from data_foundation.permissions import actor_from_config, default_tenant_id
@@ -28,18 +29,29 @@ FEISHU_COLLECT_SYSTEM = "feishu_collect"
 
 @tool
 def adopt_online_notes(
-    notes: list[dict[str, Any]],
     sync_feishu: bool = True,
+    selected_notes: Annotated[
+        list[dict[str, Any]] | None, InjectedState("selected_notes")
+    ] = None,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """采纳用户选中的线上笔记:写数据库(权威)+ 同步飞书爆款采集库(镜像)。幂等。
+    """采纳用户在面板勾选的线上笔记:写数据库(权威)+ 同步飞书爆款采集库(镜像)。幂等。
+
+    数据来源(官方 InjectedState,单一事实源):笔记由前端勾选时经 `submit` 直传 graph state
+    `selected_notes`,**完全不经对话文本/LLM 转写**。你(模型)只需在用户触发采纳时调用本工具,
+    **不传也无法传笔记内容**——直接 `adopt_online_notes()` 即可。
 
     Args:
-        notes: 选中的线上笔记列表(卡片级字段,至少含 note_id/note_url)。
         sync_feishu: 是否同步飞书采集库(默认 True)。
     """
-    if not isinstance(notes, list) or not notes:
-        return {"ok": False, "error": "notes is required", "results": [], "errors": []}
+    notes = selected_notes if isinstance(selected_notes, list) else None
+    if not notes:
+        return {
+            "ok": False,
+            "error": "no selected notes in state (前端未直传 selected_notes)",
+            "results": [],
+            "errors": [],
+        }
 
     actor = actor_from_config(config)
     tenant_id = default_tenant_id()

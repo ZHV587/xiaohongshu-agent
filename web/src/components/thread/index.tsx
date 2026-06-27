@@ -265,7 +265,7 @@ export function Thread() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const submitText = (text: string) => {
+  const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
     if (!text.trim() || isLoading) return;
     setFirstTokenReceived(false);
     const newHumanMessage: Message = {
@@ -284,8 +284,12 @@ export function Thread() {
       },
     };
 
+    // stateUpdate:前端结构化数据直传 graph state(官方 state-update 通道),
+    // 供工具经 InjectedState 注入,绕过 LLM 转写(如采纳的 selected_notes)。
+    const patch = stateUpdate ?? {};
+
     stream.submit(
-      { messages: [...toolMessages, newHumanMessage], context },
+      { messages: [...toolMessages, newHumanMessage], context, ...patch },
       {
         streamMode: ["values"],
         streamSubgraphs: true,
@@ -293,6 +297,7 @@ export function Thread() {
         optimisticValues: (prev) => ({
           ...prev,
           context,
+          ...patch,
           messages: [
             ...(prev.messages ?? []),
             ...toolMessages,

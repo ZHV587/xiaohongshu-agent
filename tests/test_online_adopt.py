@@ -87,9 +87,17 @@ def patched(monkeypatch):
     return repo
 
 
-def test_adopt_requires_notes(patched):
-    res = oa.adopt_online_notes.func(notes=[])
-    assert res["ok"] is False
+def test_adopt_requires_selected_notes(patched):
+    """state 没有 selected_notes 时报错(前端必须直传)。"""
+    assert oa.adopt_online_notes.func(selected_notes=[])["ok"] is False
+    assert oa.adopt_online_notes.func(selected_notes=None)["ok"] is False
+
+
+def test_adopt_data_only_from_state_not_llm():
+    """完整修复:工具对 LLM 不暴露 notes 参数,数据唯一来自 state(InjectedState)。"""
+    llm_args = list(oa.adopt_online_notes.args.keys())
+    assert "notes" not in llm_args
+    assert "selected_notes" not in llm_args  # InjectedState 对模型不可见
 
 
 def test_real_repository_exposes_mapping_methods():
@@ -113,34 +121,41 @@ def test_real_repository_exposes_mapping_methods():
 def test_adopt_writes_db_metric_and_feishu(patched):
     repo = patched
     with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "rec_1"}) as mock_feishu:
-        res = oa.adopt_online_notes.func(notes=[_note()], sync_feishu=True)
+        res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=True)
     assert res["ok"] is True
     r = res["results"][0]
     assert r["adopted"] is True
     assert r["feishu_synced"] is True
-    # 采纳后带出选题衔接引导
     assert res.get("next_step") and "选题" in res["next_step"]
-    # 入库 1 条 note + 1 条 metric
     types = sorted(v["type"] for v in repo.resources.values())
     assert types == ["performance_metric", "xhs_online_note"]
-    # 1 条 measured_by 边
     measured = [e for e in repo.edges if e[2] == "measured_by"]
     assert len(measured) == 1
     mock_feishu.assert_called_once()
 
 
+def test_adopt_stores_full_authoritative_fields(patched):
+    """state 直传的笔记原样落库(零转写):摘要/标签/互动数完整保留。"""
+    repo = patched
+    with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "rec_1"}):
+        res = oa.adopt_online_notes.func(selected_notes=[_note(note_id="abc")], sync_feishu=True)
+    rid = res["results"][0]["resource_id"]
+    stored = repo.resources[rid]["content_json"]
+    assert stored["summary"] == "摘要"
+    assert stored["tags"] == ["护肤"]
+    assert stored["likes"] == 3000
+
+
 def test_adopt_is_idempotent(patched):
     repo = patched
     with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "rec_1"}) as mock_feishu:
-        oa.adopt_online_notes.func(notes=[_note()], sync_feishu=True)
-        res2 = oa.adopt_online_notes.func(notes=[_note()], sync_feishu=True)
-    # 第二次:note 仍 1 条、metric 仍 1 条、边仍 1 条
+        oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=True)
+        res2 = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=True)
     note_ids = [k for k, v in repo.resources.items() if v["type"] == "xhs_online_note"]
     metric_ids = [k for k, v in repo.resources.items() if v["type"] == "performance_metric"]
     assert len(note_ids) == 1
     assert len(metric_ids) == 1
     assert len([e for e in repo.edges if e[2] == "measured_by"]) == 1
-    # 飞书第二次跳过(已同步)
     assert res2["results"][0]["feishu_synced"] == "skipped"
     assert mock_feishu.call_count == 1
 
@@ -148,17 +163,16 @@ def test_adopt_is_idempotent(patched):
 def test_adopt_feishu_failure_keeps_db(patched):
     repo = patched
     with patch.object(oa, "create_online_note_record", return_value={"ok": False, "error": "perm denied"}):
-        res = oa.adopt_online_notes.func(notes=[_note()], sync_feishu=True)
+        res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=True)
     r = res["results"][0]
-    assert r["adopted"] is True             # 库记录保留
+    assert r["adopted"] is True
     assert r["feishu_synced"] == "failed"
     assert any("FEISHU_SYNC_FAILED" in e["error"] for e in res["errors"])
-    # 库里仍有 note 资源
     assert any(v["type"] == "xhs_online_note" for v in repo.resources.values())
 
 
 def test_adopt_missing_note_id_collected_as_error(patched):
-    res = oa.adopt_online_notes.func(notes=[{"title": "无 id"}], sync_feishu=False)
+    res = oa.adopt_online_notes.func(selected_notes=[{"title": "无 id"}], sync_feishu=False)
     assert res["ok"] is True
     assert res["results"] == []
     assert res["errors"][0]["error"].startswith("DB_ADOPT_FAILED") or "note_id" in res["errors"][0]["error"]
