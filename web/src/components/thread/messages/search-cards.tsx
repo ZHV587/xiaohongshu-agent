@@ -129,7 +129,7 @@ function Card({
         <InteractionChips note={note} />
         {note.tags && note.tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {note.tags.slice(0, 4).map((t, i) => (
+            {note.tags.map((t, i) => (
               <span key={i} className="rounded-full bg-oats-light/60 px-1.5 py-0.5 text-[10px] text-charcoal-light">
                 #{String(t).replace(/^#/, "")}
               </span>
