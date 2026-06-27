@@ -316,6 +316,19 @@ export function AssistantMessage({
 
   const lastBlockIdx = blocks.length - 1;
 
+  // 兜底"思考中"占位:当前组在加载,但还没有可见工具步骤、也没有 AI 文本内容时
+  // (如 agent 刚冒出空 AI 消息、模型仍在推理),补一个思考占位,杜绝中间空白。
+  const hasVisibleTools = blocks.some(
+    (b) => b.kind === "tools" && b.tools.length > 0,
+  );
+  const hasAiText = blocks.some(
+    (b) =>
+      b.kind === "ai" &&
+      getContentString(b.message.content ?? "").trim().length > 0,
+  );
+  const showThinkingPlaceholder =
+    isLastGroup && isLoading && !hasVisibleTools && !hasAiText;
+
   return (
     <div className="group mr-auto flex w-full items-start gap-2">
       <div className="flex w-full flex-col gap-2">
@@ -338,6 +351,25 @@ export function AssistantMessage({
             <AiContent key={block.message.id || `ai-${i}`} message={block.message} />
           );
         })}
+
+        {showThinkingPlaceholder && (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mr-auto flex w-full max-w-[460px] flex-col gap-2 py-1 select-none"
+          >
+            <div className="border-coral-light/50 flex items-center gap-2.5 rounded-2xl border bg-gradient-to-b from-white to-oats-light/30 p-3.5 shadow-xs">
+              <LoaderCircle className="text-coral size-4 animate-spin" />
+              <motion.span
+                animate={{ opacity: [0.5, 1, 0.5] }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                className="text-charcoal-light text-xs font-medium"
+              >
+                正在思考…
+              </motion.span>
+            </div>
+          </motion.div>
+        )}
 
         <Interrupt
           interrupt={threadInterrupt}
