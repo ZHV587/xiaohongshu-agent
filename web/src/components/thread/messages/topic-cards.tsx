@@ -1,5 +1,5 @@
 // web/src/components/thread/messages/topic-cards.tsx
-import { ChevronRight, Database } from "lucide-react";
+import { Database } from "lucide-react";
 import { useThreadActions } from "@/lib/thread-actions-context";
 import { MarkdownText } from "../markdown-text";
 import type { TopicsSegment } from "@/lib/xhs-blocks";
@@ -21,35 +21,43 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
       )}
       <div className="flex flex-col gap-3">
         {data.topics.map((topic, i) => (
-          <button
+          <div
             key={i}
-            type="button"
-            onClick={() =>
-              submitText(
-                `我选第 ${i + 1} 个选题："${topic}"。请帮我围绕这个选题写一篇完整的小红书爆款文案。`,
-                // 选题依据(evidence,含 resource_id)经 graph state(selected_topic)直传工具,
-                // 绝不进对话文本/不经 LLM 重填,杜绝静默丢 resource_id。topic 取用户点的这张卡。
-                { selected_topic: { topic, evidence: data.evidence } },
-              )
-            }
-            className="group/topic relative overflow-hidden flex items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left transition-all duration-300 hover:border-primary/30 hover:shadow-[0_6px_20px_-8px_rgba(229,46,64,0.12)] active:scale-[0.995]"
+            className="group/topic relative overflow-hidden flex items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4 hover:border-coral/30 hover:shadow-[0_6px_20px_-8px_rgba(229,46,64,0.12)] transition-all duration-300"
           >
             {/* Left glowing accent line */}
-            <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-primary scale-y-0 group-hover/topic:scale-y-100 transition-transform origin-center duration-300 rounded-l-2xl" />
+            <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-coral scale-y-0 group-hover/topic:scale-y-100 transition-transform origin-center duration-300 rounded-l-2xl" />
             
-            {/* Index badge with scale and subtle rotate animation */}
-            <span className="bg-muted text-muted-foreground group-hover/topic:bg-primary group-hover/topic:text-primary-foreground group-hover/topic:scale-110 group-hover/topic:rotate-6 flex size-7 flex-shrink-0 items-center justify-center rounded-full font-display text-xs font-semibold transition-all duration-300 shadow-2xs group-hover/topic:shadow-xs">
-              {i + 1}
-            </span>
+            {/* Main content area: clicks trigger copywriting workflow */}
+            <div
+              onClick={() =>
+                submitText(
+                  `我选第 ${i + 1} 个选题："${topic}"。请帮我围绕这个选题写一篇完整的小红书爆款文案。`,
+                  { selected_topic: { topic, evidence: data.evidence } },
+                )
+              }
+              className="flex items-center gap-4 flex-1 cursor-pointer"
+            >
+              <span className="bg-muted text-muted-foreground group-hover/topic:bg-coral group-hover/topic:text-white flex size-7 flex-shrink-0 items-center justify-center rounded-full font-display text-xs font-semibold transition-colors duration-300 shadow-2xs">
+                {i + 1}
+              </span>
+              <span className="text-foreground/90 flex-1 text-sm font-medium leading-relaxed font-sans transition-colors">
+                {topic}
+              </span>
+            </div>
             
-            {/* Topic content text */}
-            <span className="text-foreground/90 group-hover/topic:text-foreground flex-1 text-sm font-medium leading-relaxed transition-colors font-sans">
-              {topic}
-            </span>
-            
-            {/* Action Arrow with transition */}
-            <ChevronRight className="text-muted-foreground/60 size-5 flex-shrink-0 transition-all duration-300 ease-out group-hover/topic:translate-x-1 group-hover/topic:text-primary" />
-          </button>
+            {/* Save button: directly saves the topic card to DB/Feishu */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                submitText(`保存第 ${i + 1} 个选题："${topic}"。`, { selected_topic: { topic, evidence: data.evidence } });
+              }}
+              className="z-10 flex-shrink-0 px-2.5 py-1 text-[11px] font-semibold text-coral border border-coral/20 rounded-full bg-coral/5 hover:bg-coral hover:text-white transition-all duration-300 active:scale-95 cursor-pointer"
+            >
+              保存
+            </button>
+          </div>
         ))}
       </div>
       {data.evidence.length > 0 && (
