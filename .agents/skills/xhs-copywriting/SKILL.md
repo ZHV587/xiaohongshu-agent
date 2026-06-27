@@ -21,6 +21,12 @@ description: |
 - 核心痛点
 - 有无对标 resource_id（有的话调用 `get_resource` 精读）
 
+【状态穿透规则（极重要）】：
+在开始追问前，请优先检查运行状态或上下文（如 `selected_topic` 字段）。如果已存在用户选中的选题：
+1. 直接将 `selected_topic.topic` 作为创作主题，提取其 `selected_topic.evidence` 作为对标依据；
+2. 自动免去 Phase 1 的所有问题收集与追问，直接携带选题与依据跳入 Phase 2（备选标题）或 Phase 3 开始创作。此时不需要做任何落库，保留状态数据到内存。
+
+只有在状态为空时，才执行 Phase 1 的常规对话追问。
 ---
 
 ## Phase 2：标题生成
@@ -93,9 +99,13 @@ description: |
 
 ## Phase 5：持久化
 
-文案确认后，调用 `save_generated_copy(title, body, tags, source_topic, evidence)` 存入数据库，再调用 `sync_copy_to_feishu(title, content, tags)` 同步飞书。
+【用户确认持久化规则（极重要）】：
+只有当文案创作全部完成，且用户发送了“确定”、“保存”、“存档”或“同步”等明确指令后，你才能调用持久化工具：
+1. 如果该文案是基于选题卡生成的（上下文存在 `selected_topic` 且尚未落库），你必须首先调用 `save_generated_topic` 工具对该选题进行落库，并记录工具返回的 UUID `resource_id` 作为选题 ID；
+2. 调用 `save_generated_copy` 工具对文案进行落库，对于 `source_topic` 参数，传入上一步生成的选题 `resource_id`；
+3. 调用 `sync_copy_to_feishu` 同步飞书草稿，并向用户返回保存成功的提示及飞书草稿链接。
 
-返回：resource_id + 飞书草稿链接。
+如果用户中途没有发送保存指令，或者对内容不满意要求修改，绝对不能在后台擅自调用任何保存工具，防止数据库被垃圾草稿塞满。
 
 ---
 
