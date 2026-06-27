@@ -9,8 +9,8 @@ from langchain_core.messages import AIMessage
 DEFAULT_CONTENT_RUBRIC = """评估最终的小红书内容是否满足以下标准:
 1. 输出遵守 xhs_topics 或 xhs_copy 结构约定,字段完整且内容可用
 2. 标题有点击钩子,正文自然、具体、无明显 AI 腔
-3. 引用的数据包含实际采用来源的 resource_id、摘要、source_updated_at 和 indexed_at
-4. 事实受来源支持,源端过时信息说明时效限制,indexed_at 不得冒充源端更新时间,创意推断明确标注为推断
+3. 引用的**库内采用来源**包含 resource_id、摘要、source_updated_at 和 indexed_at;**双源出选题的线上实时趋势来源**(用户尚未采纳)允许只标 note_url、无 resource_id 与时效,只要在选题角度注明"(线上实时:note_url)"且不冒充正式依据即可——**不得因线上来源缺 resource_id 判为不合格,也不要为补 resource_id 而自动采纳(采纳由用户在面板触发)**
+4. 事实受来源支持,源端过时信息说明时效限制,indexed_at 不得冒充源端更新时间,创意推断明确标注为推断;**来源时效未知时如实写"未知"即可,无须额外解释原因**
 5. 数据不足时明确说明,不编造来源、事实或结论
 6. xhs_copy 的标签与内容相关且数量合理
 """
