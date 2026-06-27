@@ -55,6 +55,7 @@ function CoverImage({ url, title }: { url?: string; title?: string }) {
       src={url}
       alt={title || "封面"}
       loading="lazy"
+      referrerPolicy="no-referrer"
       onError={() => setErrored(true)}
       className="aspect-[3/4] w-[88px] flex-shrink-0 rounded-xl object-cover bg-oats-dark/40"
     />
