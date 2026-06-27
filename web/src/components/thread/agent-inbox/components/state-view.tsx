@@ -41,22 +41,109 @@ const messageTypeToLabel = (message: BaseMessage) => {
   }
 };
 
+function tryParseJson(val: unknown): unknown {
+  if (typeof val !== "string") return null;
+  const trimmed = val.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function PrettyJsonRenderer({ value }: { value: unknown }) {
+  if (value == null) return null;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-gray-400">Empty list</span>;
+    return (
+      <ul className="flex flex-col gap-2.5 w-full pl-2">
+        {value.map((item, idx) => (
+          <li
+            key={idx}
+            className="flex flex-col gap-1.5 rounded-xl border border-border bg-oats-light/40 p-3 text-sm shadow-2xs"
+          >
+            {typeof item === "object" ? (
+              <PrettyJsonRenderer value={item} />
+            ) : (
+              <MarkdownText>{String(item)}</MarkdownText>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return <span className="text-gray-400">Empty object</span>;
+    return (
+      <div className="flex flex-col gap-3 w-full">
+        {entries.map(([key, val], idx) => {
+          const formattedKey = key
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, (c) => c.toUpperCase());
+          return (
+            <div
+              key={idx}
+              className="flex flex-col gap-1 border-b border-gray-100 pb-2.5 last:border-0 last:pb-0"
+            >
+              <span className="text-xs font-semibold text-gray-500 tracking-wider uppercase">
+                {formattedKey}
+              </span>
+              <div className="text-sm text-charcoal-dark pl-1">
+                {typeof val === "object" && val !== null ? (
+                  <div className="mt-1.5 rounded-xl border border-border bg-oats-light/20 p-3">
+                    <PrettyJsonRenderer value={val} />
+                  </div>
+                ) : (
+                  <MarkdownText>{String(val)}</MarkdownText>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return <MarkdownText>{String(value)}</MarkdownText>;
+}
+
 function MessagesRenderer({ messages }: { messages: BaseMessage[] }) {
   return (
-    <div className="flex w-full flex-col gap-1">
+    <div className="flex w-full flex-col gap-4">
       {messages.map((msg, idx) => {
         const messageTypeLabel = messageTypeToLabel(msg);
         const content =
           typeof msg.content === "string"
             ? msg.content
             : JSON.stringify(msg.content, null);
+
+        const parsedJson = typeof msg.content === "string" ? tryParseJson(msg.content) : (typeof msg.content === "object" && msg.content !== null ? msg.content : null);
+        const isJson = parsedJson !== null && typeof parsedJson === "object";
+
         return (
           <div
             key={msg.id ?? `message-${idx}`}
-            className="ml-2 flex w-full flex-col gap-[2px]"
+            className="ml-2 flex w-full flex-col gap-2 rounded-xl border border-border/40 bg-oats-light/30 p-4 shadow-2xs"
           >
-            <p className="font-medium text-gray-700">{messageTypeLabel}:</p>
-            {content && <MarkdownText>{content}</MarkdownText>}
+            <p className="font-semibold text-charcoal-dark text-sm border-b border-border pb-1.5 mb-1">{messageTypeLabel}</p>
+            {content && (
+              isJson ? (
+                <div className="w-full my-1 rounded-xl border border-border bg-white p-4 shadow-2xs">
+                  <PrettyJsonRenderer value={parsedJson} />
+                </div>
+              ) : (
+                <MarkdownText>{content}</MarkdownText>
+              )
+            )}
             {"tool_calls" in msg && msg.tool_calls ? (
               <div className="flex w-full flex-col items-start gap-1">
                 {(msg.tool_calls as ToolCall[]).map((tc, idx) => (
@@ -81,6 +168,14 @@ function StateViewRecursive(props: StateViewRecursiveProps) {
   }
 
   if (["string", "number"].includes(typeof props.value)) {
+    const parsedJson = typeof props.value === "string" ? tryParseJson(props.value) : null;
+    if (parsedJson !== null && typeof parsedJson === "object") {
+      return (
+        <div className="w-full my-1 rounded-xl border border-border bg-white p-4 shadow-2xs">
+          <PrettyJsonRenderer value={parsedJson} />
+        </div>
+      );
+    }
     return <MarkdownText>{props.value as string}</MarkdownText>;
   }
 

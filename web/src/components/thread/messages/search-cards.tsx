@@ -36,7 +36,7 @@ export interface SearchToolResult {
 
 function fmt(n?: number): string {
   const v = n ?? 0;
-  if (v >= 10000) return `${(v / 10000).toFixed(1)}w`;
+  if (v >= 10000) return `${(v / 10000).toFixed(1)}万`;
   if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
   return String(v);
 }
@@ -45,7 +45,7 @@ function CoverImage({ url, title }: { url?: string; title?: string }) {
   const [errored, setErrored] = useState(false);
   if (!url || errored) {
     return (
-      <div className="flex aspect-[3/4] w-[88px] flex-shrink-0 self-start items-center justify-center rounded-xl bg-oats-dark/50 text-[10px] text-charcoal-light">
+      <div className="flex aspect-[3/4] w-[88px] flex-shrink-0 self-start items-center justify-center rounded-2xl border border-black/5 bg-oats-dark/50 text-[10px] text-charcoal-light">
         无封面
       </div>
     );
@@ -57,23 +57,33 @@ function CoverImage({ url, title }: { url?: string; title?: string }) {
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setErrored(true)}
-      className="aspect-[3/4] w-[88px] flex-shrink-0 self-start rounded-xl object-cover bg-oats-dark/40"
+      className="aspect-[3/4] w-[88px] flex-shrink-0 self-start rounded-2xl object-cover border border-black/5 shadow-2xs bg-oats-dark/40 hover:scale-[1.02] transition-transform duration-300"
     />
   );
 }
 
 function InteractionChips({ note }: { note: NoteCard }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-charcoal-light">
+    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
       {note.interactive ? (
-        <span className="inline-flex items-center gap-0.5 font-semibold text-coral">
+        <span className="inline-flex items-center gap-1 rounded-md bg-coral/5 px-1.5 py-0.5 font-medium text-coral">
           <Flame className="size-3" /> {fmt(note.interactive)}
         </span>
       ) : null}
-      <span className="inline-flex items-center gap-0.5"><Heart className="size-3" /> {fmt(note.likes)}</span>
-      <span className="inline-flex items-center gap-0.5"><Star className="size-3" /> {fmt(note.collects)}</span>
-      <span className="inline-flex items-center gap-0.5"><MessageCircle className="size-3" /> {fmt(note.comments)}</span>
-      <span className="inline-flex items-center gap-0.5"><Share2 className="size-3" /> {fmt(note.shares)}</span>
+      <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5">
+        <Heart className="size-3 text-muted-foreground/70" /> {fmt(note.likes)}
+      </span>
+      <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5">
+        <Star className="size-3 text-muted-foreground/70" /> {fmt(note.collects)}
+      </span>
+      <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5">
+        <MessageCircle className="size-3 text-muted-foreground/70" /> {fmt(note.comments)}
+      </span>
+      {note.shares ? (
+        <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5">
+          <Share2 className="size-3 text-muted-foreground/70" /> {fmt(note.shares)}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -149,7 +159,7 @@ function Card({
               href={note.note_url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-0.5 text-[11px] text-coral hover:underline"
+              className="inline-flex items-center gap-0.5 text-[11px] text-coral hover:underline hover:text-coral/80 transition-colors duration-300"
             >
               查看原文 <ExternalLink className="size-3" />
             </a>
@@ -158,7 +168,7 @@ function Card({
             <button
               type="button"
               onClick={onGenTopic}
-              className="inline-flex items-center gap-1 rounded-full border border-coral/40 bg-coral-light/30 px-2.5 py-1 text-[11px] font-medium text-coral transition-colors hover:bg-coral hover:text-white"
+              className="inline-flex items-center gap-1 rounded-full border border-coral/40 bg-coral-light/30 px-2.5 py-1 text-[11px] font-medium text-coral transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-coral hover:text-white hover:shadow-2xs active:scale-95 cursor-pointer"
             >
               <Sparkles className="size-3" /> 出选题
             </button>
@@ -170,8 +180,8 @@ function Card({
                   type="button"
                   onClick={onToggle}
                   className={cn(
-                    "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    selected ? "border-coral bg-coral text-white" : "border-border bg-white text-charcoal hover:border-coral",
+                    "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-95 cursor-pointer",
+                    selected ? "border-coral bg-coral text-white hover:bg-coral/95" : "border-border bg-white text-charcoal hover:border-coral",
                   )}
                 >
                   {selected ? <><Check className="size-3" /> 已选</> : "选择"}
