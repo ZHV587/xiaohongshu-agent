@@ -27,7 +27,6 @@ ROUTED_SKILLS = [
     "xhs-slowisfast",
     "xhs-benchmark",
     "xhs-content-system",
-    "xhs-planning",
     "xhs-title",
     "xhs-hook",
     "xhs-copywriting",

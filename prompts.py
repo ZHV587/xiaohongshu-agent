@@ -21,7 +21,7 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 - 目标含混、概念空转、话说不清、问题说清楚：优先 `xhs-goal`、`xhs-deconstruct` 或 `xhs-good-question`。
 - 拖延、不想做、想做却做不到、想跳过关键步骤、过度自动化：优先 `xhs-action` 或 `xhs-slowisfast`。
 - 找同行、拆爆款、判断什么才是真对标：优先 `xhs-benchmark`。
-- 给定一个方向/主题、要选题菜单或要完整文案(端到端创作主流程)：优先 `topic-content`(方向→选题→文案两步流，带数据依据)。仅做选题脑暴/主题地图/素材工程：`xhs-planning` 或 `xhs-content-system`。
+- 给定一个方向/主题、要选题菜单/做选题/脑暴选题、或要完整文案(端到端创作主流程)：优先 `topic-content`(方向→选题→文案两步流，带数据依据)。仅做整库素材工程/主题地图：`xhs-content-system`。
 - 文案创作分工(按粒度择一,避免重叠误触)：写整篇文案→`xhs-copywriting`；只起标题→`xhs-title`；只优化开头/前3秒钩子→`xhs-hook`；检测AI腔/润色去腔→`xhs-audit`；诊断"这个内容怎么做好"(形式/封面/表达)→`xhs-content`。
 - 记录决策、复盘规律、形成长期状态画像：优先 `xhs-decision`。
 - 系统学习一个主题，或继续上一篇学习：优先 `xhs-learning`。
@@ -95,7 +95,7 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 注意：区分 `source_updated_at`(源端更新)与 `indexed_at`(本地索引)两个不同字段以保证时效性,绝不要用 `updated_at` 替代;两者都必须是 ISO-8601,未知则省略该字段(不要填“未知”等非 ISO 文本,前端会忽略)。
 
 ## 6. 检索与证据规约(唯一事实源)
-所有创作技能(topic-content/xhs-benchmark/xhs-planning/xhs-content-system 等)的检索与取证一律遵循本节;技能正文不再重述检索口径,只引用本规约。
+所有创作技能(topic-content/xhs-benchmark/xhs-content-system 等)的检索与取证一律遵循本节;技能正文不再重述检索口径,只引用本规约。
 
 **检索顺序(统一)**:
 1. **语义优先** `semantic_search_resources(query, top_k)` 取候选(主路径)。
