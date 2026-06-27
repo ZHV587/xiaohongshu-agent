@@ -132,3 +132,22 @@ description: |
 ---
 
 > 文案确认后可以说「存档」保存。
+
+---
+
+## 差异化工作流与数据规约
+
+### 检索与数据依据
+1. 检索与证据规约一律遵循主控 system prompt §6《检索与证据规约》，本技能不重述。
+2. 时效防伪依据：在记录实际采用的来源时，必须带上 `resource_id`、标题、依据摘要、`source_updated_at`、`indexed_at` (任一未知写"未知")。
+3. 数据不足时不硬编：若检索结果不足，明说"当前数据不足"，不得凭空编造，不拿弱相关凑依据。
+
+### 持久化与用户修改反馈
+1. 选题与文案持久化：只有当文案打磨完成，用户明确发送“保存”、“确定”或“存档”指令后，才依次调用 `save_generated_topic` 和 `save_generated_copy` 进行持久化，并调用 `sync_copy_to_feishu` 同步到飞书。
+2. 在用户意见修改时，最终回复用户前，先调用 `save_user_feedback`(feedback=用户原话, target_resource_id=当前文案 ID, feedback_type="revision_request")，保存修改意见后再迭代修改。当前文案 ID 即为保存后返回的 `resource_id`。
+
+### 效果反馈与表现分析
+1. 效果数据收集：最终回复用户前，若用户提供发布后数据(如点赞、收藏、评论、转发、浏览、发布时间或链接)，先调用 `save_performance_metric` 保存到 Postgres，绑定目标内容资源 ID。不得猜 ID，无对应目标时先询问。
+2. 过去表现与推荐分析：用户询问“过去表现”或“为什么推荐”某个选题方向时，先对相关资源调用 `get_resource_performance` 获取数据，结合表现分析，不得凭感觉编造效果数据。
+
+

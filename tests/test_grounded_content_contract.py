@@ -19,9 +19,9 @@ from prompts import MAIN_SYSTEM_PROMPT
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_CONTRACT = (
-    ROOT / ".agents" / "skills" / "topic-content" / "SKILL.md"
-).read_text(encoding="utf-8")
+_topic_content = (ROOT / ".agents" / "skills" / "topic-content" / "SKILL.md").read_text(encoding="utf-8")
+_xhs_copywriting = (ROOT / ".agents" / "skills" / "xhs-copywriting" / "SKILL.md").read_text(encoding="utf-8")
+SKILL_CONTRACT = _topic_content + "\n" + _xhs_copywriting
 
 # 检索口径里的工具名 —— 唯一源是 MAIN_SYSTEM_PROMPT §6《检索与证据规约》。
 RETRIEVAL_TOOLS = {

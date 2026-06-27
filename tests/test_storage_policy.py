@@ -78,7 +78,8 @@ def test_shareable_business_assets_use_database_and_feishu() -> None:
         assert "sync_diagnosis_to_feishu" in skill
 
     topic_content = _read(".agents/skills/topic-content/SKILL.md")
+    xhs_copywriting = _read(".agents/skills/xhs-copywriting/SKILL.md")
     assert "save_generated_topic" in topic_content
     assert "sync_topic_to_feishu" in topic_content
-    assert "save_generated_copy" in topic_content
-    assert "sync_copy_to_feishu" in topic_content
+    assert "save_generated_copy" in xhs_copywriting
+    assert "sync_copy_to_feishu" in xhs_copywriting
