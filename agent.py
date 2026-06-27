@@ -57,9 +57,11 @@ rubric_middleware = RubricMiddleware(
 )
 content_rubric_activator = ContentRubricActivator()
 
+assembled_tools = data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes, dispatch_thinking_step] + load_lark_mcp_tools()
+
 agent = create_deep_agent(
     model=initial_model,
-    tools=data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes, dispatch_thinking_step] + load_lark_mcp_tools(),
+    tools=assembled_tools,
     system_prompt=MAIN_SYSTEM_PROMPT,
     skills=["/skills/"],
     subagents=build_executor_subagents(model_registry, initial_model, backend),
@@ -91,5 +93,5 @@ agent = create_deep_agent(
     name="xhs-router",
 )
 
-agent.tools = data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes, dispatch_thinking_step] + load_lark_mcp_tools()
+agent.tools = assembled_tools
 

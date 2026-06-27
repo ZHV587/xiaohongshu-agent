@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
 import psycopg
@@ -564,7 +564,7 @@ data_foundation_tools = [
 async def dispatch_thinking_step(
     step_id: str,
     label: str,
-    status: str,
+    status: Literal["running", "done", "failed"],
 ) -> str:
     """向前端推送当前正在进行的思考/处理步骤（面向用户的友好中文描述）。
     
