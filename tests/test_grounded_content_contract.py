@@ -69,6 +69,30 @@ def test_prompt_owns_output_protocol_with_evidence_schema():
             assert f'"{field}"' in block, f"{block_name}: {field}"
 
 
+def test_output_protocol_shape_matches_frontend_renderer():
+    """回归(Q-1):§5 模板结构必须与前端 xhs-blocks.ts 渲染器一致,否则照权威 prompt 写卡片必渲染失败。
+    渲染器要求:topics 是字符串数组、evidence 是顶层数组;文案用 title/body/tags(非 copy_text)。"""
+    topics_start = MAIN_SYSTEM_PROMPT.index("```xhs_topics")
+    copy_start = MAIN_SYSTEM_PROMPT.index("```xhs_copy")
+    topics_block = MAIN_SYSTEM_PROMPT[topics_start:copy_start]
+    copy_block = MAIN_SYSTEM_PROMPT[copy_start:]
+
+    # 旧的错误结构不得再出现(对象数组 topic_title / copy_text)
+    assert "topic_title" not in MAIN_SYSTEM_PROMPT
+    assert "copy_text" not in topics_block and "copy_text" not in copy_block.replace(
+        "不要用 `copy_text`", ""
+    )  # 仅允许出现在"不要用 copy_text"的警示里
+
+    # topics 必须是字符串数组:模板里 topics 后跟 [ 且元素是带引号的字符串,不是 { 对象
+    import re
+    m = re.search(r'"topics"\s*:\s*\[\s*"', topics_block)
+    assert m is not None, "topics 必须是字符串数组(形如 \"topics\": [\"...\"])"
+
+    # 文案必须用 title/body/tags
+    for field in ('"title"', '"body"', '"tags"'):
+        assert field in copy_block, f"xhs_copy 缺字段 {field}"
+
+
 def test_prompt_forbids_fabricating_source_freshness():
     assert "未知" in MAIN_SYSTEM_PROMPT
     assert "source_updated_at" in MAIN_SYSTEM_PROMPT

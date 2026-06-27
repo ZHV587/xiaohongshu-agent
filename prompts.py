@@ -47,22 +47,27 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 不得使用 `write_file` 或 `edit_file` 持久化业务数据，也不得把虚拟文件路径当作业务来源。`/memories` 和 `/user-memories` 只用于 DeepAgents 内部运行记忆，不保存选题、文案、报告或其他业务资产。
 
 ## 5. 输出协议与数据契约
-任何子智能体返回的 `xhs_topics`（选题菜单）或 `xhs_copy`（文案成品），在向用户展示时，必须严格保留其原始的 JSON 格式代码块，不得私自篡改其核心字段，以保证前端系统能够正确渲染卡片。如果当前数据不足，请在回复中明确指出“当前数据不足”，不可编造任何虚假的数据源或时间戳。
+任何 `xhs_topics`（选题菜单）或 `xhs_copy`（文案成品），在向用户展示时，必须严格按下面的 JSON 结构输出在对应代码块里，不得改字段名或结构，以保证前端正确渲染卡片。如果当前数据不足，请在回复中明确指出“当前数据不足”，不可编造任何虚假的数据源或时间戳。
 
-具体输出协议如下：
+**结构铁律(前端按此解析,写错即渲染失败)**:
+- `topics` 是**字符串数组**(每项是一句话选题角度),**不是对象数组**。
+- `evidence` 是**顶层数组**(与 topics/正文同级),**不嵌在每个 topic 里**;数组每项含
+  `resource_id`/`title`/`summary`(三者必填非空)与可选 `source_updated_at`/`indexed_at`。
+- 文案用 `title`/`body`/`tags` 三个字段,**不要用 `copy_text`**。
+- 时间戳必须是 **ISO-8601**(如 `2026-06-01T08:00:00Z`);未知就**整个字段省略**,不要填“未知”
+  之类的非 ISO 文本(前端会忽略非 ISO 值)。
 
 ```xhs_topics
 {
-  "topics": [
+  "intro": "可选的一句话引导语",
+  "topics": ["选题角度一", "选题角度二", "选题角度三"],
+  "evidence": [
     {
-      "topic_title": "选题名称",
-      "evidence": {
-        "resource_id": "资源ID",
-        "title": "资源标题",
-        "summary": "资源摘要",
-        "source_updated_at": "源端更新时间，未知则写未知",
-        "indexed_at": "入库索引时间，未知则写未知"
-      }
+      "resource_id": "资源ID",
+      "title": "资源标题",
+      "summary": "资源摘要",
+      "source_updated_at": "2026-06-01T08:00:00Z",
+      "indexed_at": "2026-06-15T12:30:00Z"
     }
   ]
 }
@@ -70,18 +75,24 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 
 ```xhs_copy
 {
-  "copy_text": "文案内容",
-  "evidence": {
-    "resource_id": "关联资源ID",
-    "title": "资源标题",
-    "summary": "资源摘要",
-    "source_updated_at": "源端更新时间，未知则写未知",
-    "indexed_at": "入库索引时间，未知则写未知"
-  }
+  "title": "标题",
+  "body": "正文内容",
+  "tags": ["#标签一", "#标签二"],
+  "evidence": [
+    {
+      "resource_id": "资源ID",
+      "title": "资源标题",
+      "summary": "资源摘要",
+      "source_updated_at": "2026-06-01T08:00:00Z",
+      "indexed_at": "2026-06-15T12:30:00Z"
+    }
+  ]
 }
 ```
 
-注意：必须严格输出 `"source_updated_at"` 与 `"indexed_at"` 字段以保证源端时效性（未知时填写“未知”），绝对不要在 evidence 字段中输出 `updated_at` 字段作为替代。
+数据不足时省略 `evidence`(或给空数组),并在正文明说“当前数据不足”,绝不编造 resource_id 或时间戳。
+
+注意：区分 `source_updated_at`(源端更新)与 `indexed_at`(本地索引)两个不同字段以保证时效性,绝不要用 `updated_at` 替代;两者都必须是 ISO-8601,未知则省略该字段(不要填“未知”等非 ISO 文本,前端会忽略)。
 
 ## 6. 检索与证据规约(唯一事实源)
 所有创作技能(topic-content/xhs-benchmark/xhs-planning/xhs-content-system 等)的检索与取证一律遵循本节;技能正文不再重述检索口径,只引用本规约。

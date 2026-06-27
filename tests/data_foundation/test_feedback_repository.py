@@ -159,12 +159,12 @@ def test_add_edge_inserts_correctly(migrated_conn):
         assert outbox[0]["event_id"] is None
         assert outbox[0]["payload"] == {"resource_id": str(r1.id), "version": 1}
         
-        # Verify dedupe key
+        # Verify dedupe key —— 含边维度(target+edge_type),与 node-ingest key 区分(Q-2 修复)
         import hashlib
         import json
         expected_dedupe = hashlib.sha256(
             json.dumps(
-                ["tenant_1", str(r1.id), 1, "graph_ingest", "graph"],
+                ["tenant_1", str(r1.id), 1, "graph_ingest", "graph", "edge", str(r2.id), "related_to"],
                 sort_keys=True,
                 ensure_ascii=False
             ).encode("utf-8")
@@ -352,3 +352,40 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
             conn=migrated_conn
         )
 
+
+
+def test_add_edge_after_node_ingest_enqueues_distinct_task(migrated_conn):
+    """Q-2 回归:节点已 graph_ingest 标 succeeded 后再加边,必须产生**新的** pending 任务,
+    而非因 dedupe_key 与 node-ingest 相同被 on conflict 吞掉(否则边永不入 FalkorDB)。"""
+    res_repo = ResourceRepository()
+    fb_repo = FeedbackRepository()
+    actor = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_1")
+
+    def _mk(title):
+        return res_repo.upsert_resource(
+            Resource(id=None, tenant_id="tenant_1", type="xhs_copy", title=title, summary=None,
+                     content_text="x", content_json={}, version=None, status="active",
+                     visibility="private", owner_open_id="user_1", created_at=None, updated_at=None),
+            actor=actor, conn=migrated_conn,
+        )
+    src, tgt = _mk("src"), _mk("tgt")
+
+    # 模拟节点的 graph_ingest 已被处理成 succeeded(upsert_resource 入队的那条)
+    with migrated_conn.cursor() as cur:
+        cur.execute(
+            "update resource_outbox set status='succeeded' where resource_id=%s and topic='graph_ingest'",
+            (src.id,),
+        )
+
+    fb_repo.add_edge(tenant_id="tenant_1", source_resource_id=src.id, target_resource_id=tgt.id,
+                     edge_type="measured_by", weight=1.0, conn=migrated_conn)
+
+    with migrated_conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
+            "select status, dedupe_key from resource_outbox where resource_id=%s and topic='graph_ingest'",
+            (src.id,),
+        ).fetchall()
+    # 必须有一条新的 pending(边任务),与已 succeeded 的 node 任务并存、dedupe_key 不同
+    statuses = sorted(r["status"] for r in rows)
+    assert "pending" in statuses, f"加边未产生新任务,边会丢失:{statuses}"
+    assert len({r["dedupe_key"] for r in rows}) == len(rows), "边任务与节点任务 dedupe_key 撞了"

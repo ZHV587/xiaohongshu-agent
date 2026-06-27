@@ -69,8 +69,14 @@ class FeedbackRepository(BaseRepository):
                     source_version = version_row["version"]
 
                     # Enqueue outbox task for graph_ingest
+                    # dedupe_key 必须含边维度(target+edge_type):否则与 upsert_resource 对同
+                    # (resource,version) 生成的 node-ingest key 相同 → 节点先入图标 succeeded 后,
+                    # 加边再 enqueue 同 key → on conflict do nothing → 任务不创建 → 边永不入 FalkorDB
+                    # (measured_by/derived_from/feedback_on 边在节点首次入图后添加的全部丢失)。
+                    # 加上 (target, edge_type) 后,每条新边都是独立任务,触发重新 ingest 节点+其全部边
+                    # (processor 读当前所有边,幂等)。
                     topic = "graph_ingest"
-                    dedupe_parts = ("graph",)
+                    dedupe_parts = ("graph", "edge", str(target_resource_id), edge_type)
                     payload = {
                         "resource_id": str(source_resource_id),
                         "version": source_version,
