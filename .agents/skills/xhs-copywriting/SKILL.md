@@ -31,6 +31,10 @@ description: |
 
 ## Phase 2：标题生成
 
+【状态推送】：
+- 开始时调用 `dispatch_thinking_step(step_id='copy_title', label='正在脑暴候选标题...', status='running')`。
+- 完成时调用 `dispatch_thinking_step(step_id='copy_title', label='标题设计已完成', status='done')`。
+
 **12 类心理触发器，75 个爆款公式（节选核心）**：
 
 | 触发器类型 | 代表公式 | 示例 |
@@ -50,11 +54,23 @@ description: |
 字数：{N}（严格不超过20字）
 ```
 
-完成后暂停，等用户选定或调整标题。
+完成后暂停，等用户选定或调整标题。在 Phase 2 末尾，你必须输出以下内容以挂起交互：
+```xhs_panel
+{
+  "actions": [
+    { "label": "✍️ 确认为该标题写开头", "text": "我选这个标题，请帮我写开头设计。" },
+    { "label": "🔄 换一批标题", "text": "这几个不够亮眼，换一批新的标题。" }
+  ]
+}
+```
 
 ---
 
 ## Phase 3：前3秒钩子设计
+
+【状态推送】：
+- 开始时调用 `dispatch_thinking_step(step_id='copy_hook', label='正在设计前3秒吸引钩子...', status='running')`。
+- 完成时调用 `dispatch_thinking_step(step_id='copy_hook', label='开头设计已完成', status='done')`。
 
 设计高点击率的开头。
 
@@ -69,11 +85,23 @@ description: |
 
 **生成 2 条备选开头**，每条说明心理触发逻辑。
 
-完成后暂停，等用户确认开头风格。
+完成后暂停，等用户确认开头风格。在 Phase 3 末尾，你必须输出以下内容以挂起交互：
+```xhs_panel
+{
+  "actions": [
+    { "label": "✍️ 撰写完整正文", "text": "开头满意，请帮我生成完整文案正文。" },
+    { "label": "🔄 重新设计开头", "text": "开头风格不太对，帮我重新写两个开头。" }
+  ]
+}
+```
 
 ---
 
 ## Phase 4：正文生成
+
+【状态推送】：
+- 开始时调用 `dispatch_thinking_step(step_id='copy_body', label='正在生成完整正文并打磨排版...', status='running')`。
+- 完成时调用 `dispatch_thinking_step(step_id='copy_body', label='正文生成已完成', status='done')`。
 
 基于确认的标题和开头，写完整正文。
 
@@ -94,6 +122,16 @@ description: |
 - 无 AI 腔（不用「首先/其次/总之」「在…领域」「深入探讨」）
 - 有真实细节（数字、具体场景、实际案例）
 - 长短句交错，有节奏感
+
+在 Phase 4 末尾，你必须输出以下内容以挂起交互：
+```xhs_panel
+{
+  "actions": [
+    { "label": "💾 确定并保存到飞书", "text": "确定" },
+    { "label": "🛡️ 运行 AI 质检润色", "text": "检测AI味" }
+  ]
+}
+```
 
 ---
 
@@ -151,3 +189,5 @@ description: |
 2. 过去表现与推荐分析：用户询问“过去表现”或“为什么推荐”某个选题方向时，先对相关资源调用 `get_resource_performance` 获取数据，结合表现分析，不得凭感觉编造效果数据。
 
 
+【认知语义匹配规约（铁律）】：
+在进入文案创作流前，必须对 `selected_topic` 字段的内容进行语义审查。如果该选题所属的分类或核心讨论点与用户最近三轮对话讨论的话题（如用户已跳转去搜美妆，但 `selected_topic` 仍为健身）出现明显不匹配，或者该选题已经被保存过，你必须忽略该状态，并向用户提示：“您是要写刚才讨论的 [新话题]，还是之前的 [旧选题]？”，防止旧状态产生跨会话污染。

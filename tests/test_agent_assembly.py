@@ -456,3 +456,13 @@ def test_main_prompt_has_routing_and_cleansing_rules(monkeypatch):
     assert "关键词清洗" in prompt
     assert "search_local_note_cards(keyword, limit=10)" in prompt
     assert "search_xhs_online(keyword, page_size=10)" in prompt
+
+
+def test_dispatch_thinking_step_tool_assembled(monkeypatch):
+    _set_assembly_env(monkeypatch)
+    import importlib
+    import agent as agent_module
+    importlib.reload(agent_module)
+    tools = [t.name for t in agent_module.agent.tools]
+    assert "dispatch_thinking_step" in tools
+
