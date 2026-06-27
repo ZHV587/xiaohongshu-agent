@@ -412,7 +412,7 @@ export function AssistantMessage({
   const showThinkingPlaceholder =
     isLastGroup && isLoading && !hasVisibleTools && !hasAiText;
 
-  const resolvedMessageId = blocks.find((b) => b.kind === "ai")?.message?.id || (isLastGroup ? thread.messages[thread.messages.length - 1]?.id : undefined);
+  const resolvedMessageId = blocks.find((b): b is { kind: "ai"; message: Message } => b.kind === "ai")?.message?.id || (isLastGroup ? thread.messages[thread.messages.length - 1]?.id : undefined);
 
   return (
     <div className="group mr-auto flex w-full items-start gap-2">
@@ -425,7 +425,7 @@ export function AssistantMessage({
               <Fragment key={`tools-${i}`}>
                 <ThinkingAura
                   toolCalls={block.tools}
-                  messageId={(block as any).message?.id || resolvedMessageId}
+                  messageId={resolvedMessageId}
                   status={running ? "running" : "done"}
                 />
                 {/* 工具富卡片(搜索发现等):注册表驱动,与思考链同位、流式/完成都展示 */}

@@ -48,10 +48,10 @@ export function PanelCard({
             className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold shadow-xs active:scale-95 transition-all duration-300 cursor-pointer border
               ${
                 isClicked
-                  ? "bg-coral text-white border-coral"
-                  : "bg-white text-coral border-coral/20 hover:bg-coral-light hover:border-coral/50"
+                  ? "bg-coral text-white border-coral disabled:hover:bg-coral disabled:hover:text-white disabled:hover:border-coral"
+                  : "bg-white text-coral border-coral/20 hover:bg-coral-light hover:border-coral/50 disabled:hover:bg-white disabled:hover:border-coral/20 disabled:hover:text-coral"
               }
-              disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 disabled:hover:bg-white disabled:hover:border-coral/20 disabled:hover:text-coral
+              disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100
             `}
           >
             {isClicked && <Loader2 className="size-3 animate-spin text-white" />}
