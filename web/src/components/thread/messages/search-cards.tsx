@@ -45,7 +45,7 @@ function CoverImage({ url, title }: { url?: string; title?: string }) {
   const [errored, setErrored] = useState(false);
   if (!url || errored) {
     return (
-      <div className="flex aspect-[3/4] w-[88px] flex-shrink-0 items-center justify-center rounded-xl bg-oats-dark/50 text-[10px] text-charcoal-light">
+      <div className="flex aspect-[3/4] w-[88px] flex-shrink-0 self-start items-center justify-center rounded-xl bg-oats-dark/50 text-[10px] text-charcoal-light">
         无封面
       </div>
     );
@@ -57,7 +57,7 @@ function CoverImage({ url, title }: { url?: string; title?: string }) {
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setErrored(true)}
-      className="aspect-[3/4] w-[88px] flex-shrink-0 rounded-xl object-cover bg-oats-dark/40"
+      className="aspect-[3/4] w-[88px] flex-shrink-0 self-start rounded-xl object-cover bg-oats-dark/40"
     />
   );
 }
