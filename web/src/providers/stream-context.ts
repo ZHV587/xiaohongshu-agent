@@ -55,6 +55,15 @@ export function isStreamUiEvent(event: unknown): event is UIMessage | RemoveUIMe
   return isUIMessage(event) || isRemoveUIMessage(event);
 }
 
+export function isThinkingStepEvent(event: unknown): event is ThinkingStepEvent {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    (event as any).type === "thinking_step"
+  );
+}
+
 export const useStreamContext = (): StreamContextType => {
   const context = useContext(StreamContext);
   if (context === undefined) {
