@@ -45,7 +45,7 @@ hover 会话项 → 露出垃圾桶 → 点击 → 项内变 "确认删除? [取
   → 点[删除] → ThreadProvider.deleteThread(id)
       → await client.threads.delete(id)
       → 成功:setThreads(prev => prev.filter(t => t.thread_id !== id))   ← 成功后才 filter,非乐观
-              + 若 id === 当前 threadId 则 setThreadId(null)
+              + 若 id === 当前 threadId 则走现有切换路径 onThreadClick(null) ?? setThreadId(null)
       → 失败:抛出 → 调用方 sonner toast 报错,列表 state 不变
 ```
 
@@ -73,12 +73,14 @@ deleteThread: (threadId: string) => Promise<void>;
 ### 5.3 `web/src/components/thread/history/index.tsx`(`ThreadList`)
 - 每个会话项外层加 `group` 容器;主体仍是切换会话的可点区域。
 - 右侧 `Trash2` 图标按钮:`opacity-0 group-hover:opacity-100`,`aria-label="删除会话"`。
-- 本地 state:`confirmingId: string | null`(哪一项在确认态)、`deletingId: string | null`(哪一项删除在途,同时只一个)。
-- 点垃圾桶(`stopPropagation`,避免触发切换)→ `setConfirmingId(t.thread_id)`,启动 3 秒复原定时器。
+- 本地 state:`confirmingId: string | null`(哪一项在确认态)、`isDeleting: boolean`(删除在途,用于 disable 按钮防重复点击)。因"全局同时只一项确认态"+"仅确认态可点删除",同时只可能删一项,故无需按 id 跟踪删除态。
+- 定时器:用一个 `confirmTimer` ref 持有 3 秒复原定时器。**任何离开/切换确认态的动作(点删除、点取消、切到他项垃圾桶、点会话主体切换、组件卸载)都先 `clearTimeout` 再处理**,避免旧定时器误清新确认态。
+- 点垃圾桶(`stopPropagation`,避免触发切换)→ 清旧定时器 → `setConfirmingId(t.thread_id)` → 启动新的 3 秒复原定时器。
+- `threadId` 来自 `ThreadList` 自身的 `const [threadId, setThreadId] = useQueryState("threadId")`(现有代码已有此解构)。
 - 确认态该项渲染为"确认删除? [取消][删除]":
-  - [删除]:`setDeletingId(id)` → `await deleteThread(id)` → 成功后若 `id === threadId` 则 `setThreadId(null)`;`finally` 清 `confirmingId`/`deletingId`。删除中按钮 disable。失败 `toast.error("删除失败,请重试")`。
-  - [取消]:清 `confirmingId`。
-- 点会话主体(切换)时一并 `setConfirmingId(null)`。
+  - [删除]:清定时器 → `setIsDeleting(true)` → `await deleteThread(id)` → 成功后,若 `id === threadId`(当前正查看的会话)则走**现有切换路径** `onThreadClick ? onThreadClick(null) : setThreadId(null)`(与"新对话"按钮一致,不直接硬调 `setThreadId`);`finally` 里 `setConfirmingId(null)` + `setIsDeleting(false)`。删除中两个按钮 `disabled={isDeleting}`。失败 `toast.error("删除失败,请重试")`(列表 state 不变)。
+  - [取消]:清定时器 → `setConfirmingId(null)`。
+- 点会话主体(切换)时:清定时器 + `setConfirmingId(null)`,再执行现有切换逻辑。
 - 从 `useThreads()` 取 `deleteThread`;`toast` 用项目已有的 `sonner`。
 
 ## 6. 错误处理与边界
@@ -86,7 +88,7 @@ deleteThread: (threadId: string) => Promise<void>;
 | 情形 | 行为 |
 |---|---|
 | 删除失败(网络/403/500) | sonner toast "删除失败,请重试";列表 state 不变(成功后才 filter) |
-| 删当前会话 | 成功后 `setThreadId(null)` → 空白新会话态 |
+| 删当前会话 | 成功后走现有切换路径 `onThreadClick(null) ?? setThreadId(null)` → 空白新会话态 |
 | 删非当前会话 | 仅从列表移除,当前查看不变 |
 | 越权删他人会话 | 后端 `on_thread_delete` 拒绝 → 走 toast 报错路径,前端不额外校验 |
 | 与 getThreads 刷新并发 | 仅 filter 本地数组;下次 search 以最新为准,无状态冲突 |
@@ -99,7 +101,7 @@ deleteThread: (threadId: string) => Promise<void>;
 - **provider 单测**:patch `./client` 模块的 `createClient` 注入 mock SDK client,验证:
   - `deleteThread` 成功后 `setThreads` 正确 filter 掉该 `thread_id`;
   - SDK 抛错时 `deleteThread` 向上抛且不修改列表。
-- **逻辑断言**:删当前会话(`id === threadId`)时触发 `setThreadId(null)`;删非当前不触发。
+- **逻辑断言**:删当前会话(`id === threadId`)时走切换路径(`onThreadClick(null)` 或 `setThreadId(null)`)；删非当前不触发切换。
 - `tsc --noEmit` + `eslint src` 通过。
 
 ## 8. 部署
