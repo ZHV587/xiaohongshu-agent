@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import inspect
 from contextlib import nullcontext
 
 from tools.runtime_identity import identity_config
+
+
+def test_resource_repository_check_permission_signature_is_stable():
+    """S2 护栏(不依赖 DB):creation_memory._actor_can_read 用 getattr(repo,"check_permission")
+    软门调用真仓权限校验。若真方法被改名/改签名,getattr 取不到 → 软门退化成 allow-all 越权,
+    而其余单测仍绿(假仓本就没这方法、真仓 ACL 测试默认 skip)。此处把签名钉死,漂移即在单元层炸。
+    """
+    from data_foundation.repositories.resource import ResourceRepository
+
+    assert hasattr(ResourceRepository, "check_permission")
+    params = list(inspect.signature(ResourceRepository.check_permission).parameters)
+    # _actor_can_read 以 (resource_id, actor, permission=..., conn=...) 调用,这些形参必须在
+    assert params[:3] == ["self", "resource_id", "actor"], params
+    assert "permission" in params and "conn" in params, params
 
 
 class RecordingRepository:

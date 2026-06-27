@@ -206,14 +206,20 @@ async def internal_feishu_uat_post(request: Request) -> JSONResponse:
     if isinstance(actor, JSONResponse):
         return actor
     body = await request.json()
-    save_uat(
-        open_id=actor.open_id,
-        uat=str(body.get("uat") or ""),
-        refresh_token=str(body.get("refresh_token") or ""),
-        expires_at=float(body.get("expires_at") or 0),
-        scopes=list(body.get("scopes") or []),
-        name=str(body.get("name") or actor.open_id),
-    )
+    try:
+        save_uat(
+            open_id=actor.open_id,
+            uat=str(body.get("uat") or ""),
+            refresh_token=str(body.get("refresh_token") or ""),
+            expires_at=float(body.get("expires_at") or 0),
+            scopes=list(body.get("scopes") or []),
+            name=str(body.get("name") or actor.open_id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 持久化失败必须据实返回 5xx(而非吞掉报 ok:true)——否则用户看到"已授权"但 token 没存,
+        # 陷入永久重授权循环。不回带异常细节(可能含底层 DSN/路径),只记日志。
+        logger.error("Failed to persist UAT for user %s: %s", actor.open_id, type(exc).__name__)
+        return _json_error(500, "Failed to persist Feishu authorization. Please retry.")
     return _json_ok({"ok": True})
 
 

@@ -89,58 +89,57 @@ def _read_store() -> dict:
 
 def _write_store(data: dict) -> None:
     store_path = os.environ.get("XHS_UAT_STORE_PATH", str(_DEFAULT_STORE_PATH))
-    try:
-        f = Fernet(_get_fernet_key())
-        serialized = json.dumps(data).encode("utf-8")
-        encrypted_data = f.encrypt(serialized)
+    f = Fernet(_get_fernet_key())
+    serialized = json.dumps(data).encode("utf-8")
+    encrypted_data = f.encrypt(serialized)
 
-        # 原子写:同目录临时文件 + fsync + os.replace 原子 rename。直接 O_TRUNC 覆写非原子,
-        # 写一半进程被杀会把文件截断,下次 _read_store 的 decrypt 抛异常 → 兜底返回 {} →
-        # 全员 UAT 静默全丢(所有用户需重新授权,且无报错)。os.replace 在同一文件系统原子,
-        # 任一时刻读到的要么完整旧文件、要么完整新文件。
-        # tempfile.mkstemp 默认即 0600,正好满足令牌文件的权限要求(rename 保留该权限)。
-        store_dir = os.path.dirname(store_path) or "."
-        fd, tmp_name = tempfile.mkstemp(dir=store_dir, prefix=".uat_store.", suffix=".tmp")
+    # 原子写:同目录临时文件 + fsync + os.replace 原子 rename。直接 O_TRUNC 覆写非原子,
+    # 写一半进程被杀会把文件截断,下次 _read_store 的 decrypt 抛异常 → 兜底返回 {} →
+    # 全员 UAT 静默全丢(所有用户需重新授权,且无报错)。os.replace 在同一文件系统原子,
+    # 任一时刻读到的要么完整旧文件、要么完整新文件。
+    # tempfile.mkstemp 默认即 0600,正好满足令牌文件的权限要求(rename 保留该权限)。
+    # 注意:写失败必须**抛出**(不再 try/except 吞掉)——否则调用方(save_uat → OAuth 回调)
+    # 会误以为持久化成功返回 {ok:true},用户看到"已授权"但 token 根本没存,陷入永久重授权循环。
+    store_dir = os.path.dirname(store_path) or "."
+    fd, tmp_name = tempfile.mkstemp(dir=store_dir, prefix=".uat_store.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fp:
+            fp.write(encrypted_data)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tmp_name, store_path)
+    except BaseException:
         try:
-            with os.fdopen(fd, "wb") as fp:
-                fp.write(encrypted_data)
-                fp.flush()
-                os.fsync(fp.fileno())
-            os.replace(tmp_name, store_path)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except FileNotFoundError:
-                pass
-            raise
-    except Exception as e:
-        logger.error(f"Error writing token storage: {e}")
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 def save_uat(open_id: str, uat: str, refresh_token: str, expires_at: float, scopes: list, name: str) -> None:
     postgres_uri = os.environ.get("POSTGRES_URI")
     if postgres_uri:
+        # PG 是配置后端时,写失败必须**抛出**,不再静默落文件兜底 —— 因为 get_uat 在 PG 可读时
+        # 只读 PG、永不查文件(split-brain:写进文件却读不到),静默兜底等于"写了等于没写"。
+        # 抛出让 OAuth 回调据实返回失败,用户能重试,而非陷入"已授权但永远读不到"的假象。
         _ensure_pg_table()
-        try:
-            import psycopg
-            with psycopg.connect(postgres_uri) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO lark_uat_tokens (open_id, user_access_token, refresh_token, expires_at, scopes, name)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (open_id) DO UPDATE SET
-                            user_access_token = EXCLUDED.user_access_token,
-                            refresh_token = EXCLUDED.refresh_token,
-                            expires_at = EXCLUDED.expires_at,
-                            scopes = EXCLUDED.scopes,
-                            name = EXCLUDED.name,
-                            updated_at = CURRENT_TIMESTAMP;
-                    """, (open_id, uat, refresh_token, expires_at, scopes, name))
-            logger.info(f"Saved UAT token for user {open_id} to PostgreSQL database.")
-            return
-        except Exception as e:
-            logger.error(f"Failed to save UAT token to PostgreSQL database: {e}. Falling back to file storage.")
+        import psycopg
+        with psycopg.connect(postgres_uri) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO lark_uat_tokens (open_id, user_access_token, refresh_token, expires_at, scopes, name)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (open_id) DO UPDATE SET
+                        user_access_token = EXCLUDED.user_access_token,
+                        refresh_token = EXCLUDED.refresh_token,
+                        expires_at = EXCLUDED.expires_at,
+                        scopes = EXCLUDED.scopes,
+                        name = EXCLUDED.name,
+                        updated_at = CURRENT_TIMESTAMP;
+                """, (open_id, uat, refresh_token, expires_at, scopes, name))
+        logger.info(f"Saved UAT token for user {open_id} to PostgreSQL database.")
+        return
 
-    # File storage fallback
+    # 文件后端(未配 POSTGRES_URI):写失败由 _write_store 抛出,同样向上传播。
     with _store_lock:
         store = _read_store()
         store[open_id] = {

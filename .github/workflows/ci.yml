@@ -1,0 +1,45 @@
+name: CI
+
+# 让权限/ACL 等 117 个挂在 migrated_conn 上的测试**真跑**:起 Postgres 容器并设
+# TEST_XHS_DATABASE_URL。本机不设该变量时这些测试默认 skip(开发者本地全绿 ≠ 验证过权限),
+# CI 必须把它们跑起来,否则越权防护在回归里形同虚设。
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # 标准 postgres 自带 contrib(pgcrypto/pg_trgm);conftest 会剥掉 vector 扩展、
+        # 用 plpgsql 模拟 <=> 余弦距离,故无需 pgvector 镜像即可跑全部 DB 测试。
+        image: postgres:16
+        env:
+          POSTGRES_USER: xhs_user
+          POSTGRES_PASSWORD: xhs_pass
+          POSTGRES_DB: xhs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U xhs_user -d xhs_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # 关键:设这个变量,migrated_conn 的 117 个 ACL/权限测试才会真执行而非 skip。
+      TEST_XHS_DATABASE_URL: postgresql://xhs_user:xhs_pass@localhost:5432/xhs_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run full test suite (DB tests included)
+        # 跑全量;DB 测试因 TEST_XHS_DATABASE_URL 已设而真执行。
+        run: uv run pytest -q

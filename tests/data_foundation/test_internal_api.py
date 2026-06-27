@@ -156,6 +156,28 @@ def test_internal_uat_save_requires_user_identity(monkeypatch):
     assert response.json()["error"] == "Missing internal user"
 
 
+def test_internal_uat_save_failure_returns_500_not_ok(monkeypatch):
+    """P0 回归:save_uat 持久化失败时端点必须返回 5xx,不得吞掉报 ok:true ——
+    否则用户看到"已授权"但 token 没存,永久重授权循环。"""
+    client = _client(monkeypatch)
+    import data_foundation.internal_api as internal_api
+
+    def _boom(**kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(internal_api, "save_uat", _boom)
+
+    response = client.post(
+        "/internal/feishu/uat",
+        headers={"X-XHS-Internal-Key": "internal-secret", "X-XHS-Open-Id": "ou_user"},
+        json={"uat": "t", "refresh_token": "r", "expires_at": 123, "scopes": [], "name": "U"},
+    )
+
+    assert response.status_code == 500
+    # 不回带异常细节(可能含 DSN/路径)
+    assert "No space left" not in response.text
+
+
 def test_internal_chats_filters_group_chats(monkeypatch):
     client = _client(monkeypatch)
 

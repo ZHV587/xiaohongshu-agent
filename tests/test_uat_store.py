@@ -65,6 +65,22 @@ def test_uat_store_atomic_write_survives_mid_write_crash():
     assert get_uat("usr_c") == "token_c"
 
 
+def test_uat_store_write_failure_propagates_not_swallowed():
+    """P0 回归:文件写失败(如磁盘满/只读)必须抛出,不得被静默吞掉 ——
+    否则 save_uat 返回成功、OAuth 回调报 ok:true,用户看到"已授权"却没存,陷入永久重授权循环。"""
+    save_uat("usr_x", "token_x", "ref_x", time.time() + 3600, [], "X")
+
+    # 模拟 os.replace 失败(磁盘满/只读 fs 的真实形态)
+    with patch("tools.uat_store.os.replace", side_effect=OSError("No space left on device")):
+        with pytest.raises(OSError):
+            save_uat("usr_y", "token_y", "ref_y", time.time() + 3600, [], "Y")
+
+    # 旧令牌完好,临时文件无泄漏
+    assert get_uat("usr_x") == "token_x"
+    store_dir = os.path.dirname(os.environ["XHS_UAT_STORE_PATH"])
+    assert [f for f in os.listdir(store_dir) if f.endswith(".tmp")] == []
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX 文件权限")
 def test_uat_store_preserves_0600_after_atomic_write():
     """原子写后令牌文件仍是 0600(tempfile.mkstemp 默认 0600,os.replace 保留)。"""

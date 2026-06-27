@@ -39,7 +39,9 @@ services:
       POSTGRES_PASSWORD: ${XHS_PG_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./scripts/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh
+      # 复制配置不再走 initdb hook(对 external 既有卷从不触发,见 scripts/setup-replication.sh)。
+      # 改为挂幂等脚本,部署后对运行中的主库执行一次即可建复制角色 + 加 pg_hba 规则。
+      - ./scripts/setup-replication.sh:/usr/local/bin/setup-replication.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U xhs_user -d xhs_agent"]
       interval: 10s
@@ -52,7 +54,8 @@ services:
     networks: [xhs-net]
     restart: unless-stopped
     environment:
-      PGPASSWORD: replication_password
+      # 复制口令走 env(与 setup-replication.sh 写入主库的口令必须一致),不再源码硬编码。
+      PGPASSWORD: ${XHS_PG_REPLICATION_PASSWORD}
     volumes:
       - pgdata_standby:/var/lib/postgresql/data
       - ./scripts/entrypoint-standby.sh:/usr/local/bin/entrypoint-standby.sh
