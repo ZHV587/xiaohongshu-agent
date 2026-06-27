@@ -30,3 +30,27 @@ test("index.tsx provider correctly injects new states and actions", () => {
   assert.match(thread, /isDirty,/);
   assert.match(thread, /handleExecuteCommand,/);
 });
+
+test("thread-context 接口声明 deleteThread", () => {
+  const ctx = readFileSync(
+    join(process.cwd(), "src", "providers", "thread-context.ts"),
+    "utf8",
+  );
+  assert.match(ctx, /deleteThread:\s*\(threadId:\s*string\)\s*=>\s*Promise<void>/);
+});
+
+test("Thread provider 实现 deleteThread:成功后才 filter,且经 client.threads.delete", () => {
+  const provider = readFileSync(
+    join(process.cwd(), "src", "providers", "Thread.tsx"),
+    "utf8",
+  );
+  // 经 SDK 删除
+  assert.match(provider, /client\.threads\.delete\(threadId\)/);
+  // 成功后才 filter(delete 在 setThreads 之前,即先 await 再 filter)
+  const deleteIdx = provider.indexOf("client.threads.delete(threadId)");
+  const filterIdx = provider.indexOf("t.thread_id !== threadId");
+  assert.ok(deleteIdx > -1 && filterIdx > -1 && deleteIdx < filterIdx,
+    "必须先 await delete 再 filter 列表(非乐观)");
+  // 注入 value
+  assert.match(provider, /deleteThread,/);
+});

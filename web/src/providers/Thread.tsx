@@ -35,16 +35,22 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
 
-  const getThreads = useCallback(async (): Promise<Thread[]> => {
+  const makeClient = useCallback(() => {
     const resolvedAssistantId = assistantId || envAssistantId;
-    if (!finalApiUrl || !resolvedAssistantId) return [];
+    if (!finalApiUrl || !resolvedAssistantId) return null;
     const browserApiUrl = toBrowserApiUrl(finalApiUrl);
-    if (!browserApiUrl) return [];
-    const client = createClient(
+    if (!browserApiUrl) return null;
+    return createClient(
       browserApiUrl,
       getApiKey() ?? undefined,
       authScheme || undefined,
     );
+  }, [finalApiUrl, assistantId, authScheme, envAssistantId]);
+
+  const getThreads = useCallback(async (): Promise<Thread[]> => {
+    const resolvedAssistantId = assistantId || envAssistantId;
+    const client = makeClient();
+    if (!client || !resolvedAssistantId) return [];
 
     const threads = await client.threads.search({
       metadata: {
@@ -54,10 +60,22 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     });
 
     return threads;
-  }, [finalApiUrl, assistantId, authScheme, envAssistantId]);
+  }, [makeClient, assistantId, envAssistantId]);
+
+  const deleteThread = useCallback(
+    async (threadId: string): Promise<void> => {
+      const client = makeClient();
+      if (!client) throw new Error("无法连接服务,删除失败");
+      // 成功后才从本地列表移除(非乐观):delete 抛错则不动 state,由调用方 toast。
+      await client.threads.delete(threadId);
+      setThreads((prev) => prev.filter((t) => t.thread_id !== threadId));
+    },
+    [makeClient],
+  );
 
   const value = {
     getThreads,
+    deleteThread,
     threads,
     setThreads,
     threadsLoading,
