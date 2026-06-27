@@ -66,7 +66,7 @@ export type ThinkingStepEvent = {
   payload: {
     id: string;
     label: string;
-    status: "running" | "done" | "failed";
+    status: "running" | "done" | "failed" | "interrupted";
   };
 };
 
@@ -90,10 +90,15 @@ export const useTypedStream = useStream<
 #### [MODIFY] [ai.tsx](file:///e:/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E6%99%BA%E8%83%BD%E4%BD%93/web/src/components/thread/messages/ai.tsx)
 重构 `ThinkingAura` 组件。通过 `useStreamContext()` 获取 `customEvents` 队列，将其中的 `thinking_step` 元素与已有的 `toolCalls` 进行时间戳/顺序合并，形成一条统一的中文“思考轨迹”时间线。
 
-* **渲染规范**：
-  * **进行中**：前置 LoaderCircle 旋转，文本置灰显示 `label`。
-  * **已完成**：前置绿色勾，文本加深显示 `label`。
-  * **已失败**：前置红色交叉 `✗`，文本呈红色警告状态显示 `label` 并展开异常描述。
+* **隔离与容错机制（铁律）**：
+  1. **隔离渲染**：`ThinkingAura` 必须通过 `message.id` 或 `run_id` 精确过滤思考事件，严禁非当前消息的思考事件泄露进历史消息。
+  2. **手动中止兼容**：若检测到全局 `isLoading` 为 `false` 且当前步骤仍为 `"running"`，界面上必须将其强行收敛为 `"interrupted"`（展示为灰色减号 `–`），禁止无限旋转。
+  3. **工具报错处理**：若工具的 `tc.result` 包含明确的错误信息（如 `ok: false`），图标降级为红叉 `✗`，步骤显示为红色报错文案，不予显示绿勾。
+  4. **状态渲染规范**：
+     * **进行中**：前置 LoaderCircle 旋转，文本置灰。
+     * **已完成**：前置绿色勾，文本加深。
+     * **已失败**：前置红叉 `✗`，文本显红并可展开详情。
+     * **已中断**：前置灰色减号 `–`，文本显灰色。
 
 ---
 
