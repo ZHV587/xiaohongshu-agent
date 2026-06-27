@@ -81,3 +81,27 @@ test("phone preview does not include decorative social follow like or collect ac
     /likeCount|isLiked|showPlusOne|collectCount|isCollected/,
   );
 });
+
+test("会话列表项支持删除:hover 垃圾桶 + 行内确认 + SDK 删除接线", () => {
+  const history = src("components", "thread", "history", "index.tsx");
+
+  // hover 显隐的垃圾桶图标
+  assert.match(history, /Trash2/);
+  assert.match(history, /opacity-0 group-hover:opacity-100/);
+  assert.match(history, /aria-label="删除会话"/);
+
+  // 行内二次确认态(不引入弹窗原语)
+  assert.match(history, /confirmingId/);
+  assert.match(history, /确认删除/);
+
+  // 接 provider 的 deleteThread + 失败 toast
+  assert.match(history, /deleteThread/);
+  assert.match(history, /toast\.error/);
+
+  // 删当前会话走现有切换路径(不硬调 setThreadId)
+  assert.match(history, /onThreadClick\s*\?\s*onThreadClick\(null\)\s*:\s*setThreadId\(null\)/);
+
+  // 3 秒复原定时器 + 清理
+  assert.match(history, /setTimeout/);
+  assert.match(history, /clearTimeout/);
+});

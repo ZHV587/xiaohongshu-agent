@@ -2,7 +2,7 @@
 import { Button } from "@/components/ui/button";
 import { useThreads } from "@/providers/thread-context";
 import { Thread } from "@langchain/langgraph-sdk";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getContentString } from "../utils";
 import { useQueryState, parseAsBoolean } from "nuqs";
@@ -20,9 +20,11 @@ import {
   LogOut,
   Sparkles,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { BRAND } from "@/lib/brand";
 import {
   getCurrentUser,
@@ -40,6 +42,54 @@ function ThreadList({
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
   const [, setView] = useQueryState("view");
+  const { deleteThread } = useThreads();
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearConfirmTimer = () => {
+    if (confirmTimer.current) {
+      clearTimeout(confirmTimer.current);
+      confirmTimer.current = null;
+    }
+  };
+
+  useEffect(() => () => clearConfirmTimer(), []);
+
+  const switchTo = (id: string | null) => {
+    if (id === null) {
+      void (onThreadClick ? onThreadClick(null) : setThreadId(null));
+    } else if (onThreadClick) {
+      onThreadClick(id);
+    } else {
+      setThreadId(id);
+    }
+  };
+
+  const startConfirm = (id: string) => {
+    clearConfirmTimer();
+    setConfirmingId(id);
+    confirmTimer.current = setTimeout(() => setConfirmingId(null), 3000);
+  };
+
+  const cancelConfirm = () => {
+    clearConfirmTimer();
+    setConfirmingId(null);
+  };
+
+  const confirmDelete = async (id: string) => {
+    clearConfirmTimer();
+    setIsDeleting(true);
+    try {
+      await deleteThread(id);
+      if (id === threadId) switchTo(null);
+      setConfirmingId(null);
+    } catch {
+      toast.error("删除失败,请重试");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <div className="[&::-webkit-scrollbar-thumb]:bg-border flex h-full w-full flex-col items-start gap-1 overflow-y-auto px-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full">
@@ -58,29 +108,84 @@ function ThreadList({
           if (first) itemText = first;
         }
         const active = t.thread_id === threadId;
+        const confirming = t.thread_id === confirmingId;
+
+        if (confirming) {
+          return (
+            <div
+              key={t.thread_id}
+              className="bg-oats/60 flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm"
+            >
+              <span className="text-charcoal truncate">确认删除?</span>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={isDeleting}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    cancelConfirm();
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-coral hover:text-coral h-7 px-2 text-xs"
+                  disabled={isDeleting}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void confirmDelete(t.thread_id);
+                  }}
+                >
+                  删除
+                </Button>
+              </div>
+            </div>
+          );
+        }
+
         return (
-          <button
+          <div
             key={t.thread_id}
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              setView(null);
-              if (t.thread_id === threadId) return;
-              if (onThreadClick) {
-                onThreadClick(t.thread_id);
-              } else {
-                setThreadId(t.thread_id);
-              }
-            }}
             className={cn(
-              "flex min-h-11 w-full items-center justify-between truncate rounded-lg px-3 py-2.5 text-left text-sm transition-all",
+              "group flex min-h-11 w-full items-center rounded-lg transition-all",
               active
-                ? "bg-oats text-coral border-coral rounded-l-none rounded-r-lg border-l-2 pl-2 font-semibold"
-                : "text-charcoal hover:bg-oats/50 rounded-lg",
+                ? "bg-oats text-coral border-coral rounded-l-none rounded-r-lg border-l-2"
+                : "text-charcoal hover:bg-oats/50",
             )}
           >
-            {itemText}
-          </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                setView(null);
+                cancelConfirm();
+                if (t.thread_id === threadId) return;
+                switchTo(t.thread_id);
+              }}
+              className={cn(
+                "min-w-0 flex-1 truncate px-3 py-2.5 text-left text-sm",
+                active ? "pl-2 font-semibold" : "",
+              )}
+            >
+              {itemText}
+            </button>
+            <button
+              type="button"
+              aria-label="删除会话"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                startConfirm(t.thread_id);
+              }}
+              className="text-charcoal-light hover:text-coral mr-2 flex size-7 shrink-0 items-center justify-center rounded transition-opacity opacity-0 group-hover:opacity-100"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          </div>
         );
       })}
     </div>
