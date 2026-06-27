@@ -24,7 +24,14 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
           <button
             key={i}
             type="button"
-            onClick={() => submitText(`我选第 ${i + 1} 个选题："${topic}"。请帮我围绕这个选题写一篇完整的小红书爆款文案。`)}
+            onClick={() =>
+              submitText(
+                `我选第 ${i + 1} 个选题："${topic}"。请帮我围绕这个选题写一篇完整的小红书爆款文案。`,
+                // 选题依据(evidence,含 resource_id)经 graph state(selected_topic)直传工具,
+                // 绝不进对话文本/不经 LLM 重填,杜绝静默丢 resource_id。topic 取用户点的这张卡。
+                { selected_topic: { topic, evidence: data.evidence } },
+              )
+            }
             className="group/topic relative overflow-hidden flex items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left transition-all duration-300 hover:border-primary/30 hover:shadow-[0_6px_20px_-8px_rgba(229,46,64,0.12)] active:scale-[0.995]"
           >
             {/* Left glowing accent line */}

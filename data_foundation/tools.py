@@ -3,12 +3,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 import psycopg
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from data_foundation.creation_memory import (
     save_generated_copy_resource,
@@ -391,10 +392,32 @@ def sync_feishu_resources(config: RunnableConfig | None = None) -> dict[str, Any
 def save_generated_topic(
     direction: str,
     topics: list[str],
-    evidence: list[dict[str, Any]] | None = None,
+    selected_topic: Annotated[
+        dict[str, Any] | None, InjectedState("selected_topic")
+    ] = None,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """Persist generated topic choices into the shared Postgres data foundation."""
+    """持久化用户选定的那一个选题到 Postgres 数据底座(只存选中的)。
+
+    依据来源(官方 InjectedState,单一事实源):选题依据(evidence,含 resource_id)由前端在
+    用户点选选题卡时经 `submit` 直传 graph state `selected_topic`(`{topic, evidence}`),
+    **完全不经对话文本/LLM 转写**——即「卡片上展示的依据 = 落库的依据」,杜绝重填时静默丢
+    resource_id。你(模型)**不要也无法在参数里传 evidence**;只需给 `direction`,`topics`
+    会以用户点选的那张卡为准。
+
+    Args:
+        direction: 选题方向(用户给的方向)。
+        topics: 选定的选题(回退用;若 state 带了点选的卡,则以卡上文案为准)。
+    """
+    final_topics = topics
+    evidence: list[dict[str, Any]] | None = None
+    if isinstance(selected_topic, dict):
+        picked = selected_topic.get("topic")
+        if isinstance(picked, str) and picked.strip():
+            final_topics = [picked.strip()]
+        ev = selected_topic.get("evidence")
+        if isinstance(ev, list):
+            evidence = ev
     actor = actor_from_config(config)
     with _repository() as repo:
         return save_generated_topic_resource(
@@ -402,7 +425,7 @@ def save_generated_topic(
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
             direction=direction,
-            topics=topics,
+            topics=final_topics,
             evidence=evidence,
         )
 

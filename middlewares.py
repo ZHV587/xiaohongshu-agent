@@ -70,22 +70,29 @@ def build_retry_middleware() -> ModelRetryMiddleware:
     )
 
 
-class AdoptState(AgentState):
-    """扩展 agent state:承载前端经 submit 直传的结构化数据。
+class FrontendDirectState(AgentState):
+    """扩展 agent state:承载前端在用户操作时经 submit 直传的**权威结构化数据**。
 
-    `selected_notes`:用户在搜索卡片勾选要采纳的线上笔记的**权威结构化副本**,
-    由前端经 `stream.submit({ selected_notes: [...] })`(官方 state-update 通道)直传,
-    不经对话文本/LLM 转写。`adopt_online_notes` 经 `InjectedState("selected_notes")` 注入它落库。
+    这些字段由前端在用户点选卡片时经 `stream.submit({...})`(官方 state-update 通道)直传,
+    工具用 `InjectedState("字段名")` 注入,**完全绕过对话文本/LLM 转写**,杜绝静默丢字段
+    (尤其 resource_id 这类依据)。
+
+    - `selected_notes`:用户在搜索卡片勾选要采纳的线上笔记的权威副本。
+      `adopt_online_notes` 经 `InjectedState("selected_notes")` 注入它落库。
+    - `selected_topic`:用户点选的那张选题卡的权威数据 `{topic, evidence}`,evidence 即卡片
+      上展示的库内依据(带 resource_id)。`save_generated_topic` 经 `InjectedState("selected_topic")`
+      注入它落库 —— 即「卡片展示的依据 = 落库的依据」,evidence 不再由 LLM 重填。
     """
 
     selected_notes: NotRequired[list[dict]]
+    selected_topic: NotRequired[dict]
 
 
-class SelectedNotesMiddleware(AgentMiddleware):
-    """向 agent state 注册 `selected_notes` 字段(官方:经 middleware 扩 state_schema)。
+class FrontendStateMiddleware(AgentMiddleware):
+    """向 agent state 注册前端直传字段(官方:经 middleware 扩 state_schema)。
 
-    只声明 state 形状,不拦截任何节点;让 deepagents 把该字段并入 graph state,
-    从而工具能用 `InjectedState("selected_notes")` 拿到前端直传的权威笔记。
+    只声明 state 形状,不拦截任何节点;让 deepagents 把这些字段并入 graph state,
+    从而工具能用 `InjectedState(...)` 拿到前端直传的权威数据(采纳笔记 / 选定选题)。
     """
 
-    state_schema = AdoptState
+    state_schema = FrontendDirectState

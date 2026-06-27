@@ -140,13 +140,17 @@ def test_save_generated_topic_tool_persists_for_current_actor(monkeypatch):
     repo = RecordingRepository()
     monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
 
+    # evidence 经 selected_topic(InjectedState)直传,不再是 LLM 参数;topics 以点选的卡为准。
     result = df_tools.save_generated_topic.func(
         direction="露营装备",
-        topics=["轻量露营（收藏点强）"],
-        evidence=[
-            {"resource_id": "source-1", "summary": "依据"},
-            {"resource_id": "source-2", "summary": "另一个依据"},
-        ],
+        topics=["LLM 占位(应被卡片覆盖)"],
+        selected_topic={
+            "topic": "轻量露营（收藏点强）",
+            "evidence": [
+                {"resource_id": "source-1", "summary": "依据"},
+                {"resource_id": "source-2", "summary": "另一个依据"},
+            ],
+        },
         config=identity_config("ou_user"),
     )
 
@@ -154,7 +158,18 @@ def test_save_generated_topic_tool_persists_for_current_actor(monkeypatch):
     assert repo.upsert["tenant_id"] == "default"
     assert repo.upsert["actor_open_id"] == "ou_user"
     assert repo.upsert["resource_type"] == "generated_topic"
+    # 落库的选题以用户点选的那张卡为准(覆盖 LLM 占位)
+    assert repo.upsert["content_json"]["topics"] == ["轻量露营（收藏点强）"]
     assert [edge["target_resource_id"] for edge in repo.edges] == ["source-1", "source-2"]
+
+
+def test_save_generated_topic_evidence_not_llm_arg():
+    """完整修复:evidence 不暴露给 LLM(只能经 selected_topic 的 InjectedState 注入)。"""
+    from data_foundation import tools as df_tools
+
+    llm_args = list(df_tools.save_generated_topic.args.keys())
+    assert "evidence" not in llm_args
+    assert "selected_topic" not in llm_args  # InjectedState 对模型不可见
 
 
 def test_save_generated_copy_tool_persists_for_current_actor(monkeypatch):
@@ -213,10 +228,13 @@ def test_save_generated_topic_skips_edge_to_unreadable_evidence(monkeypatch):
     result = df_tools.save_generated_topic.func(
         direction="露营",
         topics=["轻量化装备清单"],
-        evidence=[
-            {"resource_id": "22222222-2222-2222-2222-222222222222"},  # 可读
-            {"resource_id": "11111111-1111-1111-1111-111111111111"},  # 不可读
-        ],
+        selected_topic={
+            "topic": "轻量化装备清单",
+            "evidence": [
+                {"resource_id": "22222222-2222-2222-2222-222222222222"},  # 可读
+                {"resource_id": "11111111-1111-1111-1111-111111111111"},  # 不可读
+            ],
+        },
         config=identity_config("ou_user"),
     )
 

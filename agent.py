@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 from backends import build_backend
 from content_rubric import ContentRubricActivator
-from middlewares import build_retry_middleware, SelectedNotesMiddleware
+from middlewares import build_retry_middleware, FrontendStateMiddleware
 from model_registry import ModelRegistry
 from models import build_initial_placeholder_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
@@ -76,7 +76,7 @@ agent = create_deep_agent(
     checkpointer=True,
     middleware=[
         build_retry_middleware(),
-        SelectedNotesMiddleware(),
+        FrontendStateMiddleware(),
         rubric_middleware,
         content_rubric_activator,
         build_router_middleware(model_registry),
