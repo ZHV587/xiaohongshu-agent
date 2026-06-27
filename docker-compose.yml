@@ -24,12 +24,14 @@ networks:
 volumes:
   pgdata:
     external: true
-  pgdata_standby:
 
 services:
   pg:
     image: local/postgres16-pgvector:0.8.3
     container_name: xhs-pg
+    # command 里的 wal_level/max_wal_senders/hot_standby 均为 PG16 默认值,对单库运行无害;
+    # 热备(pg-standby)曾因 init 脚本对 external 卷从不执行而始终是空壳(从未真正复制),
+    # 已整体移除,不保留"看似有热备实则没有"的假象。如未来需要真灾备,另起干净方案。
     command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10", "-c", "hot_standby=on"]
     networks: [xhs-net]
     restart: unless-stopped
@@ -39,29 +41,11 @@ services:
       POSTGRES_PASSWORD: ${XHS_PG_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 复制配置不再走 initdb hook(对 external 既有卷从不触发,见 scripts/setup-replication.sh)。
-      # 改为挂幂等脚本,部署后对运行中的主库执行一次即可建复制角色 + 加 pg_hba 规则。
-      - ./scripts/setup-replication.sh:/usr/local/bin/setup-replication.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U xhs_user -d xhs_agent"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  pg-standby:
-    image: local/postgres16-pgvector:0.8.3
-    container_name: xhs-pg-standby
-    networks: [xhs-net]
-    restart: unless-stopped
-    environment:
-      # 复制口令走 env(与 setup-replication.sh 写入主库的口令必须一致),不再源码硬编码。
-      PGPASSWORD: ${XHS_PG_REPLICATION_PASSWORD}
-    volumes:
-      - pgdata_standby:/var/lib/postgresql/data
-      - ./scripts/entrypoint-standby.sh:/usr/local/bin/entrypoint-standby.sh
-    entrypoint: ["/usr/local/bin/entrypoint-standby.sh"]
-    depends_on:
-      pg: {condition: service_healthy}
 
   redis:
     image: redis:7-alpine
