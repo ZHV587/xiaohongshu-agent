@@ -194,14 +194,16 @@ export function SearchCards({ toolName, data }: { toolName: string; data: Search
   if (isOnline && data?.ok === false) {
     return (
       <div className="mx-auto my-2 max-w-3xl rounded-xl border border-border bg-oats-light/30 px-3.5 py-2 text-xs text-charcoal-light">
-        线上检索暂不可用,仅展示本地结果。
+        线上检索服务暂时不可用,仅展示本地结果。
       </div>
     );
   }
   if (!results.length) {
     return (
       <div className="mx-auto my-2 max-w-3xl rounded-xl border border-border bg-oats-light/30 px-3.5 py-2 text-xs text-charcoal-light">
-        {isOnline ? "线上未发现相关笔记。" : "本地暂无相关已收录笔记。"}
+        {isOnline
+          ? "红狐线上暂无该关键词的近期热门笔记(小众/长词组常见;换更宽泛的核心词可能有结果)。"
+          : "本地暂无相关已收录笔记。"}
       </div>
     );
   }

@@ -115,7 +115,7 @@ def _mark_already_local(notes: list[dict[str, Any]]) -> None:
 @tool
 def search_xhs_online(
     keyword: str,
-    days: int = 7,
+    days: int = 30,
     page_size: int = 20,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
@@ -123,9 +123,13 @@ def search_xhs_online(
 
     线上结果默认瞬态、不落库;用户在面板勾选「采纳收录」后才入库 + 同步飞书。
 
+    关键词用法(命中率关键):传**简短的核心词**(1 个名词/短词,如「握力圈」「敏感肌护肤」),
+    **不要堆叠修饰词**(如「秋冬握力圈正确用法」往往 0 命中)。红狐对小众/长词组覆盖有限,
+    返回空 `results` 是正常情况(非故障),此时可改用更宽泛的核心词重试,或仅用本地结果。
+
     Args:
-        keyword: 搜索关键词。
-        days: 回溯天数(近 N 天,红狐仅覆盖近 30 天)。
+        keyword: 搜索关键词(简短核心词,勿堆砌修饰)。
+        days: 回溯天数(默认 30;红狐仅覆盖近 30 天,取满窗命中更多)。
         page_size: 返回条数。
     """
     keyword = (keyword or "").strip()
