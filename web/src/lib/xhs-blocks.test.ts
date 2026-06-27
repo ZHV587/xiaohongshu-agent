@@ -63,3 +63,41 @@ test("discards malformed evidence timestamps without dropping the source", () =>
     {resource_id: "note-4", title: "来源", summary: "摘要"},
   ]);
 });
+
+test("parses valid xhs_panel segments", () => {
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_panel
+{
+  "actions": [
+    { "label": "✍️ 确认为该标题写开头", "text": "我选这个标题，请帮我写开头设计。" },
+    { "label": "🔄 换一批标题", "text": "这几个不够亮眼，换一批新的标题。" }
+  ]
+}
+\`\`\``);
+
+  assert.equal(segment.kind, "panel");
+  if (segment.kind !== "panel") return;
+  assert.deepEqual(segment.data, {
+    actions: [
+      { label: "✍️ 确认为该标题写开头", text: "我选这个标题，请帮我写开头设计。" },
+      { label: "🔄 换一批标题", text: "这几个不够亮眼，换一批新的标题。" },
+    ],
+  });
+});
+
+test("parses partial xhs_panel segments gracefully", () => {
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_panel
+{
+  "actions": [
+    { "label": "✍️ 确认为该标题写开头", "text": "我选这个标题，请帮我写开头设计。" },
+    { "label": "🔄 换一批标题", "text": "这几个不够
+\`\``); // note the unclosed JSON and incomplete actions array
+
+  assert.equal(segment.kind, "panel");
+  if (segment.kind !== "panel") return;
+  assert.deepEqual(segment.data, {
+    actions: [
+      { label: "✍️ 确认为该标题写开头", text: "我选这个标题，请帮我写开头设计。" },
+    ],
+  });
+});
+

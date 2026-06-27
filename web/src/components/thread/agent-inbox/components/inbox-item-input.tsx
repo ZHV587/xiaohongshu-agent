@@ -35,29 +35,58 @@ function isNoteArray(value: unknown): value is Record<string, unknown>[] {
   );
 }
 
+function fmt(num: unknown): string {
+  if (num == null) return "";
+  const n = Number(num);
+  if (isNaN(n)) return String(num);
+  if (n >= 10000) {
+    return `${(n / 10000).toFixed(1)}万`;
+  }
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(1)}k`;
+  }
+  return String(n);
+}
+
 /** 笔记数组(如 adopt 的 notes)友好摘要,避免 HITL 弹窗里堆裸 JSON。 */
 function NoteListSummary({ notes }: { notes: Record<string, unknown>[] }) {
+  const localNotes = notes.slice(0, 8);
   return (
-    <div className="flex w-full flex-col gap-1.5 rounded-xl bg-zinc-100 p-3">
-      <p className="text-[13px] font-semibold text-black">共 {notes.length} 篇笔记</p>
-      <ul className="flex flex-col gap-1">
-        {notes.slice(0, 8).map((n, i) => {
+    <div className="flex w-full flex-col gap-3 rounded-2xl bg-oats/30 p-4 border border-border/80">
+      <p className="text-[13px] font-semibold text-charcoal">共 {notes.length} 篇选定素材</p>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 w-full">
+        {localNotes.map((n, i) => {
           const title = String(n.title ?? n.note_id ?? "(无标题)");
           const author = n.author ? `@${String(n.author)}` : "";
           const inter = n.interactive ?? n.likes;
           return (
-            <li key={i} className="flex items-center gap-2 text-[12px] text-gray-700">
-              <span className="text-coral">{i + 1}.</span>
-              <span className="line-clamp-1 flex-1">{title}</span>
-              {author && <span className="shrink-0 text-gray-400">{author}</span>}
-              {inter != null && <span className="shrink-0 text-gray-400">🔥{String(inter)}</span>}
-            </li>
+            <div
+              key={i}
+              className="flex flex-col justify-between gap-1.5 rounded-xl border border-border/60 bg-white p-3 shadow-xs hover:border-coral/30 hover:shadow-sm transition-all"
+            >
+              <div className="flex items-start gap-1.5">
+                <span className="text-xs font-bold text-coral leading-tight">{i + 1}.</span>
+                <span className="text-xs font-medium text-charcoal-dark line-clamp-2 leading-tight flex-1">
+                  {title}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-charcoal-light mt-0.5">
+                <span className="truncate max-w-[120px]">{author || "(未知作者)"}</span>
+                {inter != null && (
+                  <span className="shrink-0 font-medium bg-coral-light text-coral px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                    🔥 {fmt(inter)}
+                  </span>
+                )}
+              </div>
+            </div>
           );
         })}
-        {notes.length > 8 && (
-          <li className="text-[12px] text-gray-400">…还有 {notes.length - 8} 篇</li>
-        )}
-      </ul>
+      </div>
+      {notes.length > 8 && (
+        <p className="text-[11px] text-charcoal-light font-medium pl-1">
+          …及其他 {notes.length - 8} 篇笔记
+        </p>
+      )}
     </div>
   );
 }
@@ -82,7 +111,7 @@ function ArgsRenderer({ args }: { args: Record<string, unknown> }) {
             {isNoteArray(value) ? (
               <NoteListSummary notes={value} />
             ) : (
-              <span className="w-full max-w-full rounded-xl bg-zinc-100 p-3 text-[13px] leading-[18px] text-black">
+              <span className="w-full max-w-full rounded-xl bg-oats-light/60 border border-border/60 p-3 text-[13px] leading-[18px] text-charcoal-dark shadow-2xs">
                 <MarkdownText>{stringValue}</MarkdownText>
               </span>
             )}
@@ -128,15 +157,14 @@ function ApproveOnly({
   ) => Promise<void> | void;
 }) {
   return (
-    <div className="flex w-full flex-col items-start gap-4 rounded-lg border border-gray-300 p-6">
+    <div className="flex w-full flex-col items-start gap-5 rounded-2xl border border-border bg-white/60 p-6 shadow-xs backdrop-blur-xs">
       {Object.keys(actionRequestArgs).length > 0 && (
         <ArgsRenderer args={actionRequestArgs} />
       )}
       <Button
-        variant="brand"
+        className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-medium shadow-md shadow-emerald-500/20 hover:shadow-lg hover:shadow-emerald-500/30 border-0 rounded-xl py-5 h-auto transition-all cursor-pointer"
         disabled={isLoading}
         onClick={handleSubmit}
-        className="w-full"
       >
         批准执行
       </Button>
@@ -228,7 +256,7 @@ function EditActionCard({
   };
 
   return (
-    <div className="flex w-full min-w-full flex-col items-start gap-4 rounded-lg border border-gray-300 p-6">
+    <div className="flex w-full min-w-full flex-col items-start gap-5 rounded-2xl border border-border bg-white/60 p-6 shadow-xs backdrop-blur-xs">
       <div className="flex w-full items-center justify-between">
         <p className="text-base font-semibold text-black">{header}</p>
         <ResetButton handleReset={handleReset} />
@@ -273,7 +301,7 @@ function EditActionCard({
                 </p>
                 <Textarea
                   disabled={isLoading}
-                  className="h-full w-full max-w-full"
+                  className="h-full w-full max-w-full focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:border-coral focus:shadow-[0_0_12px_rgba(229,46,64,0.2)] transition-all rounded-xl border border-border bg-white"
                   value={stringValue}
                   onChange={(event) =>
                     onEditChange(event.target.value, editResponse, key)
@@ -289,7 +317,7 @@ function EditActionCard({
 
       <div className="flex w-full items-center justify-end gap-2">
         <Button
-          variant="brand"
+          className="rounded-xl cursor-pointer bg-coral hover:bg-coral-hover text-white border-0 font-medium px-5 shadow-xs py-2 h-auto transition-all"
           disabled={isLoading}
           onClick={handleSubmit}
         >
@@ -334,7 +362,7 @@ function RejectActionCard({
   };
 
   return (
-    <div className="flex w-full max-w-full flex-col items-start gap-4 rounded-xl border border-gray-300 p-6">
+    <div className="flex w-full max-w-full flex-col items-start gap-5 rounded-2xl border border-border bg-white/60 p-6 shadow-xs backdrop-blur-xs">
       <div className="flex w-full items-center justify-between">
         <p className="text-base font-semibold text-black">驳回</p>
         <ResetButton handleReset={() => onChange("", rejectResponse)} />
@@ -346,7 +374,7 @@ function RejectActionCard({
         <p className="min-w-fit text-sm font-medium">驳回原因</p>
         <Textarea
           disabled={isLoading}
-          className="w-full max-w-full"
+          className="w-full max-w-full focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:border-coral focus:shadow-[0_0_12px_rgba(229,46,64,0.2)] transition-all rounded-xl border border-border bg-white"
           value={rejectResponse.message ?? ""}
           onChange={(event) => onChange(event.target.value, rejectResponse)}
           onKeyDown={handleKeyDown}
@@ -357,7 +385,7 @@ function RejectActionCard({
 
       <div className="flex w-full items-center justify-end gap-2">
         <Button
-          variant="brand"
+          className="rounded-xl cursor-pointer bg-coral hover:bg-coral-hover text-white border-0 font-medium px-5 shadow-xs py-2 h-auto transition-all"
           disabled={isLoading}
           onClick={handleSubmit}
         >

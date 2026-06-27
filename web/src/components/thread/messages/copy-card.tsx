@@ -49,7 +49,10 @@ export function CopyCard({ data }: { data: CopySegment["data"] }) {
         {data.tags.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {data.tags.map((tag, i) => (
-              <span key={i} className="text-xs text-sky-700/80">
+              <span
+                key={i}
+                className="rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-medium text-sky-600 border border-sky-100 hover:bg-sky-100/80 transition-colors duration-300"
+              >
                 {tag}
               </span>
             ))}
@@ -72,8 +75,8 @@ export function CopyCard({ data }: { data: CopySegment["data"] }) {
                     }
                   }}
                   className={cn(
-                    "text-xs leading-relaxed p-2.5 rounded-xl border border-coral-light/20 bg-oats-light/20 cursor-pointer hover:border-coral hover:bg-white hover:shadow-2xs transition-all",
-                    threadCtx?.selectedEvidence?.resource_id === source.resource_id && "border-coral bg-white shadow-2xs"
+                    "text-xs leading-relaxed p-2.5 rounded-xl border border-coral-light/20 bg-oats-light/20 cursor-pointer hover:border-coral hover:bg-white hover:-translate-y-0.5 hover:shadow-xs transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                    threadCtx?.selectedEvidence?.resource_id === source.resource_id && "border-coral bg-white shadow-xs -translate-y-0.5"
                   )}
                 >
                   <div className="text-foreground/80 font-semibold">{source.title}</div>

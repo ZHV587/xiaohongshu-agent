@@ -31,29 +31,31 @@ function ButtonGroup({
   showingDescription: boolean;
 }) {
   return (
-    <div className="flex flex-row items-center justify-center gap-0">
-      <Button
-        variant="outline"
+    <div className="flex flex-row items-center justify-center gap-1 rounded-full bg-oats-dark/80 p-1 border border-border">
+      <button
+        type="button"
         className={cn(
-          "rounded-l-md rounded-r-none border-r-[0px]",
-          showingState ? "text-black" : "bg-white",
+          "rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-200 cursor-pointer",
+          showingState
+            ? "bg-white text-charcoal shadow-xs font-semibold"
+            : "bg-transparent text-charcoal-light hover:text-charcoal",
         )}
-        size="sm"
         onClick={handleShowState}
       >
         运行状态
-      </Button>
-      <Button
-        variant="outline"
+      </button>
+      <button
+        type="button"
         className={cn(
-          "rounded-l-none rounded-r-md border-l-[0px]",
-          showingDescription ? "text-black" : "bg-white",
+          "rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-200 cursor-pointer",
+          showingDescription
+            ? "bg-white text-charcoal shadow-xs font-semibold"
+            : "bg-transparent text-charcoal-light hover:text-charcoal",
         )}
-        size="sm"
         onClick={handleShowDescription}
       >
         操作说明
-      </Button>
+      </button>
     </div>
   );
 }
@@ -331,7 +333,7 @@ export function ThreadActionsView({
       <div className="flex w-full flex-row flex-wrap items-center justify-start gap-2">
         <Button
           variant="outline"
-          className="border-gray-500 bg-white font-normal text-gray-800"
+          className="rounded-xl border-border bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900 transition-colors shadow-xs"
           onClick={handleResolve}
           disabled={actionsDisabled}
         >
@@ -340,7 +342,7 @@ export function ThreadActionsView({
         {hasMultipleActions && allAllowApprove && (
           <Button
             variant="outline"
-            className="border-gray-500 bg-white font-normal text-gray-800"
+            className="rounded-xl border-emerald-500/30 bg-emerald-50/10 text-emerald-600 hover:border-emerald-500 hover:bg-emerald-50/50 hover:text-emerald-700 transition-colors shadow-xs"
             onClick={handleApproveAll}
             disabled={actionsDisabled}
           >

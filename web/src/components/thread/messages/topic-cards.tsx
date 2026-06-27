@@ -23,7 +23,7 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
         {data.topics.map((topic, i) => (
           <div
             key={i}
-            className="group/topic relative overflow-hidden flex items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4 hover:border-coral/30 hover:shadow-[0_6px_20px_-8px_rgba(229,46,64,0.12)] transition-all duration-300"
+            className="group/topic relative overflow-hidden flex items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4 hover:border-coral/40 hover:shadow-[0_8px_30px_rgba(229,46,64,0.16),0_0_15px_rgba(229,46,64,0.08)] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
           >
             {/* Left glowing accent line */}
             <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-coral scale-y-0 group-hover/topic:scale-y-100 transition-transform origin-center duration-300 rounded-l-2xl" />
@@ -38,7 +38,7 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
               }
               className="flex items-center gap-4 flex-1 cursor-pointer"
             >
-              <span className="bg-muted text-muted-foreground group-hover/topic:bg-coral group-hover/topic:text-white flex size-7 flex-shrink-0 items-center justify-center rounded-full font-display text-xs font-semibold transition-colors duration-300 shadow-2xs">
+              <span className="bg-muted text-muted-foreground group-hover/topic:bg-coral group-hover/topic:text-white group-hover/topic:scale-110 group-hover/topic:rotate-6 flex size-7 flex-shrink-0 items-center justify-center rounded-full font-display text-xs font-semibold transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] shadow-2xs">
                 {i + 1}
               </span>
               <span className="text-foreground/90 flex-1 text-sm font-medium leading-relaxed font-sans transition-colors">
