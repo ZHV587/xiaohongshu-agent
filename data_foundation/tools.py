@@ -216,6 +216,10 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
     from data_foundation.config import current_relevance_floor, resolve_query_instruction
     from data_foundation.search_ranker import rank_evidence
 
+    # top_k clamp:对齐 search_resources 的 [1,20]。负值会让 rank_evidence 的 [:top_k]
+    # 从尾部丢结果、0 直接返回空,均非预期;LLM 偶发传 0/负也不该出错。
+    top_k = min(max(int(top_k), 1), 20)
+
     def _fulltext_fallback(reason: str) -> dict[str, Any]:
         # 语义不可用时降级到全文(Meilisearch),与设计一致(全文引擎=Meili,非 PG)
         fallback = search_resources.func(query, limit=top_k, config=config)

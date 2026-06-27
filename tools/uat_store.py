@@ -203,6 +203,56 @@ def _refresh_user_token(open_id: str, refresh_token: str) -> dict | None:
         logger.error(f"Network error or server error during Feishu refresh token API call: {e}")
         return None
 
+def _refresh_uat_pg_locked(postgres_uri: str, open_id: str) -> str | None:
+    """在行锁内刷新 PG 里的 UAT,消除并发刷新竞态。
+
+    P2 竞态:两个并发 get_uat 同时见到临期 → 都去 refresh;第一个成功并轮换了 refresh_token,
+    第二个拿已失效的旧 refresh_token → 飞书返 400 → TokenInvalidError → **删掉第一个刚刷好的记录**。
+    解法:SELECT ... FOR UPDATE 串行化同一 open_id 的刷新;拿到锁后 **重读** —— 若已被别的 worker
+    刷新过(expiry 已远),直接复用,不再重复刷新(也就不会用旧 refresh_token 触发误删)。
+    """
+    import psycopg
+    with psycopg.connect(postgres_uri) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_access_token, refresh_token, expires_at
+                FROM lark_uat_tokens WHERE open_id = %s FOR UPDATE;
+                """,
+                (open_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None  # 已被并发删除
+            access_token, refresh_token, expires_at = row[0], row[1], row[2]
+
+            # 双检:拿锁期间可能已有 worker 刷新过,此时直接复用,避免用旧 refresh_token 二次刷新。
+            if expires_at - time.time() >= 600:
+                return access_token
+
+            try:
+                refreshed = _refresh_user_token(open_id, refresh_token)
+            except TokenInvalidError:
+                logger.warning(f"OAuth refresh token invalid for user {open_id}. Deleting database token record.")
+                cur.execute("DELETE FROM lark_uat_tokens WHERE open_id = %s;", (open_id,))
+                return None
+
+            if not refreshed:
+                logger.warning(f"Failed to refresh database token for user {open_id} due to network issues. Preserving record.")
+                return None
+
+            cur.execute(
+                """
+                UPDATE lark_uat_tokens
+                SET user_access_token = %s, refresh_token = %s, expires_at = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE open_id = %s;
+                """,
+                (refreshed["user_access_token"], refreshed["refresh_token"], refreshed["expires_at"], open_id),
+            )
+            logger.info(f"Database token for user {open_id} successfully refreshed in PostgreSQL.")
+            return refreshed["user_access_token"]
+
+
 def get_uat(open_id: str) -> str | None:
     postgres_uri = os.environ.get("POSTGRES_URI")
     if postgres_uri:
@@ -217,10 +267,10 @@ def get_uat(open_id: str) -> str | None:
                         WHERE open_id = %s;
                     """, (open_id,))
                     row = cur.fetchone()
-            
+
             if not row:
                 return None
-            
+
             user_data = {
                 "user_access_token": row[0],
                 "refresh_token": row[1],
@@ -232,28 +282,7 @@ def get_uat(open_id: str) -> str | None:
             # Check if the token expires in less than 10 minutes
             if user_data["expires_at"] - time.time() < 600:
                 logger.info(f"Database token for user {open_id} expiring soon. Attempting refresh...")
-                try:
-                    refreshed = _refresh_user_token(open_id, user_data["refresh_token"])
-                    if refreshed:
-                        user_data.update(refreshed)
-                        with psycopg.connect(postgres_uri) as conn:
-                            with conn.cursor() as cur:
-                                cur.execute("""
-                                    UPDATE lark_uat_tokens
-                                    SET user_access_token = %s, refresh_token = %s, expires_at = %s, updated_at = CURRENT_TIMESTAMP
-                                    WHERE open_id = %s;
-                                """, (user_data["user_access_token"], user_data["refresh_token"], user_data["expires_at"], open_id))
-                        logger.info(f"Database token for user {open_id} successfully refreshed in PostgreSQL.")
-                        return user_data["user_access_token"]
-                    else:
-                        logger.warning(f"Failed to refresh database token for user {open_id} due to network issues. Preserving record.")
-                        return None
-                except TokenInvalidError:
-                    logger.warning(f"OAuth refresh token invalid for user {open_id}. Deleting database token record.")
-                    with psycopg.connect(postgres_uri) as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("DELETE FROM lark_uat_tokens WHERE open_id = %s;", (open_id,))
-                    return None
+                return _refresh_uat_pg_locked(postgres_uri, open_id)
             return user_data["user_access_token"]
         except Exception as e:
             logger.error(f"Failed to load UAT token from PostgreSQL database: {e}. Falling back to file storage.")

@@ -18,7 +18,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
-from middlewares import is_retryable_error
+from middlewares import is_gateway_failover_error
 
 logger = logging.getLogger(__name__)
 
@@ -218,11 +218,11 @@ class ModelRouterMiddleware(AgentMiddleware):
             try:
                 return handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
-                if is_retryable_error(exc):
+                if is_gateway_failover_error(exc):
                     self._mark_unhealthy(cand)
                     last_exc = exc
                     continue
-                raise  # 非瞬时错误(400/鉴权)不换候选
+                raise  # 请求级错误(400/404/422)换网关也一样,不切候选
         assert last_exc is not None
         raise last_exc
 
@@ -235,11 +235,11 @@ class ModelRouterMiddleware(AgentMiddleware):
             try:
                 return await handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
-                if is_retryable_error(exc):
+                if is_gateway_failover_error(exc):
                     self._mark_unhealthy(cand)
                     last_exc = exc
                     continue
-                raise  # 非瞬时错误(400/鉴权)不换候选
+                raise  # 请求级错误(400/404/422)换网关也一样,不切候选
         assert last_exc is not None
         raise last_exc
 

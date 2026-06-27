@@ -30,6 +30,21 @@ _P_SCORE_LOG_DENOM: float = math.log10(1.0 + P_SCORE_LOG_CAP)
 _VALID_SCORE_KINDS = {"cosine", "bm25"}
 
 
+def _safe_float(value: Any) -> float:
+    """把 metrics 值安全转 float;非数值(字符串如 "1.2万"、None、畸形)一律按 0 计。
+
+    历史迁移/手工写入的 performance_metric 可能含非数值,直接 float() 会抛 ValueError
+    把整个 rank_evidence 排序拖崩。这里吞掉转换失败,保证脏数据不中断检索。
+    """
+    if isinstance(value, bool):  # bool 是 int 子类,显式排除以免 True→1.0 误计
+        return 0.0
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return result if math.isfinite(result) else 0.0
+
+
 def _relevance_score(raw: float, score_kind: str, max_raw_score: float) -> float:
     """relevance 口径分支。
 
@@ -96,9 +111,11 @@ def rank_evidence(
         if p_rows:
             best_p = p_rows[0]
             metrics = best_p.get("metrics") or {}
-            likes = float(metrics.get("likes", 0))
-            collects = float(metrics.get("collects", 0))
-            comments = float(metrics.get("comments", 0))
+            # 历史迁移/手工写入的 metrics 可能是字符串(如 "1.2万"),float() 会抛 ValueError
+            # 把整个排序拖崩。用安全转换:非数值一律按 0 计,绝不让脏数据中断检索排序。
+            likes = _safe_float(metrics.get("likes"))
+            collects = _safe_float(metrics.get("collects"))
+            comments = _safe_float(metrics.get("comments"))
             # 对数归一化(去饱和):engagement 复用既有权重口径,跨数量级单调可分。
             engagement = likes + 2 * collects + 5 * comments
             if engagement > 0:

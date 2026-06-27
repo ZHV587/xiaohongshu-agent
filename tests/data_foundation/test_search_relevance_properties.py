@@ -162,3 +162,19 @@ def test_no_active_index_always_keyword_fallback(query):
         mp.undo()
     assert out["mode"] == "keyword_fallback"
     assert out["mode"] != "insufficient_relevance"
+
+
+def test_rank_evidence_tolerates_non_numeric_metrics():
+    """P2 回归:performance_metric 含字符串等脏值(如 "1.2万")时,rank_evidence 不得崩,
+    脏值按 0 计、排序照常完成。"""
+    items = _items([0.9, 0.8])
+    dirty_perf = {
+        "r0": [{"metrics": {"likes": "1.2万", "collects": None, "comments": "abc"}}],
+        "r1": [{"metrics": {"likes": 100, "collects": 5, "comments": 2}}],
+    }
+    ranked = rank_evidence("default", items, performance_data=dirty_perf, limit=10, score_kind="cosine")
+    assert len(ranked) == 2  # 没崩
+    by_id = {r["resource_id"]: r for r in ranked}
+    # r0 脏值按 0 计 → performance 信号为 0;r1 正常数值 → performance 信号 > 0
+    assert by_id["r0"]["rank_signals"]["performance"] == 0.0
+    assert by_id["r1"]["rank_signals"]["performance"] > 0.0

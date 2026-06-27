@@ -39,21 +39,33 @@ async def ok(_request):
 
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    supervisor = build_supervisor()
-    await supervisor.start()
-    runtime_snapshot = create_runtime_snapshot(supervisor)
+    # 启动期任一步失败都必须回滚已启动组件,否则 supervisor 的 cycle 线程/DB listen 连接、
+    # health_probe 会泄漏(try/finally 的 finally 只在 yield 后才覆盖,startup 抛错到不了 yield)。
+    supervisor = None
+    health_probe = None
+    try:
+        supervisor = build_supervisor()
+        await supervisor.start()
+        runtime_snapshot = create_runtime_snapshot(supervisor)
 
-    # 模型池单一数据源:启动对齐 —— 进程刚起时 registry 是空的(agent.py 不灌 env)。
-    # 用 config-center 最新快照构池填充;config-center 为空(纯 env/全新部署)则
-    # 跳过,registry 维持空池、router 回退到装配占位 model,待 admin 配置后生效。
-    model_registry = _resolve_model_registry()
-    startup_snapshot = latest_config_snapshot()
-    if startup_snapshot is not None:
-        model_registry.reload_from_config(startup_snapshot, force_discover=True)
+        # 模型池单一数据源:启动对齐 —— 进程刚起时 registry 是空的(agent.py 不灌 env)。
+        # 用 config-center 最新快照构池填充;config-center 为空(纯 env/全新部署)则
+        # 跳过,registry 维持空池、router 回退到装配占位 model,待 admin 配置后生效。
+        model_registry = _resolve_model_registry()
+        startup_snapshot = latest_config_snapshot()
+        if startup_snapshot is not None:
+            model_registry.reload_from_config(startup_snapshot, force_discover=True)
 
-    # 定时健康探测:独立后台任务(不绑 XHS_SYNC_ENABLED),周期强制重探刷新活跃池。
-    health_probe = build_model_health_probe(model_registry)
-    await health_probe.start()
+        # 定时健康探测:独立后台任务(不绑 XHS_SYNC_ENABLED),周期强制重探刷新活跃池。
+        health_probe = build_model_health_probe(model_registry)
+        await health_probe.start()
+    except BaseException:
+        # 回滚:已起的 health_probe 先停,再停 supervisor(顺序与正常 finally 一致)。
+        if health_probe is not None:
+            await health_probe.stop()
+        if supervisor is not None:
+            await supervisor.stop(grace_seconds=shutdown_grace_seconds())
+        raise
 
     app.state.supervisor = supervisor
     app.state.runtime_snapshot = runtime_snapshot

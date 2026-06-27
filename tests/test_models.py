@@ -300,6 +300,26 @@ def test_router_switches_on_retryable():
     assert mw._is_cooling(pool[0]) is True            # g1 被标记不健康
 
 
+def test_router_switches_on_gateway_auth_failure():
+    """P2 回归:401/403 是按网关的鉴权失败 —— g1 的 key 失效不代表 g2,必须 failover 到 g2。
+    (区别于 ModelRetryMiddleware 的同端点重试:那里 401 不该重试。)"""
+    for status in (401, 403):
+        pool = [_candidate("g1", "a"), _candidate("g2", "b")]
+        mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
+        seen = []
+
+        def handler(req):
+            seen.append(req.model)
+            if req.model is pool[0].model:
+                raise FakeStatusError(status)
+            return "OK2"
+
+        out = mw.wrap_model_call(_fake_request(), handler)
+        assert out == "OK2", f"status {status} 应 failover"
+        assert seen == [pool[0].model, pool[1].model]
+        assert mw._is_cooling(pool[0]) is True
+
+
 def test_router_non_retryable_raises_immediately():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
     mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))

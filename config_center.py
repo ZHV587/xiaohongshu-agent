@@ -4,12 +4,40 @@ import json
 import os
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet
+
+
+@contextmanager
+def _file_lock(path: Path):
+    """对 <path>.lock 取跨进程独占锁(Linux fcntl / Windows msvcrt)。
+
+    生产是 Linux(fcntl.flock,进程退出/崩溃自动释放,无死锁残留)。锁原语不可用的平台
+    (或导入失败)优雅降级为无锁——行为与加锁前一致,不阻断功能。
+    """
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "w")
+    try:
+        try:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        except ImportError:
+            try:
+                import msvcrt
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+            except Exception:
+                pass  # 无可用锁原语:降级无锁
+        except Exception:
+            pass
+        yield
+    finally:
+        fh.close()
 
 EDITABLE_KEYS = {
     "LLM_PROVIDER",
@@ -161,28 +189,33 @@ class ConfigCenter:
 
     def save(self, actor_open_id: str, updates: dict[str, Any]) -> ConfigSnapshot:
         sanitized = _validate_updates(updates)
-        document = self._read_document()
-        current = {str(k): str(v) for k, v in document.get("current", {}).items()}
-        next_values = {**current, **sanitized}
-        created_at = time.time()
-        snapshot = ConfigSnapshot(
-            version=_make_version(next_values, created_at),
-            values=next_values,
-            actor_open_id=actor_open_id,
-            changed_keys=sorted(sanitized),
-            created_at=created_at,
-        )
-        history = list(document.get("history", []))
-        history.append(
-            {
-                "version": snapshot.version,
-                "values": snapshot.values,
-                "actor_open_id": snapshot.actor_open_id,
-                "changed_keys": snapshot.changed_keys,
-                "created_at": snapshot.created_at,
-            }
-        )
-        self._write_document({"current": next_values, "history": history})
+        # 跨进程独占锁包住整个 read-modify-write:三个写入方(langgraph admin save、
+        # web_bridge_runner 恢复子进程、embedding bootstrap)并发 save 时,无锁会各自读到同一
+        # current+history、各 append 一条、后写的 os.replace 覆盖前者 → 丢一次配置变更+一条历史。
+        # 锁文件用目标旁的 .lock,fcntl/msvcrt 不可用的平台优雅降级为无锁(行为同改前)。
+        with _file_lock(self.path):
+            document = self._read_document()
+            current = {str(k): str(v) for k, v in document.get("current", {}).items()}
+            next_values = {**current, **sanitized}
+            created_at = time.time()
+            snapshot = ConfigSnapshot(
+                version=_make_version(next_values, created_at),
+                values=next_values,
+                actor_open_id=actor_open_id,
+                changed_keys=sorted(sanitized),
+                created_at=created_at,
+            )
+            history = list(document.get("history", []))
+            history.append(
+                {
+                    "version": snapshot.version,
+                    "values": snapshot.values,
+                    "actor_open_id": snapshot.actor_open_id,
+                    "changed_keys": snapshot.changed_keys,
+                    "created_at": snapshot.created_at,
+                }
+            )
+            self._write_document({"current": next_values, "history": history})
         return snapshot
 
     def get_plain(self) -> dict[str, str]:

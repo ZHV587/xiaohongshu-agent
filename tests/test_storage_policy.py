@@ -41,7 +41,7 @@ def test_runtime_has_no_business_file_routes_or_ui_labels() -> None:
     assert '"/drafts/"' not in backend
 
     for relative_path in (
-        "web/src/lib/tool-display.ts",
+        "web/src/lib/tool-render.tsx",
         "web/src/components/thread/messages/ai.tsx",
     ):
         source = _read(relative_path)

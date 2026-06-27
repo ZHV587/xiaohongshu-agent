@@ -26,12 +26,14 @@ async def inject_lark_mcp_identity(request: MCPToolCallRequest, handler):
     if request.name != "execute_lark_command":
         return await handler(request)
 
+    # 先无条件剥掉客户端可能塞进 args 的 user_id(纵深防御:不依赖"无身份就原样转发"),
+    # 再仅当解析到服务端可信身份时注入它。无可信身份则交由 server 端因缺 user_id 拒绝,
+    # 绝不让客户端自带的 user_id 透传过去冒用他人飞书 UAT。
+    safe_args = {k: v for k, v in request.args.items() if k != "user_id"}
     open_id = _open_id_from_runtime(request.runtime)
-    if not open_id:
-        return await handler(request)
-
-    modified = request.override(args={**request.args, "user_id": open_id})
-    return await handler(modified)
+    if open_id:
+        safe_args["user_id"] = open_id
+    return await handler(request.override(args=safe_args))
 
 
 def build_lark_mcp_client() -> MultiServerMCPClient:

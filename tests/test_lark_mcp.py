@@ -79,3 +79,44 @@ def test_lark_mcp_identity_interceptor_ignores_client_supplied_user_id():
     # 未注入任何 user_id,且绝不出现受害者 open_id
     assert "user_id" not in forwarded.args
     assert "ou_victim" not in str(forwarded.args)
+
+
+def test_lark_mcp_identity_interceptor_strips_client_user_id_in_args():
+    """P2 安全回归:客户端把 user_id 直接塞进 args 时,无可信身份则必须剥掉,
+    绝不原样透传(纵深防御:不依赖下游 server 拒绝)。"""
+    from tools.lark_mcp import inject_lark_mcp_identity
+
+    request = MCPToolCallRequest(
+        name="execute_lark_command",
+        args={"command": "im +chat-list", "user_id": "ou_victim"},  # 客户端注入 args
+        server_name="lark-cli",
+        runtime=SimpleNamespace(config={}),  # 无可信身份
+    )
+    handler = AsyncMock(return_value="handled")
+
+    asyncio.run(inject_lark_mcp_identity(request, handler))
+
+    forwarded = handler.await_args.args[0]
+    assert "user_id" not in forwarded.args
+    assert "ou_victim" not in str(forwarded.args)
+
+
+def test_lark_mcp_identity_interceptor_overrides_client_user_id_in_args():
+    """有可信身份时:客户端注入的 args.user_id 被可信身份覆盖,而非取客户端值。"""
+    from tools.lark_mcp import inject_lark_mcp_identity
+
+    request = MCPToolCallRequest(
+        name="execute_lark_command",
+        args={"command": "im +chat-list", "user_id": "ou_victim"},
+        server_name="lark-cli",
+        runtime=SimpleNamespace(
+            config={"configurable": {"langgraph_auth_user": {"identity": "ou_trusted"}}}
+        ),
+    )
+    handler = AsyncMock(return_value="handled")
+
+    asyncio.run(inject_lark_mcp_identity(request, handler))
+
+    forwarded = handler.await_args.args[0]
+    assert forwarded.args["user_id"] == "ou_trusted"
+    assert "ou_victim" not in str(forwarded.args)
