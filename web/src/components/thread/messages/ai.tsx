@@ -90,8 +90,9 @@ export function ThinkingAura({
     return (toolCalls || []).filter((tc) => {
       if (!tc.name) return false;
       const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
-      if (spec.aura === "hidden") return false; // skills 内部噪音等,不展示
-      if (spec.card) return false; // 有专属富卡片的工具不在思考链里重复
+      if (spec.aura === "hidden") return false; // 仅过滤真噪音(skills 内部读写等)
+      // 有专属富卡片的工具(搜索发现)仍进思考链:一步状态文案("已找到 N 条"),
+      // 与下方卡片网格不重复,保证思考链完整连续。
       return true;
     });
   }, [toolCalls]);

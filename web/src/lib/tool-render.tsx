@@ -70,9 +70,27 @@ const retrieval = (running: string, done: string): ToolRenderSpec => ({
 
 /** 工具名 → 渲染声明。新增工具卡片只改这里。 */
 export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
-  // 搜索发现:富卡片(本地组/线上组),不进思考链
-  search_xhs_online: { aura: "hidden", card: searchCard("search_xhs_online") },
-  search_local_note_cards: { aura: "hidden", card: searchCard("search_local_note_cards") },
+  // 搜索发现:思考链显示"检索中→已找到 N 条"一步,同时下方渲染富卡片(本地组/线上组)
+  search_xhs_online: {
+    aura: {
+      running: "正在检索小红书线上热门笔记…",
+      done: ({ result }) => {
+        const n = arrLen(result, "results");
+        return n ? `已找到线上 ${n} 条笔记` : "线上暂无相关笔记";
+      },
+    },
+    card: searchCard("search_xhs_online"),
+  },
+  search_local_note_cards: {
+    aura: {
+      running: "正在检索本地已收录笔记…",
+      done: ({ result }) => {
+        const n = arrLen(result, "results");
+        return n ? `已找到本地 ${n} 条笔记` : "本地暂无相关笔记";
+      },
+    },
+    card: searchCard("search_local_note_cards"),
+  },
 
   // 采纳收录:思考链一步
   adopt_online_notes: {
