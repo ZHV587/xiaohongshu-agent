@@ -81,6 +81,12 @@ agent = create_deep_agent(
         "adopt_online_notes": {"allowed_decisions": ["approve", "reject"]},
     },
     checkpointer=True,
+    # ⚠️ Middleware 顺序是 load-bearing,改动前先想清楚:
+    #   retry(最外) → frontend-state → rubric → content-rubric-activator → router(最内)
+    # - retry 在最外:整轮模型调用(含 router 的网关 failover)失败耗尽后仍能重来一次。
+    # - router 在最内:贴近真实模型调用,质量优先热切(override 最强健康候选)由它发起。
+    # - content_rubric_activator 与 rubric 成对:activator 在结构化交付物上置 state["rubric"],
+    #   rubric 据此评分;两者相邻、勿拆。
     middleware=[
         build_retry_middleware(),
         FrontendStateMiddleware(),

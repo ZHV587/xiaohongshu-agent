@@ -142,3 +142,16 @@ def test_prompt_referenced_skills_have_real_directories():
         skill_path = SKILLS_DIR / name / "SKILL.md"
         assert skill_path.exists(), f"prompt references {name}, but {skill_path} missing"
         assert name in prompt
+
+
+def test_skill_body_cross_refs_point_to_real_skills():
+    """技能正文(尤其"下一步建议"表)里反引号包裹的 xhs-*/topic-content/anti-ai-copy-taste
+    技能名,必须都有真实 SKILL.md 目录 —— 防技能改名后正文留死引用(主控会原样转述给用户,
+    指向已不存在的技能)。补齐 test_prompt_referenced_skills_have_real_directories 只守 prompt
+    的缺口,把守护扩到所有 SKILL.md 正文。"""
+    real = set(_all_skill_dirs())
+    ref_re = re.compile(r"`(xhs-[a-z0-9-]+|topic-content|anti-ai-copy-taste)`")
+    for name in _all_skill_dirs():
+        body = _body(name)
+        for ref in sorted(set(ref_re.findall(body))):
+            assert ref in real, f"{name} 正文引用了不存在的技能 `{ref}`"
