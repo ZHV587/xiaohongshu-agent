@@ -12,7 +12,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from config_center import ConfigCenter, ConfigValidationError, latest_config_snapshot
+from config_center import ConfigCenter, ConfigValidationError, latest_config_snapshot, project_config_to_env
 from data_foundation.db import connect
 from data_foundation.permissions import default_tenant_id
 from data_foundation.repositories.resource import ResourceRepository
@@ -169,6 +169,10 @@ async def internal_config_post(request: Request) -> JSONResponse:
 
         snapshot = center.save(actor_open_id=actor.open_id, updates=configs)
 
+        # 投影进当前进程 os.environ:env-reading 消费方(飞书 lark_cli/bitable/actions、uat_store 等)
+        # 立即遵从新配置(N_WORKERS=1 同进程,下次工具调用即生效),兑现"config-center 唯一权威源"。
+        project_config_to_env(snapshot.values)
+
         reloaded = None
         if should_apply:
             from agent import model_registry  # 延迟 import:同进程单例(N_WORKERS=1)
@@ -184,6 +188,25 @@ async def internal_config_post(request: Request) -> JSONResponse:
         return _json_error(400, str(exc))
     except KeyError as exc:
         return _json_error(500, f"Config center missing required environment: {exc.args[0]}")
+
+
+async def internal_feishu_oauth_config(request: Request) -> JSONResponse:
+    """返回飞书 OAuth 应用凭证(app_id/app_secret)给 web BFF。
+
+    专供 web 的 OAuth login/callback 在**用户登录前**(无 open_id/admin 身份)取权威凭证,
+    故仅用 require_internal(内部密钥,只有 web BFF 服务端持有)鉴权,不要求 user/admin。
+    取自本进程 os.environ —— 已由 project_config_to_env 投影成 config-center 权威值,因此
+    web 与 langgraph 两进程对飞书凭证**强一致**(改 config-center 即时对 OAuth 生效)。
+    只返回 OAuth 必需的两个字段(不暴露其余配置),app_secret 仅服务端到服务端传输、不入浏览器。
+    """
+    denied = require_internal(request)
+    if denied is not None:
+        return denied
+    return _json_ok({
+        "ok": True,
+        "app_id": os.environ.get("FEISHU_APP_ID", ""),
+        "app_secret": os.environ.get("FEISHU_APP_SECRET", ""),
+    })
 
 
 async def internal_feishu_status(request: Request) -> JSONResponse:
@@ -408,6 +431,49 @@ async def internal_data_foundation_status(request: Request) -> JSONResponse:
         return _json_error(503, "Data foundation status unavailable")
 
 
+def _config_center_enabled() -> bool:
+    return bool(
+        os.environ.get("XHS_CONFIG_ENCRYPTION_KEY")
+        and os.environ.get("XHS_CONFIG_CENTER_PATH")
+    )
+
+
+async def internal_model_status(request: Request) -> JSONResponse:
+    """返回部署感知的模型热切权威事实(单一事实源,供 web BFF 透传)。
+
+    hot_reload 各路径的"当前部署模式下是否实际生效":
+    - main_agent / server_async / subagents:ModelRouterMiddleware 每次调用实时读 registry,
+      恒可热切。
+    - rubric / embedding_index_profiles:依赖 config-center 驱动 registry/索引 profile,
+      env 模式下 registry 不被 reload、profile 走重启边界,故等于 config_center_enabled。
+    registry 明细(版本/活跃模型)best-effort:同进程能拿到 agent.model_registry 则附带,
+    取不到(测试/未装配)不影响 hot_reload 事实。
+    """
+    actor = require_admin(request)
+    if isinstance(actor, JSONResponse):
+        return actor
+    cc = _config_center_enabled()
+    registry_status = None
+    try:
+        from agent import model_registry
+
+        registry_status = model_registry.status()
+    except Exception:  # noqa: BLE001 - registry 明细可选,拿不到不影响 hot_reload 事实
+        registry_status = None
+    return _json_ok({
+        "ok": True,
+        "config_center_enabled": cc,
+        "registry": _json_safe(registry_status) if registry_status is not None else None,
+        "hot_reload": {
+            "main_agent": True,
+            "server_async": True,
+            "subagents": True,
+            "rubric": cc,
+            "embedding_index_profiles": cc,
+        },
+    })
+
+
 def _config_center() -> ConfigCenter:
     return ConfigCenter(
         path=os.environ["XHS_CONFIG_CENTER_PATH"],
@@ -425,9 +491,11 @@ internal_routes = [
     Route("/internal/config", internal_config_get, methods=["GET"]),
     Route("/internal/config", internal_config_post, methods=["POST"]),
     Route("/internal/feishu/status", internal_feishu_status, methods=["GET"]),
+    Route("/internal/feishu/oauth-config", internal_feishu_oauth_config, methods=["GET"]),
     Route("/internal/feishu/uat", internal_feishu_uat_post, methods=["POST"]),
     Route("/internal/feishu/chats", internal_feishu_chats, methods=["GET"]),
     Route("/internal/feishu/wiki-space", internal_feishu_wiki_space, methods=["GET"]),
     Route("/internal/data-foundation/status", internal_data_foundation_status, methods=["GET"]),
+    Route("/internal/model/status", internal_model_status, methods=["GET"]),
     Route("/internal/health/facts", internal_health_facts, methods=["GET"]),
 ]

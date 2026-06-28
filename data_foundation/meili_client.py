@@ -62,6 +62,14 @@ class MeiliResourceIndex:
                 f"error={getattr(task, 'error', None)}"
             )
 
+    def count(self, *, tenant_id: str) -> int:
+        """按 tenant 统计索引内文档数(对账用)。limit=0 只取总数不取命中。"""
+        result = self.client.index(self.index_uid).search(
+            "",
+            opt_params={"filter": f'tenant_id = "{tenant_id}"', "limit": 0},
+        )
+        return int(result.get("estimatedTotalHits") or result.get("totalHits") or 0)
+
     def search(self, query: str, *, tenant_id: str, limit: int) -> list[tuple[str, float]]:
         # showRankingScore:让 Meili 返回 _rankingScore(0~1 归一化相关度),
         # 贯通到 rank_evidence 作 BM25 口径排序依据;否则全文相关度信号丢失。

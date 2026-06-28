@@ -183,3 +183,64 @@ def test_config_center_accepts_valid_relevance_floor(tmp_path):
     center = _center(tmp_path)
     center.save(actor_open_id="ou_admin", updates={"XHS_EMBEDDING_RELEVANCE_FLOOR": "0.55"})
     assert center.get_plain()["XHS_EMBEDDING_RELEVANCE_FLOOR"] == "0.55"
+
+
+def test_project_config_to_env_projects_editable_and_overrides(monkeypatch):
+    from config_center import project_config_to_env
+
+    # .env 已有旧值,config-center 管理的 key 应覆盖;预先 setenv 全部待投影 key 以便 teardown 回滚
+    monkeypatch.setenv("FEISHU_APP_ID", "old-app-id")
+    monkeypatch.setenv("FEISHU_BITABLE_APP_TOKEN", "old-token")
+    monkeypatch.setenv("XHS_BITABLE_FIELD_TITLE", "旧标题列")
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+
+    projected = project_config_to_env(
+        {
+            "FEISHU_APP_ID": "cli_new",
+            "FEISHU_BITABLE_APP_TOKEN": "bascn_new",
+            "XHS_BITABLE_FIELD_TITLE": "标题",
+        }
+    )
+
+    import os
+
+    assert os.environ["FEISHU_APP_ID"] == "cli_new"  # 覆盖 .env
+    assert os.environ["FEISHU_BITABLE_APP_TOKEN"] == "bascn_new"
+    assert os.environ["XHS_BITABLE_FIELD_TITLE"] == "标题"
+    # 未被 config-center 管理的 key 保留 .env(未投影)
+    assert os.environ["LLM_PROVIDER"] == "openai"
+    assert projected == sorted(["FEISHU_APP_ID", "FEISHU_BITABLE_APP_TOKEN", "XHS_BITABLE_FIELD_TITLE"])
+
+
+def test_project_config_to_env_skips_deploy_only_and_unknown(monkeypatch):
+    from config_center import project_config_to_env
+
+    monkeypatch.delenv("XHS_JWT_SECRET", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "seed")  # 预先 setenv 待投影 key,teardown 回滚防泄漏
+    projected = project_config_to_env(
+        {
+            "XHS_JWT_SECRET": "should-not-project",   # DEPLOY_ONLY
+            "XHS_INTERNAL_SECRET": "nope",            # DEPLOY_ONLY
+            "TOTALLY_UNKNOWN_KEY": "x",               # 未知
+            "LLM_API_KEY": "sk-ok",                   # EDITABLE
+        }
+    )
+
+    import os
+
+    assert "XHS_JWT_SECRET" not in os.environ
+    assert os.environ.get("TOTALLY_UNKNOWN_KEY") is None
+    assert os.environ["LLM_API_KEY"] == "sk-ok"
+    assert projected == ["LLM_API_KEY"]
+
+
+def test_project_config_to_env_empty_value_clears(monkeypatch):
+    # config-center 把某 key 改空 → 覆盖为空串(消费方按"未配置"处理),不残留 .env 旧值
+    from config_center import project_config_to_env
+
+    monkeypatch.setenv("FEISHU_BITABLE_TABLE_ID", "tbl_old")
+    project_config_to_env({"FEISHU_BITABLE_TABLE_ID": ""})
+
+    import os
+
+    assert os.environ["FEISHU_BITABLE_TABLE_ID"] == ""

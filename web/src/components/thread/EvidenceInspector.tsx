@@ -1,9 +1,12 @@
 import { useThread } from "./ThreadContext";
+import { useStreamContext } from "@/providers/stream-context";
+import { lookupRankSignals } from "@/lib/evidence-rank";
 import { Database, FileText, Sparkles, TrendingUp, X } from "lucide-react";
 import { EvidenceTime } from "./messages/evidence-time";
 
 export function EvidenceInspector() {
   const { selectedEvidence, setSelectedEvidence, setRightTab } = useThread();
+  const stream = useStreamContext();
 
   if (!selectedEvidence) {
     return (
@@ -15,7 +18,13 @@ export function EvidenceInspector() {
     );
   }
 
-  const { title, summary, score, why_selected, rank_signals, source_updated_at, indexed_at } = selectedEvidence;
+  const { title, summary, source_updated_at, indexed_at } = selectedEvidence;
+  // rank 信号的权威源是检索工具结果(非 LLM 写的精简 evidence 块)。优先用 evidence 自带值
+  // (未来若契约扩展则直接生效),否则按 resource_id 从 stream 的检索工具结果补全。
+  const enrichment = lookupRankSignals(stream.messages, selectedEvidence.resource_id);
+  const score = selectedEvidence.score ?? enrichment.score;
+  const why_selected = selectedEvidence.why_selected ?? enrichment.why_selected;
+  const rank_signals = selectedEvidence.rank_signals ?? enrichment.rank_signals;
 
   return (
     <div className="flex flex-col h-full bg-oats/10 text-charcoal">

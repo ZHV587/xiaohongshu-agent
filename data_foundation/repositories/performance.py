@@ -145,13 +145,17 @@ class PerformanceRepository(BaseRepository):
             return {}
 
         if actor is not None:
-            target_where = self.readable_resource_where(actor, "target")
-            metric_where = self.readable_resource_where(actor, "metric")
-            params = (resource_ids,)
+            target_where = self.readable_resource_where("target")
+            metric_where = self.readable_resource_where("metric")
+            params = {
+                "resource_ids": resource_ids,
+                "tenant_id": actor.tenant_id,
+                "actor_open_id": actor.open_id,
+            }
         else:
-            target_where = "target.tenant_id = %s"
+            target_where = "target.tenant_id = %(tenant_id)s"
             metric_where = "1=1"
-            params = (resource_ids, tenant_id)
+            params = {"resource_ids": resource_ids, "tenant_id": tenant_id}
 
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
@@ -172,7 +176,7 @@ class PerformanceRepository(BaseRepository):
                       ON metric.tenant_id = target.tenant_id
                      AND metric.id = e.target_resource_id
                      AND metric.type = 'performance_metric'
-                    WHERE target.id = ANY(%s::uuid[])
+                    WHERE target.id = ANY(%(resource_ids)s::uuid[])
                       AND {target_where}
                       AND {metric_where}
                     ORDER BY metric.updated_at DESC, metric.id DESC

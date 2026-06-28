@@ -109,6 +109,12 @@ services:
       POSTGRES_URI: "postgres://xhs_user:${XHS_PG_PASSWORD}@pg:5432/langgraph?sslmode=disable"
       REDIS_URI: "redis://redis:6379"
       N_JOBS_PER_WORKER: "10"
+      # 热切单进程不变量(硬钉,勿改大):模型池/健康探测/config save reload 全靠 graph 与
+      # http_app 共享**同一进程内**的 ModelRegistry 单例(见 http_app._resolve_model_registry
+      # 与 model-pool-single-source-health-probe 设计)。N_WORKERS>1 会让每个 worker 各持一份
+      # 独立 registry,admin 在某 worker 存配置只 reload 那个 worker,其余静默不切 → 热重载部分
+      # 失效。固定为 1 把这一隐式前提显式化;需横向扩容须先改造为跨进程 registry 广播再放开。
+      N_WORKERS: "1"
       # 允许阻塞 I/O:飞书集成依赖 lark-cli 阻塞式子进程(subprocess.run 读管道触发
       # langgraph blockbuster 的 os.read 拦截)。重活(后台同步)已走 asyncio.to_thread,
       # 不会实质占用共享事件循环;关掉 dev 安全网以支持子进程 CLI 集成。

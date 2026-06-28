@@ -195,10 +195,12 @@ export function buildBackendStatusPayload({
       server_async: true,
       subagents: true,
       embedding_index_profiles: configCenterEnabled,
-      rubric: false,
+      // rubric 评分模型经 RegistryRoutedChatModel 每次评分取 registry 当前最强候选,
+      // 随 config-center 热重载即时切换;env 模式下 registry 不被 reload,故仍是重启边界。
+      rubric: configCenterEnabled,
     },
     hot_reload_message: configCenterEnabled
-      ? "ModelRouterMiddleware 路径可热切；embedding profile 保存后由 scheduler 新建索引并在完成后切换；rubric 仍是重启边界。"
+      ? "ModelRouterMiddleware 路径可热切；embedding profile 保存后由 scheduler 新建索引并在完成后切换；rubric 评分模型随配置热切即时生效。"
       : "ModelRouterMiddleware 路径可热切；embedding profile 在环境变量模式下仍需后端应用新环境；rubric 仍是重启边界。",
     status_message: configCenterEnabled
       ? "配置中心已启用；保存 embedding 配置后会自动创建 building 索引，并在回填完成后切换为 active。"

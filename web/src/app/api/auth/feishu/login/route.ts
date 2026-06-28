@@ -4,7 +4,11 @@ import crypto from "node:crypto";
 import {
   FEISHU_AUTHORIZE_URL,
   STATE_COOKIE,
+  getActualOrigin,
   getFeishuConfig,
+  getFeishuOAuthCredentials,
+  isSecureRequest,
+  safeNextPath,
 } from "@/lib/server/feishu";
 import { FEISHU_OAUTH_SCOPES } from "@/lib/feishu-scopes";
 
@@ -12,14 +16,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  let cfg;
   try {
-    cfg = getFeishuConfig();
+    getFeishuConfig(); // 预校验 XHS_JWT_SECRET(回调签 JWT 依赖),缺失则不进入 OAuth
   } catch (e) {
     return NextResponse.json(
       { error: (e as Error).message },
       { status: 500 },
     );
+  }
+
+  // app_id 取权威值(config-center 经内部接口;回退 env),与后端强一致。
+  const { appId } = await getFeishuOAuthCredentials();
+  if (!appId) {
+    return NextResponse.json({ error: "飞书 OAuth 配置缺失:FEISHU_APP_ID" }, { status: 500 });
   }
 
   // CSRF 防护:随机 state 写入 httpOnly cookie,回调时比对。
@@ -30,7 +39,7 @@ export async function GET(req: NextRequest) {
   const origin = getActualOrigin(req);
 
   const authorizeUrl = new URL(FEISHU_AUTHORIZE_URL);
-  authorizeUrl.searchParams.set("client_id", cfg.appId);
+  authorizeUrl.searchParams.set("client_id", appId);
   authorizeUrl.searchParams.set("redirect_uri", `${origin}/api/auth/feishu/callback`);
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("state", state);
@@ -49,23 +58,3 @@ export async function GET(req: NextRequest) {
   return res;
 }
 
-function getActualOrigin(req: NextRequest): string {
-  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.replace(/\/$/, "");
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
-  const protocol = req.headers.get("x-forwarded-proto") || "http";
-  const actualHost = host.split(",")[0].trim();
-  return `${protocol}://${actualHost}`;
-}
-
-// 与 callback 一致:Secure 按实际对外协议判定(TLS 上游终止时 req.nextUrl 是 http)。
-function isSecureRequest(req: NextRequest): boolean {
-  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.startsWith("https:");
-  return (req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "")) === "https";
-}
-
-// 只接受站内绝对路径,挡掉开放重定向(//evil.com / /\evil.com)。
-function safeNextPath(value: string | undefined): string {
-  if (!value || !value.startsWith("/")) return "/";
-  if (value.startsWith("//") || value.startsWith("/\\")) return "/";
-  return value;
-}

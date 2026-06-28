@@ -6,7 +6,11 @@ import {
   FEISHU_TOKEN_URL,
   FEISHU_USER_INFO_URL,
   STATE_COOKIE,
+  getActualOrigin,
   getFeishuConfig,
+  getFeishuOAuthCredentials,
+  isSecureRequest,
+  safeNextPath,
 } from "@/lib/server/feishu";
 import { signJwt } from "@/lib/server/jwt";
 import { forwardToInternalServer } from "@/lib/server/internal-client";
@@ -14,29 +18,6 @@ import { isAdminOpenId } from "@/lib/server/authz";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function getActualOrigin(req: NextRequest): string {
-  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.replace(/\/$/, "");
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
-  const protocol = req.headers.get("x-forwarded-proto") || "http";
-  const actualHost = host.split(",")[0].trim();
-  return `${protocol}://${actualHost}`;
-}
-
-// cookie Secure 标志须按**实际对外协议**判定,而非 req.nextUrl.protocol —— 部署里 TLS 在上游
-// 终止、到达 Next 的是明文 http,用 req.nextUrl.protocol 会让 7 天身份 JWT 不带 Secure、可被嗅探。
-function isSecureRequest(req: NextRequest): boolean {
-  if (process.env.XHS_PUBLIC_ORIGIN) return process.env.XHS_PUBLIC_ORIGIN.startsWith("https:");
-  return (req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "")) === "https";
-}
-
-// 只接受站内绝对路径,挡掉开放重定向:"/foo" 放行;"//evil.com"(协议相对)、"/\evil.com"、
-// 含控制字符的一律退回 "/"。否则认证后可被跳到钓鱼站。
-function safeNextPath(value: string | undefined): string {
-  if (!value || !value.startsWith("/")) return "/";
-  if (value.startsWith("//") || value.startsWith("/\\")) return "/";
-  return value;
-}
 
 function fail(req: NextRequest, msg: string) {
   // 失败时回首页并带上错误,前端可 toast 提示。
@@ -65,6 +46,10 @@ export async function GET(req: NextRequest) {
   if (state !== savedState) return fail(req, "state 校验失败，请重试");
   const next = safeNextPath(savedNext);
 
+  // app_id/app_secret 取权威值(config-center 经内部接口;回退 env),与后端强一致。
+  const { appId, appSecret } = await getFeishuOAuthCredentials();
+  if (!appId || !appSecret) return fail(req, "飞书 OAuth 应用凭证缺失，请在配置中设置 FEISHU_APP_ID/SECRET");
+
   // 1) 授权码换 user_access_token(v2 接口,JSON 体)
   let userToken: string;
   let refreshToken: string | undefined;
@@ -76,8 +61,8 @@ export async function GET(req: NextRequest) {
       headers: { "Content-Type": "application/json; charset=utf-8" },
       body: JSON.stringify({
         grant_type: "authorization_code",
-        client_id: cfg.appId,
-        client_secret: cfg.appSecret,
+        client_id: appId,
+        client_secret: appSecret,
         code,
         redirect_uri: `${getActualOrigin(req)}/api/auth/feishu/callback`,
       }),

@@ -14,10 +14,12 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/chats": { path: "/internal/feishu/chats", method: "GET" },
   "/_internal/uat": { path: "/internal/feishu/uat", method: "POST" },
   "/_internal/uat-status": { path: "/internal/feishu/status", method: "GET" },
+  "/_internal/feishu-oauth-config": { path: "/internal/feishu/oauth-config", method: "GET" },
   "/_internal/wiki-space": { path: "/internal/feishu/wiki-space", method: "GET" },
   "/_internal/config-status": { path: "/internal/config", method: "GET" },
   "/_internal/config-set": { path: "/internal/config", method: "POST" },
   "/_internal/data-foundation-status": { path: "/internal/data-foundation/status", method: "GET" },
+  "/_internal/model-status": { path: "/internal/model/status", method: "GET" },
   "/_internal/runtime-facts": { path: "/internal/health/facts", method: "GET" },
 };
 

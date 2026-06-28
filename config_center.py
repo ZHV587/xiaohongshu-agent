@@ -263,6 +263,26 @@ def default_config_center() -> ConfigCenter:
     return ConfigCenter(path=path, encryption_key=key)
 
 
+def project_config_to_env(values: dict[str, Any]) -> list[str]:
+    """把 config-center 可编辑配置投影进当前进程 os.environ,使所有 env-reading 消费方
+    (飞书工具 lark_cli/feishu_bitable/feishu_actions、uat_store 等)遵从 config-center 为
+    唯一权威源。
+
+    语义(对齐 README"config-center 是唯一权威源"):config-center 管理的 key **覆盖** .env;
+    未被 config-center 管理的 key 保留 .env(填补)。只投影 EDITABLE_KEYS —— DEPLOY_ONLY
+    (JWT/内部密钥/引擎 URL 等)与未知 key 一律不动。返回被投影的 key 列表(不含值,供日志)。
+
+    调用点:① http_app lifespan 启动(冷启动对齐);② internal_config_post 保存成功后
+    (热生效,N_WORKERS=1 同进程,下次工具调用即读到新值)。
+    """
+    projected: list[str] = []
+    for key, value in values.items():
+        if key in EDITABLE_KEYS:
+            os.environ[key] = str(value if value is not None else "")
+            projected.append(key)
+    return sorted(projected)
+
+
 def latest_config_snapshot() -> ConfigSnapshot | None:
     """读 config-center 当前生效快照(history 末条),供进程启动时按权威配置构建模型池。
 

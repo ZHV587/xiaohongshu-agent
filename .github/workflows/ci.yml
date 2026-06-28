@@ -38,6 +38,12 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Set up Python
         run: uv python install 3.11
+      # 装 node 22(支持 --experimental-strip-types 直接跑 jwt.ts),让 JWT 跨语言契约测试
+      # 真跑而非 skip —— 防前端 jwt.ts 与后端 auth.py 的 HS256 口径单侧漂移。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Install dependencies
         run: uv sync --frozen
       - name: Run full test suite (DB tests included)

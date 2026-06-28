@@ -60,6 +60,16 @@ class FalkorResourceGraph:
             {"sid": source_id, "tid": target_id, "etype": edge_type, "weight": weight},
         )
 
+    def count(self, *, tenant_id: str) -> int:
+        """按 tenant 统计图中 Resource 节点数(对账用)。"""
+        rows = self.graph.query(
+            "MATCH (r:Resource {tenant_id: $t}) RETURN count(r)",
+            {"t": tenant_id},
+        ).result_set
+        if rows and rows[0]:
+            return int(rows[0][0] or 0)
+        return 0
+
     def expand(self, *, resource_ids: list[str], hops: int, edge_types: list[str] | None,
                tenant_id: str) -> tuple[list[dict], list[dict]]:
         params: dict[str, Any] = {"ids": resource_ids, "tenant": tenant_id}

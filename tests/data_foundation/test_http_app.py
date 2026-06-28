@@ -54,12 +54,17 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
             return True
 
     registry = FakeRegistry()
+    monkeypatch.setenv("FEISHU_APP_ID", "seed")  # lifespan 投影会写 os.environ,setenv 以便 teardown 回滚
     monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
     monkeypatch.setattr(http_app, "shutdown_grace_seconds", lambda: 7)
     monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: registry)
     monkeypatch.setattr(http_app, "build_model_health_probe", lambda reg: FakeProbe())
-    # 启动对齐:config-center 有快照 → 启动即 reload(force 探测)
-    monkeypatch.setattr(http_app, "latest_config_snapshot", lambda: type("S", (), {"version": "v-start"})())
+    # 启动对齐:config-center 有快照 → 启动即投影 env + reload(force 探测)
+    monkeypatch.setattr(
+        http_app,
+        "latest_config_snapshot",
+        lambda: type("S", (), {"version": "v-start", "values": {"FEISHU_APP_ID": "cli_x"}})(),
+    )
 
     async with http_app.lifespan(http_app.app) as state:
         assert "start" in events and "probe_start" in events

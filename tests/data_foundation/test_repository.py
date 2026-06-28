@@ -736,7 +736,7 @@ def test_bulk_performance_metrics_sql_syntax():
     assert "select target.id::text" in conn.sql
     assert "join resource_edges e" in conn.sql
     assert "join resources metric" in conn.sql
-    assert conn.params == (["id-1", "id-2"], "default")
+    assert conn.params == {"resource_ids": ["id-1", "id-2"], "tenant_id": "default"}
 
 
 def test_bulk_performance_metrics_fetches_multiple(migrated_conn):

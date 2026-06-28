@@ -83,6 +83,29 @@ class OutboxRepository:
         self.conn.commit()
         return len(rows)
 
+    def pending_counts_by_topic(self, *, topics: list[str]) -> dict[str, dict[str, int]]:
+        """按 (topic, tenant) 统计在途(尚未 succeeded)的 outbox 任务数,供索引对账防误报。
+
+        在途 = pending/retry/processing(blocked/dead/succeeded/superseded 不算在途):
+        正常 backlog 会让引擎暂时少于 PG 应有数,把在途算进来才不会把它误判成数据丢失。
+        """
+        if not topics:
+            return {}
+        rows = self.conn.execute(
+            """
+            select topic, tenant_id, count(*) as n
+            from resource_outbox
+            where status in ('pending', 'retry', 'processing')
+              and topic = any(%s::text[])
+            group by topic, tenant_id
+            """,
+            (topics,),
+        ).fetchall()
+        out: dict[str, dict[str, int]] = {}
+        for row in rows:
+            out.setdefault(row["topic"], {})[row["tenant_id"]] = int(row["n"])
+        return out
+
     def discover_ready_tenants(self, *, limit: int) -> list[str]:
         rows = self.conn.execute(
             """

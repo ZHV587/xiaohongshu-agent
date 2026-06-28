@@ -1,11 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from data_foundation.models import SourceSecrets
 from data_foundation.sources.base import SourceContext
 from data_foundation.sources.feishu import FeishuBaseSourceProcessor, FeishuWikiSourceProcessor
+
+
+def _run_coro(coro):
+    """在同步上下文运行协程,且对"已处于运行中的事件循环线程"健壮。
+
+    sync_feishu_sources 是同步函数,经同步 @tool 触发。LangChain 在 async 执行路径下会把
+    同步工具卸到线程池(线程内无 running loop),此时直接 asyncio.run —— 这是生产主路径,
+    行为与改前完全一致。但为不依赖"总会被卸到线程"这一外部假设(本地/未来某些同步执行
+    路径可能在事件循环线程直接调用),检测到当前线程已有 running loop 时改到独立线程跑独立
+    事件循环,避免 asyncio.run "cannot be called from a running event loop" 直接崩工具。
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)  # 无 running loop:生产主路径,行为不变
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(lambda: asyncio.run(coro)).result()
 
 
 class _ManualLease:
@@ -65,7 +83,7 @@ def sync_feishu_sources(
     cursor: dict[str, Any] = {}
     errors: list[str] = list(source_errors or [])
     try:
-        base_result = asyncio.run(
+        base_result = _run_coro(
             FeishuBaseSourceProcessor(
                 loader=None
                 if preloaded_base_rows is None
@@ -91,7 +109,7 @@ def sync_feishu_sources(
         cursor["feishu_base"] = base_result.cursor
         errors.extend(base_result.errors)
 
-        wiki_result = asyncio.run(
+        wiki_result = _run_coro(
             FeishuWikiSourceProcessor(
                 loader=None
                 if preloaded_wiki_documents is None

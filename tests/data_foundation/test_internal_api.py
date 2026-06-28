@@ -447,3 +447,103 @@ def test_internal_health_facts_rejects_non_admin_user(monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+def test_model_status_rejects_non_admin(monkeypatch):
+    client = _client(monkeypatch, admins="ou_real_admin")
+
+    response = client.get(
+        "/internal/model/status",
+        headers={
+            "X-XHS-Internal-Key": "internal-secret",
+            "X-XHS-Open-Id": "ou_normal",
+            "X-XHS-Is-Admin": "false",
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_model_status_env_mode_marks_rubric_and_embedding_as_restart_boundary(monkeypatch):
+    # 无 config-center(纯 env 模式):rubric / embedding 热切不生效(重启边界),路由路径恒可热切。
+    monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
+    client = _client(monkeypatch)
+
+    response = client.get("/internal/model/status", headers=_admin_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["config_center_enabled"] is False
+    hot = payload["hot_reload"]
+    assert hot["main_agent"] is True
+    assert hot["server_async"] is True
+    assert hot["subagents"] is True
+    assert hot["rubric"] is False
+    assert hot["embedding_index_profiles"] is False
+
+
+def test_model_status_config_center_mode_enables_rubric_and_embedding(monkeypatch, tmp_path):
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv("XHS_CONFIG_ENCRYPTION_KEY", key)
+    monkeypatch.setenv("XHS_CONFIG_CENTER_PATH", str(tmp_path / "config-center.enc"))
+    client = _client(monkeypatch)
+
+    response = client.get("/internal/model/status", headers=_admin_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config_center_enabled"] is True
+    hot = payload["hot_reload"]
+    assert hot["rubric"] is True
+    assert hot["embedding_index_profiles"] is True
+
+
+def test_config_save_projects_feishu_keys_into_process_env(monkeypatch, tmp_path):
+    # 根因修复回归:config-center 模式下保存飞书配置必须投影进 os.environ,
+    # 使 env-reading 的飞书工具立即生效(否则保存了但运行时永不读到)。
+    import os
+
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv("XHS_CONFIG_ENCRYPTION_KEY", key)
+    monkeypatch.setenv("XHS_CONFIG_CENTER_PATH", str(tmp_path / "config-center.enc"))
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_old")  # 预先 setenv,teardown 回滚投影写入防泄漏
+    monkeypatch.setenv("FEISHU_BITABLE_APP_TOKEN", "bascn_old")
+    client = _client(monkeypatch)
+
+    response = client.post(
+        "/internal/config",
+        headers=_admin_headers(),
+        json={"configs": {"FEISHU_APP_ID": "cli_hot", "FEISHU_BITABLE_APP_TOKEN": "bascn_hot"}},
+    )
+
+    assert response.status_code == 200
+    # 保存后进程内 env 立即可见新值(飞书工具读 os.environ)
+    assert os.environ["FEISHU_APP_ID"] == "cli_hot"
+    assert os.environ["FEISHU_BITABLE_APP_TOKEN"] == "bascn_hot"
+
+
+def test_feishu_oauth_config_requires_internal_key(monkeypatch):
+    client = _client(monkeypatch)
+    # 无内部密钥 → 401(即便 OAuth 前无用户身份,也必须有内部密钥)
+    response = client.get("/internal/feishu/oauth-config")
+    assert response.status_code == 401
+
+
+def test_feishu_oauth_config_returns_authoritative_app_credentials(monkeypatch):
+    # 返回本进程 os.environ(已被 config-center 投影成权威值)的 OAuth 凭证,仅内部密钥鉴权
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_authoritative")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "secret_authoritative")
+    client = _client(monkeypatch)
+
+    response = client.get(
+        "/internal/feishu/oauth-config",
+        headers={"X-XHS-Internal-Key": "internal-secret"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["app_id"] == "cli_authoritative"
+    assert payload["app_secret"] == "secret_authoritative"

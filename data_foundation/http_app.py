@@ -7,7 +7,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from config_center import latest_config_snapshot
+from config_center import latest_config_snapshot, project_config_to_env
 from data_foundation.internal_api import internal_routes
 from data_foundation.runtime_facts import create_runtime_snapshot, utc_now
 from data_foundation.supervisor import build_supervisor
@@ -54,6 +54,9 @@ async def lifespan(app: Starlette):
         model_registry = _resolve_model_registry()
         startup_snapshot = latest_config_snapshot()
         if startup_snapshot is not None:
+            # 冷启动对齐:把 config-center 当前配置投影进 os.environ,使 env-reading 消费方
+            # (飞书工具等)遵从 config-center 为唯一权威源,而非启动时 .env 的旧值。
+            project_config_to_env(startup_snapshot.values)
             model_registry.reload_from_config(startup_snapshot, force_discover=True)
 
         # 定时健康探测:独立后台任务(不绑 XHS_SYNC_ENABLED),周期强制重探刷新活跃池。
