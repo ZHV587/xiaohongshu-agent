@@ -126,3 +126,22 @@ def test_is_base_chat_model_instance():
     from langchain_core.language_models import BaseChatModel
     m = _routed(_FakePool([]), _FakeModel("p"))
     assert isinstance(m, BaseChatModel)
+
+
+def test_grader_uses_configured_rubric_model_when_in_pool(monkeypatch):
+    """配置 XHS_RUBRIC_MODEL 且池中有该 model_id → 分层 grader 用它(不烧最强模型)。"""
+    strong = _Cand(_FakeModel("strong")); strong.model_id = "strong-id"
+    weak = _Cand(_FakeModel("weak")); weak.model_id = "weak-id"
+    m = _routed(_FakePool([strong, weak]), _FakeModel("placeholder"))
+    monkeypatch.setenv("XHS_RUBRIC_MODEL", "weak-id")
+    assert m._generate([]) == "gen:weak"
+
+
+def test_grader_falls_back_to_strongest_when_rubric_model_unset_or_absent(monkeypatch):
+    """XHS_RUBRIC_MODEL 未配置或不在池中 → 回退池首(最强),不破坏既有行为。"""
+    strong = _Cand(_FakeModel("strong")); strong.model_id = "strong-id"
+    m = _routed(_FakePool([strong]), _FakeModel("placeholder"))
+    monkeypatch.delenv("XHS_RUBRIC_MODEL", raising=False)
+    assert m._generate([]) == "gen:strong"
+    monkeypatch.setenv("XHS_RUBRIC_MODEL", "nonexistent-id")
+    assert m._generate([]) == "gen:strong"

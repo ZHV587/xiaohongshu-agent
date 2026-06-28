@@ -18,6 +18,7 @@ registry 空(填充前/测试态/全挂保留旧池)时回退到 import-time 占
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -47,9 +48,19 @@ class RegistryRoutedChatModel(BaseChatModel):
         self._placeholder = placeholder
 
     def _resolve(self) -> BaseChatModel:
-        """取 registry 当前池最强(质量序首个);空池回退到 import-time 占位。"""
+        """解析本次评分用的模型。默认取 registry 池最强(质量序首个);若配置了
+        XHS_RUBRIC_MODEL 且池中有该 model_id 的候选,则用它做分层 grader —— 把最强
+        模型让给生成,质检用次强/专设模型省成本。读 env(而非构造期固化)故配置改动下次
+        评分即生效;未配置/不在池中则回退池首,不破坏既有行为。空池回退 import-time 占位。"""
         pool = self._registry.get_pool()
-        return pool[0].model if pool else self._placeholder
+        if not pool:
+            return self._placeholder
+        rubric_model_id = os.environ.get("XHS_RUBRIC_MODEL", "").strip()
+        if rubric_model_id:
+            for cand in pool:
+                if getattr(cand, "model_id", None) == rubric_model_id:
+                    return cand.model
+        return pool[0].model
 
     @property
     def _llm_type(self) -> str:
