@@ -3,7 +3,7 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 
 from data_foundation.repositories.base import BaseRepository
-from data_foundation.models import Resource, RuntimeIdentityConfig
+from data_foundation.models import RuntimeIdentityConfig
 
 
 class PerformanceRepository(BaseRepository):
@@ -53,14 +53,13 @@ class PerformanceRepository(BaseRepository):
                     ).fetchone()
                     metric_id = str(existing_metric["id"]) if existing_metric else None
 
-                # 3. Instantiate and upsert the performance metric Resource
-                metric_res = Resource(
-                    id=metric_id,
+                # 3. Upsert the performance metric resource(单一 kwargs 契约;outbox 默认走 default_write_requests)
+                upserted_metric = res_repo.upsert_resource(
                     tenant_id=actor.tenant_id,
-                    type="performance_metric",
+                    actor_open_id=actor.open_id,
+                    resource_id=metric_id,
+                    resource_type="performance_metric",
                     title="效果数据",
-                    summary=None,
-                    content_text=None,
                     content_json={
                         "target_resource_id": resource_id,
                         "metrics": {
@@ -70,14 +69,10 @@ class PerformanceRepository(BaseRepository):
                         },
                         "score": score,
                     },
-                    status="active",
                     visibility=target_visibility,
                     owner_open_id=target_owner_open_id,
-                    created_at=None,
-                    updated_at=None,
+                    conn=connection,
                 )
-
-                upserted_metric = res_repo.upsert_resource(metric_res, actor, conn=connection)
 
                 # 4. Add measured_by edge from target to metric
                 fb_repo.add_edge(

@@ -7,58 +7,55 @@ from psycopg.rows import dict_row
 
 from data_foundation.repositories.base import BaseRepository
 from data_foundation.models import Resource, RuntimeIdentityConfig
+from data_foundation.outbox_requests import default_write_requests
 
 class ResourceRepository(BaseRepository):
     def upsert_resource(
         self,
-        resource: Optional[Resource] = None,
-        actor: Optional[RuntimeIdentityConfig] = None,
-        conn: Optional[Connection] = None,
         *,
-        tenant_id: Optional[str] = None,
-        actor_open_id: Optional[str] = None,
-        resource_type: Optional[str] = None,
-        title: Optional[str] = None,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_type: str,
+        title: str,
+        summary: Optional[str] = None,
         content_text: Optional[str] = None,
         content_json: Optional[dict[str, Any]] = None,
+        status: str = "active",
         visibility: str = "private",
         owner_open_id: Optional[str] = None,
-        summary: Optional[str] = None,
+        resource_id: Optional[str] = None,
         mapping: Optional[dict[str, Any]] = None,
         outbox_requests: Optional[list] = None,
-        **kwargs,
+        conn: Optional[Connection] = None,
     ) -> Resource:
-        """Upsert a resource, record version, events, type counts, and write to outbox.
-        Supports both the new model-based signature and the legacy keyword-argument signature.
-        """
-        is_legacy = (resource is None)
-        if resource is None:
-            t_id = tenant_id or kwargs.get("tenant_id")
-            a_open_id = actor_open_id or kwargs.get("actor_open_id")
-            if not t_id or not a_open_id or not resource_type or not title:
-                raise ValueError("Missing required arguments for upsert_resource")
-            
-            actor = RuntimeIdentityConfig(tenant_id=t_id, open_id=a_open_id)
-            res_id = kwargs.get("id") or kwargs.get("resource_id")
-            
-            resource = Resource(
-                id=res_id,
-                tenant_id=t_id,
-                type=resource_type,
-                title=title,
-                summary=summary,
-                content_text=content_text,
-                content_json=content_json or {},
-                status="active",
-                visibility=visibility,
-                owner_open_id=owner_open_id or a_open_id,
-                created_at=None,
-                updated_at=None,
-            )
+        """Upsert a resource and, in the same transaction, record its version, event,
+        type-count delta, optional external mapping, and outbox tasks.
 
-        tenant_id = actor.tenant_id
-        actor_open_id = actor.open_id
-        
+        单一调用契约(全 kwargs)。outbox_requests 语义(单一源,消除随签名静默分歧):
+        - None(默认):投递 default_write_requests()(meili_index + graph_ingest),新资源默认进检索/图谱管道。
+        - []:显式不投递任何 outbox(仅本地、无需索引的中间态)。
+        - 非空列表:按给定 OutboxRequest 投递。
+        """
+        if not tenant_id or not actor_open_id or not resource_type or not title:
+            raise ValueError("tenant_id, actor_open_id, resource_type, title are required")
+        if outbox_requests is None:
+            outbox_requests = default_write_requests()
+
+        resource = Resource(
+            id=resource_id,
+            tenant_id=tenant_id,
+            type=resource_type,
+            title=title,
+            summary=summary,
+            content_text=content_text,
+            content_json=content_json or {},
+            status=status,
+            visibility=visibility,
+            owner_open_id=owner_open_id or actor_open_id,
+            created_at=None,
+            updated_at=None,
+        )
+
         with self.connection_context(conn) as connection:
             with connection.transaction():
                 with connection.cursor(row_factory=dict_row) as cursor:
@@ -240,8 +237,8 @@ class ResourceRepository(BaseRepository):
                     if mapping is not None:
                         self._upsert_mapping(tenant_id=tenant_id, resource_id=resource_id, mapping=mapping, cursor=cursor)
 
-                    # Enqueue transactional outbox tasks
-                    if outbox_requests is not None:
+                    # Enqueue transactional outbox tasks(单一源:default_write_requests;[] 表示显式不投)。
+                    if outbox_requests:
                         self._enqueue_outbox(
                             tenant_id=tenant_id,
                             resource_id=resource_id,
@@ -250,48 +247,7 @@ class ResourceRepository(BaseRepository):
                             event_id=event_id,
                             cursor=cursor,
                         )
-                    elif is_legacy:
-                        # Legacy signature: do not enqueue default outbox requests
-                        pass
-                    else:
-                        for topic, dedupe_parts in [("meili_index", ("search",)), ("graph_ingest", ("graph",))]:
-                            request_payload = {
-                                "resource_id": str(resource_id),
-                                "version": version,
-                            }
-                            dedupe_key = hashlib.sha256(
-                                json.dumps(
-                                    [
-                                        tenant_id,
-                                        str(resource_id),
-                                        version,
-                                        topic,
-                                        *dedupe_parts,
-                                    ],
-                                    sort_keys=True,
-                                    ensure_ascii=False,
-                                ).encode("utf-8")
-                            ).hexdigest()
-                            
-                            cursor.execute(
-                                """
-                                insert into resource_outbox (
-                                    tenant_id, resource_id, resource_version, event_id, topic, dedupe_key, payload
-                                )
-                                values (%s, %s, %s, %s, %s, %s, %s::jsonb)
-                                on conflict (tenant_id, dedupe_key) do nothing
-                                """,
-                                (
-                                    tenant_id,
-                                    resource_id,
-                                    version,
-                                    event_id,
-                                    topic,
-                                    dedupe_key,
-                                    json.dumps(request_payload, sort_keys=True, ensure_ascii=False),
-                                )
-                            )
-                    
+
                     return self._resource_from_row(row, version)
 
     @staticmethod
