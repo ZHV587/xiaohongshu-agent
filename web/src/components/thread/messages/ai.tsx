@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStreamContext } from "@/providers/stream-context";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
@@ -81,20 +81,6 @@ function Interrupt({
   );
 }
 
-/** 把工具的真实入参/结果格式化成可展开详情用的紧凑字符串(截断防过长)。 */
-function formatToolData(v: unknown): string | undefined {
-  if (v == null) return undefined;
-  let s: string;
-  try {
-    s = typeof v === "string" ? v : JSON.stringify(v);
-  } catch {
-    return undefined;
-  }
-  if (!s || s === "{}" || s === "[]" || s === "null" || s === '""') return undefined;
-  const MAX = 800;
-  return s.length > MAX ? `${s.slice(0, MAX)} …(已截断)` : s;
-}
-
 export function ThinkingAura({
   toolCalls,
   status = "done",
@@ -104,7 +90,6 @@ export function ThinkingAura({
 }) {
   const stream = useStreamContext();
   const isLoading = stream.isLoading;
-  const [openLogs, setOpenLogs] = useState<Record<string, boolean>>({});
 
   const steps = useMemo(() => {
     // 思考链路完全由消息流派生(通用、与 skill 无关):每个工具调用一步。
@@ -138,24 +123,14 @@ export function ThinkingAura({
           labelText = aura.running;
         }
 
-        // Gap D: 关键入参摘要(检索词/资源ID等)
+        // Gap D: 关键入参摘要(检索词/资源ID/选题方向等),人话化、面向创作者
         const detail = spec.argsSummary?.(tc.args as Record<string, unknown>);
-        // Gap C: 可展开详情 = 真实输入(args) + 真实输出(result),不再用编造日志
-        const detailLogs: { label: string; text: string }[] = [];
-        const inputStr = formatToolData(tc.args);
-        if (inputStr) detailLogs.push({ label: "输入", text: inputStr });
-        if (isDone) {
-          const outputStr = formatToolData(tc.result);
-          if (outputStr) detailLogs.push({ label: "输出", text: outputStr });
-        }
-        const logs = detailLogs.length ? detailLogs : undefined;
 
         return {
           key: `${tc.name || "tool"}-${idx}`,
           label: labelText,
           status: isDone ? (hasError ? ("failed" as const) : ("done" as const)) : ("running" as const),
           detail,
-          logs,
         };
       });
 
@@ -280,64 +255,33 @@ export function ThinkingAura({
                       )}
                     </AnimatePresence>
                   </span>
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                      <AnimatePresence mode="wait" initial={false}>
-                        <motion.span
-                          key={step.label}
-                          initial={{ opacity: 0, y: 3 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -3 }}
-                          transition={{ duration: 0.2 }}
-                          className={cn(
-                            "text-xs leading-relaxed transition-colors",
-                            step.status === "running" && "text-charcoal/60 font-medium",
-                            step.status === "done" && "text-charcoal-light",
-                            step.status === "failed" && "text-rose-600 font-semibold",
-                            step.status === "interrupted" && "text-gray-400",
-                          )}
-                        >
-                          {step.label}
-                        </motion.span>
-                      </AnimatePresence>
-                      {step.detail && (
-                        <span
-                          title={step.detail}
-                          className="max-w-[220px] truncate rounded-md bg-oats-light/60 px-1.5 py-px font-mono text-[10px] text-charcoal-light/70"
-                        >
-                          {step.detail}
-                        </span>
-                      )}
-                      {step.logs && step.logs.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenLogs((p) => ({ ...p, [step.key]: !p[step.key] }))
-                          }
-                          className="text-[10px] font-medium text-coral/70 transition-colors hover:text-coral"
-                        >
-                          {openLogs[step.key] ? "收起" : "详情"}
-                        </button>
-                      )}
-                    </div>
-                    <AnimatePresence initial={false}>
-                      {step.logs && step.logs.length > 0 && openLogs[step.key] && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.2 }}
-                          className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-coral-light/20 bg-oats-light/40 p-2 font-mono text-[10px] leading-relaxed text-gray-500"
-                        >
-                          {step.logs.map((entry, li) => (
-                            <div key={li} className="break-all">
-                              <span className="font-semibold text-coral/70">{entry.label}</span>
-                              <span className="ml-1 whitespace-pre-wrap text-gray-500">{entry.text}</span>
-                            </div>
-                          ))}
-                        </motion.div>
-                      )}
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={step.label}
+                        initial={{ opacity: 0, y: 3 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -3 }}
+                        transition={{ duration: 0.2 }}
+                        className={cn(
+                          "text-xs leading-relaxed transition-colors",
+                          step.status === "running" && "text-charcoal/60 font-medium",
+                          step.status === "done" && "text-charcoal-light",
+                          step.status === "failed" && "text-rose-600 font-semibold",
+                          step.status === "interrupted" && "text-gray-400",
+                        )}
+                      >
+                        {step.label}
+                      </motion.span>
                     </AnimatePresence>
+                    {step.detail && (
+                      <span
+                        title={step.detail}
+                        className="max-w-[220px] truncate rounded-md bg-oats-light/60 px-1.5 py-px text-[11px] text-charcoal-light/70"
+                      >
+                        {step.detail}
+                      </span>
+                    )}
                   </div>
                 </motion.div>
               ))}
