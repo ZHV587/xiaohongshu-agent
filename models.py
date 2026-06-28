@@ -209,27 +209,19 @@ class ModelRouterMiddleware(AgentMiddleware):
 
     def wrap_model_call(self, request: ModelRequest, handler):
         candidates = self._ordered_candidates()
-        print(f"DEBUG: ModelRouterMiddleware.wrap_model_call: request={repr(request)}, candidates={[c.model_id for c in candidates]}", flush=True)
         if not candidates:
             # 池为空:registry 尚未被 lifespan/探测/事件填充(server 接客前不会命中),
             # 或测试/CLI 态。回退到 request 自带的装配占位 model,不阻断调用。
-            try:
-                req_model = getattr(request, "model", None)
-                key_obj = getattr(req_model, "openai_api_key", None)
-                key_str = key_obj.get_secret_value() if hasattr(key_obj, "get_secret_value") else str(key_obj)
-                print(f"DEBUG: wrap_model_call fallback to model={getattr(req_model, 'model_name', getattr(req_model, 'model', 'None'))}, base_url={getattr(req_model, 'openai_api_base', 'None')}, api_key={key_str[:12]}...", flush=True)
-                return handler(request)
-            except Exception as exc:
-                print(f"DEBUG: wrap_model_call fallback failed: {exc}", flush=True)
-                raise
+            logger.debug("ModelRouter: 模型池为空,回退到装配占位 model")
+            return handler(request)
         last_exc: Exception | None = None
         for cand in candidates:
             try:
-                print(f"DEBUG: wrap_model_call trying candidate model={cand.model_id}", flush=True)
                 return handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
-                print(f"DEBUG: wrap_model_call candidate={cand.model_id} failed: {exc}", flush=True)
                 if is_gateway_failover_error(exc):
+                    # 仅记 model_id 与异常类型名(不打印 request/prompt/响应体/api_key,守安全铁律)。
+                    logger.warning("ModelRouter: 候选 %s 故障转移(%s)", cand.model_id, type(exc).__name__)
                     self._mark_unhealthy(cand)
                     last_exc = exc
                     continue
@@ -239,25 +231,17 @@ class ModelRouterMiddleware(AgentMiddleware):
 
     async def awrap_model_call(self, request: ModelRequest, handler):
         candidates = self._ordered_candidates()
-        print(f"DEBUG: ModelRouterMiddleware.awrap_model_call: request={repr(request)}, candidates={[c.model_id for c in candidates]}", flush=True)
         if not candidates:
-            try:
-                req_model = getattr(request, "model", None)
-                key_obj = getattr(req_model, "openai_api_key", None)
-                key_str = key_obj.get_secret_value() if hasattr(key_obj, "get_secret_value") else str(key_obj)
-                print(f"DEBUG: awrap_model_call fallback to model={getattr(req_model, 'model_name', getattr(req_model, 'model', 'None'))}, base_url={getattr(req_model, 'openai_api_base', 'None')}, api_key={key_str[:12]}...", flush=True)
-                return await handler(request)
-            except Exception as exc:
-                print(f"DEBUG: awrap_model_call fallback failed: {exc}", flush=True)
-                raise
+            logger.debug("ModelRouter: 模型池为空,回退到装配占位 model")
+            return await handler(request)
         last_exc: Exception | None = None
         for cand in candidates:
             try:
-                print(f"DEBUG: awrap_model_call trying candidate model={cand.model_id}", flush=True)
                 return await handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
-                print(f"DEBUG: awrap_model_call candidate={cand.model_id} failed: {exc}", flush=True)
                 if is_gateway_failover_error(exc):
+                    # 仅记 model_id 与异常类型名(不打印 request/prompt/响应体/api_key,守安全铁律)。
+                    logger.warning("ModelRouter: 候选 %s 故障转移(%s)", cand.model_id, type(exc).__name__)
                     self._mark_unhealthy(cand)
                     last_exc = exc
                     continue

@@ -40,3 +40,14 @@ web/src/app/api/auth/feishu/simulate/
 scripts/_remote_run.py
 scripts/_setup_github_deploy.py
 scripts/_cleanup_gitee.py
+
+# 本地临时/诊断产物(SSH 会话日志、base64 诊断脚本等),严禁入库
+_*.txt
+lc.txt
+ld2.txt
+
+# 编辑器/审计工具本地目录(可重建,不入库)
+.codex-ui-audit/
+.kiro/
+.hypothesis/
+.vscode/
