@@ -15,7 +15,6 @@ import {
   isStreamUiEvent,
   reduceUiMessages,
   useTypedStream,
-  isThinkingStepEvent,
 } from "./stream-context";
 
 async function sleep(ms = 4000) {
@@ -74,18 +73,6 @@ const StreamSession = ({
         options.mutate((prev) => {
           const ui = reduceUiMessages(prev.ui, event);
           return { ...prev, ui };
-        });
-      } else if (isThinkingStepEvent(event)) {
-        options.mutate((prev) => {
-          const currentEvents = prev.customEvents ?? [];
-          const index = currentEvents.findIndex((e) => e.payload.id === event.payload.id);
-          const nextEvents = [...currentEvents];
-          if (index > -1) {
-            nextEvents[index] = event;
-          } else {
-            nextEvents.push(event);
-          }
-          return { ...prev, customEvents: nextEvents };
         });
       }
     },

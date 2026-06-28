@@ -83,20 +83,19 @@ function Interrupt({
 
 export function ThinkingAura({
   toolCalls,
-  messageId,
   status = "done",
 }: {
   toolCalls: { name: string; args?: any; result?: any }[];
-  messageId?: string;
   status?: "running" | "done";
 }) {
   const stream = useStreamContext();
   const isLoading = stream.isLoading;
 
   const steps = useMemo(() => {
-    // 1. 解析可见工具步骤
+    // 思考链路完全由消息流派生(通用、与 skill 无关):每个工具调用一步。
+    // 工具消息已按回合分组(groupMessages),天然按轮次隔离,不会跨轮泄漏。
     const toolSteps = (toolCalls || [])
-      .filter((tc) => tc.name && tc.name !== "dispatch_thinking_step" && resolveToolRender(tc.name, tc.args as Record<string, unknown>).aura !== "hidden")
+      .filter((tc) => tc.name && resolveToolRender(tc.name, tc.args as Record<string, unknown>).aura !== "hidden")
       .map((tc, idx) => {
         const spec = resolveToolRender(tc.name, tc.args as Record<string, unknown>);
         const aura = spec.aura as Exclude<AuraSpec, "hidden">;
@@ -131,23 +130,8 @@ export function ThinkingAura({
         };
       });
 
-    // 2. 提取当前 message 轮次的 customEvents (绑定 parent_message_id 过滤隔离)
-    // 只有在当前 messageId 是整个 thread 的最后一条 AI 消息（或者当前正在加载的 AI 消息）时，才合并展示 customEvents。
-    const aiMsgs = (stream.messages || []).filter((m) => m.type === "ai");
-    const isLatestAiMessage = messageId && aiMsgs.length > 0 && aiMsgs[aiMsgs.length - 1].id === messageId;
-
-    const customSteps = isLatestAiMessage
-      ? (stream.values.customEvents || []).map((e) => ({
-          key: e.payload.id,
-          label: e.payload.label,
-          status: e.payload.status,
-        }))
-      : [];
-
-    const merged = [...toolSteps, ...customSteps];
-
-    // 3. 中止流兼容：若全局停止了加载，把所有依然是 running 的自定义步骤变更为 interrupted
-    return merged.map((s) => {
+    // 中止流兼容：若全局停止了加载，把所有依然是 running 的步骤变更为 interrupted
+    return toolSteps.map((s) => {
       if (s.status === "running" && !isLoading) {
         const cleanLabel = s.label.startsWith("正在")
           ? s.label.replace("正在", "已中断:")
@@ -160,7 +144,7 @@ export function ThinkingAura({
       }
       return s;
     });
-  }, [toolCalls, stream.values.customEvents, stream.messages, messageId, isLoading]);
+  }, [toolCalls, isLoading]);
 
   if (steps.length === 0) return null;
 
@@ -412,8 +396,6 @@ export function AssistantMessage({
   const showThinkingPlaceholder =
     isLastGroup && isLoading && !hasVisibleTools && !hasAiText;
 
-  const resolvedMessageId = blocks.find((b): b is { kind: "ai"; message: Message } => b.kind === "ai")?.message?.id || (isLastGroup ? thread.messages[thread.messages.length - 1]?.id : undefined);
-
   return (
     <div className="group mr-auto flex w-full items-start gap-2">
       <div className="flex w-full flex-col gap-2">
@@ -425,7 +407,6 @@ export function AssistantMessage({
               <Fragment key={`tools-${i}`}>
                 <ThinkingAura
                   toolCalls={block.tools}
-                  messageId={resolvedMessageId}
                   status={running ? "running" : "done"}
                 />
                 {/* 工具富卡片(搜索发现等):注册表驱动,与思考链同位、流式/完成都展示 */}

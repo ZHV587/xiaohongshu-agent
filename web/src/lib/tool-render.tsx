@@ -173,7 +173,19 @@ export function resolveToolRender(
   args?: Record<string, unknown>,
 ): ToolRenderSpec {
   const path = String((args?.file_path ?? args?.path ?? args?.filename ?? "") || "");
-  if (path.includes("/skills/")) return HIDDEN;
+  // skill 激活是"通用思考链"的信号:读取某 skill 的 SKILL.md = 智能体正在运用该技能。
+  // 由消息流(read_file 调用)天然派生,与具体 skill 无耦合、零 per-skill 代码。
+  const skillMatch = path.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
+  if (skillMatch) {
+    const slug = skillMatch[1].replace(/^xhs-/, "");
+    return {
+      aura: {
+        running: `正在调取「${slug}」技能…`,
+        done: () => `已运用「${slug}」技能`,
+      },
+    };
+  }
+  if (path.includes("/skills/")) return HIDDEN; // 其它 skill 目录读写是噪音,不展示
   if (name && TOOL_RENDERERS[name]) return TOOL_RENDERERS[name];
   return DEFAULT;
 }

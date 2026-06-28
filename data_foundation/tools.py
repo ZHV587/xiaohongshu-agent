@@ -3,12 +3,11 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import httpx
 import psycopg
 from langchain_core.runnables import RunnableConfig
-from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
@@ -558,25 +557,4 @@ data_foundation_tools = [
     get_resource_performance,
     save_session_snapshot,
 ]
-
-
-@tool
-async def dispatch_thinking_step(
-    step_id: str,
-    label: str,
-    status: Literal["running", "done", "failed"],
-) -> str:
-    """向前端推送当前正在进行的思考/处理步骤（面向用户的友好中文描述）。
-    
-    Args:
-        step_id: 步骤的唯一标识（如 'brainstorm_titles'）。
-        label: 步骤的中文友好描述（如 '正在设计爆款标题...'）。
-        status: 步骤的状态，可选 'running', 'done', 'failed'。
-    """
-    await adispatch_custom_event(
-        "thinking_step",
-        {"id": step_id, "label": label, "status": status}
-    )
-    return "Thinking step status dispatched successfully."
-
 

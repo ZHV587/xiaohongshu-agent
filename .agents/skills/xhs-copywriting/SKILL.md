@@ -31,10 +31,6 @@ description: |
 
 ## Phase 2：标题生成
 
-【状态推送】：
-- 开始时调用 `dispatch_thinking_step(step_id='copy_title', label='正在脑暴候选标题...', status='running')`。
-- 完成时调用 `dispatch_thinking_step(step_id='copy_title', label='标题设计已完成', status='done')`。
-
 **标题公式以 `xhs-title` 为唯一权威源**:12 类心理触发器、75 个验证过的爆款公式全部在 `xhs-title`。本技能不再自维护节选表(避免与 `xhs-title` 双份维护漂移)——按当前选题/受众/痛点,从 `xhs-title` 的公式库挑 3 类以上、生成定制标题。
 
 **生成 3 条备选标题**，每条标注：
@@ -57,10 +53,6 @@ description: |
 ---
 
 ## Phase 3：前3秒钩子设计
-
-【状态推送】：
-- 开始时调用 `dispatch_thinking_step(step_id='copy_hook', label='正在设计前3秒吸引钩子...', status='running')`。
-- 完成时调用 `dispatch_thinking_step(step_id='copy_hook', label='开头设计已完成', status='done')`。
 
 设计高点击率的开头。
 
@@ -88,10 +80,6 @@ description: |
 ---
 
 ## Phase 4：正文生成
-
-【状态推送】：
-- 开始时调用 `dispatch_thinking_step(step_id='copy_body', label='正在生成完整正文并打磨排版...', status='running')`。
-- 完成时调用 `dispatch_thinking_step(step_id='copy_body', label='正文生成已完成', status='done')`。
 
 基于确认的标题和开头，写完整正文。
 

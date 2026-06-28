@@ -458,11 +458,13 @@ def test_main_prompt_has_routing_and_cleansing_rules(monkeypatch):
     assert "search_xhs_online(keyword, page_size=10)" in prompt
 
 
-def test_dispatch_thinking_step_tool_assembled(monkeypatch):
+def test_thinking_chain_is_generic_no_skill_coupled_dispatch_tool(monkeypatch):
+    """思考链路改为纯由消息流(工具调用 + skill 激活 + 模型输出)派生,通用且按回合隔离。
+    不得再存在 skill 手动派发的 dispatch_thinking_step 工具(那是已废除的 skill 耦合反模式)。"""
     _set_assembly_env(monkeypatch)
     import importlib
     import agent as agent_module
     importlib.reload(agent_module)
     tools = [t.name for t in agent_module.agent.tools]
-    assert "dispatch_thinking_step" in tools
+    assert "dispatch_thinking_step" not in tools
 
