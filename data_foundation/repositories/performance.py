@@ -99,9 +99,8 @@ class PerformanceRepository(BaseRepository):
         resource_id: str,
         conn: Optional[Connection] = None,
     ) -> list[dict]:
-        actor = RuntimeIdentityConfig(tenant_id=tenant_id, open_id=actor_open_id)
-        target_where = self.readable_resource_where(actor, "target")
-        metric_where = self.readable_resource_where(actor, "metric")
+        target_where = self.readable_resource_where("target")
+        metric_where = self.readable_resource_where("metric")
 
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
@@ -122,12 +121,16 @@ class PerformanceRepository(BaseRepository):
                       ON metric.tenant_id = target.tenant_id
                      AND metric.id = e.target_resource_id
                      AND metric.type = 'performance_metric'
-                    WHERE target.id = %s
+                    WHERE target.id = %(resource_id)s
                       AND {target_where}
                       AND {metric_where}
                     ORDER BY metric.updated_at DESC, metric.id DESC
                     """,
-                    (resource_id,),
+                    {
+                        "resource_id": resource_id,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
                 ).fetchall()
                 return [dict(row) for row in rows]
 

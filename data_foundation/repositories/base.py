@@ -4,7 +4,6 @@ from typing import Tuple, Generator, Optional
 from psycopg import Connection
 from contextlib import contextmanager, AbstractContextManager
 from data_foundation import db
-from data_foundation.models import RuntimeIdentityConfig
 
 class BaseRepository:
     def __init__(self, conn: Optional[Connection] = None) -> None:
@@ -33,23 +32,22 @@ class BaseRepository:
             if should_close:
                 connection.close()
 
-    def readable_resource_where(self, actor: RuntimeIdentityConfig, alias: Optional[str] = None) -> str:
-        """Generate safe, SQL-injection-proof tenant filtering fragment"""
-        if alias is not None:
-            if not re.match(r"^[a-zA-Z0-9_]+$", alias):
-                raise ValueError("Invalid alias")
-        
+    def readable_resource_where(self, alias: Optional[str] = None) -> str:
+        """返回参数化的租户/ACL 过滤片段(命名占位符,不拼接身份值)。
+
+        安全:tenant_id / actor_open_id 一律走命名占位符 %(tenant_id)s / %(actor_open_id)s
+        由 psycopg 绑定,绝不把身份值拼进 SQL 文本——与 permissions.readable_resource_where
+        保持单一实现,消除手动转义的注入面。调用方必须用命名参数 dict 传入这两个键
+        (tenant_id / actor_open_id);同一查询里多别名复用同名占位符即可(psycopg 按名绑定)。
+        """
+        if alias is not None and not re.match(r"^[a-zA-Z0-9_]+$", alias):
+            raise ValueError("Invalid alias")
+
         from data_foundation.permissions import readable_resource_where as perm_where
+
         actual_alias = alias if alias is not None else "r"
         fragment = perm_where(actual_alias)
-        
-        clean_tenant = actor.tenant_id.replace("'", "''")
-        clean_user = actor.open_id.replace("'", "''")
-        fragment = fragment.replace("%(tenant_id)s", f"'{clean_tenant}'")
-        fragment = fragment.replace("%(actor_open_id)s", f"'{clean_user}'")
-        
         if alias is None:
             fragment = fragment.replace("r.", "")
-            
         return f"({fragment.strip()})"
 

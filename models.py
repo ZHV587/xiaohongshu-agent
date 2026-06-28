@@ -213,7 +213,15 @@ class ModelRouterMiddleware(AgentMiddleware):
         if not candidates:
             # 池为空:registry 尚未被 lifespan/探测/事件填充(server 接客前不会命中),
             # 或测试/CLI 态。回退到 request 自带的装配占位 model,不阻断调用。
-            return handler(request)
+            try:
+                req_model = getattr(request, "model", None)
+                key_obj = getattr(req_model, "openai_api_key", None)
+                key_str = key_obj.get_secret_value() if hasattr(key_obj, "get_secret_value") else str(key_obj)
+                print(f"DEBUG: wrap_model_call fallback to model={getattr(req_model, 'model_name', getattr(req_model, 'model', 'None'))}, base_url={getattr(req_model, 'openai_api_base', 'None')}, api_key={key_str[:12]}...", flush=True)
+                return handler(request)
+            except Exception as exc:
+                print(f"DEBUG: wrap_model_call fallback failed: {exc}", flush=True)
+                raise
         last_exc: Exception | None = None
         for cand in candidates:
             try:
@@ -233,7 +241,15 @@ class ModelRouterMiddleware(AgentMiddleware):
         candidates = self._ordered_candidates()
         print(f"DEBUG: ModelRouterMiddleware.awrap_model_call: request={repr(request)}, candidates={[c.model_id for c in candidates]}", flush=True)
         if not candidates:
-            return await handler(request)
+            try:
+                req_model = getattr(request, "model", None)
+                key_obj = getattr(req_model, "openai_api_key", None)
+                key_str = key_obj.get_secret_value() if hasattr(key_obj, "get_secret_value") else str(key_obj)
+                print(f"DEBUG: awrap_model_call fallback to model={getattr(req_model, 'model_name', getattr(req_model, 'model', 'None'))}, base_url={getattr(req_model, 'openai_api_base', 'None')}, api_key={key_str[:12]}...", flush=True)
+                return await handler(request)
+            except Exception as exc:
+                print(f"DEBUG: awrap_model_call fallback failed: {exc}", flush=True)
+                raise
         last_exc: Exception | None = None
         for cand in candidates:
             try:

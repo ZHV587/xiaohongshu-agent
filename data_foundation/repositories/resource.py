@@ -474,8 +474,7 @@ class ResourceRepository(BaseRepository):
                     raise ValueError(f"Unknown permission type: {permission}")
 
     def get_resource(self, tenant_id: str, actor_open_id: str, resource_id: str, conn: Optional[Connection] = None) -> Resource | None:
-        actor = RuntimeIdentityConfig(tenant_id=tenant_id, open_id=actor_open_id)
-        where_clause = self.readable_resource_where(actor, "r")
+        where_clause = self.readable_resource_where("r")
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 row = cursor.execute(
@@ -492,10 +491,14 @@ class ResourceRepository(BaseRepository):
                              where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
                            ) as source_updated_at
                     from resources r
-                    where r.id = %s
+                    where r.id = %(resource_id)s
                       and {where_clause}
                     """,
-                    (resource_id,),
+                    {
+                        "resource_id": resource_id,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
                 ).fetchone()
                 if row is None:
                     return None
@@ -534,8 +537,7 @@ class ResourceRepository(BaseRepository):
         if not resource_ids:
             return []
         ordering = {rid: i for i, rid in enumerate(resource_ids)}
-        actor = RuntimeIdentityConfig(tenant_id=tenant_id, open_id=actor_open_id)
-        where_clause = self.readable_resource_where(actor, "r")
+        where_clause = self.readable_resource_where("r")
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 rows = cursor.execute(
@@ -548,10 +550,14 @@ class ResourceRepository(BaseRepository):
                            ) as source_updated_at,
                            1.0::real as score
                     from resources r
-                    where r.id = any(%s::uuid[])
+                    where r.id = any(%(resource_ids)s::uuid[])
                       and {where_clause}
                     """,
-                    (resource_ids,),
+                    {
+                        "resource_ids": resource_ids,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
                 ).fetchall()
                 return sorted([dict(row) for row in rows], key=lambda row: ordering.get(str(row["id"]), len(ordering)))
 
@@ -572,8 +578,7 @@ class ResourceRepository(BaseRepository):
         if not embedding_model:
             raise ValueError("Embedding model is required")
         vector_literal = self._vector_literal(embedding)
-        actor = RuntimeIdentityConfig(tenant_id=tenant_id, open_id=actor_open_id)
-        where_clause = self.readable_resource_where(actor, "r")
+        where_clause = self.readable_resource_where("r")
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 rows = cursor.execute(
@@ -585,10 +590,10 @@ class ResourceRepository(BaseRepository):
                                from resource_mappings rm
                                where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
                              ) as source_updated_at,
-                             1 - (e.embedding <=> %s::public.vector) as score,
+                             1 - (e.embedding <=> %(vector)s::public.vector) as score,
                              row_number() over (
                                partition by r.id
-                               order by e.embedding <=> %s::public.vector, e.chunk_index
+                               order by e.embedding <=> %(vector)s::public.vector, e.chunk_index
                              ) as resource_rank
                       from resource_embeddings e
                       join embedding_indexes idx
@@ -604,7 +609,7 @@ class ResourceRepository(BaseRepository):
                         on rv.tenant_id = e.tenant_id
                        and rv.resource_id = e.resource_id
                        and rv.version = e.resource_version
-                      where e.embedding_model = %s
+                      where e.embedding_model = %(embedding_model)s
                         and {where_clause}
                         and rv.version = (
                           select max(latest.version)
@@ -616,9 +621,15 @@ class ResourceRepository(BaseRepository):
                     select * from candidates
                     where resource_rank = 1
                     order by score desc, updated_at desc
-                    limit %s
+                    limit %(top_k)s
                     """,
-                    (vector_literal, vector_literal, embedding_model, top_k),
+                    {
+                        "vector": vector_literal,
+                        "embedding_model": embedding_model,
+                        "top_k": top_k,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
                 ).fetchall()
                 return [dict(row) for row in rows]
 
