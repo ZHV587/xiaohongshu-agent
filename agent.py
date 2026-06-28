@@ -98,5 +98,3 @@ agent = create_deep_agent(
     name="xhs-router",
 )
 
-agent.tools = assembled_tools
-

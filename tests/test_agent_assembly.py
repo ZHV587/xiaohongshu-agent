@@ -465,6 +465,6 @@ def test_thinking_chain_is_generic_no_skill_coupled_dispatch_tool(monkeypatch):
     import importlib
     import agent as agent_module
     importlib.reload(agent_module)
-    tools = [t.name for t in agent_module.agent.tools]
+    tools = [t.name for t in agent_module.assembled_tools]
     assert "dispatch_thinking_step" not in tools
 
