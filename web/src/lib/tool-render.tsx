@@ -125,7 +125,7 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
   sync_copy_to_feishu: { aura: { running: "正在同步文案到飞书…", done: () => "已同步飞书(文案)" }, title: "同步文案到飞书多维表格" },
   sync_diagnosis_to_feishu: { aura: { running: "正在同步诊断到飞书…", done: () => "已同步飞书(诊断)" }, title: "同步诊断到飞书多维表格" },
   send_review_notification: { aura: { running: "正在发送飞书群审核通知…", done: () => "已发送审核通知" }, title: "发送飞书群审核通知" },
-  execute_lark_command: { aura: { running: "正在执行飞书操作…", done: () => "已执行飞书操作" }, title: "执行飞书操作" },
+  lark_cli: { aura: { running: "正在执行飞书操作…", done: () => "已执行飞书操作" }, title: "执行飞书操作" },
 
   // 读爆款库:思考链一步(带条数)
   read_xhs_data: {

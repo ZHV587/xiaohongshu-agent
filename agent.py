@@ -32,7 +32,7 @@ from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
 from tools.redfox_search import search_xhs_online
 from tools.online_adopt import adopt_online_notes
-from tools.lark_mcp import load_lark_mcp_tools
+from tools.lark_cli import lark_cli
 
 
 load_dotenv()
@@ -62,7 +62,7 @@ rubric_middleware = RubricMiddleware(
 )
 content_rubric_activator = ContentRubricActivator()
 
-assembled_tools = data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes] + load_lark_mcp_tools()
+assembled_tools = data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes, lark_cli]
 
 agent = create_deep_agent(
     model=initial_model,
@@ -72,7 +72,7 @@ agent = create_deep_agent(
     subagents=build_executor_subagents(model_registry, initial_model, backend),
     backend=backend,
     interrupt_on={
-        "execute_lark_command": True,
+        "lark_cli": True,
         "sync_copy_to_feishu": True,
         "sync_topic_to_feishu": True,
         "sync_diagnosis_to_feishu": True,

@@ -40,8 +40,8 @@ def actor_open_id_from_config(config: Any | None) -> str | None:
 
     安全铁律(与 data_foundation/permissions.actor_from_config 同源):身份只能来自
     服务端 auth 注入的可信字段,**绝不信任** config["configurable"] 里 user_id/open_id
-    这类客户端在 run 请求里可任意填写的字段 —— 否则用户能注入他人 open_id,经 lark_cli/
-    lark_mcp 用 get_uat(他人) 冒充身份操作飞书(越权)。
+    这类客户端在 run 请求里可任意填写的字段 —— 否则用户能注入他人 open_id,
+    经 lark_cli 用 get_uat(他人) 冒充身份操作飞书(越权)。
 
     可信来源(两条):
     1. server_info.user.identity —— 脚本/internal API/测试经 identity_config() 构造的对象路径。

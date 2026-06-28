@@ -14,7 +14,6 @@ def test_pyproject_packages_imported_root_modules():
         "backends",
         "config_center",
         "content_rubric",
-        "lark_mcp_server",
         "middlewares",
         "model_health",
         "model_registry",

@@ -304,7 +304,7 @@ def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
 
     interrupts = captured["interrupt_on"]
     assert captured["checkpointer"] is True
-    assert interrupts["execute_lark_command"] is True
+    assert interrupts["lark_cli"] is True
     assert interrupts["sync_copy_to_feishu"] is True
     assert interrupts["sync_topic_to_feishu"] is True
     assert interrupts["sync_diagnosis_to_feishu"] is True
