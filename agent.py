@@ -5,8 +5,8 @@ if "NO_PROXY" in os.environ:
 if "no_proxy" in os.environ:
     del os.environ["no_proxy"]
 
-from langchain.globals import set_debug
-set_debug(True)
+import langchain
+langchain.debug = True
 
 import json
 from deepagents import (
