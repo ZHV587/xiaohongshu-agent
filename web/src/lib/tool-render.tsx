@@ -27,6 +27,14 @@ export interface ToolRenderSpec {
   card?: (result: unknown) => ReactNode;
   /** 业务显示名:用于 HITL 审批标题等"让用户确认"的场景(中文、面向用户)。 */
   title?: string;
+  /** 思考链里展示的关键入参摘要(面向用户、简短,如检索词/资源ID);无则不展示。 */
+  argsSummary?: (args: Record<string, unknown>) => string | undefined;
+}
+
+/** 从 args 取一个非空字符串字段,做思考链入参摘要用。 */
+function strArg(args: Record<string, unknown> | undefined, key: string): string | undefined {
+  const v = args?.[key];
+  return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
 function parse(result: unknown): Record<string, unknown> | null {
@@ -63,9 +71,10 @@ const DEFAULT: ToolRenderSpec = {
   },
 };
 
-// 检索/取证类:统一"检索中→已检索"措辞
-const retrieval = (running: string, done: string): ToolRenderSpec => ({
+// 检索/取证类:统一"检索中→已检索"措辞;可选 argsKey 把关键入参(检索词/ID)显示出来
+const retrieval = (running: string, done: string, argsKey?: string): ToolRenderSpec => ({
   aura: { running, done: () => done },
+  ...(argsKey ? { argsSummary: (a: Record<string, unknown>) => strArg(a, argsKey) } : {}),
 });
 
 /** 工具名 → 渲染声明。新增工具卡片只改这里。 */
@@ -80,6 +89,7 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
       },
     },
     card: searchCard("search_xhs_online"),
+    argsSummary: (a) => strArg(a, "keyword"),
   },
   search_local_note_cards: {
     aura: {
@@ -90,6 +100,7 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
       },
     },
     card: searchCard("search_local_note_cards"),
+    argsSummary: (a) => strArg(a, "keyword"),
   },
 
   // 采纳收录:思考链一步
@@ -99,16 +110,19 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
   },
 
   // ── 检索 / 取证 ──────────────────────────────
-  semantic_search_resources: retrieval("正在语义检索数据底座…", "已检索到相关素材"),
-  search_resources: retrieval("正在关键词检索数据底座…", "已检索到相关素材"),
-  get_resource: retrieval("正在精读笔记原文…", "已精读笔记"),
-  graph_expand: retrieval("正在扩展关联图谱…", "已扩展关联上下文"),
-  get_resource_performance: retrieval("正在查历史效果数据…", "已读取历史效果"),
+  semantic_search_resources: retrieval("正在语义检索数据底座…", "已检索到相关素材", "query"),
+  search_resources: retrieval("正在关键词检索数据底座…", "已检索到相关素材", "query"),
+  get_resource: retrieval("正在精读笔记原文…", "已精读笔记", "resource_id"),
+  graph_expand: {
+    aura: { running: "正在扩展关联图谱…", done: () => "已扩展关联上下文" },
+    argsSummary: (a) => (Array.isArray(a?.resource_ids) ? `${(a.resource_ids as unknown[]).length} 个起点` : undefined),
+  },
+  get_resource_performance: retrieval("正在查历史效果数据…", "已读取历史效果", "resource_id"),
   get_data_foundation_status: retrieval("正在核对数据底座状态…", "已核对底座状态"),
 
   // ── 落库 / 同步(数据库 + 飞书镜像)──────────────
-  save_generated_topic: { aura: { running: "正在保存选题到数据库…", done: () => "已保存选题" }, title: "保存选题到数据库" },
-  save_generated_copy: { aura: { running: "正在保存文案到数据库…", done: () => "已保存文案" }, title: "保存文案到数据库" },
+  save_generated_topic: { aura: { running: "正在保存选题到数据库…", done: () => "已保存选题" }, title: "保存选题到数据库", argsSummary: (a) => strArg(a, "direction") },
+  save_generated_copy: { aura: { running: "正在保存文案到数据库…", done: () => "已保存文案" }, title: "保存文案到数据库", argsSummary: (a) => strArg(a, "title") },
   save_user_feedback: { aura: { running: "正在记录修改意见…", done: () => "已记录修改意见" } },
   save_performance_metric: { aura: { running: "正在写入效果数据…", done: () => "已写入效果数据" }, title: "写入效果数据" },
   save_session_snapshot: { aura: { running: "正在保存会话快照…", done: () => "已保存快照" } },
