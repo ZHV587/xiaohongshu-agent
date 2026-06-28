@@ -16,8 +16,6 @@ export type AuraSpec =
   | {
       running: string;
       done: (ctx: { result?: unknown; name: string }) => string;
-      /** 可选:展开"分析详情"时的终端日志(不含时间戳,由 ThinkingAura 统一加)。 */
-      logs?: (ctx: { result?: unknown; name: string }) => string[];
     };
 
 export interface ToolRenderSpec {
@@ -64,10 +62,6 @@ const DEFAULT: ToolRenderSpec = {
   aura: {
     running: "正在处理…",
     done: () => "已完成一步处理",
-    logs: ({ name }) => [
-      `[SYSTEM] 启动工具 [${name || "unknown"}] 并发送参数中...`,
-      "[SYSTEM] 指令执行成功，返回结果已注入上下文。",
-    ],
   },
 };
 
@@ -133,7 +127,7 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
   send_review_notification: { aura: { running: "正在发送飞书群审核通知…", done: () => "已发送审核通知" }, title: "发送飞书群审核通知" },
   execute_lark_command: { aura: { running: "正在执行飞书操作…", done: () => "已执行飞书操作" }, title: "执行飞书操作" },
 
-  // 读爆款库:思考链一步 + 终端日志(带条数)
+  // 读爆款库:思考链一步(带条数)
   read_xhs_data: {
     aura: {
       running: "正在读取飞书多维表格数据...",
@@ -141,13 +135,6 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
         const n = arrLen(result, "rows");
         return n != null ? `已成功解析飞书多维表格 (${n} 条爆款数据)` : "已成功解析飞书多维表格";
       },
-      logs: () => [
-        "[SYSTEM] 正在连接飞书多维表格 API 网关...",
-        "[SYSTEM] 企业自建应用凭证校验成功",
-        "[SYSTEM] 正在读取多维表格数据...",
-        "[SYSTEM] 数据读取完毕，正在过滤空行及无效列...",
-        "[SYSTEM] 成功加载并分析爆款记录！",
-      ],
     },
   },
 
@@ -167,11 +154,6 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
     aura: {
       running: "正在分析爆款规律…",
       done: () => "已完成爆款数据深度分析",
-      logs: () => [
-        "[ANALYST] 调起爆款数据分析子智能体...",
-        "[ANALYST] 正在对互动量(点赞数、收藏数)进行排序及分位数计算...",
-        "[ANALYST] 选题规则构建完成，正在输出精炼后的选题建议...",
-      ],
     },
   },
 

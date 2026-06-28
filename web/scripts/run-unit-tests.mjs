@@ -25,6 +25,7 @@ try {
       bundle: true,
       platform: "node",
       format: "cjs",
+      tsconfig: join(webRoot, "tsconfig.json"),
     });
   }
 

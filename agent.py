@@ -6,7 +6,9 @@ if "no_proxy" in os.environ:
     del os.environ["no_proxy"]
 
 import langchain
-langchain.debug = True
+# 生产默认关闭 verbose 调试日志:debug 会把 prompt 与模型 I/O(可能含敏感内容)打进日志,
+# 有性能开销且违背"日志不打敏感信息"铁律。需要排查时设 LANGCHAIN_DEBUG=1 临时开启。
+langchain.debug = os.environ.get("LANGCHAIN_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
 
 import json
 from deepagents import (

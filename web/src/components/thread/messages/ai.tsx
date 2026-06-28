@@ -81,6 +81,20 @@ function Interrupt({
   );
 }
 
+/** 把工具的真实入参/结果格式化成可展开详情用的紧凑字符串(截断防过长)。 */
+function formatToolData(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  let s: string;
+  try {
+    s = typeof v === "string" ? v : JSON.stringify(v);
+  } catch {
+    return undefined;
+  }
+  if (!s || s === "{}" || s === "[]" || s === "null" || s === '""') return undefined;
+  const MAX = 800;
+  return s.length > MAX ? `${s.slice(0, MAX)} …(已截断)` : s;
+}
+
 export function ThinkingAura({
   toolCalls,
   status = "done",
@@ -124,12 +138,17 @@ export function ThinkingAura({
           labelText = aura.running;
         }
 
-        // Gap D: 关键入参摘要(检索词/资源ID等);Gap C: 可展开的终端日志详情
+        // Gap D: 关键入参摘要(检索词/资源ID等)
         const detail = spec.argsSummary?.(tc.args as Record<string, unknown>);
-        const logs =
-          isDone && !hasError && aura.logs
-            ? aura.logs({ result: tc.result, name: tc.name })
-            : undefined;
+        // Gap C: 可展开详情 = 真实输入(args) + 真实输出(result),不再用编造日志
+        const detailLogs: { label: string; text: string }[] = [];
+        const inputStr = formatToolData(tc.args);
+        if (inputStr) detailLogs.push({ label: "输入", text: inputStr });
+        if (isDone) {
+          const outputStr = formatToolData(tc.result);
+          if (outputStr) detailLogs.push({ label: "输出", text: outputStr });
+        }
+        const logs = detailLogs.length ? detailLogs : undefined;
 
         return {
           key: `${tc.name || "tool"}-${idx}`,
@@ -308,10 +327,13 @@ export function ThinkingAura({
                           animate={{ opacity: 1, height: "auto" }}
                           exit={{ opacity: 0, height: 0 }}
                           transition={{ duration: 0.2 }}
-                          className="max-h-32 space-y-0.5 overflow-y-auto rounded-lg border border-coral-light/20 bg-oats-light/40 p-2 font-mono text-[10px] leading-relaxed text-gray-400"
+                          className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-coral-light/20 bg-oats-light/40 p-2 font-mono text-[10px] leading-relaxed text-gray-500"
                         >
-                          {step.logs.map((line, li) => (
-                            <div key={li}>{line}</div>
+                          {step.logs.map((entry, li) => (
+                            <div key={li} className="break-all">
+                              <span className="font-semibold text-coral/70">{entry.label}</span>
+                              <span className="ml-1 whitespace-pre-wrap text-gray-500">{entry.text}</span>
+                            </div>
                           ))}
                         </motion.div>
                       )}
