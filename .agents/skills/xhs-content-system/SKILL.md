@@ -67,7 +67,7 @@ description: |
 
 完成后暂停，让用户确认主题划分是否准确，是否需要合并或拆分。
 
-用户确认主题地图后，调用 `save_session_snapshot(project_name, "内容主题地图-{date}", content)` 保存数据库版本，再调用 `sync_diagnosis_to_feishu(project_name, "内容主题地图-{date}", content)` 同步飞书。
+用户确认主题地图后落库（这是结构化资产沉淀，属本技能本职）：按主控 system prompt §4《存储路由与权威性》先写数据库 `save_session_snapshot(project_name, "内容主题地图-{date}", content)`，成功后同步飞书 `sync_diagnosis_to_feishu(project_name, "内容主题地图-{date}", content)`。
 
 ---
 
@@ -120,10 +120,9 @@ description: |
 
 3. **出选题只展示,不自动落库**。把 3~5 个选题卡呈现给用户挑选。**绝不在生成阶段调 `save_generated_topic`/`sync_topic_to_feishu`**——多数选题不会被选中,全落库会把库塞满垃圾选题(违背"用户选择性入库"铁律)。
 
-4. **用户选定/保留某些选题后**,才持久化被选中的那些:
+4. **用户选定/保留某些选题后**才落库,按主控 system prompt §4《存储路由与权威性》先写库、成功后同步飞书、飞书写经 HITL 人工确认:
    - `save_generated_topic(direction, topics=[用户选定的], evidence)` —— 只存用户选中的,没选的丢弃
-   - `sync_topic_to_feishu(direction, topics=同上)` 同步飞书
-   > ⚠️ 飞书写入会触发**审批确认**弹窗,批准后才写入
+   - `sync_topic_to_feishu(direction, topics=同上)` 同步飞书(经审批确认弹窗,批准后才写入)
 
 ---
 

@@ -34,7 +34,6 @@ ROUTED_SKILLS = [
     "xhs-decision",
     "xhs-learning",
     "xhs-chatroom",
-    "xhs-chatroom-austrian",
     "xhs-system",
     "xhs-dbskill-upgrade",
 ]
