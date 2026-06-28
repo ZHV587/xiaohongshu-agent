@@ -209,6 +209,7 @@ class ModelRouterMiddleware(AgentMiddleware):
 
     def wrap_model_call(self, request: ModelRequest, handler):
         candidates = self._ordered_candidates()
+        print(f"DEBUG: ModelRouterMiddleware.wrap_model_call: request={repr(request)}, candidates={[c.model_id for c in candidates]}", flush=True)
         if not candidates:
             # 池为空:registry 尚未被 lifespan/探测/事件填充(server 接客前不会命中),
             # 或测试/CLI 态。回退到 request 自带的装配占位 model,不阻断调用。
@@ -216,8 +217,10 @@ class ModelRouterMiddleware(AgentMiddleware):
         last_exc: Exception | None = None
         for cand in candidates:
             try:
+                print(f"DEBUG: wrap_model_call trying candidate model={cand.model_id}", flush=True)
                 return handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
+                print(f"DEBUG: wrap_model_call candidate={cand.model_id} failed: {exc}", flush=True)
                 if is_gateway_failover_error(exc):
                     self._mark_unhealthy(cand)
                     last_exc = exc
@@ -228,13 +231,16 @@ class ModelRouterMiddleware(AgentMiddleware):
 
     async def awrap_model_call(self, request: ModelRequest, handler):
         candidates = self._ordered_candidates()
+        print(f"DEBUG: ModelRouterMiddleware.awrap_model_call: request={repr(request)}, candidates={[c.model_id for c in candidates]}", flush=True)
         if not candidates:
             return await handler(request)
         last_exc: Exception | None = None
         for cand in candidates:
             try:
+                print(f"DEBUG: awrap_model_call trying candidate model={cand.model_id}", flush=True)
                 return await handler(request.override(model=cand.model))
             except Exception as exc:  # noqa: BLE001
+                print(f"DEBUG: awrap_model_call candidate={cand.model_id} failed: {exc}", flush=True)
                 if is_gateway_failover_error(exc):
                     self._mark_unhealthy(cand)
                     last_exc = exc
