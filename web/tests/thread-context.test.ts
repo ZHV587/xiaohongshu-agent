@@ -31,6 +31,17 @@ test("index.tsx provider correctly injects new states and actions", () => {
   assert.match(thread, /handleExecuteCommand,/);
 });
 
+test("Thread delegates draft autosave and AI draft parsing to useThreadDraftState", () => {
+  const thread = src("components", "thread", "index.tsx");
+  const hook = src("components", "thread", "useThreadDraftState.ts");
+
+  assert.match(thread, /useThreadDraftState\(/);
+  assert.doesNotMatch(thread, /xhs_autosave_draft_/);
+  assert.doesNotMatch(thread, /setLastSavedContent\(/);
+  assert.match(hook, /buildDraftAutosaveKey/);
+  assert.match(hook, /parseAiDraft/);
+});
+
 test("thread-context 接口声明 deleteThread", () => {
   const ctx = readFileSync(
     join(process.cwd(), "src", "providers", "thread-context.ts"),

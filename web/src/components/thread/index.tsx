@@ -21,6 +21,7 @@ import { EvidenceInspector } from "./EvidenceInspector";
 import { RightInspector } from "./RightInspector";
 import { CommandPalette } from "./CommandPalette";
 import { PhoneSimulator } from "./PhoneSimulator";
+import { useThreadDraftState } from "./useThreadDraftState";
 
 export function Thread() {
   const [threadId, _setThreadId] = useQueryState("threadId");
@@ -57,12 +58,6 @@ export function Thread() {
     useState<SourceEvidence | null>(null);
   const [viewMode, setViewMode] = useState<"detail" | "feed">("detail");
   const [isEditingText, setIsEditingText] = useState(false);
-
-  // 当前动态编辑的选题和正文
-  const [draftTitle, setDraftTitle] = useState("精致露营「搬家式」装备清单");
-  const [draftContent, setDraftContent] = useState(
-    "夏天太适合露营啦！⛺但是作为一个精致的搬家式露营玩家，带什么装备去真的大有讲究！今天就给大家盘点一下我私藏的「搬家式」露营好物，少带一件体验感都打折！\n\n👇精致露营必带清单：\n1️⃣ 双顶充气天幕：不仅防雨防晒，最重要是拍照真的超出片！空间很大，容纳8个人也宽敞。",
-  );
 
   // 多图轮播状态
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -122,48 +117,17 @@ export function Thread() {
       .catch(() => {});
   }, []);
 
-  // 草稿加载已并入下方按 threadId 的"会话切换重置"effect(每会话独立草稿键,
-  // 杜绝全局键跨会话串草稿)。
-
-  const [isDirty, setIsDirty] = useState(false);
-  const [lastSavedContent, setLastSavedContent] = useState("");
-  const [lastSavedTitle, setLastSavedTitle] = useState("");
-
-  // Initialize lastSaved state when AI generates new draft
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMsg = messages[messages.length - 1];
-      if (lastMsg.type === "ai" && typeof lastMsg.content === "string") {
-        setLastSavedContent(lastMsg.content);
-        const lines = lastMsg.content.trim().split("\n");
-        const firstLine = lines[0]
-          .replace(/^[#\s*✨🍠⛺☕🌿👇📝🌟🔥🚗]*/gu, "")
-          .trim();
-        if (firstLine && firstLine.length < 40) {
-          setLastSavedTitle(firstLine);
-        } else {
-          setLastSavedTitle("小红书爆款文案");
-        }
-        setIsDirty(false);
-      }
-    }
-  }, [messages]);
-
-  // Autosave to localStorage and track changes(按会话键,避免跨会话串草稿)
-  useEffect(() => {
-    localStorage.setItem(
-      `xhs_autosave_draft_${threadId ?? "new"}`,
-      JSON.stringify({ title: draftTitle, content: draftContent }),
-    );
-    if (
-      lastSavedContent &&
-      (draftContent !== lastSavedContent || draftTitle !== lastSavedTitle)
-    ) {
-      setIsDirty(true);
-    } else {
-      setIsDirty(false);
-    }
-  }, [threadId, draftTitle, draftContent, lastSavedContent, lastSavedTitle]);
+  const {
+    draftTitle,
+    setDraftTitle,
+    draftContent,
+    setDraftContent,
+    isDirty,
+    setIsDirty,
+    lastSavedTitle,
+    lastSavedContent,
+    resetForThreadSwitch,
+  } = useThreadDraftState(threadId, messages);
 
   // 自适应高度 Editor text area auto grow
   useEffect(() => {
@@ -188,29 +152,6 @@ export function Thread() {
     },
     [isDirty, _setThreadId, setView],
   );
-
-  // 监听 AI 流式更新，实时同步至右侧模拟器预览
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMsg = messages[messages.length - 1];
-      if (lastMsg.type === "ai" && typeof lastMsg.content === "string") {
-        const text = lastMsg.content.trim();
-        const lines = text.split("\n");
-        if (lines.length > 0) {
-          // 智能截取第一行作为手机卡片的标题
-          const firstLine = lines[0]
-            .replace(/^[#\s*✨🍠⛺☕🌿👇📝🌟🔥🚗]*/gu, "")
-            .trim();
-          if (firstLine && firstLine.length < 40) {
-            setDraftTitle(firstLine);
-            setDraftContent(text);
-          } else {
-            setDraftContent(text);
-          }
-        }
-      }
-    }
-  }, [messages]);
 
   // 当切换到飞书 Tab 时，拉取真实群聊列表
   useEffect(() => {
@@ -475,18 +416,7 @@ export function Thread() {
     setInput("");
     setContentBlocks([]);
     setIsEditingText(false);
-    setIsDirty(false);
-    setLastSavedContent("");
-    setLastSavedTitle("");
-    try {
-      const saved = localStorage.getItem(`xhs_autosave_draft_${threadId ?? "new"}`);
-      const parsed = saved ? JSON.parse(saved) : null;
-      setDraftTitle(parsed?.title ?? "");
-      setDraftContent(parsed?.content ?? "");
-    } catch {
-      setDraftTitle("");
-      setDraftContent("");
-    }
+    resetForThreadSwitch(threadId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
 
