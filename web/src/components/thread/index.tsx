@@ -14,7 +14,6 @@ import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ThreadActionsProvider } from "@/lib/thread-actions";
 import { useFileUpload } from "@/hooks/use-file-upload";
-import { SourceEvidence } from "./types";
 import { ThreadContext } from "./ThreadContext";
 import { ChatTimeline } from "./ChatTimeline";
 import { EvidenceInspector } from "./EvidenceInspector";
@@ -23,6 +22,7 @@ import { CommandPalette } from "./CommandPalette";
 import { PhoneSimulator } from "./PhoneSimulator";
 import { useThreadDraftState } from "./useThreadDraftState";
 import { useCommandPaletteState } from "./useCommandPaletteState";
+import { useWorkbenchTabsState } from "./useWorkbenchTabsState";
 
 export function Thread() {
   const [threadId, _setThreadId] = useQueryState("threadId");
@@ -52,11 +52,8 @@ export function Thread() {
   const lastError = useRef<string | undefined>(undefined);
 
   // ── UI 工作台状态变量 ────────────────────────────────────
-  const [rightTab, setRightTab] = useState<"mock" | "feishu" | "evidence">(
-    "mock",
-  );
-  const [selectedEvidence, setSelectedEvidence] =
-    useState<SourceEvidence | null>(null);
+  const { rightTab, setRightTab, selectedEvidence, setSelectedEvidence } =
+    useWorkbenchTabsState();
   const [viewMode, setViewMode] = useState<"detail" | "feed">("detail");
   const [isEditingText, setIsEditingText] = useState(false);
 

@@ -60,6 +60,16 @@ test("Thread delegates command palette state and keyboard handling", () => {
   assert.match(hook, /getCommandPaletteKeyboardAction/);
 });
 
+test("Thread delegates workbench tab and selected evidence state", () => {
+  const thread = src("components", "thread", "index.tsx");
+  const hook = src("components", "thread", "useWorkbenchTabsState.ts");
+
+  assert.match(thread, /useWorkbenchTabsState\(/);
+  assert.doesNotMatch(thread, /useState<"mock"\s*\|\s*"feishu"\s*\|\s*"evidence">/);
+  assert.doesNotMatch(thread, /useState<SourceEvidence\s*\|\s*null>/);
+  assert.match(hook, /createWorkbenchTabsInitialState/);
+});
+
 test("thread-context 接口声明 deleteThread", () => {
   const ctx = readFileSync(
     join(process.cwd(), "src", "providers", "thread-context.ts"),
