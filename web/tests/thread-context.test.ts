@@ -50,6 +50,16 @@ test("useThreadDraftState keeps applying streaming content updates for the same 
   assert.match(hook, /setDraftContent\(next\.content\)/);
 });
 
+test("Thread delegates command palette state and keyboard handling", () => {
+  const thread = src("components", "thread", "index.tsx");
+  const hook = src("components", "thread", "useCommandPaletteState.ts");
+
+  assert.match(thread, /useCommandPaletteState\(/);
+  assert.doesNotMatch(thread, /addEventListener\("keydown"/);
+  assert.doesNotMatch(thread, /key\.toLowerCase\(\)\s*===\s*"p"/);
+  assert.match(hook, /getCommandPaletteKeyboardAction/);
+});
+
 test("thread-context 接口声明 deleteThread", () => {
   const ctx = readFileSync(
     join(process.cwd(), "src", "providers", "thread-context.ts"),

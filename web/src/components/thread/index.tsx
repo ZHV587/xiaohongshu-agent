@@ -22,6 +22,7 @@ import { RightInspector } from "./RightInspector";
 import { CommandPalette } from "./CommandPalette";
 import { PhoneSimulator } from "./PhoneSimulator";
 import { useThreadDraftState } from "./useThreadDraftState";
+import { useCommandPaletteState } from "./useCommandPaletteState";
 
 export function Thread() {
   const [threadId, _setThreadId] = useQueryState("threadId");
@@ -84,10 +85,6 @@ export function Thread() {
   // 抛物线飞行动效触发器
   const [isFlying, setIsFlying] = useState(false);
 
-  // Ctrl+P 智能润色工具箱弹窗
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [cmdSearch, setCmdSearch] = useState("");
-
   // 飞书多维表格与知识库跳转链接
   const [bitableUrl, setBitableUrl] = useState<string | null>(null);
   const [wikiUrl, setWikiUrl] = useState<string | null>(null);
@@ -128,6 +125,12 @@ export function Thread() {
     lastSavedContent,
     resetForThreadSwitch,
   } = useThreadDraftState(threadId, messages);
+  const {
+    showCommandPalette,
+    setShowCommandPalette,
+    cmdSearch,
+    setCmdSearch,
+  } = useCommandPaletteState();
 
   // 自适应高度 Editor text area auto grow
   useEffect(() => {
@@ -179,21 +182,6 @@ export function Thread() {
         });
     }
   }, [rightTab, feishuChats.length]);
-
-  // 监听 Ctrl+P 热键，阻断默认打印行为
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
-        e.preventDefault();
-        setShowCommandPalette((prev) => !prev);
-      }
-      if (e.key === "Escape") {
-        setShowCommandPalette(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
 
   const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
     if (!text.trim() || isLoading) return;
