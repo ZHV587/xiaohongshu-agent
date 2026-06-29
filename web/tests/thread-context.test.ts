@@ -81,6 +81,17 @@ test("Thread delegates phone preview state", () => {
   assert.match(hook, /createPreviewInitialState/);
 });
 
+test("Thread delegates Feishu workspace state and chat loading", () => {
+  const thread = src("components", "thread", "index.tsx");
+  const hook = src("components", "thread", "useFeishuWorkspaceState.ts");
+
+  assert.match(thread, /useFeishuWorkspaceState\(rightTab\)/);
+  assert.doesNotMatch(thread, /fetch\("\/api\/feishu\/chats"\)/);
+  assert.doesNotMatch(thread, /const \[feishuChats,\s*setFeishuChats\]/);
+  assert.doesNotMatch(thread, /const \[selectedChatId,\s*setSelectedChatId\]/);
+  assert.match(hook, /shouldFetchFeishuChats/);
+});
+
 test("thread-context 接口声明 deleteThread", () => {
   const ctx = readFileSync(
     join(process.cwd(), "src", "providers", "thread-context.ts"),

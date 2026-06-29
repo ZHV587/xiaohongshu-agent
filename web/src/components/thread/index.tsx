@@ -24,6 +24,7 @@ import { useThreadDraftState } from "./useThreadDraftState";
 import { useCommandPaletteState } from "./useCommandPaletteState";
 import { useWorkbenchTabsState } from "./useWorkbenchTabsState";
 import { usePreviewState } from "./usePreviewState";
+import { useFeishuWorkspaceState } from "./useFeishuWorkspaceState";
 
 export function Thread() {
   const [threadId, _setThreadId] = useQueryState("threadId");
@@ -65,14 +66,18 @@ export function Thread() {
     carouselImages,
   } = usePreviewState();
 
-  // 飞书群组与通知发送状态
-  const [feishuChats, setFeishuChats] = useState<
-    { chat_id: string; name: string }[]
-  >([]);
-  const [selectedChatId, setSelectedChatId] = useState("");
-  const [isFetchingChats, setIsFetchingChats] = useState(false);
-  const [isSendingNotification, setIsSendingNotification] = useState(false);
-  const [isFeishuActionPending, setIsFeishuActionPending] = useState(false);
+  const {
+    feishuChats,
+    setFeishuChats,
+    selectedChatId,
+    setSelectedChatId,
+    isFetchingChats,
+    setIsFetchingChats,
+    isSendingNotification,
+    setIsSendingNotification,
+    isFeishuActionPending,
+    setIsFeishuActionPending,
+  } = useFeishuWorkspaceState(rightTab);
 
   // 同步校验进度条状态
   const [syncStepsVisible, setSyncStepsVisible] = useState(false);
@@ -152,33 +157,6 @@ export function Thread() {
     },
     [isDirty, _setThreadId, setView],
   );
-
-  // 当切换到飞书 Tab 时，拉取真实群聊列表
-  useEffect(() => {
-    if (rightTab === "feishu" && feishuChats.length === 0) {
-      setIsFetchingChats(true);
-      fetch("/api/feishu/chats")
-        .then((res) => {
-          if (res.ok) return res.json();
-          throw new Error("Unauthorized");
-        })
-        .then((data) => {
-          if (data.ok && data.chats) {
-            setFeishuChats(data.chats);
-            if (data.chats.length > 0) {
-              setSelectedChatId(data.chats[0].chat_id);
-            }
-          }
-        })
-        .catch((err) => {
-          toast.error("获取飞书群聊列表失败，请检查授权状态");
-          setFeishuChats([]);
-        })
-        .finally(() => {
-          setIsFetchingChats(false);
-        });
-    }
-  }, [rightTab, feishuChats.length]);
 
   const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
     if (!text.trim() || isLoading) return;
