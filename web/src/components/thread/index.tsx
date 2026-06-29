@@ -23,6 +23,7 @@ import { PhoneSimulator } from "./PhoneSimulator";
 import { useThreadDraftState } from "./useThreadDraftState";
 import { useCommandPaletteState } from "./useCommandPaletteState";
 import { useWorkbenchTabsState } from "./useWorkbenchTabsState";
+import { usePreviewState } from "./usePreviewState";
 
 export function Thread() {
   const [threadId, _setThreadId] = useQueryState("threadId");
@@ -54,16 +55,15 @@ export function Thread() {
   // ── UI 工作台状态变量 ────────────────────────────────────
   const { rightTab, setRightTab, selectedEvidence, setSelectedEvidence } =
     useWorkbenchTabsState();
-  const [viewMode, setViewMode] = useState<"detail" | "feed">("detail");
-  const [isEditingText, setIsEditingText] = useState(false);
-
-  // 多图轮播状态
-  const [carouselIndex, setCarouselIndex] = useState(0);
-  const carouselImages = [
-    "https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?auto=format&fit=crop&w=500&q=80",
-    "https://images.unsplash.com/photo-1533873984035-25970ab07461?auto=format&fit=crop&w=500&q=80",
-    "https://images.unsplash.com/photo-1478131143081-80f7f84ca84d?auto=format&fit=crop&w=500&q=80",
-  ];
+  const {
+    viewMode,
+    setViewMode,
+    isEditingText,
+    setIsEditingText,
+    carouselIndex,
+    setCarouselIndex,
+    carouselImages,
+  } = usePreviewState();
 
   // 飞书群组与通知发送状态
   const [feishuChats, setFeishuChats] = useState<

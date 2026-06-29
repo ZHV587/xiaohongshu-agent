@@ -70,6 +70,17 @@ test("Thread delegates workbench tab and selected evidence state", () => {
   assert.match(hook, /createWorkbenchTabsInitialState/);
 });
 
+test("Thread delegates phone preview state", () => {
+  const thread = src("components", "thread", "index.tsx");
+  const hook = src("components", "thread", "usePreviewState.ts");
+
+  assert.match(thread, /usePreviewState\(/);
+  assert.doesNotMatch(thread, /useState<"detail"\s*\|\s*"feed">/);
+  assert.doesNotMatch(thread, /const \[carouselIndex,\s*setCarouselIndex\]/);
+  assert.doesNotMatch(thread, /const carouselImages = \[/);
+  assert.match(hook, /createPreviewInitialState/);
+});
+
 test("thread-context 接口声明 deleteThread", () => {
   const ctx = readFileSync(
     join(process.cwd(), "src", "providers", "thread-context.ts"),
