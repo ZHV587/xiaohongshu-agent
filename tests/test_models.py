@@ -507,9 +507,6 @@ def test_build_chat_model_providers(monkeypatch):
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_openai import ChatOpenAI
 
-    # Ensure NO_PROXY does not cause httpx initialization failures
-    monkeypatch.delenv("NO_PROXY", raising=False)
-
     # Test anthropic
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     model_anthropic = _build_chat_model("claude-3-5-sonnet", "https://api.anthropic.com", "fake-key")
