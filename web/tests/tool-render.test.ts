@@ -5,24 +5,28 @@ import { resolveToolRender } from "../src/lib/tool-render";
 
 // 守护"思考链通用化"的核心派生逻辑(发现 B:此前无回归覆盖)。
 
-test("读取 SKILL.md 渲染为通用'运用技能'步骤,且剥离 xhs- 前缀", () => {
+test("读取 SKILL.md 渲染为通用方法步骤,且不暴露技能 slug", () => {
   const spec = resolveToolRender("read_file", {
     file_path: "/skills/xhs-copywriting/SKILL.md",
   });
   assert.notEqual(spec.aura, "hidden");
   if (spec.aura === "hidden") throw new Error("unreachable");
-  assert.match(spec.aura.running, /技能/);
-  assert.match(spec.aura.running, /copywriting/);
-  assert.doesNotMatch(spec.aura.running, /xhs-/);
+  assert.equal(spec.aura.running, "正在整理方法…");
+  assert.equal(spec.aura.done({ name: "read_file" }), "已整理好方法");
+  assert.doesNotMatch(spec.aura.running, /xhs-|copywriting|topic-content|技能|skill/i);
+  assert.doesNotMatch(spec.aura.done({ name: "read_file" }), /xhs-|copywriting|topic-content|技能|skill/i);
 });
 
-test("非 xhs 前缀的 skill 也命中激活步骤", () => {
+test("非 xhs 前缀的 skill 也渲染为通用方法步骤", () => {
   const spec = resolveToolRender("read_file", {
     file_path: "/skills/topic-content/SKILL.md",
   });
   assert.notEqual(spec.aura, "hidden");
   if (spec.aura === "hidden") throw new Error("unreachable");
-  assert.match(spec.aura.running, /topic-content/);
+  assert.equal(spec.aura.running, "正在整理方法…");
+  assert.equal(spec.aura.done({ name: "read_file" }), "已整理好方法");
+  assert.doesNotMatch(spec.aura.running, /xhs-|copywriting|topic-content|技能|skill/i);
+  assert.doesNotMatch(spec.aura.done({ name: "read_file" }), /xhs-|copywriting|topic-content|技能|skill/i);
 });
 
 test("非 skill 的 read_file 保持隐藏(噪音不入思考链)", () => {

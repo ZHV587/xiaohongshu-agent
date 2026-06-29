@@ -226,7 +226,7 @@ Run:
 
 ```powershell
 cd web
-node --import tsx --test tests/tool-render.test.ts
+npm run test:unit
 ```
 
 Expected: FAIL because `resolveToolRender` still returns labels containing the skill slug.
@@ -280,7 +280,7 @@ Run:
 
 ```powershell
 cd web
-node --import tsx --test tests/tool-render.test.ts
+npm run test:unit
 ```
 
 Expected: PASS.

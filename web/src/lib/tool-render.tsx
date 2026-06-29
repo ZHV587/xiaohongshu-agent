@@ -163,21 +163,19 @@ export const TOOL_RENDERERS: Record<string, ToolRenderSpec> = {
   edit_file: HIDDEN,
 };
 
-/** 解析某工具的渲染声明;命中 /skills/ 路径强制 hidden,未注册走 DEFAULT。 */
+/** 解析某工具的渲染声明;读取 skill 入口展示通用方法步骤,未注册走 DEFAULT。 */
 export function resolveToolRender(
   name?: string,
   args?: Record<string, unknown>,
 ): ToolRenderSpec {
   const path = String((args?.file_path ?? args?.path ?? args?.filename ?? "") || "");
-  // skill 激活是"通用思考链"的信号:读取某 skill 的 SKILL.md = 智能体正在运用该技能。
-  // 由消息流(read_file 调用)天然派生,与具体 skill 无耦合、零 per-skill 代码。
-  const skillMatch = path.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
+  // skill 激活是"通用方法整理"的信号:读取某 skill 的 SKILL.md 时不暴露具体 slug 或内部术语。
+  const skillMatch = path.match(/\/skills\/[^/]+\/SKILL\.md$/i);
   if (skillMatch) {
-    const slug = skillMatch[1].replace(/^xhs-/, "");
     return {
       aura: {
-        running: `正在调取「${slug}」技能…`,
-        done: () => `已运用「${slug}」技能`,
+        running: "正在整理方法…",
+        done: () => "已整理好方法",
       },
     };
   }
