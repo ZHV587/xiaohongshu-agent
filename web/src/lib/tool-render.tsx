@@ -169,8 +169,9 @@ export function resolveToolRender(
   args?: Record<string, unknown>,
 ): ToolRenderSpec {
   const path = String((args?.file_path ?? args?.path ?? args?.filename ?? "") || "");
+  const normalizedPath = path.replace(/\\/g, "/");
   // skill 激活是"通用方法整理"的信号:读取某 skill 的 SKILL.md 时不暴露具体 slug 或内部术语。
-  const skillMatch = path.match(/\/skills\/[^/]+\/SKILL\.md$/i);
+  const skillMatch = normalizedPath.match(/\/skills\/[^/]+\/SKILL\.md$/i);
   if (skillMatch) {
     return {
       aura: {
@@ -179,7 +180,7 @@ export function resolveToolRender(
       },
     };
   }
-  if (path.includes("/skills/")) return HIDDEN; // 其它 skill 目录读写是噪音,不展示
+  if (normalizedPath.includes("/skills/")) return HIDDEN; // 其它 skill 目录读写是噪音,不展示
   if (name && TOOL_RENDERERS[name]) return TOOL_RENDERERS[name];
   return DEFAULT;
 }

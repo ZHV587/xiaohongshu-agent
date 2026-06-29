@@ -9,9 +9,18 @@ def test_clear_host_proxy_env_removes_upper_and_lowercase_proxy_vars(monkeypatch
 
     removed = clear_host_proxy_env()
 
-    assert removed == sorted(HOST_PROXY_ENV_VARS)
+    assert {key.upper() for key in removed} == {"ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY"}
     for key in HOST_PROXY_ENV_VARS:
         assert key not in os.environ
+
+
+def test_clear_host_proxy_env_reports_only_present_proxy_vars(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "socks5://127.0.0.1:7897")
+
+    removed = clear_host_proxy_env()
+
+    assert removed == ["HTTPS_PROXY"]
+    assert "HTTPS_PROXY" not in os.environ
 
 
 def test_normalize_no_proxy_removes_ipv6_entries_but_keeps_hostnames(monkeypatch):

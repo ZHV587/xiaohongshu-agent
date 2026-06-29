@@ -16,11 +16,7 @@ HOST_PROXY_ENV_VARS = (
 def clear_host_proxy_env() -> list[str]:
     """Remove host proxy variables so offline model tests stay machine-independent."""
     present_keys = set(os.environ)
-    present_upper_keys = {key.upper() for key in present_keys}
-    removed = [
-        key for key in HOST_PROXY_ENV_VARS
-        if key in present_keys or key.upper() in present_upper_keys
-    ]
+    removed = [key for key in HOST_PROXY_ENV_VARS if key in present_keys]
     for key in HOST_PROXY_ENV_VARS:
         os.environ.pop(key, None)
     return sorted(removed)

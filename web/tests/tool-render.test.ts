@@ -29,6 +29,18 @@ test("非 xhs 前缀的 skill 也渲染为通用方法步骤", () => {
   assert.doesNotMatch(spec.aura.done({ name: "read_file" }), /xhs-|copywriting|topic-content|技能|skill/i);
 });
 
+test("Windows 风格的 SKILL.md 路径也渲染为通用方法步骤", () => {
+  const spec = resolveToolRender("read_file", {
+    file_path: "E:\\小红书智能体\\skills\\xhs-copywriting\\SKILL.md",
+  });
+  assert.notEqual(spec.aura, "hidden");
+  if (spec.aura === "hidden") throw new Error("unreachable");
+  assert.equal(spec.aura.running, "正在整理方法…");
+  assert.equal(spec.aura.done({ name: "read_file" }), "已整理好方法");
+  assert.doesNotMatch(spec.aura.running, /xhs-|copywriting|topic-content|技能|skill/i);
+  assert.doesNotMatch(spec.aura.done({ name: "read_file" }), /xhs-|copywriting|topic-content|技能|skill/i);
+});
+
 test("非 skill 的 read_file 保持隐藏(噪音不入思考链)", () => {
   const spec = resolveToolRender("read_file", {
     file_path: "/memories/team/AGENTS.md",
