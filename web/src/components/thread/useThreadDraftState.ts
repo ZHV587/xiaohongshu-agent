@@ -3,7 +3,6 @@ import {
   type Dispatch,
   type SetStateAction,
   useEffect,
-  useRef,
   useState,
 } from "react";
 
@@ -79,16 +78,13 @@ export function useThreadDraftState(
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedContent, setLastSavedContent] = useState("");
   const [lastSavedTitle, setLastSavedTitle] = useState("");
-  const lastAiMessageId = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg || lastMsg.type !== "ai" || typeof lastMsg.content !== "string") {
       return;
     }
-    if (lastMsg.id && lastMsg.id === lastAiMessageId.current) return;
 
-    lastAiMessageId.current = lastMsg.id;
     const next = parseAiDraft(lastMsg.content);
     setDraftTitle(next.title);
     setDraftContent(next.content);

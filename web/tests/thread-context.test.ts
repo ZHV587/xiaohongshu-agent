@@ -42,6 +42,14 @@ test("Thread delegates draft autosave and AI draft parsing to useThreadDraftStat
   assert.match(hook, /parseAiDraft/);
 });
 
+test("useThreadDraftState keeps applying streaming content updates for the same AI message", () => {
+  const hook = src("components", "thread", "useThreadDraftState.ts");
+
+  assert.doesNotMatch(hook, /lastAiMessageId/);
+  assert.match(hook, /lastMsg\.content/);
+  assert.match(hook, /setDraftContent\(next\.content\)/);
+});
+
 test("thread-context 接口声明 deleteThread", () => {
   const ctx = readFileSync(
     join(process.cwd(), "src", "providers", "thread-context.ts"),
