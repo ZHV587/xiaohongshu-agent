@@ -83,6 +83,11 @@ def test_analytics_account_view_allows_user(monkeypatch):
 
 
 def test_calendar_contract_shape_and_empty_grid(monkeypatch):
+    # 存储可用但无排期行 → 200 + 真实月份网格 + 空 calendar(需求 12.4)。
+    # _load_schedule_items 走真实 DB;此处注入空排期模拟「库里暂无排期」,与「库不可用」区分。
+    import data_foundation.studio_api as studio_api
+
+    monkeypatch.setattr(studio_api, "_load_schedule_items", lambda *, tenant_id, account: [])
     client = _client(monkeypatch)
     response = client.get("/internal/studio/calendar", headers=_user_headers())
     assert response.status_code == 200
@@ -92,8 +97,21 @@ def test_calendar_contract_shape_and_empty_grid(monkeypatch):
     assert set(month) == {"label", "days", "firstOffset"}
     assert 28 <= month["days"] <= 31
     assert 0 <= month["firstOffset"] <= 6
-    # 暂无排期存储 → 真实空网格(需求 12.4)
     assert payload["calendar"] == []
+
+
+def test_calendar_store_unavailable_returns_503_not_degraded(monkeypatch):
+    # 排期存储不可用是真实错误 → 503(不降级吞成 200+空网格;严禁兼容兜底)。
+    import data_foundation.studio_api as studio_api
+
+    def _boom(*, tenant_id, account):
+        raise RuntimeError("postgresql://user:db-secret@host/db down")
+
+    monkeypatch.setattr(studio_api, "_load_schedule_items", _boom)
+    client = _client(monkeypatch)
+    response = client.get("/internal/studio/calendar", headers=_user_headers())
+    assert response.status_code == 503
+    assert "db-secret" not in response.text  # 不回带异常细节
 
 
 def test_accounts_empty_overview_all_zero(monkeypatch):

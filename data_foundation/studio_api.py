@@ -146,22 +146,13 @@ def _format_schedule_time(content: dict) -> str:
 
 
 def _derive_stage(content: dict) -> str | None:
-    """从 performance_metric.content_json 派生发布管线 stage(单一事实源)。
+    """发布管线 stage = performance_metric.content_json 的显式 `stage` 字段(单一事实源)。
 
-    显式 `stage` 字段优先(本特性写入);缺省则按既有效果指标启发式回退(兼容飞书同步
-    历史 performance_metric:有 metrics → measured,有 note_url → published)。均不满足 → None。
+    本特性所有写路径(排期/回填/推进 stage)都落显式 `stage`。不做启发式推断、不为
+    无显式 stage 的历史/外部指标兜底 —— 这类数据不属于发布管线,返回 None。
     """
     stage = content.get("stage")
-    if stage in _PIPELINE_STAGES:
-        return stage
-    if content.get("metrics"):
-        return "measured"
-    note_url = content.get("note_url")
-    if isinstance(note_url, str) and note_url.strip():
-        return "published"
-    if content.get("scheduled_date"):
-        return "scheduled"
-    return None
+    return stage if stage in _PIPELINE_STAGES else None
 
 
 def _existing_metric_content(repo, *, tenant_id: str, actor_open_id: str, metric_id: str | None) -> dict:
@@ -332,13 +323,9 @@ def _load_schedule_items(*, tenant_id: str, account: str | None) -> list[dict]:
     真实来源:写接口(/internal/studio/schedule)把排期落为 generated_copy 的 performance_metric
     (measured_by 边 + content_json.scheduled_date/scheduled_time/account),此处经边回读其归属
     generated_copy 标题。account 指定 → 仅该账号(需求 12.3);无排期 → 真实空集合(需求 12.4)。
+    存储不可用直接抛出 → calendar 接口据此返回 503(真实错误,不降级吞错)。
     """
-    try:
-        conn = connect()
-    except Exception:  # noqa: BLE001 - 排期是日历的可选叠加层:存储不可用时降级为真实空排期,
-        # 月份网格仍可纯计算返回(需求 12.4),不让整个 calendar 接口 503。
-        logger.warning("studio_schedule_items_store_unavailable")
-        return []
+    conn = connect()
     try:
         rows = conn.execute(
             """

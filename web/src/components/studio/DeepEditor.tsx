@@ -51,7 +51,7 @@ export function DeepEditor() {
           {note.versions ? (["A", "B", "C"] as VersionId[]).filter((id) => note.versions?.[id]).map((id) => {
             const v = note.versions![id]!, on = note.activeVersion === id, sc = versionScore(id);
             return (
-              <button key={id} onClick={() => actions.setVersion(id)} style={{ display: "flex", alignItems: "center", gap: 8, textAlign: "left", padding: "8px 9px", borderRadius: "var(--radius-sm)", cursor: "pointer", border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--accent-surface)" : "var(--surface-card)" }}>
+              <button key={id} data-testid={`version-${id}`} onClick={() => actions.setVersion(id)} style={{ display: "flex", alignItems: "center", gap: 8, textAlign: "left", padding: "8px 9px", borderRadius: "var(--radius-sm)", cursor: "pointer", border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--accent-surface)" : "var(--surface-card)" }}>
                 <span style={{ width: 20, height: 20, borderRadius: 6, background: on ? "var(--primary)" : "var(--oats-dark)", color: on ? "#fff" : "var(--text-muted)", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "var(--font-display)" }}>{id}</span>
                 <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 600, color: on ? "var(--primary)" : "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.label.replace("版本 ", "")}</span>
                 {sc != null && <span style={{ fontSize: 10, fontWeight: 700, color: sc >= 80 ? "var(--success)" : "var(--warning)" }}>{sc}</span>}
@@ -125,7 +125,7 @@ export function DeepEditor() {
             <span style={{ marginLeft: "auto", fontSize: 10, color: body.length > 1000 ? "var(--warning)" : "var(--text-subtle)" }} className="font-tabular">{writing ? "🍠 生成中…" : `${body.length} / 1000`}</span>
           </div>
           {/* 正文 */}
-          <textarea ref={bodyRef} value={writing ? body + " ▍" : body} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => actions.updateField("body", e.target.value)} readOnly={writing} placeholder="正文从一句共情钩子开始，再用 1️⃣2️⃣3️⃣ 分点干货，最后引导互动…" style={{ border: "none", background: "transparent", resize: "none", minHeight: 300, fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", outline: "none" }} />
+          <textarea data-testid="draft-body" ref={bodyRef} value={writing ? body + " ▍" : body} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => actions.updateField("body", e.target.value)} readOnly={writing} placeholder="正文从一句共情钩子开始，再用 1️⃣2️⃣3️⃣ 分点干货，最后引导互动…" style={{ border: "none", background: "transparent", resize: "none", minHeight: 300, fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", outline: "none" }} />
           {/* 话题标签 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
             <Eyebrow>话题标签 · {note.tags.length} 个（建议 5–10，大词+长尾）</Eyebrow>
