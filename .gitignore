@@ -27,6 +27,10 @@ web/out/
 web/tsconfig.tsbuildinfo
 node_modules/.cache/
 
+# Playwright e2e 运行产物(可重建,不入库)
+web/test-results/
+web/playwright-report/
+
 # CodeGraph 本地索引(可重建,不入库)
 .codegraph/
 
