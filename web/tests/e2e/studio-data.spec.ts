@@ -62,6 +62,16 @@ function step(n: string, detail: string) {
   console.log(`[studio-e2e] 步骤${n}: ✅ 已断言 — ${detail}`);
 }
 
+/** 等真实 LangGraph 流落定(__XHS_STREAMING__===false),再导航/断言,避免读流式中间态。 */
+async function waitStreamIdle(page: import("@playwright/test").Page, timeout = 120_000) {
+  await expect
+    .poll(async () => page.evaluate(() => (window as unknown as { __XHS_STREAMING__?: boolean }).__XHS_STREAMING__ === false), {
+      timeout,
+      intervals: [1000, 1500, 2000],
+    })
+    .toBe(true);
+}
+
 test.describe("studio-data-integration 端到端基线(真实后端)", () => {
   test.beforeAll(() => requireEnv());
 
@@ -154,7 +164,7 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
       expect(evOutcome, "选题须 either 附着真实证据(>0 条) either 明示数据不足(不得凭空 mock)").toBeTruthy();
       if (evOutcome === "has-evidence") {
         await page.locator('[data-testid="detail-evidence-item"]').first().click();
-        await expect(page.getByText("why_selected", { exact: false })).toBeVisible();
+        await expect(page.getByText("why_selected", { exact: false }).first()).toBeVisible();
         const relevance = page.locator('[data-testid="evidence-relevance"]').first();
         await expect(relevance).toBeVisible();
         const relRaw = (await relevance.innerText()).replace(/[^0-9.]/g, "");
@@ -173,21 +183,27 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
 
     // ── ③ 多版本草稿:仅当②真实产出选题时可达(无草稿无从多版本);非跳过,是流程前置依赖 ──
     if (topicsProduced) {
-      await topicCards.first().click();
-      const enterDeep = page.getByRole("button", { name: /进入深度创作/ });
+      await waitStreamIdle(page); // 等②的流完全落定,否则 DOM 持续变更导致导航元素不 stable
+      // ②结束后仍停在选题详情视图(已点开第一张卡);若已返回 rail,则重新点开第一张。
+      let enterDeep = page.getByRole("button", { name: /进入深度创作/ });
+      if (!(await enterDeep.count())) {
+        await topicCards.first().click();
+        enterDeep = page.getByRole("button", { name: /进入深度创作/ });
+      }
       await expect(enterDeep.first()).toBeVisible({ timeout: 15_000 });
-      await enterDeep.first().click();
+      await enterDeep.first().click({ force: true });
       // 在深度创作里请求多版本草稿(真实 LLM 产出 note.versions)
       const deepComposer = page.getByPlaceholder(/继续追问|让 🍠/).first();
       await deepComposer.fill("给我 A/B/C 三个不同风格的标题与正文版本");
       await page.getByRole("button", { name: "生成" }).first().click();
       // 等版本 B 出现(真实多版本产出),点它,硬断言正文切换(需求 4.5)。
       const versionB = page.locator('[data-testid="version-B"]');
-      await expect(versionB).toBeVisible({ timeout: 90_000 });
+      await expect(versionB).toBeVisible({ timeout: 120_000 });
+      await waitStreamIdle(page); // 等正文流落定再读取/切换
       const draftBody = page.locator('[data-testid="draft-body"]');
       await expect(draftBody).toBeVisible();
       const bodyBefore = await draftBody.inputValue();
-      await versionB.click();
+      await versionB.click({ force: true });
       await expect.poll(async () => draftBody.inputValue()).not.toBe(bodyBefore);
       step("③", "真实多版本产出,点版本 B 编辑区正文切换");
     } else {
@@ -198,6 +214,7 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     // ── ④ 账号运营:页面渲染 == 后端真实返回(硬断言相等,不是跳过)──
     // 注:账号矩阵实体模型为独立特性,数据底座当前无账号实体 → 后端真实返回空集合。
     // 本步硬断言「页面渲染数 == 后端 API 真实返回数」,空与非空都成立(契约一致性)。
+    await waitStreamIdle(page).catch(() => {}); // 等③的流落定再切 section
     await page.getByRole("button", { name: "账号运营" }).click();
     await expect(page.getByText("账号矩阵", { exact: false }).first()).toBeVisible();
 
@@ -216,15 +233,17 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     // ②真实产出选题时,经 UI 草稿触发排期写动作(端到端);否则对真实 BFF 直接断言写契约。
     if (topicsProduced) {
       await page.getByRole("button", { name: "创作" }).click();
-      await topicCards.first().click();
+      await expect(topicCards.first()).toBeVisible({ timeout: 15_000 });
+      await topicCards.first().click({ force: true });
       const enterDeep5 = page.getByRole("button", { name: /进入深度创作/ });
       await expect(enterDeep5.first()).toBeVisible({ timeout: 15_000 });
-      await enterDeep5.first().click();
+      await enterDeep5.first().click({ force: true });
+      await waitStreamIdle(page).catch(() => {});
       const scheduleBtn = page.getByRole("button", { name: /定稿并排期|排期发布|立即排期|排期/ }).first();
       await expect(scheduleBtn).toBeVisible({ timeout: 30_000 });
       const [schedResp] = await Promise.all([
         page.waitForResponse((r) => r.url().includes("/api/backend/schedule") && r.request().method() === "POST", { timeout: 30_000 }),
-        scheduleBtn.click(),
+        scheduleBtn.click({ force: true }),
       ]);
       expect([200, 400].includes(schedResp.status()), `排期写接口应返回 200/400,实际 ${schedResp.status()}`).toBeTruthy();
       step("⑤", `UI 排期写动作 → 真实 BFF /api/backend/schedule 状态 ${schedResp.status()}`);

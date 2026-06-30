@@ -17,7 +17,8 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: [["list"]],
-  timeout: 90_000,
+  // 真实数据基线驱动多轮真实 LLM 对话(选题产出 + 多版本草稿),单测试放宽到 5 分钟。
+  timeout: 300_000,
   expect: { timeout: 15_000 },
   use: {
     baseURL,

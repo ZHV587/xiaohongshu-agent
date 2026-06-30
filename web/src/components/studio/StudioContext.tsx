@@ -263,6 +263,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         ? "draft"
         : "idle";
 
+  // 测试可观测钩子:暴露真实流是否在产出中,供 e2e 等流落定再导航(避免读流式中间态)。
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as unknown as { __XHS_STREAMING__?: boolean }).__XHS_STREAMING__ = t.isLoading;
+    }
+  }, [t.isLoading]);
+
   // ── multi-version draft + its backend resource id parsed from the live stream ──
   const { versions, copyResourceId } = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
 
