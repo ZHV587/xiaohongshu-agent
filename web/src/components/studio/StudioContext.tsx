@@ -284,6 +284,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   // ── topics & evidence parsed from the LIVE stream (rich fields, no mock) ──
   const { topics, evidence } = useMemo(() => parseTopicsFromMessages(t.messages), [t.messages]);
 
+  // 测试可观测钩子:暴露后端解析出的真实 topics 长度,供 e2e 断言「选题卡数 == topics 长度」
+  // (需求 3.4)。仅写 window,生产无副作用。
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as unknown as { __XHS_TOPICS_LEN__?: number }).__XHS_TOPICS_LEN__ = topics.length;
+    }
+  }, [topics.length]);
+
   // ── chat transcript derived from the real messages ──
   const chatExtra: ChatMsg[] = useMemo(() => deriveChat(t.messages), [t.messages]);
 

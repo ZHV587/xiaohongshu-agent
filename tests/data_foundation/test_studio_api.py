@@ -243,9 +243,9 @@ def test_write_endpoints_reject_missing_internal_key(monkeypatch):
     client = _client(monkeypatch)
     # 排期/回填/推进 stage 三个写端点未带内部密钥一律 401,且响应体不含业务字段
     for path, body in (
-        ("/internal/studio/schedule", {"resourceId": "r", "date": "2026-02-12", "time": "19:00", "account": "a"}),
-        ("/internal/studio/backfill", {"resourceId": "r", "metrics": {"likes": 1}}),
-        ("/internal/studio/pipeline-advance", {"resourceId": "r", "toStage": "measured"}),
+        ("/internal/studio/schedule", {"resourceId": "11111111-1111-1111-1111-111111111111", "date": "2026-02-12", "time": "19:00", "account": "a"}),
+        ("/internal/studio/backfill", {"resourceId": "11111111-1111-1111-1111-111111111111", "metrics": {"likes": 1}}),
+        ("/internal/studio/pipeline-advance", {"resourceId": "11111111-1111-1111-1111-111111111111", "toStage": "measured"}),
     ):
         response = client.post(path, json=body)
         assert response.status_code == 401, path
@@ -254,7 +254,7 @@ def test_write_endpoints_reject_missing_internal_key(monkeypatch):
 
 def test_schedule_missing_field_returns_400(monkeypatch):
     client = _client(monkeypatch)
-    base = {"resourceId": "res_1", "date": "2026-02-12", "time": "19:00", "account": "acc_1"}
+    base = {"resourceId": "11111111-1111-1111-1111-111111111111", "date": "2026-02-12", "time": "19:00", "account": "acc_1"}
     for field in ("resourceId", "date", "time", "account"):
         body = dict(base)
         body.pop(field)
@@ -278,7 +278,7 @@ def test_schedule_success_returns_scheduled_item(monkeypatch):
     response = client.post(
         "/internal/studio/schedule",
         headers=_user_headers(open_id="ou_alice"),
-        json={"resourceId": " res_1 ", "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
+        json={"resourceId": " 11111111-1111-1111-1111-111111111111 ", "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
     )
     assert response.status_code == 200
     payload = response.json()
@@ -288,7 +288,7 @@ def test_schedule_success_returns_scheduled_item(monkeypatch):
         "item": {"t": "露营避坑", "time": "19:00", "tone": "coral", "acct": "acc_1"},
     }
     # handler 转发前 strip,落库收到去空白后的 resourceId 与登录身份
-    assert captured["resource_id"] == "res_1"
+    assert captured["resource_id"] == "11111111-1111-1111-1111-111111111111"
     assert captured["actor_open_id"] == "ou_alice"
 
 
@@ -302,7 +302,7 @@ def test_schedule_persist_failure_returns_500_without_leak(monkeypatch):
     response = client.post(
         "/internal/studio/schedule",
         headers=_user_headers(),
-        json={"resourceId": "res_1", "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
+        json={"resourceId": "11111111-1111-1111-1111-111111111111", "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
     )
     # 落库失败整体失败(前端据此回滚乐观更新),不回带异常细节
     assert response.status_code == 500
@@ -321,7 +321,7 @@ def test_backfill_missing_resource_id_returns_400(monkeypatch):
 def test_backfill_missing_metrics_returns_400(monkeypatch):
     client = _client(monkeypatch)
     for metrics in (None, "x", [1, 2]):
-        body = {"resourceId": "res_1"}
+        body = {"resourceId": "11111111-1111-1111-1111-111111111111"}
         if metrics is not None:
             body["metrics"] = metrics
         response = client.post("/internal/studio/backfill", headers=_user_headers(), json=body)
@@ -340,10 +340,25 @@ def test_backfill_invalid_metrics_returns_400(monkeypatch):
     response = client.post(
         "/internal/studio/backfill",
         headers=_user_headers(),
-        json={"resourceId": "res_1", "metrics": {"likes": -3}},
+        json={"resourceId": "11111111-1111-1111-1111-111111111111", "metrics": {"likes": -3}},
     )
     assert response.status_code == 400
     assert "non-negative" in response.json()["error"]
+
+
+def test_write_endpoints_reject_malformed_resource_id_returns_400(monkeypatch):
+    # resourceId 是数据底座 uuid 列:格式非法(非 uuid)应在 handler 边界判 400,
+    # 而非把 Postgres uuid 转换错误冒成 500(端到端基线发现的真实缺陷)。
+    client = _client(monkeypatch)
+    cases = (
+        ("/internal/studio/backfill", {"resourceId": "not-a-uuid", "metrics": {"likes": 1}}),
+        ("/internal/studio/schedule", {"resourceId": "not-a-uuid", "date": "2026-02-12", "time": "19:00", "account": "acc_1"}),
+        ("/internal/studio/pipeline-advance", {"resourceId": "not-a-uuid", "toStage": "measured"}),
+    )
+    for path, body in cases:
+        response = client.post(path, headers=_user_headers(), json=body)
+        assert response.status_code == 400, path
+        assert "uuid" in response.json()["error"].lower(), path
 
 
 def test_backfill_success_returns_score(monkeypatch):
@@ -359,7 +374,7 @@ def test_backfill_success_returns_score(monkeypatch):
         "/internal/studio/backfill",
         headers=_user_headers(),
         json={
-            "resourceId": "res_1",
+            "resourceId": "11111111-1111-1111-1111-111111111111",
             "metrics": {"views": 12000, "likes": 1240, "collects": 340},
             "link": "https://xhslink/abc",
         },
@@ -373,7 +388,7 @@ def test_backfill_success_returns_score(monkeypatch):
 
 def test_pipeline_advance_missing_field_returns_400(monkeypatch):
     client = _client(monkeypatch)
-    for body in ({"toStage": "measured"}, {"resourceId": "res_1"}):
+    for body in ({"toStage": "measured"}, {"resourceId": "11111111-1111-1111-1111-111111111111"}):
         response = client.post("/internal/studio/pipeline-advance", headers=_user_headers(), json=body)
         assert response.status_code == 400
 
@@ -384,7 +399,7 @@ def test_pipeline_advance_invalid_stage_returns_400(monkeypatch):
     response = client.post(
         "/internal/studio/pipeline-advance",
         headers=_user_headers(),
-        json={"resourceId": "res_1", "toStage": "scheduled"},
+        json={"resourceId": "11111111-1111-1111-1111-111111111111", "toStage": "scheduled"},
     )
     assert response.status_code == 400
     assert "toStage" in response.json()["error"]
@@ -395,7 +410,7 @@ def test_pipeline_advance_published_requires_link(monkeypatch):
     response = client.post(
         "/internal/studio/pipeline-advance",
         headers=_user_headers(),
-        json={"resourceId": "res_1", "toStage": "published"},
+        json={"resourceId": "11111111-1111-1111-1111-111111111111", "toStage": "published"},
     )
     assert response.status_code == 400
     assert "link" in response.json()["error"]
@@ -412,7 +427,7 @@ def test_pipeline_advance_stage_conflict_returns_409(monkeypatch):
     response = client.post(
         "/internal/studio/pipeline-advance",
         headers=_user_headers(),
-        json={"resourceId": "res_1", "toStage": "published", "link": "https://xhslink/abc"},
+        json={"resourceId": "11111111-1111-1111-1111-111111111111", "toStage": "published", "link": "https://xhslink/abc"},
     )
     # 逆向/跨级/无起点 → 409(单向状态机,需求 13.3/13.4)
     assert response.status_code == 409
@@ -431,11 +446,11 @@ def test_pipeline_advance_success_returns_stage(monkeypatch):
     response = client.post(
         "/internal/studio/pipeline-advance",
         headers=_user_headers(),
-        json={"resourceId": "res_1", "toStage": "published", "link": "https://xhslink/abc"},
+        json={"resourceId": "11111111-1111-1111-1111-111111111111", "toStage": "published", "link": "https://xhslink/abc"},
     )
     assert response.status_code == 200
     assert response.json() == {"ok": True, "stage": "published"}
-    assert captured == {"resource_id": "res_1", "to_stage": "published", "link": "https://xhslink/abc"}
+    assert captured == {"resource_id": "11111111-1111-1111-1111-111111111111", "to_stage": "published", "link": "https://xhslink/abc"}
 
 
 # ── 写路径落库逻辑(fake 仓储跑真实代码路径,无 DB);断言写入的 content_json/边 ──

@@ -113,7 +113,7 @@ function MatrixOverview({ onOpen }: MatrixOverviewProps) {
           </div>
           {loadState.accounts !== "ready" && <StateNote status={loadState.accounts} empty="暂无账号 · 接入账号后展示矩阵对比" />}
           {accounts.map((a, i) => (
-            <button key={a.id} onClick={() => onOpen(a.id)} style={{ display: "grid", gridTemplateColumns: col, alignItems: "center", width: "100%", textAlign: "left", padding: "11px 14px", border: "none", borderTop: i ? "1px solid var(--border)" : "none", background: "transparent", cursor: "pointer", fontSize: "var(--text-xs)" }}>
+            <button key={a.id} data-testid="account-row" onClick={() => onOpen(a.id)} style={{ display: "grid", gridTemplateColumns: col, alignItems: "center", width: "100%", textAlign: "left", padding: "11px 14px", border: "none", borderTop: i ? "1px solid var(--border)" : "none", background: "transparent", cursor: "pointer", fontSize: "var(--text-xs)" }}>
               <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                 <span style={{ width: 24, height: 24, borderRadius: "999px", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, background: a.tone === "coral" ? "var(--accent-surface)" : a.tone === "topic" ? "var(--topicblue-light)" : "var(--oats-dark)", color: a.tone === "coral" ? "var(--primary)" : a.tone === "topic" ? "var(--topicblue-default)" : "var(--text-body)" }}>{a.initial}</span>
                 <span style={{ fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.handle}</span>
@@ -253,10 +253,10 @@ function CalendarSection({ accountFilter = null }: CalendarSectionProps) {
           {cells.map((d, idx) => d === null
             ? <div key={"b" + idx} />
             : (
-              <div key={d} style={{ minHeight: 66, borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: (byDate[d] && byDate[d].length) ? "var(--surface-card)" : "var(--oats-light)", padding: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+              <div key={d} data-testid={`calendar-day-${d}`} style={{ minHeight: 66, borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: (byDate[d] && byDate[d].length) ? "var(--surface-card)" : "var(--oats-light)", padding: 4, display: "flex", flexDirection: "column", gap: 3 }}>
                 <span style={{ fontSize: 10, color: "var(--text-subtle)", fontWeight: 600 }}>{d}</span>
                 {(byDate[d] || []).map((it, i) => (
-                  <div key={i} style={{ background: toneBg[it.tone], borderLeft: `2px solid ${toneColor[it.tone]}`, borderRadius: 3, padding: "2px 3px" }}>
+                  <div key={i} data-testid="calendar-item" style={{ background: toneBg[it.tone], borderLeft: `2px solid ${toneColor[it.tone]}`, borderRadius: 3, padding: "2px 3px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                       {it.acct && <span style={{ width: 11, height: 11, borderRadius: "999px", background: toneColor[it.tone], color: "#fff", fontSize: 7, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{it.acct}</span>}
                       <div style={{ fontSize: 8, fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.t}</div>

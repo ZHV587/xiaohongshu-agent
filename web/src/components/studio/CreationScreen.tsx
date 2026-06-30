@@ -42,7 +42,7 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
           const on = t.id === chosen;
           const evCount = (evidence[t.id] || { items: [] }).items.length;
           return (
-            <div key={t.id} onClick={() => onChoose(t)} className="lift pop-in" style={{
+            <div key={t.id} data-testid="topic-card" onClick={() => onChoose(t)} className="lift pop-in" style={{
               borderRadius: "var(--radius-md)", overflow: "hidden", cursor: "pointer",
               border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: "var(--surface-card)",
               boxShadow: on ? "var(--shadow-md)" : "var(--shadow-xs)", display: "flex", flexDirection: "column" }}>
@@ -50,7 +50,7 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
                 {images.length > 0 && <img src={images[(t.id - 1) % images.length]} alt={t.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
                 <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 58%, rgba(0,0,0,0.42))" }} />
                 <span style={{ position: "absolute", top: 7, left: 7, fontSize: 8, fontWeight: 700, color: "#fff", background: "rgba(0,0,0,0.36)", padding: "2px 7px", borderRadius: 999 }}>{t.angle}</span>
-                {t.hotRate != null && <span style={{ position: "absolute", top: 7, right: 7, fontSize: 9, fontWeight: 800, color: "#fff", background: "var(--coral-500)", padding: "2px 6px", borderRadius: 999 }}>🔥{t.hotRate}</span>}
+                {t.hotRate != null && <span data-testid="topic-hot" style={{ position: "absolute", top: 7, right: 7, fontSize: 9, fontWeight: 800, color: "#fff", background: "var(--coral-500)", padding: "2px 6px", borderRadius: 999 }}>🔥{t.hotRate}</span>}
                 {on && <span style={{ position: "absolute", bottom: 7, right: 7, display: "inline-flex", alignItems: "center", gap: 2, fontSize: 8, fontWeight: 700, color: "var(--primary)", background: "#fff", padding: "2px 6px", borderRadius: 999 }}><Icon name="check" size={9} /> 已选</span>}
               </div>
               <div style={{ padding: "8px 9px", display: "flex", flexDirection: "column", gap: 5 }}>
@@ -142,7 +142,7 @@ export function EvidenceChips({ topicId }: { topicId: number | null }) {
     <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", paddingTop: 2 }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, color: "var(--text-subtle)" }}><Icon name="database" size={10} /> 依据 {ev.items.length} 条</span>
       {ev.items.map((it) => (
-        <button key={it.resource_id} onClick={(e) => { e.stopPropagation(); actions.openEvidence({ ...it, mode: ev.mode }); }} title={it.title}
+        <button key={it.resource_id} data-testid="evidence-chip" onClick={(e) => { e.stopPropagation(); actions.openEvidence({ ...it, mode: ev.mode }); }} title={it.title}
           style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, color: "var(--topicblue-default)", background: "var(--topicblue-light)", border: "1px solid color-mix(in srgb, var(--topicblue-default) 20%, transparent)", borderRadius: 999, padding: "1px 6px", cursor: "pointer" }}>
           {it.type}
         </button>
@@ -158,9 +158,9 @@ export function EvidencePanel() {
   if (!e) return null;
   const modeLabel = ({ semantic: "语义检索 (pgvector)", keyword_fallback: "关键词兜底 (Meilisearch)", insufficient_relevance: "数据不足" } as Record<string, string>)[e.mode] || "检索";
   const card: CSSProperties = { background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 12, boxShadow: "var(--shadow-xs)" };
-  const Bar = ({ label, val, color }: { label: string; val: number; color: string }) => (
+  const Bar = ({ label, val, color, testid }: { label: string; val: number; color: string; testid?: string }) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)" }}><span>{label}</span><span className="font-tabular" style={{ fontWeight: 600, color: "var(--text-body)" }}>{(val * 100).toFixed(1)}%</span></div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)" }}><span>{label}</span><span data-testid={testid} className="font-tabular" style={{ fontWeight: 600, color: "var(--text-body)" }}>{(val * 100).toFixed(1)}%</span></div>
       <div style={{ height: 6, background: "var(--oats-dark)", borderRadius: 999, overflow: "hidden" }}><div style={{ height: "100%", width: `${val * 100}%`, background: color, transition: "width var(--dur-slow) var(--ease-out)" }} /></div>
     </div>
   );
@@ -188,7 +188,7 @@ export function EvidencePanel() {
           <div style={card}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", paddingBottom: 8, marginBottom: 12 }}><span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>综合排序得分</span><span className="font-tabular" style={{ fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--primary)", fontSize: "var(--text-base)" }}>{e.score.toFixed(4)}</span></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Bar label="相关度 Relevance" val={e.relevance} color="var(--primary)" />
+              <Bar label="相关度 Relevance" val={e.relevance} color="var(--primary)" testid="evidence-relevance" />
               <Bar label="时效性 Freshness · e⁻⁰·⁰⁵ᵗ" val={e.freshness} color="var(--success)" />
               <Bar label="爆款表现 Engagement · tanh" val={e.performance} color="var(--amber-500)" />
             </div>
@@ -217,7 +217,7 @@ function TrendRadar() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
         {trends.map((t) => (
-          <button key={t.tag} onClick={() => actions.toast(`🛰️ 已据热点「${t.tag}」生成探索性选题（exploration）`)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--oats-light)", cursor: "pointer", textAlign: "left" }}>
+          <button key={t.tag} data-testid="trend-row" onClick={() => actions.toast(`🛰️ 已据热点「${t.tag}」生成探索性选题（exploration）`)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--oats-light)", cursor: "pointer", textAlign: "left" }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: toneFg[t.tone], background: toneBg[t.tone], borderRadius: 6, padding: "2px 6px", flexShrink: 0 }}>{t.heat}</span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text-body)" }}>#{t.tag}</span>

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import calendar as _calendar
 import logging
+import uuid as _uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 
@@ -605,6 +606,17 @@ def _require_fields(body: dict, fields: tuple[str, ...]) -> str | None:
     return None
 
 
+def _is_uuid(value: object) -> bool:
+    """resourceId 在数据底座为 uuid 列;格式非法时提前判 400,避免 Postgres uuid 转换错误冒成 500。"""
+    if not isinstance(value, str):
+        return False
+    try:
+        _uuid.UUID(value.strip())
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 # ── 写路径:落库 helper(真实数据,复用既有仓储/落库范式;与飞书同步分离失败域) ──
 
 
@@ -867,6 +879,8 @@ async def internal_studio_schedule(request: Request) -> JSONResponse:
     missing = _require_fields(body, ("resourceId", "date", "time", "account"))
     if missing is not None:
         return _json_error(400, f"Bad Request: missing field '{missing}'")
+    if not _is_uuid(body.get("resourceId")):
+        return _json_error(400, "Bad Request: 'resourceId' must be a valid uuid")
     try:
         scheduled = _persist_schedule(
             tenant_id=default_tenant_id(),
@@ -907,6 +921,8 @@ async def internal_studio_backfill(request: Request) -> JSONResponse:
     missing = _require_fields(body, ("resourceId",))
     if missing is not None:
         return _json_error(400, f"Bad Request: missing field '{missing}'")
+    if not _is_uuid(body.get("resourceId")):
+        return _json_error(400, "Bad Request: 'resourceId' must be a valid uuid")
     if not isinstance(body.get("metrics"), dict):
         return _json_error(400, "Bad Request: missing field 'metrics'")
     try:
@@ -949,6 +965,8 @@ async def internal_studio_pipeline_advance(request: Request) -> JSONResponse:
     missing = _require_fields(body, ("resourceId", "toStage"))
     if missing is not None:
         return _json_error(400, f"Bad Request: missing field '{missing}'")
+    if not _is_uuid(body.get("resourceId")):
+        return _json_error(400, "Bad Request: 'resourceId' must be a valid uuid")
     to_stage = str(body["toStage"]).strip()
     if to_stage not in ("published", "measured"):
         return _json_error(400, "Bad Request: toStage must be 'published' or 'measured'")
