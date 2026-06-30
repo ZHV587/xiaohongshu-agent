@@ -18,8 +18,8 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   // 真实数据基线驱动多轮真实 LLM 对话(选题产出 + 多版本文案 + 排期),每轮 LLM 往返
-  // 可达 ~90-120s,单测试放宽到 12 分钟以容纳整条链路。
-  timeout: 720_000,
+  // 可达 ~90-120s,偶发长尾更久;单测试放宽到 15 分钟以容纳整条链路 + LLM 长尾。
+  timeout: 900_000,
   expect: { timeout: 15_000 },
   use: {
     baseURL,

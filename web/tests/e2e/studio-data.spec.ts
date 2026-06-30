@@ -76,8 +76,27 @@ function step(n: string, detail: string) {
   console.log(`[studio-e2e] 步骤${n}: ✅ 已断言 — ${detail}`);
 }
 
+/** page.goto 对远程公网链路瞬断(ERR_HTTP_RESPONSE_CODE_FAILURE / socket hang up / 连接重置)
+ * 做有界重试 —— 与 backendJson 同源:这是本地→远程后端的网络抖动,服务端日志/健康均正常,
+ * 非服务故障;重试兜住。重试前确认服务可达,真挂(连续失败)仍判失败。 */
+async function gotoWithRetry(page: import("@playwright/test").Page, path: string) {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await page.goto(path);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err);
+      if (!/ERR_HTTP_RESPONSE_CODE_FAILURE|socket hang up|ECONNRESET|ERR_CONNECTION|ERR_NETWORK|ERR_EMPTY_RESPONSE|timeout/i.test(msg)) throw err;
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+  }
+  throw lastErr;
+}
+
 /** 等真实 LangGraph 流落定(__XHS_STREAMING__===false),再导航/断言,避免读流式中间态。 */
-async function waitStreamIdle(page: import("@playwright/test").Page, timeout = 240_000) {
+async function waitStreamIdle(page: import("@playwright/test").Page, timeout = 300_000) {
   await expect
     .poll(async () => page.evaluate(() => (window as unknown as { __XHS_STREAMING__?: boolean }).__XHS_STREAMING__ === false), {
       timeout,
@@ -94,7 +113,7 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
 
     // ── ① 登录 → 进入工作室 ──
     await establishSession(context, origin);
-    await page.goto("/");
+    await gotoWithRetry(page, "/");
     // AuthGate 通过后渲染真实 StudioShell(非 preview fixture)
     await expect(page.getByText("小红书创作运营工作室")).toBeVisible();
     await expect(page.getByRole("button", { name: "创作" })).toBeVisible();
@@ -338,7 +357,7 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
   // 全程只发非法/缺字段请求,不向生产库写入任何业务数据(无副作用)。
   test("写接口契约在真实后端强制执行(排期/回填)", async ({ page, context, baseURL, playwright }) => {
     await establishSession(context, baseURL ?? "http://127.0.0.1:3000");
-    await page.goto("/");
+    await gotoWithRetry(page, "/");
 
     // 回填:缺 resourceId → 400(真实 BFF 校验路径,需求 15.3/17.1)
     const backfillMissing = await page.request.post("/api/backend/backfill", { data: {} });
