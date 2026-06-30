@@ -94,6 +94,9 @@ def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: s
     装进在用的服务池。改为显式参数,杜绝跨线程全局态竞争。
     """
     provider = (provider if provider is not None else os.environ.get("LLM_PROVIDER", "openai")).strip().lower()
+    # timeout=180:流式下是相邻 SSE chunk 的最大间隔(每来一块即重置),不是总时长。opus 类模型
+    # 首 token 前的扩展思考期会有 SSE 静默,60s 偏紧可能误触 ReadTimeout→无谓 failover;放宽到 180s。
+    _TIMEOUT = 180
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
         # Claude 中转网关:走 Anthropic 原生 /v1/messages(真 token 级流式,经实测长输出
@@ -106,16 +109,18 @@ def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: s
             api_key=api_key,
             base_url=anthropic_base,
             temperature=0.7,
-            timeout=60,
+            timeout=_TIMEOUT,
             max_retries=2,
         )
     elif provider == "google_genai":
         from langchain_google_genai import ChatGoogleGenerativeAI
+        # 同走网关 base_url(铁律一:所有 provider 统一经网关,不直连公网官方域名)。
         return ChatGoogleGenerativeAI(
             model=model_id,
             api_key=api_key,
+            base_url=base_url,
             temperature=0.7,
-            timeout=60,
+            timeout=_TIMEOUT,
             max_retries=2,
         )
     else:
@@ -125,7 +130,7 @@ def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: s
             base_url=base_url,
             api_key=api_key,
             temperature=0.7,
-            timeout=60,
+            timeout=_TIMEOUT,
             max_retries=2,
         )
 
@@ -172,7 +177,10 @@ def build_initial_placeholder_model() -> BaseChatModel:
             "无法构造初始占位模型:LLM_BASE_URL/LLM_API_KEY/LLM_QUALITY_MODELS 至少一项缺失"
         )
     gw_name, base_url, api_key = gateways[0]
-    return _build_chat_model(whitelist[0], base_url, api_key)
+    # 显式按权威 provider 构造占位(import 期 os.environ 已含 .env 注入的 LLM_PROVIDER);
+    # 不传则回退默认 openai,会让占位在 registry 空窗口期用错协议(假流式)。
+    provider = (os.environ.get("LLM_PROVIDER") or "openai").strip().lower()
+    return _build_chat_model(whitelist[0], base_url, api_key, provider=provider)
 
 
 _COOLDOWN_SECONDS = 30.0

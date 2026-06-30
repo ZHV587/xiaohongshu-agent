@@ -58,6 +58,23 @@ def test_analytics_matrix_overview_requires_admin(monkeypatch):
     assert response.status_code == 403
 
 
+def test_matrix_overview_endpoints_require_admin(monkeypatch):
+    # calendar/pipeline 矩阵总览(无 account)与 accounts 均跨 owner 聚合,普通用户须被拒 403。
+    # 底层聚合不带 owner 过滤,无 account 即全租户可见——杜绝越权读他人排期/发布管线(需求 17.1)。
+    client = _client(monkeypatch, admins="ou_admin")
+    for path in ("/internal/studio/calendar", "/internal/studio/pipeline", "/internal/studio/accounts"):
+        response = client.get(path, headers=_user_headers())
+        assert response.status_code == 403, path
+    # 指定 account 的单账号视图仍允许普通用户(calendar/pipeline)
+    import data_foundation.studio_api as studio_api
+
+    monkeypatch.setattr(studio_api, "_load_schedule_items", lambda *, tenant_id, account: [])
+    monkeypatch.setattr(studio_api, "_load_pipeline", lambda *, tenant_id, account: [])
+    for path in ("/internal/studio/calendar?account=acc_1", "/internal/studio/pipeline?account=acc_1"):
+        response = client.get(path, headers=_user_headers())
+        assert response.status_code == 200, path
+
+
 def test_analytics_account_view_allows_user(monkeypatch):
     client = _client(monkeypatch, admins="ou_admin")
     import data_foundation.studio_api as studio_api
@@ -89,7 +106,8 @@ def test_calendar_contract_shape_and_empty_grid(monkeypatch):
 
     monkeypatch.setattr(studio_api, "_load_schedule_items", lambda *, tenant_id, account: [])
     client = _client(monkeypatch)
-    response = client.get("/internal/studio/calendar", headers=_user_headers())
+    # 无 account = 矩阵总览 → require_admin(需求 17.1)
+    response = client.get("/internal/studio/calendar", headers=_admin_headers())
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
@@ -109,14 +127,15 @@ def test_calendar_store_unavailable_returns_503_not_degraded(monkeypatch):
 
     monkeypatch.setattr(studio_api, "_load_schedule_items", _boom)
     client = _client(monkeypatch)
-    response = client.get("/internal/studio/calendar", headers=_user_headers())
+    response = client.get("/internal/studio/calendar", headers=_admin_headers())
     assert response.status_code == 503
     assert "db-secret" not in response.text  # 不回带异常细节
 
 
 def test_accounts_empty_overview_all_zero(monkeypatch):
     client = _client(monkeypatch)
-    response = client.get("/internal/studio/accounts", headers=_user_headers())
+    # 账号矩阵总览 → require_admin(需求 17.1)
+    response = client.get("/internal/studio/accounts", headers=_admin_headers())
     assert response.status_code == 200
     payload = response.json()
     # 无账号实体模型 → 真实空集合 + overview 全 0(需求 9.5)

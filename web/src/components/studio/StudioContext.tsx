@@ -25,6 +25,7 @@ import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
 import {
   applyOptimisticSchedule,
+  canAdvanceStage,
   deriveInitial,
   mapVersions,
   rollbackSchedule,
@@ -253,7 +254,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setSection = useCallback((s: StudioSection) => void setSectionRaw(s), [setSectionRaw]);
-  const sectionVal = (section as StudioSection) || "create";
+  // 白名单校验:URL ?section=任意值 不应被透传(消费组件 switch 不中会渲染空白)。
+  const sectionVal: StudioSection =
+    section === "create" || section === "deep" || section === "ops" ? section : "create";
 
   // ── derive the live note status from the real stream ──
   const status: StudioNote["status"] = t.isLoading
@@ -356,8 +359,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const item = { t: (note.title || "新笔记").slice(0, 8), time, tone: "coral" as const, acct };
       setCalendar((cal) => applyOptimisticSchedule(cal, date, item));
       setScheduled(true);
+      // 年/月取自当前展示的 month(后端 label 形如 "2026 年 6 月"),而非系统时钟 —— 否则
+      // 当日历展示非当前月时,排期日期串会落到错误的月份/年份(M4)。解析失败回退 now。
+      const ym = /(\d{4})\D+(\d{1,2})/.exec(month.label);
       const now = new Date();
-      const dateStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(date)}`;
+      const yyyy = ym ? Number(ym[1]) : now.getFullYear();
+      const mm = ym ? Number(ym[2]) : now.getMonth() + 1;
+      const dateStr = `${yyyy}-${pad2(mm)}-${pad2(date)}`;
       try {
         const res = await fetch("/api/backend/schedule", {
           method: "POST",
@@ -376,7 +384,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         showToast(`排期失败：${err instanceof Error ? err.message : "未知错误"}`);
       }
     },
-    [calendar, selectedAccount, note.title, copyResourceId, showToast, calendarRes],
+    [calendar, selectedAccount, note.title, copyResourceId, showToast, calendarRes, month.label],
   );
 
   // backfillSave：先本地校验（口径同后端 _clean_metrics），再 await POST /api/backend/backfill。
@@ -414,6 +422,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const resourceId = item.resourceId;
       if (!resourceId) {
         showToast("无法定位该笔记的资源，暂不能推进");
+        return;
+      }
+      // 客户端先按单向状态机守卫(scheduled→published→measured),逆向/跨级直接拦,
+      // 不依赖后端兜底,与「发布管线 stage 不变量」一致。
+      if (!canAdvanceStage(item.stage, toStage)) {
+        showToast(`不能从「${item.stage}」推进到「${toStage}」`);
         return;
       }
       let link: string | undefined = item.link;
@@ -594,7 +608,10 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
   versions: Partial<Versions> | null;
   copyResourceId: string | null;
 } {
-  const fence = /```xhs_copy\s*\n([\s\S]*?)```/g;
+  // 与 xhs-blocks.ts 的 FENCE_RE 同口径:标签后允许换行或同行空格紧跟 JSON。
+  // Claude 原生 /v1/messages 常把 JSON 写在 ```xhs_copy 同一行,旧的 \s*\n 会整块漏解析
+  // → versions/copyResourceId 失效,排期/回填无法关联资源。
+  const fence = /```xhs_copy[ \t]*\r?\n?([\s\S]*?)```/g;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.type !== "ai") continue;

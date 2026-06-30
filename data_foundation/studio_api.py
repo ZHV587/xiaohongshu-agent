@@ -518,13 +518,17 @@ async def internal_studio_analytics(request: Request) -> JSONResponse:
 
 
 async def internal_studio_calendar(request: Request) -> JSONResponse:
-    """内容日历: 月份信息 + 按日期组织的排期项。"""
-    from data_foundation.internal_api import _json_error, _json_ok, require_user
+    """内容日历: 月份信息 + 按日期组织的排期项。
 
-    actor = require_user(request)
+    指定账号 → require_user(单账号视图);未指定账号(矩阵总览,跨账号聚合) →
+    require_admin(需求 17.1):底层聚合不带 owner 过滤,无 account 即全租户可见,须 admin。
+    """
+    from data_foundation.internal_api import _json_error, _json_ok, require_admin, require_user
+
+    account = _account_param(request)
+    actor = require_admin(request) if account is None else require_user(request)
     if isinstance(actor, JSONResponse):
         return actor
-    account = _account_param(request)
     try:
         data = _load_calendar(tenant_id=default_tenant_id(), account=account)
     except Exception:  # noqa: BLE001
@@ -534,23 +538,27 @@ async def internal_studio_calendar(request: Request) -> JSONResponse:
 
 
 async def internal_studio_accounts(request: Request) -> JSONResponse:
-    """账号矩阵档案 + 聚合总览。"""
-    from data_foundation.internal_api import _json_ok, require_user
+    """账号矩阵档案 + 聚合总览(跨账号矩阵总览)→ require_admin(需求 17.1)。"""
+    from data_foundation.internal_api import _json_ok, require_admin
 
-    actor = require_user(request)
+    actor = require_admin(request)
     if isinstance(actor, JSONResponse):
         return actor
     return _json_ok({"ok": True, **_load_accounts(tenant_id=default_tenant_id())})
 
 
 async def internal_studio_pipeline(request: Request) -> JSONResponse:
-    """发布管线: 待发布/已发布·回链/已回填三阶段队列。"""
-    from data_foundation.internal_api import _json_error, _json_ok, require_user
+    """发布管线: 待发布/已发布·回链/已回填三阶段队列。
 
-    actor = require_user(request)
+    指定账号 → require_user;未指定账号(矩阵总览)→ require_admin(需求 17.1):
+    底层聚合不带 owner 过滤,无 account 即全租户可见,须 admin。
+    """
+    from data_foundation.internal_api import _json_error, _json_ok, require_admin, require_user
+
+    account = _account_param(request)
+    actor = require_admin(request) if account is None else require_user(request)
     if isinstance(actor, JSONResponse):
         return actor
-    account = _account_param(request)
     try:
         queue = _load_pipeline(tenant_id=default_tenant_id(), account=account)
     except Exception:  # noqa: BLE001
@@ -744,6 +752,15 @@ def _persist_backfill(
         )
         target = repo.get_resource(tenant_id, actor_open_id, resource_id)
         title = target.title if target is not None else resource_id
+        # stage/account/scheduled_* 与回链经 extra_content 在同一事务内一次写入(原子):
+        # 回填即「已测量」→ stage=measured;保留排期归属与既有回链(note_url),避免回填后
+        # 该条在发布管线里因 measured 无 link 被静默剔除(_load_pipeline 对 measured 要求非空 link)。
+        carryover = {
+            key: prior[key]
+            for key in ("account", "scheduled_date", "scheduled_time")
+            if prior.get(key)
+        }
+        carryover["stage"] = "measured"
         result = save_performance_metric_resource(
             repo,
             tenant_id=tenant_id,
@@ -753,35 +770,8 @@ def _persist_backfill(
             published_at=published_at or prior.get("published_at"),
             note_url=note_url or prior.get("note_url"),
             channel=prior.get("channel") or "xiaohongshu",
+            extra_content=carryover,
         )
-        metric_id = result["resource"]["resource_id"]
-        # 回写合并:save_performance_metric_resource 重建了 content_json,补回 stage 与排期元数据。
-        carryover = {
-            key: prior[key]
-            for key in ("account", "scheduled_date", "scheduled_time")
-            if prior.get(key)
-        }
-        merged = _existing_metric_content(
-            repo, tenant_id=tenant_id, actor_open_id=actor_open_id, metric_id=metric_id
-        )
-        merged.update(carryover)
-        merged["stage"] = "measured"
-        meta = repo.writable_resource_metadata(
-            tenant_id=tenant_id, actor_open_id=actor_open_id, resource_id=resource_id
-        )
-        with repo.unit_of_work():
-            repo.upsert_resource(
-                tenant_id=tenant_id,
-                actor_open_id=actor_open_id,
-                resource_id=metric_id,
-                resource_type="performance_metric",
-                title=result["resource"]["title"],
-                summary=merged.get("summary"),
-                content_json=merged,
-                visibility=meta["visibility"],
-                owner_open_id=meta["owner_open_id"],
-                outbox_requests=[],
-            )
     _best_effort_feishu_metrics(
         actor_open_id, title=title, metrics=metrics, note_url=note_url or prior.get("note_url")
     )

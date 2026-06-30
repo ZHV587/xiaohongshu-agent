@@ -20,6 +20,7 @@ def save_performance_metric_resource(
     published_at: str | None = None,
     channel: str = "xiaohongshu",
     note_url: str | None = None,
+    extra_content: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     target_resource_id = target_resource_id.strip()
     if not target_resource_id:
@@ -39,6 +40,10 @@ def save_performance_metric_resource(
         "channel": channel,
         "note_url": note_url,
     }
+    # 调用方可在同一事务内合并额外字段(如 stage / account / scheduled_*),避免落库后
+    # 再开第二个事务回写——后者中途失败会留下半成品(score 已落、stage 缺失)。
+    if extra_content:
+        content_json.update({k: v for k, v in extra_content.items() if v is not None})
     with _unit_of_work(repo):
         target = repo.writable_resource_metadata(
             tenant_id=tenant_id,

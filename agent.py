@@ -38,7 +38,13 @@ from tools.lark_cli import lark_cli
 load_dotenv()
 
 with open("deepagents_harness.json", "r", encoding="utf-8") as f:
-    register_harness_profile("openai", HarnessProfileConfig.from_dict(json.load(f)))
+    _harness_cfg = json.load(f)
+# harness profile 按模型 provider 匹配:create_deep_agent 传入模型实例时,deepagents 用
+# get_model_provider(model) 解析 key(openai→"openai"、anthropic→"anthropic")。这里的配置
+# (排除 execute 工具 + 关 general-purpose 子 agent)与 provider 无关,故对所有受支持 provider
+# 都注册,避免切换 LLM_PROVIDER 后 profile 静默失效、execute/通用子 agent 被意外启用。
+for _provider_key in ("openai", "anthropic", "google_genai"):
+    register_harness_profile(_provider_key, HarnessProfileConfig.from_dict(_harness_cfg))
 
 initial_model = build_initial_placeholder_model()
 model_registry = ModelRegistry()
