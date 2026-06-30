@@ -107,19 +107,26 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     let topicsProduced = false;
     if (produced === "topics" && (await topicCards.count()) > 0) {
       topicsProduced = true;
+
+      // 等真实流落定:选题卡数量稳定(连续 2 次轮询不变)再断言,避免读到流式中间态。
+      let stable = await topicCards.count();
+      await expect.poll(async () => {
+        const c = await topicCards.count();
+        const ok = c === stable && c > 0;
+        stable = c;
+        return ok;
+      }, { timeout: 30_000, intervals: [1500, 1500, 2000] }).toBe(true);
       const topicCount = await topicCards.count();
 
-      // (A) 富字段契约:至少一张卡 🔥 为 1–100 整数(需求 1.4)
+      // 富字段契约(需求 1.3/1.4):🔥 可被合法省略(后端得不出 hotRate 时隐藏);
+      // 但凡渲染出的 🔥 必须是 1–100 整数。
       const hotBadges = page.locator('[data-testid="topic-hot"]');
-      let sawValidHot = false;
       for (let i = 0; i < (await hotBadges.count()); i++) {
         const raw = (await hotBadges.nth(i).innerText()).replace(/[^0-9]/g, "");
-        if (!raw) continue;
+        expect(raw, "渲染出的 🔥 不应为空").not.toBe("");
         const v = Number(raw);
         expect(Number.isInteger(v) && v >= 1 && v <= 100, `🔥 须为 1–100 整数,实际 ${raw}`).toBeTruthy();
-        sawValidHot = true;
       }
-      expect(sawValidHot, "至少一张选题卡须有合法 🔥(1–100 整数)").toBeTruthy();
 
       // 选题卡渲染数 == 后端解析出的 topics 长度(需求 3.4)
       const backendTopicLen = await page.evaluate(
@@ -128,18 +135,36 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
       expect(typeof backendTopicLen, "应注入 __XHS_TOPICS_LEN__ 真值钩子").toBe("number");
       expect(topicCount, "选题卡渲染数须 == 后端 topics 长度").toBe(backendTopicLen);
 
-      // 证据面板:打开第一张卡的依据,硬断言相关度 > 0 且渲染 why_selected(需求 2.6)
+      // 证据契约(需求 2.6/16.2):点选题卡进详情。两种合法渲染都接受、都硬断言:
+      //   有证据 → 相关度 > 0 且渲染 why_selected;数据不足 → 渲染「当前数据不足」。
+      // 证据随流式逐步附着,轮询等真实流落定(依据条数稳定 >0,或明示数据不足)。
       await topicCards.first().click();
-      const evidenceChip = page.locator('[data-testid="evidence-chip"]').first();
-      await expect(evidenceChip).toBeVisible();
-      await evidenceChip.click();
-      await expect(page.getByText("why_selected", { exact: false })).toBeVisible();
-      const relevance = page.locator('[data-testid="evidence-relevance"]').first();
-      await expect(relevance).toBeVisible();
-      const relRaw = (await relevance.innerText()).replace(/[^0-9.]/g, "");
-      expect(Number(relRaw) > 0, `证据相关度须 > 0,实际 ${relRaw}`).toBeTruthy();
-      await page.keyboard.press("Escape").catch(() => {});
-      step("②", `(A) 真实产出 ${topicCount} 张选题卡:🔥∈[1,100]、证据相关度>0 且渲染 why_selected`);
+      const evCount = page.locator('[data-testid="detail-evidence-count"]');
+      await expect(evCount).toBeVisible({ timeout: 15_000 });
+      const insufficientPanel = page.getByText(/当前数据不足/);
+      const evOutcome = await Promise.race([
+        (async () => {
+          await expect
+            .poll(async () => Number((await evCount.getAttribute("data-count")) ?? "0"), { timeout: 60_000, intervals: [1500, 1500, 2000] })
+            .toBeGreaterThan(0);
+          return "has-evidence" as const;
+        })().catch(() => null),
+        insufficientPanel.first().waitFor({ state: "visible", timeout: 60_000 }).then(() => "insufficient" as const).catch(() => null),
+      ]);
+      expect(evOutcome, "选题须 either 附着真实证据(>0 条) either 明示数据不足(不得凭空 mock)").toBeTruthy();
+      if (evOutcome === "has-evidence") {
+        await page.locator('[data-testid="detail-evidence-item"]').first().click();
+        await expect(page.getByText("why_selected", { exact: false })).toBeVisible();
+        const relevance = page.locator('[data-testid="evidence-relevance"]').first();
+        await expect(relevance).toBeVisible();
+        const relRaw = (await relevance.innerText()).replace(/[^0-9.]/g, "");
+        expect(Number(relRaw) > 0, `证据相关度须 > 0,实际 ${relRaw}`).toBeTruthy();
+        await page.keyboard.press("Escape").catch(() => {});
+        step("②", `(A) 真实产出 ${topicCount} 张选题卡:🔥契约合法、证据相关度>0 且渲染 why_selected`);
+      } else {
+        await expect(insufficientPanel.first()).toBeVisible();
+        step("②", `(A) 真实产出 ${topicCount} 张选题卡:🔥契约合法、证据明示「当前数据不足」(需求 16.2)`);
+      }
     } else {
       // (B) 数据不足:agent 正确明示不凑数(真实数据铁律的 agent 层体现,需求 16.2)
       await expect(insufficientSignal.first()).toBeVisible();

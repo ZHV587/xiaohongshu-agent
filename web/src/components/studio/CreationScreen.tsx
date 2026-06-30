@@ -270,7 +270,7 @@ function TopicDetail({ topicId, onBack }: { topicId: number; onBack: () => void 
         {ev && <span style={{ marginLeft: "auto", fontSize: 10, color: ev.mode === "keyword_fallback" ? "var(--warning)" : "var(--success)" }}>{ev.mode === "semantic" ? "语义命中" : "关键词兑底"}</span>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <Eyebrow>创作依据 · {ev ? ev.items.length : 0} 条（数据底座检索）</Eyebrow>
+        <Eyebrow><span data-testid="detail-evidence-count" data-count={ev ? ev.items.length : 0}>创作依据 · {ev ? ev.items.length : 0} 条（数据底座检索）</span></Eyebrow>
         {ev && ev.mode === "insufficient_relevance" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 10, borderRadius: "var(--radius-md)", border: "1px solid var(--border-coral)", background: "var(--accent-surface)" }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>当前数据不足</span>
@@ -278,7 +278,7 @@ function TopicDetail({ topicId, onBack }: { topicId: number; onBack: () => void 
           </div>
         )}
         {ev && ev.items.map((it) => (
-          <button key={it.resource_id} onClick={() => actions.openEvidence({ ...it, mode: ev.mode })} style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 10, background: "var(--oats-light)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 5 }}>
+          <button key={it.resource_id} data-testid="detail-evidence-item" onClick={() => actions.openEvidence({ ...it, mode: ev.mode })} style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 10, background: "var(--oats-light)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 5 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>{it.type}</span>
               <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{it.title}</span>
