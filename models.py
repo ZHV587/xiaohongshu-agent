@@ -1,7 +1,9 @@
 """高质量模型自主调度系统:多网关资源池 + ModelRouterMiddleware。
 
 设计见 docs/superpowers/specs/2026-06-18-model-layer-refactor-design.md。
-铁律一:所有模型用 model_provider="openai" + 该网关 base_url/key 构造。
+铁律一:模型按 provider 构造 —— 默认 openai 兼容(model_provider="openai" + 网关
+base_url/key);provider=anthropic 时用 ChatAnthropic 走该网关的 Anthropic 原生
+/v1/messages(Claude 中转,真 token 级流式)。两者都用同一网关 base_url/key。
 铁律二:ModelRouterMiddleware 同时实现 wrap_model_call 与 awrap_model_call。
 """
 from __future__ import annotations
@@ -83,7 +85,8 @@ def discover_models(base_url: str, api_key: str, *, force: bool = False) -> list
 
 
 def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: str | None = None) -> BaseChatModel:
-    """按铁律一构造模型实例:provider=openai + 网关 base_url/key。
+    """按铁律一构造模型实例:默认 openai 兼容(provider=openai + 网关 base_url/key);
+    provider=anthropic 走 ChatAnthropic + 同网关 base_url 的 Anthropic 原生 /v1/messages。
 
     provider 显式传入(线程安全);为 None 时回退读 env LLM_PROVIDER。
     历史 P1:旧实现靠临时改进程级 os.environ["LLM_PROVIDER"] 来传 provider,非线程安全 ——
@@ -93,9 +96,15 @@ def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: s
     provider = (provider if provider is not None else os.environ.get("LLM_PROVIDER", "openai")).strip().lower()
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
+        # Claude 中转网关:走 Anthropic 原生 /v1/messages(真 token 级流式,经实测长输出
+        # 1128 chunk/70s 持续到达)。base_url 去掉尾部 /v1 —— ChatAnthropic 自己拼 /v1/messages。
+        anthropic_base = base_url.rstrip("/")
+        if anthropic_base.endswith("/v1"):
+            anthropic_base = anthropic_base[: -len("/v1")]
         return ChatAnthropic(
             model=model_id,
             api_key=api_key,
+            base_url=anthropic_base,
             temperature=0.7,
             timeout=60,
             max_retries=2,
