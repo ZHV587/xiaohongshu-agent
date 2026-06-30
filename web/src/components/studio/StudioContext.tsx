@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { useQueryState } from "nuqs";
 import { useThread } from "@/components/thread/ThreadContext";
+import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
 import {
@@ -519,7 +520,9 @@ function parseTopicsFromMessages(messages: ReturnType<typeof useThread>["message
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.type !== "ai") continue;
-    const content = typeof m.content === "string" ? m.content : "";
+    // 经 getContentString 取文本:兼容 string 与 Anthropic /v1/messages 的内容块数组,
+    // 否则数组态消息会被当空串丢弃 → xhs 代码块整块漏解析。
+    const content = getContentString(m.content);
     if (!content) continue;
     const segs = parseXhsBlocks(content);
     const topicSeg = segs.find((s) => s.kind === "topics");
@@ -595,7 +598,9 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.type !== "ai") continue;
-    const content = typeof m.content === "string" ? m.content : "";
+    // 经 getContentString 取文本:兼容 string 与 Anthropic /v1/messages 的内容块数组,
+    // 否则数组态消息会被当空串丢弃 → xhs 代码块整块漏解析。
+    const content = getContentString(m.content);
     if (!content) continue;
     fence.lastIndex = 0;
     let match: RegExpExecArray | null;
@@ -621,9 +626,7 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
 function deriveChat(messages: ReturnType<typeof useThread>["messages"]): ChatMsg[] {
   const out: ChatMsg[] = [];
   for (const m of messages) {
-    const content = typeof m.content === "string" ? m.content : Array.isArray(m.content)
-      ? m.content.map((b) => (typeof b === "object" && b && "text" in b ? String((b as { text?: string }).text ?? "") : "")).join("")
-      : "";
+    const content = getContentString(m.content);
     if (m.type === "human") out.push({ who: "user", text: content });
     else if (m.type === "ai" && content.trim()) out.push({ who: "ai", text: content });
   }
