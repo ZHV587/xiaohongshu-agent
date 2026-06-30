@@ -169,7 +169,7 @@ export function EvidencePanel() {
       <div onClick={(ev) => ev.stopPropagation()} className="cs slide-in-right" style={{ width: 380, maxWidth: "92vw", height: "100%", background: "var(--background)", boxShadow: "var(--shadow-2xl)", overflowY: "auto" }}>
         <div style={{ position: "sticky", top: 0, background: "var(--surface-card)", borderBottom: "1px solid var(--border)", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Icon name="database" size={16} color="var(--primary)" /><span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>依据相关度分析</span></div>
-          <button onClick={actions.closeEvidence} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-subtle)", display: "inline-flex" }}><Icon name="x" size={16} /></button>
+          <button data-testid="evidence-panel-close" onClick={actions.closeEvidence} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-subtle)", display: "inline-flex" }}><Icon name="x" size={16} /></button>
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={card}>

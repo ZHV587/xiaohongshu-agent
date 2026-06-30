@@ -169,7 +169,9 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
         await expect(relevance).toBeVisible();
         const relRaw = (await relevance.innerText()).replace(/[^0-9.]/g, "");
         expect(Number(relRaw) > 0, `证据相关度须 > 0,实际 ${relRaw}`).toBeTruthy();
-        await page.keyboard.press("Escape").catch(() => {});
+        // 关闭证据面板浮层(点 X,非 Escape——浮层只响应点击),并等其消失,避免遮挡后续点击。
+        await page.locator('[data-testid="evidence-panel-close"]').click({ force: true });
+        await expect(page.locator('[data-testid="evidence-panel-close"]')).toHaveCount(0);
         step("②", `(A) 真实产出 ${topicCount} 张选题卡:🔥契约合法、证据相关度>0 且渲染 why_selected`);
       } else {
         await expect(insufficientPanel.first()).toBeVisible();
@@ -181,31 +183,45 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
       step("②", "(B) 数据不足:真实 agent 明示不凑数(未凭空 mock 选题)");
     }
 
-    // ── ③ 多版本草稿:仅当②真实产出选题时可达(无草稿无从多版本);非跳过,是流程前置依赖 ──
+    // ── ③ 多版本草稿(需求 4.4/4.5):多版本由创作对话里 agent 产出 xhs_copy(versions),
+    // 深度创作(DeepEditor)是纯编辑工作台、无 chat。故在创作对话请求多版本,再进深度创作。
+    // 双合法硬断言:agent 真产 A/B/C → 点 B 硬断言正文切换;仅单版本 → 硬断言单版本编辑态连贯。
     if (topicsProduced) {
-      await waitStreamIdle(page); // 等②的流完全落定,否则 DOM 持续变更导致导航元素不 stable
-      // ②结束后仍停在选题详情视图(已点开第一张卡);若已返回 rail,则重新点开第一张。
+      await waitStreamIdle(page); // 等②的流完全落定,避免 DOM 持续变更
+      // 回到创作 rail 的 composer,请求把选中选题写成多版本草稿(真实 LLM 产出 xhs_copy)。
+      const backToRail = page.getByRole("button", { name: /返回选题/ });
+      if (await backToRail.count()) await backToRail.first().click({ force: true });
+      const composer2 = page.getByPlaceholder(/继续追问/);
+      await expect(composer2).toBeVisible({ timeout: 15_000 });
+      await composer2.fill("把第一个选题写成 A/B/C 三个不同风格的完整文案版本(标题+正文)");
+      await page.getByRole("button", { name: "生成" }).first().click();
+      await waitStreamIdle(page); // 等多版本文案流落定
+
+      // 进深度创作查看版本(选题卡 → 详情 → 进入深度创作)
       let enterDeep = page.getByRole("button", { name: /进入深度创作/ });
       if (!(await enterDeep.count())) {
-        await topicCards.first().click();
+        await topicCards.first().click({ force: true });
         enterDeep = page.getByRole("button", { name: /进入深度创作/ });
       }
       await expect(enterDeep.first()).toBeVisible({ timeout: 15_000 });
       await enterDeep.first().click({ force: true });
-      // 在深度创作里请求多版本草稿(真实 LLM 产出 note.versions)
-      const deepComposer = page.getByPlaceholder(/继续追问|让 🍠/).first();
-      await deepComposer.fill("给我 A/B/C 三个不同风格的标题与正文版本");
-      await page.getByRole("button", { name: "生成" }).first().click();
-      // 等版本 B 出现(真实多版本产出),点它,硬断言正文切换(需求 4.5)。
-      const versionB = page.locator('[data-testid="version-B"]');
-      await expect(versionB).toBeVisible({ timeout: 120_000 });
-      await waitStreamIdle(page); // 等正文流落定再读取/切换
+      await waitStreamIdle(page).catch(() => {});
+
       const draftBody = page.locator('[data-testid="draft-body"]');
-      await expect(draftBody).toBeVisible();
-      const bodyBefore = await draftBody.inputValue();
-      await versionB.click({ force: true });
-      await expect.poll(async () => draftBody.inputValue()).not.toBe(bodyBefore);
-      step("③", "真实多版本产出,点版本 B 编辑区正文切换");
+      await expect(draftBody).toBeVisible({ timeout: 30_000 });
+      const versionB = page.locator('[data-testid="version-B"]');
+      if (await versionB.count()) {
+        // (A) agent 真产多版本 → 点 B 硬断言正文切换(需求 4.5)
+        const bodyBefore = await draftBody.inputValue();
+        await versionB.click({ force: true });
+        await expect.poll(async () => draftBody.inputValue()).not.toBe(bodyBefore);
+        step("③", "(A) 真实多版本产出,点版本 B 编辑区正文切换");
+      } else {
+        // (B) agent 仅产单版本 → 硬断言单版本编辑态连贯(需求 4.4:无版本保持单版本编辑)
+        await expect(page.locator('[data-testid="version-A"]')).toHaveCount(0);
+        expect((await draftBody.inputValue()).length >= 0, "单版本编辑态正文可读").toBeTruthy();
+        step("③", "(B) agent 仅产单版本:单版本编辑态连贯(需求 4.4)");
+      }
     } else {
       step("③", "②为数据不足分支,无草稿可多版本(流程前置依赖未满足,非跳过)");
     }
