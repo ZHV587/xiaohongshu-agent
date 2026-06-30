@@ -50,11 +50,25 @@ async function establishSession(context: BrowserContext, baseURL: string) {
   ]);
 }
 
-/** 经页面 context 的 request 读 BFF JSON(共享浏览器 httpOnly cookie),用作页面渲染的真值基准。 */
+/** 经页面 context 的 request 读 BFF JSON(共享浏览器 httpOnly cookie),用作页面渲染的真值基准。
+ * 对远程后端的网络瞬断(socket hang up / ECONNRESET 等)做有界重试 —— 瞬断是远程 e2e 的基础设施
+ * 抖动,不是契约失败;重试兜住,仍失败才判挂(不掩盖真实的非 2xx 响应)。 */
 async function backendJson(request: APIRequestContext, path: string) {
-  const res = await request.get(path);
-  expect(res.ok(), `${path} 应 2xx(真实 BFF 鉴权通过),实际 ${res.status()}`).toBeTruthy();
-  return res.json();
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await request.get(path);
+      expect(res.ok(), `${path} 应 2xx(真实 BFF 鉴权通过),实际 ${res.status()}`).toBeTruthy();
+      return res.json();
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err);
+      // 仅对网络层瞬断重试;断言失败(非 2xx)直接抛出,不重试不掩盖。
+      if (!/socket hang up|ECONNRESET|ECONNREFUSED|timeout|network|fetch failed/i.test(msg)) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw lastErr;
 }
 
 /** 记录每步已硬断言(基线无条件跳过分支:真实流程跑不通即判失败)。 */
