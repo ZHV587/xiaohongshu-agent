@@ -101,3 +101,17 @@ test("parses partial xhs_panel segments gracefully", () => {
   });
 });
 
+test("parses xhs_topics when JSON is on the same line as the fence tag (Claude /v1/messages 习惯)", () => {
+  // 回归:Anthropic 原生 /v1/messages 常把 JSON 紧跟在 ```xhs_topics 标签同一行(无换行)。
+  // FENCE_RE 若强制标签后换行,会整块漏解析 → 选题卡不渲染。此用例锁住同行写法可解析。
+  const segments = parseXhsBlocks(
+    '前言文字 ```xhs_topics {"intro":"久坐健康","topics":[{"title":"工位5分钟代谢重启","hotRate":88,"angle":"碎片化"}]} ``` 收尾文字',
+  );
+  const topics = segments.find((s) => s.kind === "topics");
+  assert.ok(topics, "同行 fence 应被解析为 topics 段");
+  if (!topics || topics.kind !== "topics") return;
+  assert.equal(topics.data.topics.length, 1);
+  const first = topics.data.topics[0];
+  assert.equal(typeof first === "string" ? first : first.title, "工位5分钟代谢重启");
+});
+

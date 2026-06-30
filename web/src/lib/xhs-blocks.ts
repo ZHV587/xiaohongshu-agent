@@ -68,8 +68,11 @@ export interface PanelSegment {
 export interface PendingSegment { kind: "pending"; lang: "xhs_topics" | "xhs_copy" }
 export type Segment = TextSegment | TopicsSegment | CopySegment | PanelSegment | PendingSegment;
 
-// 匹配 ```xhs_topics ... ```, ```xhs_copy ... ``` 或 ```xhs_panel ... ```（含语言行后的换行）
-const FENCE_RE = /```(xhs_topics|xhs_copy|xhs_panel)\s*\n([\s\S]*?)```/g;
+// 匹配 ```xhs_topics ... ```, ```xhs_copy ... ``` 或 ```xhs_panel ... ```。
+// 语言标签后允许「换行」或「同行空格紧跟 JSON」两种写法 —— 不同模型(OpenAI 兼容网关 vs
+// Anthropic 原生 /v1/messages)对围栏后换行习惯不同,Claude 常把 JSON 写在标签同一行,
+// 故标签后用 [ \t]*\r?\n? 兼容两者(不强制换行),否则同行写法会整块漏解析。
+const FENCE_RE = /```(xhs_topics|xhs_copy|xhs_panel)[ \t]*\r?\n?([\s\S]*?)```/g;
 
 /**
  * 把内容字符串切成有序片段。

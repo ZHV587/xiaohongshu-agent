@@ -63,7 +63,7 @@ function step(n: string, detail: string) {
 }
 
 /** 等真实 LangGraph 流落定(__XHS_STREAMING__===false),再导航/断言,避免读流式中间态。 */
-async function waitStreamIdle(page: import("@playwright/test").Page, timeout = 120_000) {
+async function waitStreamIdle(page: import("@playwright/test").Page, timeout = 240_000) {
   await expect
     .poll(async () => page.evaluate(() => (window as unknown as { __XHS_STREAMING__?: boolean }).__XHS_STREAMING__ === false), {
       timeout,
@@ -105,14 +105,21 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     await composer.fill("帮我按『程序员久坐健康』方向出 3 个选题,基于数据底座里的高相关爆款作为依据");
     await page.getByRole("button", { name: "生成" }).click();
 
-    // 等真实流落地:要么出现选题卡,要么出现数据不足信号(轮询至超时)。
+    // 真流式下长产出(3 选题+多证据)逐 token 到达需较久,且选题卡在流落定后才从消息解析。
+    // 先等流「起来」(streaming→true,避免点击后流未启动就误判落定),再等「落定」(→false)。
     const topicCards = page.locator('[data-testid="topic-card"]');
     const insufficientSignal = page.getByText(/数据不足|insufficient|没有.*爆款|不够相关|未过阈值|凑数/i);
+    await expect
+      .poll(async () => page.evaluate(() => (window as unknown as { __XHS_STREAMING__?: boolean }).__XHS_STREAMING__ === true), { timeout: 30_000, intervals: [500, 800, 1000] })
+      .toBe(true)
+      .catch(() => {}); // 极快产出可能在轮询前就落定,容忍
+    await waitStreamIdle(page); // 默认 240s,覆盖真实长产出落定
+    // 流落定后,选题卡或数据不足信号应已渲染;再给解析一点缓冲轮询。
     const produced = await Promise.race([
-      topicCards.first().waitFor({ state: "visible", timeout: 90_000 }).then(() => "topics" as const).catch(() => null),
-      insufficientSignal.first().waitFor({ state: "visible", timeout: 90_000 }).then(() => "insufficient" as const).catch(() => null),
+      topicCards.first().waitFor({ state: "visible", timeout: 30_000 }).then(() => "topics" as const).catch(() => null),
+      insufficientSignal.first().waitFor({ state: "visible", timeout: 30_000 }).then(() => "insufficient" as const).catch(() => null),
     ]);
-    expect(produced, "真实对话须在 90s 内 either 产出选题卡 either 明示数据不足(不得凭空 mock/卡死)").toBeTruthy();
+    expect(produced, "真实对话流落定后须 either 产出选题卡 either 明示数据不足(不得凭空 mock/卡死)").toBeTruthy();
 
     let topicsProduced = false;
     if (produced === "topics" && (await topicCards.count()) > 0) {
