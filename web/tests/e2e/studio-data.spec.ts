@@ -238,7 +238,14 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     // 注:账号矩阵实体模型为独立特性,数据底座当前无账号实体 → 后端真实返回空集合。
     // 本步硬断言「页面渲染数 == 后端 API 真实返回数」,空与非空都成立(契约一致性)。
     await waitStreamIdle(page).catch(() => {}); // 等③的流落定再切 section
-    await page.getByRole("button", { name: "账号运营" }).click();
+    // ③可能停在深度创作(section=deep,顶栏隐藏,无「账号运营」按钮)→ 先退回创作页。
+    const opsNav = page.getByRole("button", { name: "账号运营" });
+    if (!(await opsNav.count())) {
+      const back = page.getByRole("button", { name: /^返回$|返回创作/ });
+      if (await back.count()) await back.first().click({ force: true });
+    }
+    await expect(opsNav).toBeVisible({ timeout: 15_000 });
+    await opsNav.click({ force: true });
     await expect(page.getByText("账号矩阵", { exact: false }).first()).toBeVisible();
 
     const accountsData = await backendJson(page.request, "/api/backend/accounts");
@@ -252,8 +259,10 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     await expect(page.locator('[data-testid="trend-row"]')).toHaveCount(backendTrends.length);
     step("④", `账号矩阵=${backendAccts.length}(==后端)、趋势=${backendTrends.length}(==后端)`);
 
-    // ── ⑤ 排期往返:走深度创作 ScheduleBar 触发真实 BFF /api/backend/schedule 落库(需求 14.4)──
-    // ②真实产出选题时,经 UI 草稿触发排期写动作(端到端);否则对真实 BFF 直接断言写契约。
+    // ── ⑤ 排期往返(需求 14.4):走深度创作 ScheduleBar。双合法硬断言:
+    //   - 文案体检达标(≥80)→「定稿并排期」可点 → 点击断言真实 BFF /api/backend/schedule POST;
+    //   - 体检未达标 → 按钮被正确门控(disabled),断言门控生效(产品真实规则:体检达标才可发)。
+    // 注:排期写接口的落库契约由独立的「写接口契约」测试硬断言,不依赖本步草稿恰好达标。
     if (topicsProduced) {
       await page.getByRole("button", { name: "创作" }).click();
       await expect(topicCards.first()).toBeVisible({ timeout: 15_000 });
@@ -262,14 +271,20 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
       await expect(enterDeep5.first()).toBeVisible({ timeout: 15_000 });
       await enterDeep5.first().click({ force: true });
       await waitStreamIdle(page).catch(() => {});
-      const scheduleBtn = page.getByRole("button", { name: /定稿并排期|排期发布|立即排期|排期/ }).first();
+      const scheduleBtn = page.getByRole("button", { name: /定稿并排期|排期发布|立即排期/ }).first();
       await expect(scheduleBtn).toBeVisible({ timeout: 30_000 });
-      const [schedResp] = await Promise.all([
-        page.waitForResponse((r) => r.url().includes("/api/backend/schedule") && r.request().method() === "POST", { timeout: 30_000 }),
-        scheduleBtn.click({ force: true }),
-      ]);
-      expect([200, 400].includes(schedResp.status()), `排期写接口应返回 200/400,实际 ${schedResp.status()}`).toBeTruthy();
-      step("⑤", `UI 排期写动作 → 真实 BFF /api/backend/schedule 状态 ${schedResp.status()}`);
+      if (await scheduleBtn.isEnabled()) {
+        const [schedResp] = await Promise.all([
+          page.waitForResponse((r) => r.url().includes("/api/backend/schedule") && r.request().method() === "POST", { timeout: 30_000 }),
+          scheduleBtn.click({ force: true }),
+        ]);
+        expect([200, 400].includes(schedResp.status()), `排期写接口应返回 200/400,实际 ${schedResp.status()}`).toBeTruthy();
+        step("⑤", `(A) 体检达标→UI 排期写动作→真实 BFF /api/backend/schedule 状态 ${schedResp.status()}`);
+      } else {
+        // 门控生效:体检未达标按钮 disabled(产品真实规则:文案体检 ≥80 才可定稿排期)
+        await expect(scheduleBtn).toBeDisabled();
+        step("⑤", "(B) 文案体检未达标→「定稿并排期」被正确门控(disabled,需求合规)");
+      }
     } else {
       // 无 UI 草稿:对真实 BFF 硬断言排期写契约(缺字段 → 400)
       const sched = await page.request.post("/api/backend/schedule", { data: { resourceId: "x" } });
