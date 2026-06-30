@@ -20,7 +20,10 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
         </div>
       )}
       <div className="flex flex-col gap-3">
-        {data.topics.map((topic, i) => (
+        {data.topics.map((topic, i) => {
+          // 向后兼容：topic 可能是旧格式字符串或富选题对象，取其标题用于现有渲染。
+          const topicTitle = typeof topic === "string" ? topic : topic.title;
+          return (
           <div
             key={i}
             className="group/topic relative overflow-hidden flex items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4 hover:border-coral/40 hover:shadow-[0_8px_30px_rgba(229,46,64,0.16),0_0_15px_rgba(229,46,64,0.08)] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
@@ -32,8 +35,8 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
             <div
               onClick={() =>
                 submitText(
-                  `我选第 ${i + 1} 个选题："${topic}"。请帮我围绕这个选题写一篇完整的小红书爆款文案。`,
-                  { selected_topic: { topic, evidence: data.evidence } },
+                  `我选第 ${i + 1} 个选题："${topicTitle}"。请帮我围绕这个选题写一篇完整的小红书爆款文案。`,
+                  { selected_topic: { topic: topicTitle, evidence: data.evidence } },
                 )
               }
               className="flex items-center gap-4 flex-1 cursor-pointer"
@@ -42,7 +45,7 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
                 {i + 1}
               </span>
               <span className="text-foreground/90 flex-1 text-sm font-medium leading-relaxed font-sans transition-colors">
-                {topic}
+                {topicTitle}
               </span>
             </div>
             
@@ -51,14 +54,15 @@ export function TopicCards({ data }: { data: TopicsSegment["data"] }) {
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                submitText(`保存第 ${i + 1} 个选题："${topic}"。`, { selected_topic: { topic, evidence: data.evidence } });
+                submitText(`保存第 ${i + 1} 个选题："${topicTitle}"。`, { selected_topic: { topic: topicTitle, evidence: data.evidence } });
               }}
               className="z-10 flex-shrink-0 px-2.5 py-1 text-[11px] font-semibold text-coral border border-coral/20 rounded-full bg-coral/5 hover:bg-coral hover:text-white transition-all duration-300 active:scale-95 cursor-pointer"
             >
               保存
             </button>
           </div>
-        ))}
+          );
+        })}
       </div>
       {data.evidence.length > 0 && (
         <div className="border-border/70 mt-0.5 border-t px-1 pt-3">

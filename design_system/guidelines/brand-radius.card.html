@@ -1,0 +1,25 @@
+<!-- @dsCard group="Brand" viewport="700x170" name="Radius" subtitle="Soft corners. 16px base; pills for badges, 40px phone bezel." -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../styles.css" />
+<style>
+  body { margin: 0; background: var(--surface-card); font-family: var(--font-sans); padding: 22px; }
+  .row { display: flex; gap: 16px; align-items: flex-end; }
+  .item { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .box { width: 64px; height: 64px; background: var(--accent-surface); border: 1px solid var(--border-coral); }
+  .lbl { font-size: 10px; font-family: var(--font-mono); color: var(--charcoal-light); }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="item"><div class="box" style="border-radius:var(--radius-xs)"></div><span class="lbl">xs · 4</span></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-sm)"></div><span class="lbl">sm · 8</span></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-md)"></div><span class="lbl">md · 12</span></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-lg)"></div><span class="lbl">lg · 16</span></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-xl)"></div><span class="lbl">xl · 20</span></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-full)"></div><span class="lbl">full</span></div>
+</div>
+</body>
+</html>

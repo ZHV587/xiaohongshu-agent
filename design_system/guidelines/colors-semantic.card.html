@@ -1,0 +1,25 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Semantic & Topic Blue" subtitle="Status: synced, hot, info; topic-blue for data & hashtags." -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../styles.css" />
+<style>
+  body { margin: 0; background: #fff; font-family: var(--font-sans); padding: 20px; }
+  .row { display: flex; gap: 10px; }
+  .sw { flex: 1; border-radius: var(--radius-md); padding: 10px; height: 90px; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--border); }
+  .chip { align-self: flex-start; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
+  .name { font-size: 11px; font-weight: 600; color: var(--charcoal-default); }
+  .hex { font-size: 9px; font-family: var(--font-mono); color: var(--charcoal-light); }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="sw" style="background:var(--success-surface)"><span class="chip" style="background:#fff;color:var(--success);border:1px solid var(--success-border)">已同步</span><span class="name">success</span><span class="hex">#16a34a</span></div>
+  <div class="sw" style="background:var(--hot-surface)"><span class="chip" style="background:#fff;color:var(--hot);border:1px solid var(--border-coral)">🔥 爆款率</span><span class="name">hot</span><span class="hex">#e52e40</span></div>
+  <div class="sw" style="background:var(--info-surface)"><span class="chip" style="background:#fff;color:var(--info);border:1px solid var(--info-border)">配置可用</span><span class="name">info</span><span class="hex">#2563eb</span></div>
+  <div class="sw" style="background:var(--topicblue-light)"><span class="chip" style="background:#fff;color:var(--topicblue-default);border:1px solid color-mix(in srgb,var(--topicblue-default) 22%,transparent)">#话题</span><span class="name">topic blue</span><span class="hex">#007fff</span></div>
+  <div class="sw" style="background:var(--warning-surface)"><span class="chip" style="background:#fff;color:var(--warning)">⚠️ 超字数</span><span class="name">warning</span><span class="hex">#d97706</span></div>
+</div>
+</body>
+</html>

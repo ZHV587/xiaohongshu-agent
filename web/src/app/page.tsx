@@ -1,6 +1,6 @@
 "use client";
 
-import { Thread } from "@/components/thread";
+import { AppShell } from "@/components/AppShell";
 import { StreamProvider } from "@/providers/Stream";
 import { ThreadProvider } from "@/providers/Thread";
 import { ArtifactProvider } from "@/components/thread/artifact";
@@ -16,7 +16,7 @@ export default function DemoPage(): React.ReactNode {
         <ThreadProvider>
           <StreamProvider>
             <ArtifactProvider>
-              <Thread />
+              <AppShell />
             </ArtifactProvider>
           </StreamProvider>
         </ThreadProvider>

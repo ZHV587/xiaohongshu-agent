@@ -499,3 +499,9 @@ internal_routes = [
     Route("/internal/model/status", internal_model_status, methods=["GET"]),
     Route("/internal/health/facts", internal_health_facts, methods=["GET"]),
 ]
+
+# studio-data-integration: 工作室账号运营聚合路由。在 internal_routes 定义完成后再 import
+# studio_api(其依赖本模块的 require_user/require_admin/_json_ok/_json_error),避免循环导入。
+from data_foundation.studio_api import studio_routes  # noqa: E402
+
+internal_routes.extend(studio_routes)

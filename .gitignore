@@ -49,5 +49,6 @@ ld2.txt
 # 编辑器/审计工具本地目录(可重建,不入库)
 .codex-ui-audit/
 .kiro/
+.claude/
 .hypothesis/
 .vscode/

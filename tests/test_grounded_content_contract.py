@@ -71,7 +71,8 @@ def test_prompt_owns_output_protocol_with_evidence_schema():
 
 def test_output_protocol_shape_matches_frontend_renderer():
     """回归(Q-1):§5 模板结构必须与前端 xhs-blocks.ts 渲染器一致,否则照权威 prompt 写卡片必渲染失败。
-    渲染器要求:topics 是字符串数组、evidence 是顶层数组;文案用 title/body/tags(非 copy_text)。"""
+    渲染器要求(富选题契约):topics 是**对象数组**,每个选题对象带 title + 富字段 + 每选题独立 evidence
+    (含 rank_evidence 三信号 relevance/freshness/performance);文案用 title/body/tags(非 copy_text)。"""
     topics_start = MAIN_SYSTEM_PROMPT.index("```xhs_topics")
     copy_start = MAIN_SYSTEM_PROMPT.index("```xhs_copy")
     topics_block = MAIN_SYSTEM_PROMPT[topics_start:copy_start]
@@ -83,14 +84,44 @@ def test_output_protocol_shape_matches_frontend_renderer():
         "不要用 `copy_text`", ""
     )  # 仅允许出现在"不要用 copy_text"的警示里
 
-    # topics 必须是字符串数组:模板里 topics 后跟 [ 且元素是带引号的字符串,不是 { 对象
+    # topics 必须是对象数组:模板里 topics 后跟 [ 且元素是 { 对象(富选题),不再是裸字符串
     import re
-    m = re.search(r'"topics"\s*:\s*\[\s*"', topics_block)
-    assert m is not None, "topics 必须是字符串数组(形如 \"topics\": [\"...\"])"
+    m = re.search(r'"topics"\s*:\s*\[\s*\{', topics_block)
+    assert m is not None, "topics 必须是富选题对象数组(形如 \"topics\": [{ ... }])"
+
+    # 每个富选题对象必带 title + 富字段;hotRate 无法得出时省略(不输出 0)
+    for field in ('"title"', '"hotRate"', '"angle"', '"kw"', '"rationale"', '"emotional"'):
+        assert field in topics_block, f"xhs_topics 富选题缺字段 {field}"
+
+    # 每选题独立 evidence 必带 rank_evidence 三信号 + score,口径对齐 search_ranker
+    for field in ('"score"', '"relevance"', '"freshness"', '"performance"', '"evidence_mode"'):
+        assert field in topics_block, f"xhs_topics evidence 缺三信号字段 {field}"
+
+    # 数据不足分支:insufficient_relevance 时空 evidence + 非空 gaps
+    assert "insufficient_relevance" in topics_block
+    assert '"gaps"' in topics_block
 
     # 文案必须用 title/body/tags
     for field in ('"title"', '"body"', '"tags"'):
         assert field in copy_block, f"xhs_copy 缺字段 {field}"
+
+
+def test_xhs_copy_documents_multi_version_contract():
+    """xhs_copy 多版本增量契约(Req 4.1):用户要多版本时输出 versions 数组,
+    每项含 label/title/body/tags/cover/note;versions 为可选增量字段(不足 1 项不输出),
+    单版本仍保留顶层 title/body/tags 向后兼容。前端按 label 映射 A/B/C。"""
+    copy_start = MAIN_SYSTEM_PROMPT.index("```xhs_copy")
+    copy_block = MAIN_SYSTEM_PROMPT[copy_start:]
+
+    # versions 增量字段及其每项必填字段必须被文档化
+    assert '"versions"' in copy_block, "xhs_copy 缺多版本 versions 字段文档"
+    for field in ('"label"', '"title"', '"body"', '"tags"', '"cover"', '"note"'):
+        assert field in copy_block, f"xhs_copy versions 项缺字段 {field}"
+
+    # 向后兼容:必须说明可选/不足时省略,且单版本保持顶层 title/body/tags 契约
+    assert "顶层仍保留" in copy_block and "省略 `versions`" in copy_block
+    # 前端按 label 映射 A/B/C 选择器
+    assert '"A"' in copy_block and '"B"' in copy_block
 
 
 def test_prompt_forbids_fabricating_source_freshness():

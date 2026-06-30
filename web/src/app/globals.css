@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 @plugin "tailwindcss-animate";
@@ -57,6 +57,156 @@
   --sidebar-accent-foreground: #e52e40;
   --sidebar-border: #ebeae4;
   --sidebar-ring: #e52e40;
+
+  /* ════════════════════════════════════════════════════════════
+     Design System tokens (design_system/tokens/*) — 1:1 源
+     These power the faithfully-ported ds/* + studio/* inline styles.
+     ════════════════════════════════════════════════════════════ */
+
+  /* Coral ramp (UI primary #e52e40; brand-mark red #ff2442) */
+  --coral-50: #fff0f2;
+  --coral-100: #ffe0e4;
+  --coral-300: #f78a96;
+  --coral-500: #e52e40;
+  --coral-600: #c81d33;
+  --coral-700: #a8162a;
+  --coral-brand: #ff2442;
+
+  /* Neutral grays */
+  --gray-100: #f4f2ee;
+  --gray-200: #ebeae4;
+  --gray-300: #d6d5cf;
+  --gray-400: #a1a09a;
+  --gray-500: #6f6e69;
+
+  /* Semantic raw ramps */
+  --green-50: #f0fdf4;
+  --green-100: #dcfce7;
+  --green-500: #22c55e;
+  --green-600: #16a34a;
+  --green-700: #15803d;
+  --amber-50: #fffbeb;
+  --amber-500: #f59e0b;
+  --amber-600: #d97706;
+  --blue-50: #eff6ff;
+  --blue-100: #dbeafe;
+  --blue-600: #2563eb;
+  --blue-700: #1d4ed8;
+
+  /* Surface aliases */
+  --surface-card: #ffffff;
+  --surface-sunken: var(--oats-dark);
+  --surface-raised: var(--oats-light);
+  --surface-sidebar: #ffffff;
+
+  /* Text aliases */
+  --text-body: var(--charcoal-default);
+  --text-muted: var(--charcoal-light);
+  --text-subtle: var(--gray-400);
+  --text-on-primary: #ffffff;
+
+  /* Primary / accent semantics */
+  --primary-hover: var(--coral-600);
+  --accent-surface: var(--coral-50);
+
+  /* Borders / focus / input */
+  --border-strong: var(--gray-300);
+  --border-coral: color-mix(in srgb, var(--coral-500) 12%, transparent);
+  --input-bg: var(--oats-default);
+
+  /* Status semantics */
+  --success: var(--green-600);
+  --success-surface: var(--green-50);
+  --success-border: var(--green-100);
+  --warning: var(--amber-600);
+  --warning-surface: var(--amber-50);
+  --info: var(--blue-600);
+  --info-surface: var(--blue-50);
+  --info-border: var(--blue-100);
+  --hot: var(--coral-500);
+  --hot-surface: #fef2f2;
+
+  /* Typography */
+  --font-sans:
+    "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-display:
+    "Outfit", -apple-system, "PingFang SC", "Microsoft YaHei",
+    "Noto Sans SC", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --text-2xs: 0.625rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --text-4xl: 3rem;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-black: 800;
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.08em;
+
+  /* Spacing (4px grid) */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 0.125rem;
+  --space-1: 0.25rem;
+  --space-1-5: 0.375rem;
+  --space-2: 0.5rem;
+  --space-2-5: 0.625rem;
+  --space-3: 0.75rem;
+  --space-3-5: 0.875rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Layout rails (workbench three-pane) */
+  --rail-sidebar: 280px;
+  --rail-canvas: 580px;
+  --topbar-height: 56px;
+  --composer-max: 48rem;
+
+  /* Radius (DS literal scale — single source of truth) */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --radius-phone: 2.5rem;
+  --radius-full: 9999px;
+
+  /* Shadows (light, warm-tinted) */
+  --shadow-xs: 0 1px 2px rgba(26, 26, 28, 0.04);
+  --shadow-sm: 0 1px 3px rgba(26, 26, 28, 0.06), 0 1px 2px rgba(26, 26, 28, 0.04);
+  --shadow-md: 0 4px 12px rgba(26, 26, 28, 0.07), 0 2px 4px rgba(26, 26, 28, 0.04);
+  --shadow-lg: 0 12px 28px rgba(26, 26, 28, 0.1), 0 4px 8px rgba(26, 26, 28, 0.05);
+  --shadow-2xl: 0 24px 60px rgba(26, 26, 28, 0.18);
+  --shadow-coral: 0 6px 18px rgba(229, 46, 64, 0.22);
+  --ring-focus: 0 0 0 3px color-mix(in srgb, var(--coral-500) 18%, transparent);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 140ms;
+  --dur-base: 240ms;
+  --dur-slow: 400ms;
+  --dur-fly: 800ms;
 }
 
 .dark {
@@ -92,6 +242,23 @@
   --sidebar-accent-foreground: #ff3b54;
   --sidebar-border: #222226;
   --sidebar-ring: #ff3b54;
+
+  /* Design System tokens — dark overrides (design_system/tokens/colors.css .dark) */
+  --surface-card: #131315;
+  --surface-sunken: #1e1e22;
+  --surface-raised: #1c1c1e;
+  --surface-sidebar: #101012;
+  --text-body: #f5f5f7;
+  --text-muted: #a1a1a8;
+  --text-subtle: #6f6e74;
+  --text-on-primary: #ffffff;
+  --primary-hover: #ff5468;
+  --accent-surface: #2c1a1d;
+  --border-strong: #2e2e33;
+  --input-bg: #1a1a1d;
+  --success-surface: #112016;
+  --info-surface: #0e1726;
+  --hot-surface: #2a1416;
 }
 
 @theme inline {
@@ -134,10 +301,12 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -272,4 +441,141 @@
 
 .animate-shake {
   animation: shake 0.4s ease-in-out;
+}
+
+/* ── Design System motion (design_system/tokens/motion.css) ── */
+@keyframes xhs-ping {
+  75%,
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+@keyframes xhs-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes xhs-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20%,
+  60% {
+    transform: translateX(-4px);
+  }
+  40%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ── Studio kit helpers (design_system/ui_kits/studio/index.html <style>) ── */
+.cs::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+.cs::-webkit-scrollbar-thumb {
+  background-color: rgba(229, 46, 64, 0.18);
+  border-radius: 9999px;
+}
+.cs::-webkit-scrollbar-track {
+  background: transparent;
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@keyframes secIn {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.fade-up {
+  animation: fadeUp 0.3s var(--ease-out) both;
+}
+.slide-in-right {
+  animation: slideInRight 0.28s var(--ease-out) both;
+}
+.pop-in {
+  animation: popIn 0.22s var(--ease-spring) both;
+}
+.lift {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }

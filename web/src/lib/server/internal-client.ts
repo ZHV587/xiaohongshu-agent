@@ -21,6 +21,15 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/data-foundation-status": { path: "/internal/data-foundation/status", method: "GET" },
   "/_internal/model-status": { path: "/internal/model/status", method: "GET" },
   "/_internal/runtime-facts": { path: "/internal/health/facts", method: "GET" },
+  "/_internal/studio/analytics": { path: "/internal/studio/analytics", method: "GET" },
+  "/_internal/studio/calendar": { path: "/internal/studio/calendar", method: "GET" },
+  "/_internal/studio/accounts": { path: "/internal/studio/accounts", method: "GET" },
+  "/_internal/studio/pipeline": { path: "/internal/studio/pipeline", method: "GET" },
+  "/_internal/studio/recents": { path: "/internal/studio/recents", method: "GET" },
+  "/_internal/studio/trends": { path: "/internal/studio/trends", method: "GET" },
+  "/_internal/studio/schedule": { path: "/internal/studio/schedule", method: "POST" },
+  "/_internal/studio/backfill": { path: "/internal/studio/backfill", method: "POST" },
+  "/_internal/studio/pipeline-advance": { path: "/internal/studio/pipeline-advance", method: "POST" },
 };
 
 function jsonResponse(payload: Record<string, unknown>, status: number): Response {
@@ -113,7 +122,10 @@ export async function forwardToInternalServer(
   method: "GET" | "POST",
   openId: string,
   extraBody?: any,
-  extraHeaders?: any
+  extraHeaders?: any,
+  // 可选 query:附加到内部请求 URL 的查询串(如 studio 账号维度 { account })。
+  // 向后兼容:既有调用不传则不附加任何 query。仅保留非空字符串值。
+  query?: Record<string, string | undefined>
 ): Promise<Response> {
   const route = internalPathMap[pathName];
   if (!route) {
@@ -142,7 +154,15 @@ export async function forwardToInternalServer(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const upstream = await fetch(new URL(route.path, baseUrl).toString(), {
+    const targetUrl = new URL(route.path, baseUrl);
+    if (query) {
+      for (const [key, value] of Object.entries(query)) {
+        if (typeof value === "string" && value.trim()) {
+          targetUrl.searchParams.set(key, value.trim());
+        }
+      }
+    }
+    const upstream = await fetch(targetUrl.toString(), {
       method: route.method,
       headers,
       body: route.method === "POST" ? JSON.stringify(extraBody || {}) : undefined,
