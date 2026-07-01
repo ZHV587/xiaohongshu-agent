@@ -156,7 +156,64 @@ interface ThinkingRun {
 
 故改动天然收窄到单一入口,不会误伤深度创作或其他视图。
 
-## 8. 测试
+## 8. ai 气泡文本清洗(防 JSON 糊屏)
+
+**现存 bug**:`deriveChat` 对 AI 消息 `getContentString` 后**原样 push 全文**,
+含 ` ```xhs_topics {…JSON…} ``` ` / ` ```xhs_copy ``` ` / ` ```xhs_panel ``` ` 的
+消息会把整坨 JSON 糊进聊天气泡(选题卡另由 `parseTopicsFromMessages` 单独渲染,
+文本气泡本不该重复出现原始 JSON)。
+
+**修正**:`deriveTimeline` 生成 `{ kind: "ai" }` 气泡文本时,**复用现成的
+`parseXhsBlocks(content)`,只拼接 `TextSegment`(kind:"text")的自然语言部分**,
+丢弃 topics/copy/panel 结构化块。不自己写清洗逻辑——`parseXhsBlocks` 已在
+`parseTopicsFromMessages` / `parseCopyFromMessages` 复用,口径统一。
+- 若一条 AI 消息剥离结构块后自然语言为空 → 不产出 ai 气泡(该轮可能只有选题卡)。
+
+## 9. 流式中间态健壮性
+
+`streamMode:["values"]` 推 state 快照,流式过程中一条 AI 的 `tool_calls` 数组、
+其中 `args`(拼到一半的 JSON 片段)可能**未到齐**。解析器必须容忍:
+- `tc.args` 可能是不完整对象或字符串片段 → 进 log 时安全 stringify,不 JSON.parse 抛错。
+- `task` 步骤:`tc.args.subagent_type` 可能暂为 undefined → 先出通用「委派子任务」,
+  拿到 subagent_type 后再细化为「委派子任务:知识检索/风格提炼」。
+- 解析器**永不 throw**(对齐现有 `parseCopyFromMessages` 的健壮性约定)。
+
+## 10. 渲染:判别式 + React key 策略
+
+`ChatColumn` 的 `timeline.map` 按 `kind` 分支:
+```
+timeline.map((item, i) => {
+  switch (item.kind) {
+    case "user":     return <UserBubble key={key(item,i)} text={item.text} />;
+    case "thinking": return <ThinkingAura key={key(item,i)} steps=… logs=… defaultCollapsed={item.run.done} />;
+    case "ai":       return <AiBubble key={key(item,i)} text={item.text} />;
+  }
+})
+```
+**key 策略**:优先用该 timeline item 所属**轮的首条 message id**(稳定),回退索引。
+思考链流式增长时(同一 thinking item 内部 steps 变多)key 保持不变,避免 re-mount 闪烁。
+
+## 11. 滚动依赖
+
+`ChatColumn` 现有 `useEffect(scrollToBottom, [chatExtra])`。`chatExtra`→`timeline` 后:
+- 依赖项换 `timeline`;但思考链步骤流式增长时 timeline 引用可能不变 →
+  依赖改为对内容敏感的信号,如 `[timeline.length, 最后一轮 run.steps.length]`(或
+  `deriveTimeline` 返回稳定的内容指纹),确保新步骤出现即滚动到底,不被挡在视口外。
+
+## 12. ThinkingLog 时间戳
+
+`ThinkingLog` 支持 `{ time?, text? }`,但已核实 messages / xhs 段**均无可靠墙钟时间戳**
+(values 快照不带 per-step 时间)。故:
+- **log 不填 `time`,只按流顺序排列**;`ThinkingAura` 的 `time` 分支自然不渲染。
+- 语义阶段折叠时,同名工具的多条 log 按流内出现顺序排列,不加时间。
+
+## 13. 类型删除影响面(已核实)
+
+已 grep 全量引用:`ChatMsg` 仅在 `StudioContext.tsx`(import + `chatExtra` 字段 +
+`deriveChat`)与 `types.ts`(定义)内部使用,**无外部消费点、无测试引用**。故
+`ChatMsg` 及 `ChatMsg.thinking` 删除安全,由 `TimelineItem` / `ThinkingRun` 取代。
+
+## 14. 测试
 
 - **新增 `web/src/components/studio/thinking-trace.test.ts`**(纯函数,与现有
   `thread-*.test.ts` 同风格):
@@ -167,20 +224,24 @@ interface ThinkingRun {
   - `task` 委派 → 读 subagent_type 出中文标签;
   - Anthropic 数组内容态消息;
   - 未知工具名 → 兜底原名;
-  - 多条中间 AI(只 tool_calls、content 空)→ 只有最后 AI 出 ai 气泡。
+  - 多条中间 AI(只 tool_calls、content 空)→ 只有最后 AI 出 ai 气泡;
+  - **ai 气泡剥离 xhs 代码块**:含 ` ```xhs_topics ``` ` 的消息 → ai 气泡只留自然语言,
+    不糊 JSON;剥离后为空 → 不出 ai 气泡(§8);
+  - **流式中间态**:tool_calls/args 未到齐 → 不 throw,task 先出通用标签(§9)。
 - **e2e 可观测钩子**:新增 `window.__XHS_THINKING_STEPS__`(与现有
   `__XHS_STREAMING__` / `__XHS_TOPICS_LEN__` 约定同构),供 Playwright 断言步骤数。
 - **前端验收**:`tsc --noEmit` + `eslint src` + 上述单测。
 - **浏览器端到端**:Docker Compose 环境实发一轮「按露营出选题」,肉眼确认阶段实时
   点亮 → 完成折叠(走 CLAUDE.md 容器化验证流程)。
 
-## 9. 影响面小结
+## 15. 影响面小结
 
 - 新增:`thinking-trace.ts` + `thinking-trace.test.ts`。
-- 改动:`StudioContext.tsx`(deriveTimeline + 接 isStreaming + 钩子)、
-  `CreationScreen.tsx`(ChatColumn 消费 timeline)、`ThinkingAura.tsx`(折叠摘要态 prop)、
-  `types.ts`(TimelineItem / ThinkingRun 类型,移除死的 `ChatMsg.thinking`)。
-- 删除:`deriveChat` 及 `ChatMsg`(被 TimelineItem 取代);`CreationScreen` 里退化的
-  `m.thinking` 分支。
+- 改动:`StudioContext.tsx`(deriveTimeline + 时间线派生 + `__XHS_THINKING_STEPS__` 钩子)、
+  `CreationScreen.tsx`(ChatColumn 消费 timeline + 滚动依赖)、
+  `ThinkingAura.tsx`(折叠摘要态 prop)、
+  `types.ts`(新增 TimelineItem / ThinkingRun,删除 ChatMsg)。
+- 删除:`deriveChat` 及 `ChatMsg`(被 deriveTimeline / TimelineItem 取代);
+  `CreationScreen` 里退化的 `m.thinking` 分支。
 - 后端:**零改动**。
 
