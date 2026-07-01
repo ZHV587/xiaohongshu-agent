@@ -9,7 +9,10 @@ import { build } from "esbuild";
 const webRoot = fileURLToPath(new URL("..", import.meta.url));
 const outputDir = await mkdtemp(join(tmpdir(), "xhs-web-unit-"));
 const testEntries = [
-  join(webRoot, "src/lib/xhs-blocks.test.ts"),
+  ...(await readdir(join(webRoot, "src/lib")))
+    .filter((name) => name.endsWith(".test.ts"))
+    .sort()
+    .map((name) => join(webRoot, "src/lib", name)),
   ...(await readdir(join(webRoot, "tests")))
     .filter((name) => name.endsWith(".test.ts"))
     .sort()
