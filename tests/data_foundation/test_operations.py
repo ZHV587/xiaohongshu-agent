@@ -44,7 +44,13 @@ def test_matrix_overview_requires_admin(monkeypatch):
         out = _invoke(view, account=None, open_id="ou_user")
         assert out["ok"] is False
         assert "admin" in out["error"].lower() or "管理员" in out["error"]
-        assert "dashboard" not in out and "accounts" not in out and "queue" not in out
+        assert (
+            "dashboard" not in out
+            and "accounts" not in out
+            and "queue" not in out
+            and "month" not in out
+            and "library" not in out
+        )
 
 
 def test_matrix_overview_allows_admin(monkeypatch):
@@ -59,3 +65,19 @@ def test_unknown_view_rejected(monkeypatch):
     _patch_loads(monkeypatch)
     out = _invoke("bogus", open_id="ou_user")
     assert out["ok"] is False and "view" in out["error"].lower()
+
+
+def test_load_failure_redacts_dsn(monkeypatch):
+    # load_* 抛含 DSN 的异常时,工具须返回通用不可用提示,响应内容不得含 DSN/异常细节
+    # (与 BFF handler 的反泄露口径一致:ToolNode 会把异常原文注入模型上下文再转告用户)。
+    _patch_loads(monkeypatch)
+    monkeypatch.setenv("XHS_ADMIN_OPEN_IDS", "ou_admin")
+
+    def _boom(*, tenant_id, account):
+        raise RuntimeError("postgresql://user:db-secret@host/db")
+
+    monkeypatch.setattr(ops, "load_analytics", _boom)
+    out = _invoke("analytics", account="acc_1", open_id="ou_user")
+    assert out["ok"] is False
+    assert "db-secret" not in str(out)
+    assert "postgresql://" not in str(out)

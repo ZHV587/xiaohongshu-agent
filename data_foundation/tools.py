@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,6 +33,9 @@ from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.search import semantic_search
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sync_service import sync_feishu_sources
+
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -539,18 +543,25 @@ def get_operations_data(
     if needs_admin and not admin:
         return {"ok": False, "error": "该视图为跨账号矩阵总览,需管理员权限;请指定 account 查看单账号,或联系管理员。"}
 
-    if view == "analytics":
-        return {"ok": True, "view": view, "account": account, **ops.load_analytics(tenant_id=tenant, account=account)}
-    if view == "calendar":
-        return {"ok": True, "view": view, "account": account, **ops.load_calendar(tenant_id=tenant, account=account)}
-    if view == "pipeline":
-        return {"ok": True, "view": view, "account": account, "queue": ops.load_pipeline(tenant_id=tenant, account=account)}
-    if view == "accounts":
-        return {"ok": True, "view": view, **ops.load_accounts(tenant_id=tenant)}
-    if view == "recents":
-        return {"ok": True, "view": view, "recents": ops.load_recents(tenant_id=tenant, open_id=actor)}
-    if view == "trends":
-        return {"ok": True, "view": view, "trends": ops.load_trends(tenant_id=tenant)}
+    # load_* 数据获取包一层脱敏:失败只记固定信息 + 异常类名(不记异常细节/DSN/路径),
+    # 返回与 BFF 503 同口径的通用提示(不含异常细节),避免 ToolNode 把异常原文
+    # (可能含 DSN)注入模型上下文再转告用户。鉴权拒绝在此之上,不受影响。
+    try:
+        if view == "analytics":
+            return {"ok": True, "view": view, "account": account, **ops.load_analytics(tenant_id=tenant, account=account)}
+        if view == "calendar":
+            return {"ok": True, "view": view, "account": account, **ops.load_calendar(tenant_id=tenant, account=account)}
+        if view == "pipeline":
+            return {"ok": True, "view": view, "account": account, "queue": ops.load_pipeline(tenant_id=tenant, account=account)}
+        if view == "accounts":
+            return {"ok": True, "view": view, **ops.load_accounts(tenant_id=tenant)}
+        if view == "recents":
+            return {"ok": True, "view": view, "recents": ops.load_recents(tenant_id=tenant, open_id=actor)}
+        if view == "trends":
+            return {"ok": True, "view": view, "trends": ops.load_trends(tenant_id=tenant)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("operations_data_load_failed view=%s type=%s", view, type(exc).__name__)
+        return {"ok": False, "error": "运营数据暂不可用,请稍后重试。"}
     return {"ok": False, "error": f"unknown view '{view}';合法值:analytics/calendar/pipeline/accounts/recents/trends。"}
 
 
