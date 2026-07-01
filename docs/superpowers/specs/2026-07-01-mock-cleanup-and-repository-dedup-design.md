@@ -33,12 +33,12 @@
 
 | hook | 死字段(删) | 活字段(留,需迁移) |
 |---|---|---|
-| `usePreviewState` | `viewMode`/`setViewMode`、`carouselIndex`/`setCarouselIndex`、`carouselImages`(**假数据**) | `isEditingText`/`setIsEditingText`(provider 原位编辑器自适应高度用,[:129](../../web/src/components/thread/ThreadStateProvider.tsx)/[:133](../../web/src/components/thread/ThreadStateProvider.tsx)) |
+| `usePreviewState` | **全死**:`viewMode`/`carouselIndex`/`carouselImages`(**假数据**)+ `isEditingText`/`setIsEditingText`(唯一 `setIsEditingText(true)` 在已删的 `PhoneSimulator`,删后恒 false、自适应高度 effect 成死逻辑) | 无 → **可整删,无需迁移** |
 | `useWorkbenchTabsState` | **全死**:`rightTab`/`setRightTab` + `selectedEvidence`/`setSelectedEvidence`(ThreadContext 版无活消费方) | 无 → **可整删,无需迁移** |
 | `useCommandPaletteState` | `showCommandPalette`/`setShowCommandPalette`、`cmdSearch`/`setCmdSearch` | 无(但 `handleExecuteCommand` 内部调 `setShowCommandPalette`——见改造) |
 | `useFeishuWorkspaceState` | `feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification` 及其 setter | 无(但 `handleSyncToFeishu` 内部调 `setIsFeishuActionPending`——见改造) |
 
-唯一需迁移的活字段是 `usePreviewState` 的 `isEditingText`;其余三个 hook 无活字段,整删。因活 handler(`handleExecuteCommand`/`handleSyncToFeishu`)内部仍调死 setter,需按下述改造剔除死副作用。
+四个死 hook 均无活字段,全部整删,无字段迁移。伴随的死状态/死逻辑(`textareaRef`、自适应高度 effect、`handleEditBodyPaste`/`handleInsertEmoji`/`handleAppendTag`/`handleSendNotification`——均无活引用)一并清除。活 handler(`handleExecuteCommand`/`handleSyncToFeishu`)保留,仅剔除其内部对死 setter 的调用。
 
 ---
 
@@ -62,22 +62,22 @@
 
 ### B. 死 hook 的活字段迁移 + 文件删除
 
-1. **`usePreviewState.ts` → 删文件**;`isEditingText` 活逻辑迁入 `ThreadStateProvider` 本地 `useState`(一行 `const [isEditingText, setIsEditingText] = useState(false)`)。假数据(`carouselImages`)随文件删除消失。
+1. **`usePreviewState.ts` → 删文件**(整死,含假数据 `carouselImages`;`isEditingText` 唯一 `true` 来源在已删 `PhoneSimulator`,恒 false)。无字段迁移。
 2. **`useWorkbenchTabsState.ts` → 删文件**(整死:`rightTab` + `selectedEvidence` 均无活消费方,`selectedEvidence` 活消费来自 `useStudio()` 而非此处)。无字段迁移。
 3. **`useCommandPaletteState.ts` → 删文件**;`showCommandPalette`/`cmdSearch` 死状态丢弃(见 C 对 `handleExecuteCommand` 的处理)。
 4. **`useFeishuWorkspaceState.ts` → 删文件**;死状态丢弃(见 C 对 `handleSyncToFeishu` 的处理)。
 
 ### C. `ThreadStateProvider.tsx` 改造(保留活逻辑,移除死状态)
 
-- 删除对 4 个死 hook 的 import 与调用;`isEditingText` 改为本地 `useState`。(`selectedEvidence` 无需迁移——ThreadContext 版是死的。)
+- 删除对 4 个死 hook 的 import 与调用(四者整删,无活字段迁移)。
 - **`handleExecuteCommand`**:保留(活)。移除内部 `setShowCommandPalette(false)`(命令面板弹窗已删,该状态无意义);`submitText(...)` 调用链不动。
 - **`handleSyncToFeishu`**:保留(活)。移除内部对死状态的 set(`setIsFlying`/`setSyncStep`/`setSyncStepsVisible`/`setIsFeishuActionPending`——这些字段无活 UI 读取);保留 `submitText(sync_copy_to_feishu ...)` 与 `setIsSyncing` 守卫逻辑(防重复提交,`isSyncing` 保留为本地态)。
-- **删除死 handler**:`handleSendNotification`、`handleInsertEmoji`、`handleAppendTag`(均无活引用)。
-- 清理相关本地 `useState`:`isFlying`/`syncStep`/`syncStepsVisible`/`bitableUrl`/`wikiUrl` 等仅死 UI 用的状态,连同 [:94-111](../../web/src/components/thread/ThreadStateProvider.tsx) 的 bitable/wiki 拉取 `useEffect`(仅喂死字段)一并移除——**逐个 grep 确认无活消费方**后删。
+- **删除死 handler 与死逻辑**(均无活引用):`handleSendNotification`、`handleInsertEmoji`、`handleAppendTag`、`handleEditBodyPaste`;`textareaRef` ref 及自适应高度 `useEffect`([:128-133](../../web/src/components/thread/ThreadStateProvider.tsx),依赖恒 false 的 `isEditingText`);`setThreadId` 内的 `setIsEditingText(false)` 与会话切换 effect 内的 `setIsEditingText(false)`。
+- 清理相关本地 `useState`:`isEditingText`/`isFlying`/`syncStep`/`syncStepsVisible`/`bitableUrl`/`wikiUrl` 等仅死 UI 用的状态,连同 [:94-111](../../web/src/components/thread/ThreadStateProvider.tsx) 的 bitable/wiki 拉取 `useEffect`(仅喂死字段)一并移除——**逐个 grep 确认无活消费方**后删。
 
 ### D. `ThreadContext.tsx` 瘦身
 
-从 `ThreadContextProps` interface 与 provider `value` 中移除所有死字段:`rightTab`/`viewMode`/`carouselIndex`/`carouselImages`/`selectedEvidence`(ThreadContext 版)/`showCommandPalette`/`cmdSearch`/`feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification`/`isFeishuActionPending`/`syncStepsVisible`/`syncStep`/`isFlying`/`bitableUrl`/`wikiUrl` 及死 handler。保留活字段(见「活消费边界」)。以 `tsc --noEmit` 零错误确认无活消费方遗漏。
+从 `ThreadContextProps` interface 与 provider `value` 中移除所有死字段:`rightTab`/`viewMode`/`carouselIndex`/`carouselImages`/`selectedEvidence`(ThreadContext 版)/`isEditingText`/`setIsEditingText`/`showCommandPalette`/`cmdSearch`/`feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification`/`isFeishuActionPending`/`syncStepsVisible`/`syncStep`/`isFlying`/`bitableUrl`/`wikiUrl`/`textareaRef` 及死 handler(`handleSendNotification`/`handleInsertEmoji`/`handleAppendTag`/`handleEditBodyPaste`)。保留活字段(见「活消费边界」)。以 `tsc --noEmit` 零错误确认无活消费方遗漏。
 
 ---
 
