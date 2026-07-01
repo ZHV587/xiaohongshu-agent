@@ -34,14 +34,11 @@ from __future__ import annotations
 
 import logging
 import uuid as _uuid
-from contextlib import contextmanager
-from datetime import datetime, timezone
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from data_foundation.db import connect
 from data_foundation.operations import (
     load_accounts,
     load_analytics,
@@ -53,13 +50,18 @@ from data_foundation.operations import (
 from data_foundation.outbox_requests import default_write_requests
 from data_foundation.performance_feedback import MEASURED_BY_EDGE, save_performance_metric_resource
 from data_foundation.permissions import default_tenant_id
-from data_foundation.repositories.resource import ResourceRepository
+from data_foundation.studio_shared import (
+    day_of_month,
+    derive_stage,
+    existing_metric_content,
+    now_iso,
+    repository as _repository,
+)
 
 
 logger = logging.getLogger(__name__)
 
 # 发布管线单向状态机(需求 13.3/13.4):scheduled→published→measured,仅相邻正向可推进。
-_PIPELINE_STAGES = ("scheduled", "published", "measured")
 _ALLOWED_TRANSITIONS = frozenset({("scheduled", "published"), ("published", "measured")})
 
 
@@ -67,56 +69,10 @@ class _StageConflict(Exception):
     """发布管线 stage 推进违反单向状态机(逆向/跨级/无起点),映射 409。"""
 
 
-@contextmanager
-def _repository():
-    """写路径资源仓储(与 data_foundation/tools.py 同口径:connect→ResourceRepository→close)。"""
-    conn = connect()
-    try:
-        yield ResourceRepository(conn)
-    finally:
-        conn.close()
-
-
 def _account_param(request: Request) -> str | None:
     """读取账号维度过滤参数;空串视为未指定(矩阵总览)。"""
     value = request.query_params.get("account", "").strip()
     return value or None
-
-
-# ── 格式化 helper(纯函数,中文计数口径,与 UI types.ts 字段对齐) ──
-
-
-def _now_iso() -> str:
-    """当前 UTC 时间 ISO 串(发布时间戳缺省值)。"""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _day_of_month(value) -> int | None:
-    """'YYYY-MM-DD' → 当月第几天(int);非法 → None。供日历按天分组。"""
-    if not isinstance(value, str) or len(value) < 10:
-        return None
-    try:
-        return int(value[8:10])
-    except ValueError:
-        return None
-
-
-def _derive_stage(content: dict) -> str | None:
-    """发布管线 stage = performance_metric.content_json 的显式 `stage` 字段(单一事实源)。
-
-    本特性所有写路径(排期/回填/推进 stage)都落显式 `stage`。不做启发式推断、不为
-    无显式 stage 的历史/外部指标兜底 —— 这类数据不属于发布管线,返回 None。
-    """
-    stage = content.get("stage")
-    return stage if stage in _PIPELINE_STAGES else None
-
-
-def _existing_metric_content(repo, *, tenant_id: str, actor_open_id: str, metric_id: str | None) -> dict:
-    """读既有 performance_metric.content_json(幂等合并用);无则空 dict。"""
-    if not metric_id:
-        return {}
-    resource = repo.get_resource(tenant_id, actor_open_id, metric_id)
-    return dict(resource.content_json or {}) if resource is not None else {}
 
 
 async def internal_studio_analytics(request: Request) -> JSONResponse:
@@ -292,7 +248,7 @@ def _persist_schedule(
     published/measured 的条目不回退 stage(单向状态机),仅刷新排期元数据。落库失败抛出 → 上层
     整体返回失败触发前端回滚。返回 calendar 排期项(date=当月第几天 + item)。
     """
-    day = _day_of_month(date)
+    day = day_of_month(date)
     if day is None:
         raise ValueError("date must be in 'YYYY-MM-DD' format")
     with _repository() as repo:
@@ -307,7 +263,7 @@ def _persist_schedule(
             existing_id = repo.find_performance_metric_id(
                 tenant_id=tenant_id, target_resource_id=resource_id
             )
-            content = _existing_metric_content(
+            content = existing_metric_content(
                 repo, tenant_id=tenant_id, actor_open_id=actor_open_id, metric_id=existing_id
             )
             content.update(
@@ -319,7 +275,7 @@ def _persist_schedule(
                     "channel": content.get("channel") or "xiaohongshu",
                 }
             )
-            if _derive_stage(content) not in ("published", "measured"):
+            if derive_stage(content) not in ("published", "measured"):
                 content["stage"] = "scheduled"
             resource = repo.upsert_resource(
                 tenant_id=tenant_id,
@@ -369,7 +325,7 @@ def _persist_backfill(
         existing_id = repo.find_performance_metric_id(
             tenant_id=tenant_id, target_resource_id=resource_id
         )
-        prior = _existing_metric_content(
+        prior = existing_metric_content(
             repo, tenant_id=tenant_id, actor_open_id=actor_open_id, metric_id=existing_id
         )
         target = repo.get_resource(tenant_id, actor_open_id, resource_id)
@@ -405,7 +361,7 @@ def _persist_pipeline_stage(
 ) -> dict:
     """推进发布管线 stage(单向状态机)。scheduled→published(持久化 link)、published→measured。
 
-    逆向/跨级/无起点 → _StageConflict(上层 409)。当前 stage 经 _derive_stage 从既有
+    逆向/跨级/无起点 → _StageConflict(上层 409)。当前 stage 经 derive_stage 从既有
     performance_metric 派生。published 需非空 link(上层已校验)。落库失败抛出 → 整体失败。
     """
     with _repository() as repo:
@@ -417,10 +373,10 @@ def _persist_pipeline_stage(
         )
         if existing_id is None:
             raise _StageConflict("resource is not in the pipeline; schedule it first")
-        content = _existing_metric_content(
+        content = existing_metric_content(
             repo, tenant_id=tenant_id, actor_open_id=actor_open_id, metric_id=existing_id
         )
-        current = _derive_stage(content) or "scheduled"
+        current = derive_stage(content) or "scheduled"
         if (current, to_stage) not in _ALLOWED_TRANSITIONS:
             raise _StageConflict(f"cannot advance from '{current}' to '{to_stage}'")
         target = repo.get_resource(tenant_id, actor_open_id, resource_id)
@@ -429,7 +385,7 @@ def _persist_pipeline_stage(
             content["target_resource_id"] = resource_id
             if to_stage == "published":
                 content["note_url"] = link.strip()
-                content["published_at"] = content.get("published_at") or _now_iso()
+                content["published_at"] = content.get("published_at") or now_iso()
             content["stage"] = to_stage
             resource = repo.upsert_resource(
                 tenant_id=tenant_id,

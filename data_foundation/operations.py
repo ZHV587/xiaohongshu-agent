@@ -10,7 +10,6 @@ from datetime import date, datetime, timedelta, timezone
 
 from data_foundation.db import connect
 from data_foundation.studio_shared import (
-    _PIPELINE_STAGES,
     day_of_month,
     derive_stage,
 )
