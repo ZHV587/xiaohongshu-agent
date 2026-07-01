@@ -1,0 +1,13 @@
+/* ════════════════════════════════════════════════════════════
+   FONTS — 小红书文案助手
+   Display:  Outfit  (titles, brand, numerics)
+   Body:     Inter   (UI text, latin)
+   CJK:      PingFang SC / Microsoft YaHei / Noto Sans SC (system)
+   ────────────────────────────────────────────────────────────
+   These are Google-hosted webfonts. Consumers receive the
+   @font-face rules through this @import. If you need fully
+   offline binaries, download Outfit + Inter woff2 and swap the
+   import for local @font-face blocks.
+   ════════════════════════════════════════════════════════════ */
+
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap");

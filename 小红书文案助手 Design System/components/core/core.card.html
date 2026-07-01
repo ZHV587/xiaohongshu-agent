@@ -1,0 +1,77 @@
+<!-- @dsCard group="Components" viewport="700x440" name="Core — Buttons, Badges, Avatars, Cards" subtitle="Primary primitives: actions, status pills, avatars, surfaces" -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  body { margin: 0; background: var(--background); font-family: var(--font-sans); color: var(--text-body); padding: 24px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .lbl { font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--text-subtle); width: 100%; margin: 4px 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { Button, IconButton, Badge, Avatar, Card } = window.DesignSystem_71831b;
+  const Ico = ({ n, s = 16 }) => <i data-lucide={n} style={{ width: s, height: s }}></i>;
+
+  function Demo() {
+    React.useEffect(() => window.lucide && window.lucide.createIcons(), []);
+    return (
+      <div>
+        <div className="lbl">Buttons</div>
+        <div className="row">
+          <Button variant="primary" leftIcon={<Ico n="square-pen" />}>开启全新灵感对话</Button>
+          <Button variant="secondary">取消</Button>
+          <Button variant="soft" leftIcon={<Ico n="copy" s={14} />}>一键复制</Button>
+          <Button variant="ghost" size="sm">展开分析详情</Button>
+          <Button variant="primary" loading>生成中</Button>
+          <Button variant="primary" disabled>禁用</Button>
+        </div>
+        <div className="lbl">Icon buttons</div>
+        <div className="row">
+          <IconButton label="退出"><Ico n="log-out" /></IconButton>
+          <IconButton variant="soft" label="编辑"><Ico n="edit-3" /></IconButton>
+          <IconButton variant="solid" label="发送"><Ico n="send" /></IconButton>
+          <IconButton variant="surface" rounded="full" label="上一张"><Ico n="chevron-left" /></IconButton>
+        </div>
+        <div className="lbl">Badges</div>
+        <div className="row">
+          <Badge tone="synced">已同步</Badge>
+          <Badge tone="draft">草稿</Badge>
+          <Badge tone="synced" dot>连接成功</Badge>
+          <Badge tone="hot">🔥 爆款率 96%</Badge>
+          <Badge tone="topic" shape="chip">正文内容</Badge>
+          <Badge tone="info">配置可用</Badge>
+        </div>
+        <div className="lbl">Avatars</div>
+        <div className="row">
+          <Avatar name="张潇潇" />
+          <Avatar glyph="🍠" variant="agent" />
+          <Avatar name="我" variant="solid" size={28} />
+          <Avatar name="ZX" variant="neutral" size={40} />
+        </div>
+        <div className="lbl">Cards</div>
+        <div className="row" style={{ alignItems: "stretch" }}>
+          <Card style={{ width: 200 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>同步到飞书</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>APP Token: bascnu…</div>
+          </Card>
+          <Card tone="sunken" interactive style={{ width: 200 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>可点击选题卡片</div>
+            <div style={{ fontSize: 12, color: "var(--text-subtle)", marginTop: 4 }}>悬停看 coral 提升</div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+  ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script>
+</body>
+</html>
