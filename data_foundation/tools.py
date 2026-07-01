@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Annotated, Any
 
 import httpx
@@ -18,33 +16,22 @@ from data_foundation.creation_memory import (
     save_user_feedback_resource,
 )
 from data_foundation.config import embedding_snapshot_for_version
-from data_foundation.db import connect
 from data_foundation.graph import expand_graph as expand_graph_query
 from data_foundation import operations as ops
 from data_foundation.outbox_requests import default_write_requests
 from data_foundation.permissions import actor_from_config, default_tenant_id
-from data_foundation.studio_shared import is_admin_open_id
+from data_foundation.studio_shared import is_admin_open_id, repository as _repository
 from data_foundation.performance_feedback import (
     get_resource_performance_payload,
     save_performance_metric_resource,
 )
 from data_foundation.processors.embedding import EmbeddingProviderConfig, embedding_config_from_snapshot
-from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.search import semantic_search
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sync_service import sync_feishu_sources
 
 
 logger = logging.getLogger(__name__)
-
-
-@contextmanager
-def _repository() -> Iterator[ResourceRepository]:
-    conn = connect()
-    try:
-        yield ResourceRepository(conn)
-    finally:
-        conn.close()
 
 
 class EmbeddingSearchUnavailable(RuntimeError):
