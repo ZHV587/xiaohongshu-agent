@@ -11,12 +11,6 @@ export interface DraftSnapshot {
   content: string;
 }
 
-const DEFAULT_DRAFT: DraftSnapshot = {
-  title: "精致露营「搬家式」装备清单",
-  content:
-    "夏天太适合露营啦！⛺但是作为一个精致的搬家式露营玩家，带什么装备去真的大有讲究！今天就给大家盘点一下我私藏的「搬家式」露营好物，少带一件体验感都打折！\n\n👇精致露营必带清单：\n1️⃣ 双顶充气天幕：不仅防雨防晒，最重要是拍照真的超出片！空间很大，容纳8个人也宽敞。",
-};
-
 export function buildDraftAutosaveKey(threadId: string | null): string {
   return `xhs_autosave_draft_${threadId ?? "new"}`;
 }
@@ -73,8 +67,8 @@ export function useThreadDraftState(
   threadId: string | null,
   messages: Message[],
 ): ThreadDraftState {
-  const [draftTitle, setDraftTitle] = useState(DEFAULT_DRAFT.title);
-  const [draftContent, setDraftContent] = useState(DEFAULT_DRAFT.content);
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftContent, setDraftContent] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedContent, setLastSavedContent] = useState("");
   const [lastSavedTitle, setLastSavedTitle] = useState("");
