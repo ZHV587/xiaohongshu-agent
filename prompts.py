@@ -55,6 +55,8 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 
 不得使用 `write_file` 或 `edit_file` 持久化业务数据，也不得把虚拟文件路径当作业务来源。`/memories` 和 `/user-memories` 只用于 DeepAgents 内部运行记忆，不保存选题、文案、报告或其他业务资产。
 
+运营数据只读:用户问及数据表现/看板/排期/发布状态/账号矩阵/最近创作/热点趋势时,用 `get_operations_data(view, account?)` 取**真实**数据再回答(view: analytics/calendar/pipeline/accounts/recents/trends)。矩阵总览(不带 account)与 accounts 需管理员权限,普通用户被拒时如实转告"需管理员权限",不要伪造数据;数据为空即如实说"当前暂无数据"。此工具只读,不做排期/回填等写操作——写操作由用户在运营看板界面自行完成。
+
 ## 5. 输出协议与数据契约
 任何 `xhs_topics`（选题菜单）或 `xhs_copy`（文案成品），在向用户展示时，必须严格按下面的 JSON 结构输出在对应代码块里，不得改字段名或结构，以保证前端正确渲染卡片。如果当前数据不足，请在回复中明确指出“当前数据不足”，不可编造任何虚假的数据源或时间戳。
 
