@@ -1,4 +1,6 @@
 import type { Message } from "@langchain/langgraph-sdk";
+import { getContentString } from "@/components/thread/utils";
+import { parseXhsBlocks } from "@/lib/xhs-blocks";
 
 export interface ThinkingStep {
   label: string;
@@ -63,6 +65,110 @@ export function toolLabel(name: string, args: unknown): string {
   return TOOL_LABELS[name] ?? name;
 }
 
-export function deriveTimeline(_messages: Message[]): TimelineItem[] {
-  return [];
+interface ToolCall {
+  id?: string;
+  name: string;
+  args?: unknown;
+}
+
+function safeArgsLog(label: string, args: unknown): string {
+  let detail = "";
+  try {
+    detail = args == null ? "" : typeof args === "string" ? args : JSON.stringify(args);
+  } catch {
+    detail = "";
+  }
+  if (detail.length > 200) detail = detail.slice(0, 200) + "…";
+  return detail ? `${label}: ${detail}` : label;
+}
+
+// 剥离 xhs 结构块,只留自然语言(防 JSON 糊屏,spec §8)。
+function proseOf(content: Message["content"]): string {
+  const raw = getContentString(content);
+  if (!raw) return "";
+  const segs = parseXhsBlocks(raw);
+  return segs
+    .filter((s): s is { kind: "text"; text: string } => s.kind === "text")
+    .map((s) => s.text)
+    .join("")
+    .trim();
+}
+
+export function deriveTimeline(messages: Message[]): TimelineItem[] {
+  const out: TimelineItem[] = [];
+
+  // 全局:已答的 tool_call_id 集合(按 tool_call_id 配对,不靠顺序)。
+  const answered = new Set<string>();
+  for (const m of messages) {
+    if (m.type === "tool") {
+      const cid = (m as { tool_call_id?: string }).tool_call_id;
+      if (cid) answered.add(cid);
+    }
+  }
+
+  // 一轮内累积的原子步骤记录(渲染前折叠)。
+  type Atom = { name: string; done: boolean };
+  let atoms: Atom[] = [];
+  let logs: ThinkingLog[] = [];
+  let runOpen = false;
+  let runDone = false;
+
+  // 把原子记录按「同名连续」折叠成语义步骤;每组状态 = 组内全部 done 才 done。
+  const foldSteps = (): ThinkingStep[] => {
+    const steps: ThinkingStep[] = [];
+    let i = 0;
+    while (i < atoms.length) {
+      const name = atoms[i].name;
+      let allDone = atoms[i].done;
+      let j = i + 1;
+      while (j < atoms.length && atoms[j].name === name) {
+        allDone = allDone && atoms[j].done;
+        j++;
+      }
+      steps.push({ label: name, state: allDone ? "done" : "active" });
+      i = j;
+    }
+    return steps;
+  };
+
+  const flushRun = () => {
+    if (runOpen && atoms.length > 0) {
+      out.push({ kind: "thinking", run: { steps: foldSteps(), logs, done: runDone } });
+    }
+    atoms = [];
+    logs = [];
+    runOpen = false;
+    runDone = false;
+  };
+
+  for (const m of messages) {
+    if (m.type === "human") {
+      flushRun();
+      out.push({ kind: "user", text: getContentString(m.content) });
+      runOpen = true;
+      continue;
+    }
+    if (m.type === "ai") {
+      runOpen = true;
+      const calls = ((m as { tool_calls?: ToolCall[] }).tool_calls ?? []).filter(
+        (c) => c && typeof c.name === "string",
+      );
+      for (const c of calls) {
+        const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分
+        const done = !!(c.id && answered.has(c.id));
+        atoms.push({ name: label, done });
+        logs.push({ text: safeArgsLog(label, c.args) });
+      }
+      const prose = proseOf(m.content);
+      if (prose) {
+        runDone = true;
+        flushRun();
+        out.push({ kind: "ai", text: prose });
+      }
+      continue;
+    }
+    // tool 消息不直接产 item —— 其效果已经过 answered 反映到步骤状态。
+  }
+  flushRun();
+  return out;
 }
