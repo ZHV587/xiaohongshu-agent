@@ -26,3 +26,8 @@ export function useThreads() {
   }
   return context;
 }
+
+/** 非抛出版:provider 不存在时返回 null(供 DEV 预览路由等无 ThreadProvider 的场景优雅降级)。 */
+export function useThreadsOptional(): ThreadContextType | null {
+  return useContext(ThreadContext) ?? null;
+}

@@ -11,11 +11,11 @@ import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
 
 export function CreationScreen() {
-  const { note, activeRecent, setActiveRecent, recents, actions } = useStudio();
+  const { note, actions } = useStudio();
   const [detailId, setDetailId] = useState<number | null>(null);
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-      <Recents activeId={activeRecent} onSelect={(id) => { setActiveRecent(id); const r = (recents || []).find((x) => x.id === id); if (r) actions.toast(`📂 已打开《${r.title}》草稿`); }} onNew={() => { setDetailId(null); actions.newChat(); }} compact />
+      <Recents onNew={() => { setDetailId(null); actions.newChat(); }} compact />
       <ChatColumn showTopics={false} />
       <section style={{ width: 400, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
         <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>

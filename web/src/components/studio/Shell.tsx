@@ -3,10 +3,14 @@
 // Studio shell — top bar with brand, section switcher, account chip;
 // and the recents sidebar reused by the creation/deep screens.
 
-import type { CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Avatar, Badge, Button, Icon } from "@/components/ds";
 import { Eyebrow } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/StudioContext";
+import { useThreadOptional } from "@/components/thread/ThreadContext";
+import { useThreadsOptional } from "@/providers/thread-context";
+import { getContentString } from "@/components/thread/utils";
+import { AdminConfigPanel } from "@/components/studio/AdminConfigPanel";
 import type { StudioSection } from "@/components/studio/types";
 
 interface StudioTopBarProps {
@@ -65,36 +69,88 @@ export function StudioTopBar({ section, setSection }: StudioTopBarProps) {
 }
 
 interface RecentsProps {
-  activeId: number | null;
-  onSelect: (id: number) => void;
   onNew: () => void;
   compact?: boolean;
 }
 
-export function Recents({ activeId, onSelect, onNew, compact = false }: RecentsProps) {
-  const { recents } = useStudio();
+/** 会话历史侧边栏:列真实 LangGraph 会话(useThreads),点击 setThreadId 切换加载;
+ * 可收缩/展开;底部为管理员配置入口。取代旧的「内容资源 recents」列表。 */
+export function Recents({ onNew, compact = false }: RecentsProps) {
+  const thread = useThreadOptional();
+  const threadsCtx = useThreadsOptional();
+  const threadId = thread?.threadId ?? null;
+  const setThreadId = thread?.setThreadId;
+  const threads = threadsCtx?.threads ?? [];
+  const getThreads = threadsCtx?.getThreads;
+  const threadsLoading = threadsCtx?.threadsLoading ?? false;
+  const [collapsed, setCollapsed] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+
+  // 挂载时拉取真实会话列表(空态由 threads.length===0 呈现,不 mock)。
+  // 无 ThreadProvider(DEV 预览路由)时 getThreads 为 undefined,跳过。
+  useEffect(() => {
+    void getThreads?.();
+  }, [getThreads]);
+
+  const threadTitle = (t: (typeof threads)[number]): string => {
+    const v = t.values as { messages?: Array<{ content: unknown }> } | undefined;
+    if (v && Array.isArray(v.messages) && v.messages.length > 0) {
+      const first = getContentString(v.messages[0].content as never).trim();
+      if (first) return first;
+    }
+    return "未命名对话";
+  };
+
+  if (collapsed) {
+    return (
+      <aside style={{ width: 52, background: "var(--surface-sidebar)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "14px 0", flexShrink: 0 }}>
+        <button title="展开侧边栏" onClick={() => setCollapsed(false)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", display: "inline-flex", padding: 6 }}><Icon name="panel-left-open" size={18} /></button>
+        <button title="开启全新灵感对话" onClick={onNew} style={{ border: "none", background: "var(--accent-surface)", color: "var(--primary)", cursor: "pointer", borderRadius: "var(--radius-sm)", display: "inline-flex", padding: 8 }}><Icon name="square-pen" size={16} /></button>
+        <div style={{ marginTop: "auto" }}>
+          <button title="管理员配置" onClick={() => setConfigOpen(true)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", display: "inline-flex", padding: 6 }}><Icon name="settings" size={18} /></button>
+        </div>
+        {configOpen && <AdminConfigPanel onClose={() => setConfigOpen(false)} />}
+      </aside>
+    );
+  }
+
   return (
     <aside style={{ width: compact ? 220 : 260, background: "var(--surface-sidebar)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
       <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14, flex: 1, overflow: "hidden" }}>
-        <Button variant="primary" block size="sm" leftIcon={<Icon name="square-pen" size={15} />} onClick={onNew}>开启全新灵感对话</Button>
-        <Eyebrow>最近创作</Eyebrow>
-        <div className="cs" style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
-          {recents.map((r) => {
-            const on = r.id === activeId;
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Button variant="primary" block size="sm" leftIcon={<Icon name="square-pen" size={15} />} onClick={onNew}>开启全新灵感对话</Button>
+          <button title="收起侧边栏" onClick={() => setCollapsed(true)} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-muted)", display: "inline-flex", padding: 4, flexShrink: 0 }}><Icon name="panel-left-close" size={17} /></button>
+        </div>
+        <Eyebrow>历史会话</Eyebrow>
+        <div className="cs" style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", flex: 1 }}>
+          {threads.length === 0 && (
+            <span style={{ fontSize: 11, color: "var(--text-subtle)", padding: "8px 11px", lineHeight: 1.6 }}>
+              {threadsLoading ? "加载中…" : "暂无历史会话,点上方开启新对话"}
+            </span>
+          )}
+          {threads.map((t) => {
+            const on = t.thread_id === threadId;
             return (
-              <button key={r.id} onClick={() => onSelect(r.id)} style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%", textAlign: "left",
+              <button key={t.thread_id} onClick={() => setThreadId?.(t.thread_id)} title={threadTitle(t)} style={{
+                display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
                 padding: "9px 11px", fontSize: "var(--text-sm)", borderRadius: "var(--radius-sm)", cursor: "pointer", border: "none",
                 borderLeft: on ? "2px solid var(--primary)" : "2px solid transparent",
                 background: on ? "var(--oats-dark)" : "transparent", color: on ? "var(--primary)" : "var(--text-muted)", fontWeight: on ? 600 : 400,
               } as CSSProperties}>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.icon} {r.title}</span>
-                <Badge tone={r.status === "synced" ? "synced" : "draft"} shape="chip">{r.status === "synced" ? "已同步" : "草稿"}</Badge>
+                <Icon name="message-square" size={13} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{threadTitle(t)}</span>
               </button>
             );
           })}
         </div>
       </div>
+      {/* 管理员配置入口(侧边栏下方) */}
+      <div style={{ borderTop: "1px solid var(--border)", padding: 12 }}>
+        <button onClick={() => setConfigOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 11px", fontSize: "var(--text-sm)", borderRadius: "var(--radius-sm)", cursor: "pointer", border: "none", background: "transparent", color: "var(--text-muted)" }}>
+          <Icon name="settings" size={15} /> 管理员配置
+        </button>
+      </div>
+      {configOpen && <AdminConfigPanel onClose={() => setConfigOpen(false)} />}
     </aside>
   );
 }
