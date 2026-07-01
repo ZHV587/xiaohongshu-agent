@@ -90,13 +90,6 @@ export interface ChatMsg {
   thinking?: boolean;
 }
 
-export interface Recent {
-  id: number;
-  icon: string;
-  title: string;
-  status: "synced" | "draft";
-}
-
 export interface StudioUser {
   name: string;
   team: string;

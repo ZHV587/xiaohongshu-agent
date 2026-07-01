@@ -44,7 +44,6 @@ import type {
   MonthInfo,
   PublishItem,
   PublishStage,
-  Recent,
   SelectedEvidence,
   StudioNote,
   StudioSection,
@@ -64,7 +63,6 @@ export interface StudioLoadState {
   library: LoadStatus;
   teardown: LoadStatus;
   pipeline: LoadStatus;
-  recents: LoadStatus;
   trends: LoadStatus;
   images: LoadStatus;
 }
@@ -83,7 +81,6 @@ export interface StudioStore {
   // shell + 账号运营 collections (real-sourced; see StudioProvider)
   user: StudioUser;
   images: string[];
-  recents: Recent[];
   trends: Trend[];
   dashboard: DashboardStat[];
   library: LibraryItem[];
@@ -142,9 +139,6 @@ interface AccountsData {
 interface PipelineData {
   queue?: PublishItem[];
 }
-interface RecentsData {
-  recents?: Recent[];
-}
 interface TrendsData {
   trends?: Trend[];
 }
@@ -200,7 +194,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     { queue: [] },
     { account: accountParam },
   );
-  const recentsRes = useBackendResource<RecentsData>("/api/backend/recents", { recents: [] });
   const trendsRes = useBackendResource<TrendsData>("/api/backend/trends", { trends: [] });
 
   const dashboard = analyticsRes.data.dashboard ?? [];
@@ -209,7 +202,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const month = calendarRes.data.month ?? EMPTY_MONTH;
   const accounts = accountsRes.data.accounts ?? [];
   const publishQueue = pipelineRes.data.queue ?? [];
-  const recents = recentsRes.data.recents ?? [];
   const trends = trendsRes.data.trends ?? [];
   // 暂无配图后端来源 —— 真实空容器（组件按 images.length 守卫，不渲染占位图）。
   const images: string[] = useMemo(() => [], []);
@@ -227,7 +219,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     library: statusFor(analyticsRes.status, library.length === 0),
     teardown: statusFor(analyticsRes.status, teardown.points.length === 0),
     pipeline: statusFor(pipelineRes.status, publishQueue.length === 0),
-    recents: statusFor(recentsRes.status, recents.length === 0),
     trends: statusFor(trendsRes.status, trends.length === 0),
     images: images.length === 0 ? "empty" : "ready",
   };
@@ -471,7 +462,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     evidence,
     user,
     images,
-    recents,
     trends,
     dashboard,
     library,

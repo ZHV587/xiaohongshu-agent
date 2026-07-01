@@ -239,22 +239,6 @@ function TrendRadar() {
   );
 }
 
-// 选题选定后的收起条（钉取感：列表→详情）+ 深度创作入口
-function SelectedTopicBar({ onBrowse }: { onBrowse: () => void }) {
-  const { note, topics, actions } = useStudio();
-  const topic = (topics || []).find((t) => t.id === note.topicId);
-  if (!topic) return null;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-coral)", background: "color-mix(in srgb, var(--accent-surface) 55%, white)" }}>
-      <Badge tone="topic" shape="chip">{topic.angle}</Badge>
-      <span style={{ flex: 1, minWidth: 0, fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topic.title}</span>
-      {topic.hotRate != null && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--hot)", whiteSpace: "nowrap" }}>🔥 {topic.hotRate}%</span>}
-      <button onClick={onBrowse} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", background: "var(--surface-card)", borderRadius: "var(--radius-sm)", padding: "4px 9px", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}><Icon name="list" size={12} /> 换题</button>
-      <Button variant="soft" size="sm" leftIcon={<Icon name="feather" size={12} />} onClick={() => actions.setSection("deep")}>深度创作</Button>
-    </div>
-  );
-}
-
 // 选题详情 — 点选题卡先看各类信息，再进入深度创作
 function TopicDetail({ topicId, onBack }: { topicId: number; onBack: () => void }) {
   const { topics, evidence, actions } = useStudio();

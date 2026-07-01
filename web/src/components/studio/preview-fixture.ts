@@ -12,7 +12,6 @@ import type {
   LibraryItem,
   MonthInfo,
   PublishItem,
-  Recent,
   StudioUser,
   Teardown,
   Topic,
@@ -25,12 +24,6 @@ export const FX_IMAGES = [
   "https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?auto=format&fit=crop&w=600&q=80",
   "https://images.unsplash.com/photo-1523987355523-c7b5b0dd90a7?auto=format&fit=crop&w=600&q=80",
   "https://images.unsplash.com/photo-1510312305653-8ed496efae75?auto=format&fit=crop&w=600&q=80",
-];
-
-export const FX_RECENTS: Recent[] = [
-  { id: 1, icon: "⛺", title: "露营装备好物推荐", status: "synced" },
-  { id: 2, icon: "☕", title: "咖啡探店爆款草稿", status: "draft" },
-  { id: 3, icon: "👗", title: "夏季轻熟风穿搭笔记", status: "draft" },
 ];
 
 export const FX_TOPICS: Topic[] = [
