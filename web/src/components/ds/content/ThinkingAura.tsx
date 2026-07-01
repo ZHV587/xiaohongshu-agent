@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties, type HTMLAttributes } from "react";
+import { useState, useEffect, type CSSProperties, type HTMLAttributes } from "react";
 
 /**
  * ThinkingAura (思维微光) — the agent's live reasoning panel. A
@@ -37,6 +37,14 @@ export function ThinkingAura({
 }: ThinkingAuraProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+
+  // 当 defaultCollapsed prop 从 false → true（该轮思考完成）时自动折叠。
+  // 依赖数组只含 defaultCollapsed，用户在稳定 done 态下手动展开不会被强制覆盖。
+  useEffect(() => {
+    if (defaultCollapsed) {
+      setCollapsed(true);
+    }
+  }, [defaultCollapsed]);
 
   if (collapsed) {
     return (
