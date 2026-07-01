@@ -17,6 +17,7 @@ from data_foundation.db import connect
 from data_foundation.permissions import default_tenant_id
 from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.runtime_facts import module_fact, supervisor_runtime_fact, utc_now
+from data_foundation.studio_shared import is_admin_open_id
 from models import build_pool_from_config
 from tools.lark_cli import lark_cli
 from tools.runtime_identity import identity_config
@@ -45,14 +46,6 @@ class InternalActor:
     is_admin: bool
 
 
-def _admin_open_ids() -> set[str]:
-    return {
-        item.strip()
-        for item in os.environ.get("XHS_ADMIN_OPEN_IDS", "").split(",")
-        if item.strip()
-    }
-
-
 def _json_error(status: int, message: str) -> JSONResponse:
     response = JSONResponse({"error": message}, status_code=status)
     response.headers["Cache-Control"] = "no-store"
@@ -75,7 +68,7 @@ def _require_internal_key(request: Request) -> JSONResponse | None:
 
 def _actor_from_request(request: Request) -> InternalActor:
     open_id = request.headers.get("X-XHS-Open-Id", "").strip()
-    is_admin = bool(open_id and open_id in _admin_open_ids())
+    is_admin = is_admin_open_id(open_id)
     claimed = request.headers.get("X-XHS-Is-Admin")
     if claimed is not None:
         claimed_is_admin = claimed.strip().lower() in {"true", "1", "yes"}
