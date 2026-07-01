@@ -23,20 +23,22 @@
 ## 前端:活消费边界(已核实,决定去留)
 
 `studio/` 活 UI 经 `useThread()` 实际消费的字段(**保留**):
-`messages`、`isLoading`、`submitText`、`threadId`/`setThreadId`、`draftTitle`/`draftContent`/`setDraftTitle`/`setDraftContent`、`handleExecuteCommand`、`handleSyncToFeishu`、`selectedEvidence`/`setSelectedEvidence`(⚠️ 见下)。
+`messages`、`isLoading`、`submitText`、`threadId`/`setThreadId`、`draftTitle`/`draftContent`/`setDraftTitle`/`setDraftContent`、`handleExecuteCommand`、`handleSyncToFeishu`。
+
+> **注:`selectedEvidence` 不在此列。** studio 的 `selectedEvidence`(`CreationScreen`/`StudioShell`)来自 **`useStudio()`**(StudioContext 独立 state),与 `ThreadContext` 版是两个不同的东西;`ThreadContext.t.selectedEvidence` 无任何活消费方 → 死。故 `useWorkbenchTabsState` 整个死,不涉及迁移。
 
 ### 陷阱:混住活字段的死 hook
 
-四个「死 hook」并非全死,逐字段甄别:
+四个「死 hook」并非全死,逐字段甄别(已用精确 import 追踪核实来源):
 
-| hook | 死字段(删) | 活字段(留) |
+| hook | 死字段(删) | 活字段(留,需迁移) |
 |---|---|---|
-| `usePreviewState` | `viewMode`/`setViewMode`、`carouselIndex`/`setCarouselIndex`、`carouselImages`(**假数据**) | `isEditingText`/`setIsEditingText`(provider 原位编辑器自适应高度用,[:129](../../web/src/components/thread/ThreadStateProvider.tsx)/[:344](../../web/src/components/thread/ThreadStateProvider.tsx)) |
-| `useWorkbenchTabsState` | `rightTab`/`setRightTab` | **`selectedEvidence`/`setSelectedEvidence`**(`CreationScreen`/`StudioShell`/`StudioContext` 活用) |
+| `usePreviewState` | `viewMode`/`setViewMode`、`carouselIndex`/`setCarouselIndex`、`carouselImages`(**假数据**) | `isEditingText`/`setIsEditingText`(provider 原位编辑器自适应高度用,[:129](../../web/src/components/thread/ThreadStateProvider.tsx)/[:133](../../web/src/components/thread/ThreadStateProvider.tsx)) |
+| `useWorkbenchTabsState` | **全死**:`rightTab`/`setRightTab` + `selectedEvidence`/`setSelectedEvidence`(ThreadContext 版无活消费方) | 无 → **可整删,无需迁移** |
 | `useCommandPaletteState` | `showCommandPalette`/`setShowCommandPalette`、`cmdSearch`/`setCmdSearch` | 无(但 `handleExecuteCommand` 内部调 `setShowCommandPalette`——见改造) |
 | `useFeishuWorkspaceState` | `feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification` 及其 setter | 无(但 `handleSyncToFeishu` 内部调 `setIsFeishuActionPending`——见改造) |
 
-因存在活字段/活 handler 依赖,**不能整删 4 个 hook 文件**;需按下述改造把活逻辑就地保留、死状态移除。
+唯一需迁移的活字段是 `usePreviewState` 的 `isEditingText`;其余三个 hook 无活字段,整删。因活 handler(`handleExecuteCommand`/`handleSyncToFeishu`)内部仍调死 setter,需按下述改造剔除死副作用。
 
 ---
 
@@ -49,24 +51,25 @@
 - 组件:`index.tsx`(死根)、`ChatTimeline.tsx`、`ComposerPanel.tsx`、`RightInspector.tsx`、`PhoneSimulator.tsx`(**假数据**)、`CommandPalette.tsx`、`EvidenceInspector.tsx`、`MultimodalPreview.tsx`、`ContentBlocksPreview.tsx`
 - `messages/` 整个目录(9 文件:ai/human/copy-card/topic-cards/search-cards/panel-card/evidence-time/generic-interrupt/shared)
 - `agent-inbox/` 整个目录
+- `history/index.tsx`(`ThreadHistory`,仅死根引用;⚠️ 目录内**只删这一个**)
 - 辅助:`markdown-text.tsx`、`syntax-highlighter.tsx`、`markdown-styles.css`、`artifact-hooks.tsx`、`artifact-slot.tsx`
 - lib/hooks:`lib/tool-render.tsx`、`lib/evidence-rank.ts`、`lib/agent-inbox-interrupt.ts`、`hooks/useMediaQuery.tsx`
 - 根目录:`web/mockup.html`(设计原型,含假数据)
 
-**保留(边界):** `artifact.tsx` + `artifact-context.ts`(page.tsx 的 `ArtifactProvider` 活用)、`ThreadContext.tsx`、`ThreadStateProvider.tsx`、`useThreadDraftState.ts`、`history/`(被 `AdminConfigPanel` 活用)、`utils.ts`、`types.ts`。
+**保留(边界):** `artifact.tsx` + `artifact-context.ts`(page.tsx 的 `ArtifactProvider` 活用)、`ThreadContext.tsx`、`ThreadStateProvider.tsx`、`useThreadDraftState.ts`、`utils.ts`、`types.ts`;`history/` 下的 `FeishuConfigPage.tsx`/`LlmConfigPage.tsx`/`RuntimeFactsPage.tsx`(`AdminConfigPanel` 活用)+ `runtime-facts-format.ts`(被 `RuntimeFactsPage` 活用)。
 
 > 每个删除文件先 `grep "import.*<名>"` 精确复核活引用为零;最终以 knip 复跑 + `tsc --noEmit` 零错误为准。测试文件(`preview-state.test.ts`/`command-palette-state.test.ts`/`feishu-workspace-state.test.ts` 等)随被测死代码一并删除。
 
 ### B. 死 hook 的活字段迁移 + 文件删除
 
 1. **`usePreviewState.ts` → 删文件**;`isEditingText` 活逻辑迁入 `ThreadStateProvider` 本地 `useState`(一行 `const [isEditingText, setIsEditingText] = useState(false)`)。假数据(`carouselImages`)随文件删除消失。
-2. **`useWorkbenchTabsState.ts` → 删文件**;`selectedEvidence`/`setSelectedEvidence` 迁入 provider 本地 `useState<SourceEvidence | null>(null)`。`rightTab` 死状态丢弃。
+2. **`useWorkbenchTabsState.ts` → 删文件**(整死:`rightTab` + `selectedEvidence` 均无活消费方,`selectedEvidence` 活消费来自 `useStudio()` 而非此处)。无字段迁移。
 3. **`useCommandPaletteState.ts` → 删文件**;`showCommandPalette`/`cmdSearch` 死状态丢弃(见 C 对 `handleExecuteCommand` 的处理)。
 4. **`useFeishuWorkspaceState.ts` → 删文件**;死状态丢弃(见 C 对 `handleSyncToFeishu` 的处理)。
 
 ### C. `ThreadStateProvider.tsx` 改造(保留活逻辑,移除死状态)
 
-- 删除对 4 个死 hook 的 import 与调用;`isEditingText`、`selectedEvidence` 改为本地 `useState`。
+- 删除对 4 个死 hook 的 import 与调用;`isEditingText` 改为本地 `useState`。(`selectedEvidence` 无需迁移——ThreadContext 版是死的。)
 - **`handleExecuteCommand`**:保留(活)。移除内部 `setShowCommandPalette(false)`(命令面板弹窗已删,该状态无意义);`submitText(...)` 调用链不动。
 - **`handleSyncToFeishu`**:保留(活)。移除内部对死状态的 set(`setIsFlying`/`setSyncStep`/`setSyncStepsVisible`/`setIsFeishuActionPending`——这些字段无活 UI 读取);保留 `submitText(sync_copy_to_feishu ...)` 与 `setIsSyncing` 守卫逻辑(防重复提交,`isSyncing` 保留为本地态)。
 - **删除死 handler**:`handleSendNotification`、`handleInsertEmoji`、`handleAppendTag`(均无活引用)。
@@ -74,7 +77,7 @@
 
 ### D. `ThreadContext.tsx` 瘦身
 
-从 `ThreadContextProps` interface 与 provider `value` 中移除所有死字段:`rightTab`/`viewMode`/`carouselIndex`/`carouselImages`/`showCommandPalette`/`cmdSearch`/`feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification`/`isFeishuActionPending`/`syncStepsVisible`/`syncStep`/`isFlying`/`bitableUrl`/`wikiUrl` 及死 handler。保留活字段(见「活消费边界」)。以 `tsc --noEmit` 零错误确认无活消费方遗漏。
+从 `ThreadContextProps` interface 与 provider `value` 中移除所有死字段:`rightTab`/`viewMode`/`carouselIndex`/`carouselImages`/`selectedEvidence`(ThreadContext 版)/`showCommandPalette`/`cmdSearch`/`feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification`/`isFeishuActionPending`/`syncStepsVisible`/`syncStep`/`isFlying`/`bitableUrl`/`wikiUrl` 及死 handler。保留活字段(见「活消费边界」)。以 `tsc --noEmit` 零错误确认无活消费方遗漏。
 
 ---
 
@@ -84,7 +87,7 @@
 
 1. 删 `tools.py:41-47` 的 `_repository()` 定义。
 2. `tools.py:26` 的 import 扩为 `from data_foundation.studio_shared import is_admin_open_id, repository as _repository`——用 `as _repository` 别名,**14 处调用点**(148/193/243/324/356/378/387/428/450/472/494/514/580)零改名。
-3. 清理因删定义不再使用的 import:`Iterator`([:5](../../data_foundation/tools.py))、`contextmanager`([:6](../../data_foundation/tools.py))、`ResourceRepository`([:32](../../data_foundation/tools.py))、`connect`——逐个 grep 确认模块内无他用后删,有他用则留。
+3. 清理因删定义不再使用的 import:`Iterator`([:5](../../data_foundation/tools.py))、`contextmanager`([:6](../../data_foundation/tools.py))、`ResourceRepository`([:32](../../data_foundation/tools.py))、`connect`([:21](../../data_foundation/tools.py))——**已核实**四者除 `_repository()` 定义外在 `tools.py` 内零他用,可全部删除。
 
 对 deepagents 拓展面零影响:`@tool`/`tools=`/`RunnableConfig` 全不变,仅工具函数体内部 db helper 来源收敛。
 
@@ -115,7 +118,7 @@
 
 | 风险 | 缓解 |
 |---|---|
-| context 瘦身误删活字段致运行时 undefined | `selectedEvidence` 等活字段已核出并保留;`tsc --noEmit` 强制全消费方类型对齐兜底 |
+| context 瘦身误删活字段致运行时 undefined | `selectedEvidence` 已核实来自 `useStudio()`(非 ThreadContext),ThreadContext 版是死的可删;`tsc --noEmit` 强制全消费方类型对齐兜底 |
 | 活 handler 内死 setter 移除后残留悬空引用 | 逐 handler 核内部依赖;编译期 + eslint no-undef 兜底 |
 | knip 误报(漏动态入口)误删活文件 | knip 结果 + 精确 import 复核双重确认;`tsc`/`build` 最终裁决 |
 | 删 artifact-hooks/slot 波及活 artifact.tsx | 已核实 `artifact.tsx`/`artifact-context.ts` 活、`artifact-hooks`/`artifact-slot` 仅死 `messages/ai` 用 |
