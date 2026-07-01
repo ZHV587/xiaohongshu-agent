@@ -37,20 +37,40 @@ studio 有两条数据平面:
 BFF 路由与 agent 工具都作为它的**消费者**,互不依赖:
 
 ```
-        data_foundation/operations.py   ← 领域层(聚合 + 鉴权判定,唯一真源)
+        data_foundation/studio_shared.py  ← 基础层(读写共用的辅助 + 鉴权判定)
           ↑                    ↑
-  studio_api.py(BFF 路由)   tools.py(agent 工具 get_operations_data)
+        data_foundation/operations.py     ← 领域层(load_* 只读聚合,唯一真源)
+          ↑                    ↑
+  studio_api.py(BFF 路由:读 handler + 写 _persist_*)   tools.py(agent 工具 get_operations_data)
           ↑                    ↑
   /api/backend/*(UI 用户)   xhs_agent(对话内只读)
 ```
 
 三层清晰、无横向耦合;UI 和 agent 看到完全同一份数据,杜绝两套逻辑漂移。
 
+> **自审发现(已纳入)**:读路径 `_load_*` 与写路径 `_persist_*` **共用**若干私有辅助
+> (`_repository`、`_derive_stage`、`_existing_metric_content`、`_day_of_month`、`_now_iso`)。
+> 若只把读路径迁走,这些辅助要么被复制(两份漂移,违背解耦初衷)、要么让写路径反向依赖
+> operations(耦合回去)。故新增**基础层 `studio_shared.py`** 承载这些共用辅助,读(operations)
+> 与写(studio_api._persist_*)都依赖它,谁也不依赖谁。
+
 ## 详细设计
 
-### 1. 领域层 `data_foundation/operations.py`(新建)
+### 1. 基础层 `data_foundation/studio_shared.py`(新建)
 
-从 `studio_api.py` 迁入(行为不变,仅搬家 + 改引用):
+承载**读写路径共用**的底层辅助(纯逻辑,依赖 db/permissions/performance_feedback 等底层):
+
+- `repository()` — 仓储上下文(原 `_repository`,读写共用)
+- `derive_stage(content)` — 发布管线 stage 派生(原 `_derive_stage`;注:上一轮已删启发式回退,
+  只认显式 stage,迁移时同步订正过时 docstring)
+- `existing_metric_content(...)` — 读既有 metric content_json(读写共用)
+- `day_of_month(...)` / `now_iso()` / 时间格式化辅助(共用)
+- `is_admin_open_id(open_id: str) -> bool` — 读 `XHS_ADMIN_OPEN_IDS` 判定(供 UI 与 agent 共用;
+  取代 internal_api 内联的 `_admin_open_ids()`,internal_api 改为复用它)。
+
+### 2. 领域层 `data_foundation/operations.py`(新建)
+
+从 `studio_api.py` 迁入 6 个只读聚合(行为不变,仅搬家),依赖 `studio_shared`:
 
 - `load_analytics(*, tenant_id, account)` — 数据看板 + 选题库 + 爆款拆解
 - `load_calendar(*, tenant_id, account)` — 月份 + 排期项
@@ -58,22 +78,25 @@ BFF 路由与 agent 工具都作为它的**消费者**,互不依赖:
 - `load_accounts(*, tenant_id)` — 账号矩阵 + 聚合(当前恒空,数据底座无账号实体)
 - `load_recents(*, tenant_id, open_id)` — 登录用户最近创作(倒序)
 - `load_trends(*, tenant_id)` — 热点趋势(当前恒空,无外部源)
-- 连带迁入其私有辅助:`_derive_stage`、`_load_schedule_items`、`_build_dashboard` 等(只被这些用到的)。
+- 连带迁入**仅被读路径使用**的私有辅助:`_load_schedule_items`、`_build_dashboard`、
+  `_build_library_and_teardown`、`_compact_number`、`_delta_pct`、`_format_schedule_time`、`_as_datetime` 等。
 
-新增鉴权 helper(领域层中立,不依赖 HTTP request):
-- `is_admin_open_id(open_id: str) -> bool` — 读 `XHS_ADMIN_OPEN_IDS` 判定(供 UI 与 agent 共用,
-  取代 internal_api 里内联的 `_admin_open_ids()` 判定,internal_api 改为复用它)。
+命名:迁出后 6 个聚合去下划线(`load_*` 公开,领域层公开 API)。
 
-命名:迁出后去掉下划线(`load_*` 公开),因为现在是领域层的公开 API。
+### 3. 写路径 `studio_api._persist_*`(改为基础层消费者)
 
-### 2. BFF 路由 `studio_api.py`(改为消费者)
+- `_persist_schedule`/`_persist_backfill`/`_persist_pipeline_stage` 保留在 studio_api(写=UI 动作,
+  与运营读平面职责分离),但其用到的共享辅助改为 `from studio_shared import repository, derive_stage, ...`。
+- 行为零变化。
+
+### 4. BFF 读 handler `studio_api.internal_studio_*`(改为 operations 消费者)
 
 - 删除迁走的 `_load_*` 实现,改为 `from data_foundation.operations import load_analytics, ...`。
 - 各 `internal_studio_*` handler 调用点改名(`_load_analytics` → `load_analytics`)。
 - **HTTP 鉴权逻辑不变**(仍 require_admin/require_user,底层复用 `is_admin_open_id`)。
 - 行为零变化,现有 `test_studio_api.py` 全部照过。
 
-### 3. agent 工具 `data_foundation/tools.py`(新增消费者)
+### 5. agent 工具 `data_foundation/tools.py`(新增消费者)
 
 新增工具:
 
@@ -91,7 +114,7 @@ def get_operations_data(view: str, account: str | None = None,
 - 分发:按 `view` 调对应 `operations.load_*`。
 - 加进 `data_foundation_tools` 列表,agent 自动获得。
 
-### 4. 鉴权口径(A:agent 能读 == 用户 UI 能读)
+### 6. 鉴权口径(A:agent 能读 == 用户 UI 能读)
 
 工具内部复用与 UI 完全相同的判定:
 
@@ -106,7 +129,7 @@ def get_operations_data(view: str, account: str | None = None,
 杜绝借 agent 越权:普通用户让 agent 读矩阵总览 → agent 收到「需管理员权限」→ 转告用户,
 不返回他人数据。
 
-### 5. prompts.py
+### 7. prompts.py
 
 给主 agent 补充:用户问及运营/数据表现/排期/发布状态/账号矩阵时,调 `get_operations_data`
 获取真实数据再回答;数据为空时如实说明,不编造。
