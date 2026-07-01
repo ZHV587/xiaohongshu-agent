@@ -188,15 +188,3 @@ export type StudioSection = "create" | "deep" | "ops";
 export const IMAGE_ROLES = ["封面 · 大字报", "产品特写", "场景氛围", "清单合影", "选购对比"];
 export const QUICK_EMOJI = ["🍠", "⛺", "☕", "✨", "🌿", "👇", "📝", "🔥", "🌅", "✅", "❌", "1️⃣", "2️⃣", "💛"];
 export const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
-/** Default recommended hashtags — UI starter set; the live picker is fed by the
- *  agent's tag suggestions once a draft exists. */
-export const RECOMMENDED_TAGS = [
-  "新手必看",
-  "露营好物",
-  "氛围感",
-  "夏日露营",
-  "搬家式露营",
-  "露营避坑指南",
-  "周末去哪儿",
-  "出片攻略",
-];

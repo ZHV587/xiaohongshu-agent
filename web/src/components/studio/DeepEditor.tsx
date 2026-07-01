@@ -8,7 +8,7 @@ import { Button, HashtagTag, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "./StudioContext";
 import { computeChecks, scoreOf } from "./rubric";
-import { IMAGE_ROLES, QUICK_EMOJI, RECOMMENDED_TAGS, type VersionId } from "./types";
+import { IMAGE_ROLES, QUICK_EMOJI, type VersionId } from "./types";
 import { CopyDoctor, RiskPanel, ScheduleBar } from "./Composer";
 import { EvidenceChips } from "./CreationScreen";
 
@@ -19,6 +19,14 @@ export function DeepEditor() {
   const score = scoreOf(checks);
   const writing = note.status === "writing";
   const body = note.body || "";
+  // 推荐标签来自选中选题的真实关键词(note.kw,agent 产出的空格分隔词),去重、去掉已选,取前 6;
+  // 无 kw(未选选题/agent 未给)→ 空,不写死假标签,由「配标签」按钮让 AI 生成。
+  const kwSuggestions = (note.kw || "")
+    .split(/[\s,，、]+/)
+    .map((s) => s.trim())
+    .filter((s) => s && !note.tags.includes(s))
+    .filter((s, i, arr) => arr.indexOf(s) === i)
+    .slice(0, 6);
 
   const insertEmoji = (e: string) => {
     const el = bodyRef.current;
@@ -131,12 +139,15 @@ export function DeepEditor() {
             <Eyebrow>话题标签 · {note.tags.length} 个（建议 5–10，大词+长尾）</Eyebrow>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {note.tags.map((t) => <span key={t} onClick={() => actions.removeTag(t)} style={{ cursor: "pointer" }} title="点击移除"><HashtagTag>{t}</HashtagTag></span>)}
-              {note.tags.length === 0 && <span style={{ fontSize: 11, color: "var(--text-subtle)" }}>暂无，点下方推荐添加</span>}
+              {note.tags.length === 0 && <span style={{ fontSize: 11, color: "var(--text-subtle)" }}>暂无，点上方「配标签」让 AI 基于正文生成</span>}
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <span style={{ fontSize: 10, color: "var(--text-subtle)", alignSelf: "center" }}>推荐：</span>
-              {RECOMMENDED_TAGS.filter((t) => !note.tags.includes(t)).slice(0, 6).map((t) => <HashtagTag key={t} addable onAdd={() => actions.addTag(t)}>{t}</HashtagTag>)}
-            </div>
+            {/* 推荐标签来自选中选题的真实关键词(note.kw,agent 产出);无则引导用「配标签」让 AI 生成,不写死假标签 */}
+            {kwSuggestions.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <span style={{ fontSize: 10, color: "var(--text-subtle)", alignSelf: "center" }}>选题关键词：</span>
+                {kwSuggestions.map((t) => <HashtagTag key={t} addable onAdd={() => actions.addTag(t)}>{t}</HashtagTag>)}
+              </div>
+            )}
           </div>
         </div>
       </div>
