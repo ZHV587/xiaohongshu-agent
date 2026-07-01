@@ -22,6 +22,26 @@ export type TimelineItem =
   | { kind: "thinking"; run: ThinkingRun }
   | { kind: "ai"; text: string };
 
+// 写类工具名单:这些工具会写库或写飞书,args 可能含敏感 payload/凭证。
+// 写类工具的 log 只存中文 label,不回显 args。
+const WRITE_TOOLS = new Set([
+  "save_generated_topic",
+  "save_generated_copy",
+  "save_user_feedback",
+  "save_performance_metric",
+  "save_session_snapshot",
+  "sync_feishu_resources",
+  "sync_copy_to_feishu",
+  "sync_topic_to_feishu",
+  "sync_diagnosis_to_feishu",
+  "send_review_notification",
+  "adopt_online_notes",
+  "lark_cli",
+]);
+
+// 敏感键名模式(大小写不敏感)：剥除读类工具 args 里的此类字段后再 stringify。
+const SENSITIVE_KEY_RE = /credential|token|authorization|secret|password|dsn|uat/i;
+
 // 工具名 → 中文语义。覆盖 data_foundation/tools.py 与 tools/feishu_actions.py 两来源。
 const TOOL_LABELS: Record<string, string> = {
   semantic_search_resources: "语义检索数据底座",
@@ -74,7 +94,17 @@ interface ToolCall {
 function safeArgsLog(label: string, args: unknown): string {
   let detail = "";
   try {
-    detail = args == null ? "" : typeof args === "string" ? args : JSON.stringify(args);
+    // Strip sensitive keys before stringify (double-guard for read tools)
+    let sanitized = args;
+    if (args != null && typeof args === "object" && !Array.isArray(args)) {
+      const cleaned: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+        if (!SENSITIVE_KEY_RE.test(k)) cleaned[k] = v;
+      }
+      sanitized = cleaned;
+    }
+    detail =
+      sanitized == null ? "" : typeof sanitized === "string" ? sanitized : JSON.stringify(sanitized);
   } catch {
     detail = "";
   }
@@ -133,7 +163,9 @@ export function deriveTimeline(messages: Message[]): TimelineItem[] {
 
   const flushRun = () => {
     if (runOpen && atoms.length > 0) {
-      out.push({ kind: "thinking", run: { steps: foldSteps(), logs, done: runDone } });
+      // spec OR: runDone = prose was seen  OR  all atoms are done
+      const allAtomsDone = atoms.length > 0 && atoms.every((a) => a.done);
+      out.push({ kind: "thinking", run: { steps: foldSteps(), logs, done: runDone || allAtomsDone } });
     }
     atoms = [];
     logs = [];
@@ -157,7 +189,9 @@ export function deriveTimeline(messages: Message[]): TimelineItem[] {
         const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分
         const done = !!(c.id && answered.has(c.id));
         atoms.push({ name: label, done });
-        logs.push({ text: safeArgsLog(label, c.args) });
+        // 写类工具只存中文 label,不回显 payload;task 按读类处理(args 无凭证)。
+        const logText = WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args);
+        logs.push({ text: logText });
       }
       const prose = proseOf(m.content);
       if (prose) {

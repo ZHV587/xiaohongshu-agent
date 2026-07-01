@@ -123,4 +123,75 @@ test("never throws on malformed / partial messages", () => {
     { type: "tool", tool_call_id: "x", content: "" },
   ] as unknown as Message[];
   assert.doesNotThrow(() => deriveTimeline(weird));
+  // Fix 3: structural assertions on malformed input
+  const result = deriveTimeline(weird);
+  assert.ok(Array.isArray(result), "output should be an array");
+  assert.equal(
+    result.filter((i) => i.kind === "ai").length,
+    0,
+    "malformed ai with content=null should not produce an ai bubble",
+  );
+});
+
+// Fix 1: safeArgsLog security — write tools must not leak payload in logs
+
+test("write tool log contains only Chinese label, not payload value", () => {
+  // save_generated_copy is a write tool; its args may contain sensitive copy payload
+  const tl = deriveTimeline([
+    human("出文案"),
+    aiCall("w1", "save_generated_copy", { copy: "这是私密文案内容_SECRET" }),
+    toolMsg("w1"),
+    aiText("已沉淀"),
+  ]);
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  assert.equal(thinking.run.logs.length, 1);
+  const logText = thinking.run.logs[0].text;
+  // should only be the Chinese label
+  assert.equal(logText, "沉淀文案入库", "write tool log must equal label only, no payload");
+  assert.ok(!logText.includes("SECRET"), "write tool log must not contain payload value");
+});
+
+test("read tool log still includes truncated args detail", () => {
+  const tl = deriveTimeline([
+    human("搜索"),
+    aiCall("r1", "semantic_search_resources", { query: "露营攻略" }),
+    toolMsg("r1"),
+    aiText("结果"),
+  ]);
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  const logText = thinking.run.logs[0].text;
+  assert.ok(logText.includes("露营攻略"), "read tool log should contain query value");
+});
+
+test("read tool log strips sensitive key fields (token/credential etc) before stringify", () => {
+  const tl = deriveTimeline([
+    human("搜索"),
+    aiCall("r1", "semantic_search_resources", { query: "露营", token: "SECRET_TOKEN_VALUE" }),
+    toolMsg("r1"),
+    aiText("结果"),
+  ]);
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  const logText = thinking.run.logs[0].text;
+  assert.ok(!logText.includes("SECRET_TOKEN_VALUE"), "log must not contain token value");
+  assert.ok(logText.includes("露营"), "log should still contain non-sensitive query");
+});
+
+// Fix 2: runDone OR branch — all-done tools with no final prose → run.done = true
+
+test("thinking run with all tools done but no prose text has done=true", () => {
+  const tl = deriveTimeline([
+    human("执行"),
+    aiCall("t1", "semantic_search_resources", { query: "x" }),
+    toolMsg("t1"),
+    // No final aiText — run ends with all tools answered but no prose
+  ]);
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  assert.equal(thinking.run.steps[0].state, "done", "step should be done");
+  assert.equal(thinking.run.done, true, "run.done should be true when all steps done, even without prose");
+  // No ai bubble
+  assert.equal(tl.filter((i) => i.kind === "ai").length, 0);
 });
