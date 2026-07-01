@@ -70,7 +70,7 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
 
 // Center chat column — base proposal + dynamic store messages
 function ChatColumn({ showTopics }: { showTopics: boolean }) {
-  const { topics, chatExtra, actions } = useStudio();
+  const { topics, chatExtra, trends, actions } = useStudio();
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [chatExtra]);
@@ -78,31 +78,18 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
   return (
     <section style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--background)", minWidth: 0 }}>
       <div ref={scrollRef} className="cs" style={{ flex: 1, overflowY: "auto", padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
-        <div style={{ display: "flex", gap: 11, maxWidth: "86%", alignSelf: "flex-end", flexDirection: "row-reverse" }}>
-          <Avatar name="我" variant="solid" size={30} />
-          <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", boxShadow: "var(--shadow-sm)" }}>帮我按露营装备方向出选题，并筛选飞书里高赞的爆款。</div>
-        </div>
-        <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
-          <Avatar glyph="🍠" variant="agent" size={32} />
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0, flex: 1 }}>
-            <ThinkingAura steps={[{ label: "数据底座语义检索：命中 12 条相关资源 (pgvector)", state: "done" }, { label: "图谱扩展 + rank_evidence 加权排序（相关度·时效·表现）", state: "done" }, { label: "飞书 Bitable / Wiki 已接入并沉淀入库", state: "done" }]} />
-            <Card padding="md">
-              <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>基于数据底座检索到的爆款资源，提炼 3 个方向，每个都附「创作依据」{showTopics ? "，点击卡片进入创作：" : "，已放到右侧「选题卡」，点任意一张进入创作 👉"}</p>
-              {showTopics && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 11 }}>
-                  {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t)} />)}
-                </div>
-              )}
-            </Card>
+        {/* 真实数据铁律:聊天区只渲染真实 stream 派生的消息(chatExtra);无消息=空会话,显示欢迎引导,不 mock 假对话。 */}
+        {chatExtra.length === 0 && (
+          <div style={{ margin: "auto", maxWidth: 460, textAlign: "center", display: "flex", flexDirection: "column", gap: 12, color: "var(--text-muted)" }}>
+            <Avatar glyph="🍠" variant="agent" size={44} />
+            <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", color: "var(--text-body)" }}>开始一场创作对话</div>
+            <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>
+              说出你的方向(如「按露营装备出选题」),🍠 会基于数据底座检索爆款、提炼带「创作依据」的选题卡,点任意一张进入深度创作。
+            </p>
           </div>
-        </div>
+        )}
 
-        <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
-          <Avatar glyph="🍠" variant="agent" size={32} />
-          <div style={{ flex: 1, minWidth: 0 }}><TrendRadar /></div>
-        </div>
-
-        {/* dynamic messages from the flow */}
+        {/* 动态消息(来自真实 LangGraph 流) */}
         {chatExtra.map((m, i) => m.who === "user" ? (
           <div key={i} style={{ display: "flex", gap: 11, maxWidth: "86%", alignSelf: "flex-end", flexDirection: "row-reverse" }}>
             <Avatar name="我" variant="solid" size={30} />
@@ -116,6 +103,27 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
               : <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", boxShadow: "var(--shadow-sm)", alignSelf: "flex-start" }}>{m.text}</div>}
           </div>
         ))}
+
+        {/* 选题卡:仅当真实产出选题时,在助手气泡内渲染(showTopics 布局下);无选题不显示 */}
+        {showTopics && topics.length > 0 && (
+          <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+            <Avatar glyph="🍠" variant="agent" size={32} />
+            <Card padding="md">
+              <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>基于数据底座检索到的爆款资源,提炼了以下方向,每个都附「创作依据」,点击卡片进入创作:</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 11 }}>
+                {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t)} />)}
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* 热点趋势雷达:仅当有真实趋势数据时显示 */}
+        {trends.length > 0 && (
+          <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+            <Avatar glyph="🍠" variant="agent" size={32} />
+            <div style={{ flex: 1, minWidth: 0 }}><TrendRadar /></div>
+          </div>
+        )}
       </div>
 
       <div style={{ padding: 18, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
