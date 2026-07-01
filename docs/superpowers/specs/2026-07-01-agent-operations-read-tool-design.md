@@ -114,6 +114,35 @@ def get_operations_data(view: str, account: str | None = None,
 - 分发:按 `view` 调对应 `operations.load_*`。
 - 加进 `data_foundation_tools` 列表,agent 自动获得。
 
+### 5.1 与 deepagents 框架的挂钩(自审确认)
+
+本设计**通过 deepagents 唯一正规的能力扩展点 `tools=` 挂钩**,与现有 13 个工具同路,非旁路:
+
+```
+@tool get_operations_data
+  → 进 data_foundation_tools 列表(tools.py)
+  → assembled_tools = data_foundation_tools + feishu_action_tools + [...]  (agent.py:71)
+  → create_deep_agent(tools=assembled_tools, ...)                          (agent.py:73-75)
+```
+
+挂钩点逐条对代码核实(agent.py / tools.py):
+- **能力入口 = `tools=`**:框架给 agent 加能力的标准通道。新工具走 `@tool` 装饰 + 加进
+  `data_foundation_tools`,与 `get_resource_performance` 等现有工具**完全同一模式**(已核:列表内
+  每项都是 `@tool` 函数名)。agent 在推理中按需自主调用(框架 tool-calling)。
+- **身份注入 = `config: RunnableConfig`**:框架自动注入,经 `actor_from_config(config)` 取
+  服务端可信 open_id,与现有工具一致。
+- **中间件链**:工具调用天然经 agent 的 router/retry/rubric 中间件,无需额外接线。
+- **`interrupt_on` 不加它**(已核:interrupt_on 仅含写/同步/敏感工具 lark_cli/sync_*/adopt;
+  只读工具不进)。`get_operations_data` 只读,无需人审中断。
+- **仅挂主 agent,不挂子 agent**(已核:子 agent knowledge-atom-retriever / persona-distiller
+  各持精选检索工具子集,职责是隔离上下文精读素材,无运营职责)。运营数据是主控 agent 层面的
+  关注点,不下放子 agent——符合「职责分清」。
+
+**领域层不入框架**:`operations.py` / `studio_shared.py` 是「工具背后如何取数据」的领域实现,
+deepagents 不关心也不该关心(正如 `get_resource_performance` 背后调 `performance_feedback` 领域
+函数)。框架契约 = 工具;工具背后的领域模块自由。故解耦 ≠ 脱离框架:框架挂钩(tools=)与领域
+实现(operations)是两个正交的层次,各司其职。
+
 ### 6. 鉴权口径(A:agent 能读 == 用户 UI 能读)
 
 工具内部复用与 UI 完全相同的判定:
