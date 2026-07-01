@@ -23,6 +23,7 @@ export interface ThinkingAuraProps extends HTMLAttributes<HTMLDivElement> {
   steps?: ThinkingStep[];
   logs?: ThinkingLog[] | null;
   defaultOpen?: boolean;
+  defaultCollapsed?: boolean;
 }
 
 export function ThinkingAura({
@@ -30,10 +31,34 @@ export function ThinkingAura({
   steps = [],
   logs = null,
   defaultOpen = false,
+  defaultCollapsed = false,
   style = {},
   ...rest
 }: ThinkingAuraProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+
+  if (collapsed) {
+    return (
+      <div
+        onClick={() => setCollapsed(false)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: "0.5rem", cursor: "pointer",
+          background: "var(--surface-card)", border: "1px solid var(--border-coral)",
+          borderRadius: "var(--radius-xl)", boxShadow: "var(--shadow-sm)", padding: "0.5rem 0.75rem",
+        }}
+        {...rest}
+      >
+        <span style={{ position: "relative", display: "inline-flex", width: 8, height: 8 }}>
+          <span style={{ position: "relative", borderRadius: "var(--radius-full)", width: 8, height: 8, background: "var(--success)" }} />
+        </span>
+        <span style={{ fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-xs)", color: "var(--text-body)" }}>
+          🍠 已完成 {steps.length} 步
+        </span>
+        <span style={{ color: "var(--primary)", fontSize: "var(--text-2xs)" }}>▾</span>
+      </div>
+    );
+  }
 
   const stateColor: Record<StepState, string> = {
     done: "var(--success)",
