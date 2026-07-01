@@ -82,15 +82,25 @@ export function Recents({ onNew, compact = false }: RecentsProps) {
   const setThreadId = thread?.setThreadId;
   const threads = threadsCtx?.threads ?? [];
   const getThreads = threadsCtx?.getThreads;
+  const setThreads = threadsCtx?.setThreads;
+  const setThreadsLoading = threadsCtx?.setThreadsLoading;
   const threadsLoading = threadsCtx?.threadsLoading ?? false;
   const [collapsed, setCollapsed] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
 
-  // 挂载时拉取真实会话列表(空态由 threads.length===0 呈现,不 mock)。
+  // 挂载时拉取真实会话列表并写入 context state(getThreads 只返回不写 state,须自行 setThreads,
+  // 与旧 history 面板同款)。切换会话后 threadId 变化时刷新列表。空态由 threads.length===0 呈现,不 mock。
   // 无 ThreadProvider(DEV 预览路由)时 getThreads 为 undefined,跳过。
   useEffect(() => {
-    void getThreads?.();
-  }, [getThreads]);
+    if (!getThreads || !setThreads) return;
+    let alive = true;
+    setThreadsLoading?.(true);
+    getThreads()
+      .then((list) => { if (alive) setThreads(list); })
+      .catch(() => { /* 拉取失败保持空态,不 mock */ })
+      .finally(() => { if (alive) setThreadsLoading?.(false); });
+    return () => { alive = false; };
+  }, [getThreads, setThreads, setThreadsLoading, threadId]);
 
   const threadTitle = (t: (typeof threads)[number]): string => {
     const v = t.values as { messages?: Array<{ content: unknown }> } | undefined;
