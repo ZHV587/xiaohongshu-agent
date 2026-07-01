@@ -23,6 +23,7 @@ import { useThread } from "@/components/thread/ThreadContext";
 import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
+import { deriveTimeline, type TimelineItem } from "@/lib/thinking-trace";
 import {
   applyOptimisticSchedule,
   canAdvanceStage,
@@ -36,7 +37,6 @@ import {
 import type {
   Account,
   CalendarDay,
-  ChatMsg,
   DashboardStat,
   EvidenceBundle,
   EvidenceItem,
@@ -73,7 +73,7 @@ export interface StudioStore {
   activeRecent: number | null;
   setActiveRecent: (id: number | null) => void;
   note: StudioNote;
-  chatExtra: ChatMsg[];
+  timeline: TimelineItem[];
   calendar: CalendarDay[];
   selectedEvidence: SelectedEvidence | null;
   topics: Topic[];
@@ -294,8 +294,19 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
   }, [topics.length]);
 
-  // ── chat transcript derived from the real messages ──
-  const chatExtra: ChatMsg[] = useMemo(() => deriveChat(t.messages), [t.messages]);
+  // ── chat transcript as timeline items derived from the real messages ──
+  const timeline: TimelineItem[] = useMemo(() => deriveTimeline(t.messages), [t.messages]);
+
+  // 测试可观测钩子:暴露思考链总步数,供 e2e 断言思考 UI 已渲染。仅写 window,生产无副作用。
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const steps = timeline.reduce(
+        (n, it) => n + (it.kind === "thinking" ? it.run.steps.length : 0),
+        0,
+      );
+      (window as unknown as { __XHS_THINKING_STEPS__?: number }).__XHS_THINKING_STEPS__ = steps;
+    }
+  }, [timeline]);
 
   const showToast = useCallback((msg: string) => toast(msg), []);
 
@@ -455,7 +466,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     activeRecent,
     setActiveRecent,
     note,
-    chatExtra,
+    timeline,
     calendar,
     selectedEvidence,
     topics,
@@ -628,14 +639,4 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
     }
   }
   return { versions: null, copyResourceId: null };
-}
-
-function deriveChat(messages: ReturnType<typeof useThread>["messages"]): ChatMsg[] {
-  const out: ChatMsg[] = [];
-  for (const m of messages) {
-    const content = getContentString(m.content);
-    if (m.type === "human") out.push({ who: "user", text: content });
-    else if (m.type === "ai" && content.trim()) out.push({ who: "ai", text: content });
-  }
-  return out;
 }

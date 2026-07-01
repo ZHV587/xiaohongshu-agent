@@ -70,16 +70,26 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
 
 // Center chat column — base proposal + dynamic store messages
 function ChatColumn({ showTopics }: { showTopics: boolean }) {
-  const { topics, chatExtra, trends, actions } = useStudio();
+  const { topics, timeline, trends, actions } = useStudio();
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [chatExtra]);
+  const lastRunSteps = (() => {
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const it = timeline[i];
+      if (it.kind === "thinking") return it.run.steps.length;
+    }
+    return 0;
+  })();
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [timeline.length, lastRunSteps]);
 
   return (
     <section style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--background)", minWidth: 0 }}>
       <div ref={scrollRef} className="cs" style={{ flex: 1, overflowY: "auto", padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
-        {/* 真实数据铁律:聊天区只渲染真实 stream 派生的消息(chatExtra);无消息=空会话,显示欢迎引导,不 mock 假对话。 */}
-        {chatExtra.length === 0 && (
+        {/* 真实数据铁律:聊天区只渲染真实 stream 派生的消息(timeline);无消息=空会话,显示欢迎引导,不 mock 假对话。 */}
+        {timeline.length === 0 && (
           <div style={{ margin: "auto", maxWidth: 460, textAlign: "center", display: "flex", flexDirection: "column", gap: 12, color: "var(--text-muted)" }}>
             <Avatar glyph="🍠" variant="agent" size={44} />
             <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", color: "var(--text-body)" }}>开始一场创作对话</div>
@@ -90,19 +100,38 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
         )}
 
         {/* 动态消息(来自真实 LangGraph 流) */}
-        {chatExtra.map((m, i) => m.who === "user" ? (
-          <div key={i} style={{ display: "flex", gap: 11, maxWidth: "86%", alignSelf: "flex-end", flexDirection: "row-reverse" }}>
-            <Avatar name="我" variant="solid" size={30} />
-            <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", boxShadow: "var(--shadow-sm)" }}>{m.text}</div>
-          </div>
-        ) : (
-          <div key={i} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
-            <Avatar glyph="🍠" variant="agent" size={32} />
-            {m.thinking
-              ? <div style={{ flex: 1, maxWidth: 440 }}><ThinkingAura steps={[{ label: m.text, state: "active" }]} /></div>
-              : <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", boxShadow: "var(--shadow-sm)", alignSelf: "flex-start" }}>{m.text}</div>}
-          </div>
-        ))}
+        {timeline.map((item, i) => {
+          const key = `${item.kind}-${i}`;
+          if (item.kind === "user") {
+            return (
+              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "86%", alignSelf: "flex-end", flexDirection: "row-reverse" }}>
+                <Avatar name="我" variant="solid" size={30} />
+                <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", boxShadow: "var(--shadow-sm)" }}>{item.text}</div>
+              </div>
+            );
+          }
+          if (item.kind === "thinking") {
+            return (
+              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+                <Avatar glyph="🍠" variant="agent" size={32} />
+                <div style={{ flex: 1, maxWidth: 440 }}>
+                  <ThinkingAura
+                    steps={item.run.steps}
+                    logs={item.run.logs.length ? item.run.logs : null}
+                    defaultCollapsed={item.run.done}
+                  />
+                </div>
+              </div>
+            );
+          }
+          // item.kind === "ai"
+          return (
+            <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+              <Avatar glyph="🍠" variant="agent" size={32} />
+              <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", boxShadow: "var(--shadow-sm)", alignSelf: "flex-start" }}>{item.text}</div>
+            </div>
+          );
+        })}
 
         {/* 选题卡:仅当真实产出选题时,在助手气泡内渲染(showTopics 布局下);无选题不显示 */}
         {showTopics && topics.length > 0 && (

@@ -84,12 +84,6 @@ export interface StudioNote {
   versions: Partial<Versions> | null;
 }
 
-export interface ChatMsg {
-  who: "user" | "ai";
-  text: string;
-  thinking?: boolean;
-}
-
 export interface StudioUser {
   name: string;
   team: string;
