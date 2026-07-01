@@ -351,11 +351,11 @@ export function VisualStudio() {
   );
 }
 
-// 原创度 + 限流风控
+// 限流风控(真实正则检测:导流/极限词/敏感品类)。
+// 注:原「原创度 %」曾是硬编码假值(生产恒 72%,无真实来源),已移除——无真实查重/相似度
+// 数据源前不展示编造指标(真实数据铁律)。待接入真实原创度检测后再恢复该指标。
 export function RiskPanel({ note }: { note: StudioNote }) {
   const text = (note.title || "") + (note.body || "");
-  const polished = (note.body || "").startsWith("⛺ 夏日露营天花板");
-  const originality = note.topicId ? (polished ? 88 : 72) : 90;
   const risks: { label: string; bad: boolean; hint: string }[] = [
     { label: "导流/外链", bad: /http|www\.|公众号|微信|加我|私信|vx|v信|留链|主页链接/i.test(text), hint: "小红书限制站外导流" },
     { label: "极限词", bad: /最佳|最好|第一名|国家级|绝对|100%|顶级|纯天然|永久/.test(text), hint: "广告法违禁词" },
@@ -367,19 +367,9 @@ export function RiskPanel({ note }: { note: StudioNote }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <Icon name="shield-check" size={15} color="var(--primary)" />
-          <span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>原创度 · 限流风控</span>
+          <span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>限流风控</span>
         </div>
         <span style={{ fontSize: 10, color: riskCount ? "var(--warning)" : "var(--success)", fontWeight: 600 }}>{riskCount ? `${riskCount} 项风险` : "无明显风险"}</span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)" }}>
-          <span>原创度（vs 检索到的爆款）</span>
-          <span className="font-tabular" style={{ fontWeight: 700, color: originality >= 80 ? "var(--success)" : "var(--warning)" }}>{originality}%</span>
-        </div>
-        <div style={{ height: 6, background: "var(--oats-dark)", borderRadius: 999, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${originality}%`, background: originality >= 80 ? "var(--success)" : "var(--warning)", transition: "width var(--dur-slow) var(--ease-out)" }} />
-        </div>
-        {originality < 80 && <span style={{ fontSize: 9, color: "var(--warning)", lineHeight: 1.5 }}>⚠️ 与爆款结构相似度偏高，建议点「润色」改写提升原创度，规避查重限流</span>}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
         {risks.map((r) => (

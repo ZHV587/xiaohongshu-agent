@@ -94,15 +94,15 @@ function MatrixOverview({ onOpen }: MatrixOverviewProps) {
           <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-xl)" }}>账号矩阵总览</div>
           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 3 }}>{accounts.length} 个账号 · 近 7 天 · 数据底座聚合（performance_metric）</div>
         </div>
-        <Button variant="secondary" size="sm" leftIcon={<Icon name="download" size={13} />} onClick={() => actions.toast("📊 矩阵周报已导出（示意）")}>导出矩阵周报</Button>
+        <Button variant="secondary" size="sm" leftIcon={<Icon name="download" size={13} />} onClick={() => actions.toast("📊 矩阵周报导出功能即将推出")}>导出矩阵周报</Button>
       </div>
       <section>
         <Eyebrow style={{ marginBottom: 10 }}>矩阵聚合</Eyebrow>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          <StatCard label="矩阵总粉丝" value={fmt(sum("fansNum"))} delta={14} tone="coral" icon={<Icon name="users" size={15} />} />
-          <StatCard label="本周新增粉丝" value={"+" + sum("dFans")} unit="人" delta={22} tone="success" icon={<Icon name="user-plus" size={15} />} />
-          <StatCard label="本周发布" value={sum("posts")} unit="篇" delta={8} tone="topic" icon={<Icon name="file-text" size={15} />} />
-          <StatCard label="平均爆款率" value={avgHot} unit="%" delta={5} icon={<Icon name="flame" size={15} />} />
+          <StatCard label="矩阵总粉丝" value={fmt(sum("fansNum"))} tone="coral" icon={<Icon name="users" size={15} />} />
+          <StatCard label="本周新增粉丝" value={"+" + sum("dFans")} unit="人" tone="success" icon={<Icon name="user-plus" size={15} />} />
+          <StatCard label="本周发布" value={sum("posts")} unit="篇" tone="topic" icon={<Icon name="file-text" size={15} />} />
+          <StatCard label="平均爆款率" value={avgHot} unit="%" icon={<Icon name="flame" size={15} />} />
         </div>
       </section>
       <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -149,7 +149,7 @@ function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
             <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 3 }}>粉丝 {acct.fans}{acct.niche ? ` · ${acct.niche}` : ""} · 近 7 天 · 数据底座 / 飞书同步</div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" size="sm" leftIcon={<Icon name="download" size={13} />} onClick={() => actions.toast("📄 该账号周报已导出（示意）")}>导出周报</Button>
+            <Button variant="secondary" size="sm" leftIcon={<Icon name="download" size={13} />} onClick={() => actions.toast("📄 该账号周报导出功能即将推出")}>导出周报</Button>
             <Button variant="primary" size="sm" leftIcon={<Icon name="pencil" size={13} />} onClick={() => actions.toast("✏️ 下拉到「数据回填」即可录入真实表现")}>数据回填</Button>
           </div>
         </div>
@@ -279,7 +279,7 @@ function CalendarSection({ accountFilter = null }: CalendarSectionProps) {
 // 数据回填
 function BackfillSection() {
   const { actions } = useStudio();
-  const [vals, setVals] = useState<{ views: string; likes: string; saves: string; comments: string }>({ views: "12480", likes: "1240", saves: "864", comments: "207" });
+  const [vals, setVals] = useState<{ views: string; likes: string; saves: string; comments: string }>({ views: "", likes: "", saves: "", comments: "" });
   const set = (k: "views" | "likes" | "saves" | "comments") => (v: string) => setVals((p) => ({ ...p, [k]: v }));
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -292,7 +292,7 @@ function BackfillSection() {
           <StatCard label="评论" value={vals.comments} editable onValueChange={set("comments")} />
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <Button variant="ghost" size="sm" onClick={() => actions.toast("📥 已从小红书后台导入近 7 天数据")}>从小红书后台导入</Button>
+          <Button variant="ghost" size="sm" onClick={() => actions.toast("📥 从小红书后台自动导入即将推出;当前请手动填写真实数据")}>从小红书后台导入</Button>
           <Button variant="primary" size="sm" leftIcon={<Icon name="cloud-upload" size={13} />} onClick={() => actions.backfillSave({ views: vals.views, likes: vals.likes, collects: vals.saves, comments: vals.comments })}>保存并同步飞书</Button>
         </div>
       </Card>

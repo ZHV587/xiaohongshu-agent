@@ -36,7 +36,7 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
   const { topics, evidence, images, actions } = useStudio();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-      <PanelHead icon="lightbulb" title="选题卡" sub="数据底座检索 · 加权排序 · 点击进入创作" right={<Button variant="ghost" size="sm" leftIcon={<Icon name="refresh-cw" size={12} />} onClick={() => actions.toast("🔄 已基于数据底座重新检索一批选题")}>换一批</Button>} />
+      <PanelHead icon="lightbulb" title="选题卡" sub="数据底座检索 · 加权排序 · 点击进入创作" right={<Button variant="ghost" size="sm" leftIcon={<Icon name="refresh-cw" size={12} />} onClick={() => actions.say("再换一批不同角度的选题")}>换一批</Button>} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {topics.map((t) => {
           const on = t.id === chosen;
@@ -225,7 +225,7 @@ function TrendRadar() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
         {trends.map((t) => (
-          <button key={t.tag} data-testid="trend-row" onClick={() => actions.toast(`🛰️ 已据热点「${t.tag}」生成探索性选题（exploration）`)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--oats-light)", cursor: "pointer", textAlign: "left" }}>
+          <button key={t.tag} data-testid="trend-row" onClick={() => actions.say(`基于热点「${t.tag}」出几个探索性选题`)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--oats-light)", cursor: "pointer", textAlign: "left" }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: toneFg[t.tone], background: toneBg[t.tone], borderRadius: 6, padding: "2px 6px", flexShrink: 0 }}>{t.heat}</span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text-body)" }}>#{t.tag}</span>
