@@ -19,8 +19,10 @@ from data_foundation.creation_memory import (
 from data_foundation.config import embedding_snapshot_for_version
 from data_foundation.db import connect
 from data_foundation.graph import expand_graph as expand_graph_query
+from data_foundation import operations as ops
 from data_foundation.outbox_requests import default_write_requests
 from data_foundation.permissions import actor_from_config, default_tenant_id
+from data_foundation.studio_shared import is_admin_open_id
 from data_foundation.performance_feedback import (
     get_resource_performance_payload,
     save_performance_metric_resource,
@@ -515,6 +517,44 @@ def get_resource_performance(
 
 
 @tool
+def get_operations_data(
+    view: str,
+    account: str | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """读取账号运营数据(只读,与运营看板 UI 同源、同鉴权)。
+
+    view: analytics(数据看板/选题库/爆款拆解) | calendar(内容日历/排期) |
+          pipeline(发布管线) | accounts(账号矩阵) | recents(我的最近创作) | trends(热点趋势)。
+    account: 单账号过滤;不传=矩阵总览(analytics/calendar/pipeline/accounts 的矩阵总览需管理员)。
+    数据为空即真实无数据,不编造。
+    """
+    actor = actor_from_config(config)
+    tenant = default_tenant_id()
+    admin = is_admin_open_id(actor)
+    account = account.strip() if isinstance(account, str) and account.strip() else None
+
+    # 鉴权口径 A:矩阵总览(不带 account)与 accounts 需 admin;单账号/recents/trends 任意用户。
+    needs_admin = (account is None and view in ("analytics", "calendar", "pipeline")) or view == "accounts"
+    if needs_admin and not admin:
+        return {"ok": False, "error": "该视图为跨账号矩阵总览,需管理员权限;请指定 account 查看单账号,或联系管理员。"}
+
+    if view == "analytics":
+        return {"ok": True, "view": view, "account": account, **ops.load_analytics(tenant_id=tenant, account=account)}
+    if view == "calendar":
+        return {"ok": True, "view": view, "account": account, **ops.load_calendar(tenant_id=tenant, account=account)}
+    if view == "pipeline":
+        return {"ok": True, "view": view, "account": account, "queue": ops.load_pipeline(tenant_id=tenant, account=account)}
+    if view == "accounts":
+        return {"ok": True, "view": view, **ops.load_accounts(tenant_id=tenant)}
+    if view == "recents":
+        return {"ok": True, "view": view, "recents": ops.load_recents(tenant_id=tenant, open_id=actor)}
+    if view == "trends":
+        return {"ok": True, "view": view, "trends": ops.load_trends(tenant_id=tenant)}
+    return {"ok": False, "error": f"unknown view '{view}';合法值:analytics/calendar/pipeline/accounts/recents/trends。"}
+
+
+@tool
 def save_session_snapshot(
     project_name: str,
     title: str,
@@ -555,6 +595,7 @@ data_foundation_tools = [
     save_user_feedback,
     save_performance_metric,
     get_resource_performance,
+    get_operations_data,
     save_session_snapshot,
 ]
 
