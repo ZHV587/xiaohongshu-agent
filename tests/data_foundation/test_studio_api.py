@@ -66,10 +66,11 @@ def test_matrix_overview_endpoints_require_admin(monkeypatch):
         response = client.get(path, headers=_user_headers())
         assert response.status_code == 403, path
     # 指定 account 的单账号视图仍允许普通用户(calendar/pipeline)
+    import data_foundation.operations as operations
     import data_foundation.studio_api as studio_api
 
-    monkeypatch.setattr(studio_api, "_load_schedule_items", lambda *, tenant_id, account: [])
-    monkeypatch.setattr(studio_api, "_load_pipeline", lambda *, tenant_id, account: [])
+    monkeypatch.setattr(operations, "_load_schedule_items", lambda *, tenant_id, account: [])
+    monkeypatch.setattr(studio_api, "load_pipeline", lambda *, tenant_id, account: [])
     for path in ("/internal/studio/calendar?account=acc_1", "/internal/studio/pipeline?account=acc_1"):
         response = client.get(path, headers=_user_headers())
         assert response.status_code == 200, path
@@ -81,7 +82,7 @@ def test_analytics_account_view_allows_user(monkeypatch):
 
     monkeypatch.setattr(
         studio_api,
-        "_load_analytics",
+        "load_analytics",
         lambda *, tenant_id, account: {
             "dashboard": [],
             "library": [],
@@ -102,9 +103,9 @@ def test_analytics_account_view_allows_user(monkeypatch):
 def test_calendar_contract_shape_and_empty_grid(monkeypatch):
     # 存储可用但无排期行 → 200 + 真实月份网格 + 空 calendar(需求 12.4)。
     # _load_schedule_items 走真实 DB;此处注入空排期模拟「库里暂无排期」,与「库不可用」区分。
-    import data_foundation.studio_api as studio_api
+    import data_foundation.operations as operations
 
-    monkeypatch.setattr(studio_api, "_load_schedule_items", lambda *, tenant_id, account: [])
+    monkeypatch.setattr(operations, "_load_schedule_items", lambda *, tenant_id, account: [])
     client = _client(monkeypatch)
     # 无 account = 矩阵总览 → require_admin(需求 17.1)
     response = client.get("/internal/studio/calendar", headers=_admin_headers())
@@ -120,12 +121,12 @@ def test_calendar_contract_shape_and_empty_grid(monkeypatch):
 
 def test_calendar_store_unavailable_returns_503_not_degraded(monkeypatch):
     # 排期存储不可用是真实错误 → 503(不降级吞成 200+空网格;严禁兼容兜底)。
-    import data_foundation.studio_api as studio_api
+    import data_foundation.operations as operations
 
     def _boom(*, tenant_id, account):
         raise RuntimeError("postgresql://user:db-secret@host/db down")
 
-    monkeypatch.setattr(studio_api, "_load_schedule_items", _boom)
+    monkeypatch.setattr(operations, "_load_schedule_items", _boom)
     client = _client(monkeypatch)
     response = client.get("/internal/studio/calendar", headers=_admin_headers())
     assert response.status_code == 503
@@ -168,7 +169,7 @@ def test_recents_forwards_open_id_and_orders(monkeypatch):
             {"id": 2, "icon": "💡", "title": "旧选题", "status": "synced"},
         ]
 
-    monkeypatch.setattr(studio_api, "_load_recents", _fake_recents)
+    monkeypatch.setattr(studio_api, "load_recents", _fake_recents)
     response = client.get("/internal/studio/recents", headers=_user_headers(open_id="ou_alice"))
     assert response.status_code == 200
     assert captured["open_id"] == "ou_alice"
@@ -183,7 +184,7 @@ def test_aggregation_error_returns_503_without_leak(monkeypatch):
     def _boom(*, tenant_id, open_id):
         raise RuntimeError("postgresql://user:db-secret@host/db")
 
-    monkeypatch.setattr(studio_api, "_load_recents", _boom)
+    monkeypatch.setattr(studio_api, "load_recents", _boom)
     response = client.get("/internal/studio/recents", headers=_user_headers())
     assert response.status_code == 503
     assert "db-secret" not in response.text
@@ -193,7 +194,7 @@ def test_aggregation_error_returns_503_without_leak(monkeypatch):
 
 
 def test_build_dashboard_skips_zero_and_computes_real_delta():
-    from data_foundation.studio_api import _build_dashboard
+    from data_foundation.operations import _build_dashboard
 
     now = datetime.now(timezone.utc)
     rows = [
@@ -213,7 +214,7 @@ def test_build_dashboard_skips_zero_and_computes_real_delta():
 
 
 def test_build_library_normalizes_hot_and_teardown_top():
-    from data_foundation.studio_api import _build_library_and_teardown
+    from data_foundation.operations import _build_library_and_teardown
 
     rows = [
         {
@@ -257,7 +258,7 @@ def test_build_library_normalizes_hot_and_teardown_top():
 
 
 def test_compact_number_chinese_units():
-    from data_foundation.studio_api import _compact_number
+    from data_foundation.operations import _compact_number
 
     assert _compact_number(0) == "0"
     assert _compact_number(999) == "999"
