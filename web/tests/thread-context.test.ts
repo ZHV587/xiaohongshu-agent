@@ -6,38 +6,36 @@ import test from "node:test";
 const src = (...parts: string[]) =>
   readFileSync(join(process.cwd(), "src", ...parts), "utf8");
 
-test("ThreadContext exposes required new states and actions for split components", () => {
+test("ThreadContext exposes required states and actions + useThread guardrail", () => {
   const context = src("components", "thread", "ThreadContext.tsx");
 
-  // Check state properties
+  // 状态字段
   assert.match(context, /lastSavedTitle:\s*string/);
   assert.match(context, /lastSavedContent:\s*string/);
   assert.match(context, /isDirty:\s*boolean/);
 
-  // Check action handlers
+  // 动作 handler
   assert.match(context, /handleExecuteCommand:\s*\(cmd:\s*string\)\s*=>\s*void/);
 
-  // Check guardrails in useThread hook
+  // useThread hook 守卫
   assert.match(context, /if\s*\(!ctx\)/);
   assert.match(context, /throw\s+new\s+Error\("useThread must be used within a ThreadProvider"\)/);
 });
 
-test("index.tsx provider correctly injects new states and actions", () => {
-  const thread = src("components", "thread", "index.tsx");
-
-  assert.match(thread, /lastSavedTitle,/);
-  assert.match(thread, /lastSavedContent,/);
-  assert.match(thread, /isDirty,/);
-  assert.match(thread, /handleExecuteCommand,/);
-});
-
-test("Thread delegates draft autosave and AI draft parsing to useThreadDraftState", () => {
-  const thread = src("components", "thread", "index.tsx");
+test("ThreadStateProvider injects draft states + delegates autosave to useThreadDraftState", () => {
+  const provider = src("components", "thread", "ThreadStateProvider.tsx");
   const hook = src("components", "thread", "useThreadDraftState.ts");
 
-  assert.match(thread, /useThreadDraftState\(/);
-  assert.doesNotMatch(thread, /xhs_autosave_draft_/);
-  assert.doesNotMatch(thread, /setLastSavedContent\(/);
+  // provider 注入草稿状态
+  assert.match(provider, /lastSavedTitle,/);
+  assert.match(provider, /lastSavedContent,/);
+  assert.match(provider, /isDirty,/);
+  assert.match(provider, /handleExecuteCommand,/);
+
+  // 委托给 useThreadDraftState,provider 自身不再直接持久化
+  assert.match(provider, /useThreadDraftState\(/);
+  assert.doesNotMatch(provider, /xhs_autosave_draft_/);
+  assert.doesNotMatch(provider, /setLastSavedContent\(/);
   assert.match(hook, /buildDraftAutosaveKey/);
   assert.match(hook, /parseAiDraft/);
 });
@@ -48,48 +46,6 @@ test("useThreadDraftState keeps applying streaming content updates for the same 
   assert.doesNotMatch(hook, /lastAiMessageId/);
   assert.match(hook, /lastMsg\.content/);
   assert.match(hook, /setDraftContent\(next\.content\)/);
-});
-
-test("Thread delegates command palette state and keyboard handling", () => {
-  const thread = src("components", "thread", "index.tsx");
-  const hook = src("components", "thread", "useCommandPaletteState.ts");
-
-  assert.match(thread, /useCommandPaletteState\(/);
-  assert.doesNotMatch(thread, /addEventListener\("keydown"/);
-  assert.doesNotMatch(thread, /key\.toLowerCase\(\)\s*===\s*"p"/);
-  assert.match(hook, /getCommandPaletteKeyboardAction/);
-});
-
-test("Thread delegates workbench tab and selected evidence state", () => {
-  const thread = src("components", "thread", "index.tsx");
-  const hook = src("components", "thread", "useWorkbenchTabsState.ts");
-
-  assert.match(thread, /useWorkbenchTabsState\(/);
-  assert.doesNotMatch(thread, /useState<"mock"\s*\|\s*"feishu"\s*\|\s*"evidence">/);
-  assert.doesNotMatch(thread, /useState<SourceEvidence\s*\|\s*null>/);
-  assert.match(hook, /createWorkbenchTabsInitialState/);
-});
-
-test("Thread delegates phone preview state", () => {
-  const thread = src("components", "thread", "index.tsx");
-  const hook = src("components", "thread", "usePreviewState.ts");
-
-  assert.match(thread, /usePreviewState\(/);
-  assert.doesNotMatch(thread, /useState<"detail"\s*\|\s*"feed">/);
-  assert.doesNotMatch(thread, /const \[carouselIndex,\s*setCarouselIndex\]/);
-  assert.doesNotMatch(thread, /const carouselImages = \[/);
-  assert.match(hook, /createPreviewInitialState/);
-});
-
-test("Thread delegates Feishu workspace state and chat loading", () => {
-  const thread = src("components", "thread", "index.tsx");
-  const hook = src("components", "thread", "useFeishuWorkspaceState.ts");
-
-  assert.match(thread, /useFeishuWorkspaceState\(rightTab\)/);
-  assert.doesNotMatch(thread, /fetch\("\/api\/feishu\/chats"\)/);
-  assert.doesNotMatch(thread, /const \[feishuChats,\s*setFeishuChats\]/);
-  assert.doesNotMatch(thread, /const \[selectedChatId,\s*setSelectedChatId\]/);
-  assert.match(hook, /shouldFetchFeishuChats/);
 });
 
 test("thread-context 接口声明 deleteThread", () => {

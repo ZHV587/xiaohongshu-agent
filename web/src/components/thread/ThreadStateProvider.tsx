@@ -18,10 +18,6 @@ import { ThreadActionsProvider } from "@/lib/thread-actions";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ThreadContext } from "./ThreadContext";
 import { useThreadDraftState } from "./useThreadDraftState";
-import { useCommandPaletteState } from "./useCommandPaletteState";
-import { useWorkbenchTabsState } from "./useWorkbenchTabsState";
-import { usePreviewState } from "./usePreviewState";
-import { useFeishuWorkspaceState } from "./useFeishuWorkspaceState";
 
 export function ThreadStateProvider({ children }: { children: ReactNode }) {
   const [threadId, _setThreadId] = useQueryState("threadId");
@@ -49,66 +45,8 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
 
   const lastError = useRef<string | undefined>(undefined);
 
-  // ── UI 工作台状态变量 ────────────────────────────────────
-  const { rightTab, setRightTab, selectedEvidence, setSelectedEvidence } =
-    useWorkbenchTabsState();
-  const {
-    viewMode,
-    setViewMode,
-    isEditingText,
-    setIsEditingText,
-    carouselIndex,
-    setCarouselIndex,
-    carouselImages,
-  } = usePreviewState();
-
-  const {
-    feishuChats,
-    setFeishuChats,
-    selectedChatId,
-    setSelectedChatId,
-    isFetchingChats,
-    setIsFetchingChats,
-    isSendingNotification,
-    setIsSendingNotification,
-    isFeishuActionPending,
-    setIsFeishuActionPending,
-  } = useFeishuWorkspaceState(rightTab);
-
-  // 同步校验进度条状态
-  const [syncStepsVisible, setSyncStepsVisible] = useState(false);
-  const [syncStep, setSyncStep] = useState<number>(0); // 0=未开始, 1=配置, 2=结构, 3=写入, 4=成功
+  // 提交守卫:防止飞书同步动作重复触发。
   const [isSyncing, setIsSyncing] = useState(false);
-
-  // 抛物线飞行动效触发器
-  const [isFlying, setIsFlying] = useState(false);
-
-  // 飞书多维表格与知识库跳转链接
-  const [bitableUrl, setBitableUrl] = useState<string | null>(null);
-  const [wikiUrl, setWikiUrl] = useState<string | null>(null);
-
-  // 原位编辑器 Ref (用于自适应高度)
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // 初始化时拉取配置中的 Bitable 与 Wiki 链接
-  useEffect(() => {
-    fetch("/api/config")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.ok && data.configs) {
-          const appToken = data.configs.FEISHU_BITABLE_APP_TOKEN;
-          const tableId = data.configs.FEISHU_BITABLE_TABLE_ID;
-          if (appToken && tableId) {
-            setBitableUrl(`https://feishu.cn/base/${appToken}?table=${tableId}`);
-          }
-          const wikiSpaceId = data.configs.FEISHU_WIKI_SPACE_ID;
-          if (wikiSpaceId) {
-            setWikiUrl(`https://feishu.cn/wiki/space/${wikiSpaceId}`);
-          }
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   const {
     draftTitle,
@@ -121,16 +59,6 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     lastSavedContent,
     resetForThreadSwitch,
   } = useThreadDraftState(threadId, messages);
-  const { showCommandPalette, setShowCommandPalette, cmdSearch, setCmdSearch } =
-    useCommandPaletteState();
-
-  // 自适应高度 Editor text area auto grow
-  useEffect(() => {
-    if (isEditingText && textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${Math.max(textareaRef.current.scrollHeight, 160)}px`;
-    }
-  }, [draftContent, isEditingText]);
 
   const setThreadId = useCallback(
     (id: string | null) => {
@@ -141,11 +69,10 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         if (!ok) return;
       }
       _setThreadId(id);
-      setIsEditingText(false);
       setView(null);
       setIsDirty(false);
     },
-    [isDirty, _setThreadId, setView, setIsEditingText, setIsDirty],
+    [isDirty, _setThreadId, setView, setIsDirty],
   );
 
   const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
@@ -181,7 +108,6 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
   };
 
   const handleExecuteCommand = (cmd: string) => {
-    setShowCommandPalette(false);
     if (cmd === "polish") {
       toast.success("执行 [/polish 智能润色] 指令中，流式修改已发送...");
       submitText(
@@ -203,87 +129,20 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
   const handleSyncToFeishu = () => {
     if (isSyncing || isLoading) return;
     setIsSyncing(true);
-    setIsFlying(true);
-
     setTimeout(() => {
-      setIsFlying(false);
       submitText(
         [
           "请调用 sync_copy_to_feishu 工具，把当前右侧文案保存为飞书多维表格草稿。",
-          "这是一个写入动作，请先向我确认写入风险 and 目标表，再继续。",
+          "这是一个写入动作，请先向我确认写入风险和目标表，再继续。",
           "",
           `标题：${draftTitle}`,
           "",
           `正文：${draftContent}`,
         ].join("\n"),
       );
-      setIsFeishuActionPending(true);
-      setSyncStepsVisible(false);
-      setSyncStep(0);
       setIsSyncing(false);
       toast.success("已交给智能体，等待确认/执行。");
     }, 800);
-  };
-
-  const handleSendNotification = () => {
-    if (isSendingNotification || isLoading || !selectedChatId) return;
-    setIsSendingNotification(true);
-
-    submitText(
-      [
-        "请调用 send_review_notification 工具，把当前文案发送到我选择的飞书群用于审核。",
-        "这是一个外部发送动作，请先向我确认群聊、标题和正文摘要，再继续。",
-        "",
-        `chat_id：${selectedChatId}`,
-        `标题：${draftTitle}`,
-        "",
-        `正文：${draftContent}`,
-      ].join("\n"),
-    );
-    setIsFeishuActionPending(true);
-    setIsSendingNotification(false);
-    toast.success("已交给智能体，等待确认/执行。");
-  };
-
-  const handleInsertEmoji = (emoji: string) => {
-    const textarea = document.getElementById("edit-body-input") as HTMLTextAreaElement;
-    if (!textarea) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const text = textarea.value;
-    const nextVal = text.substring(0, start) + emoji + text.substring(end);
-    setDraftContent(nextVal);
-
-    setTimeout(() => {
-      textarea.focus();
-      textarea.selectionStart = textarea.selectionEnd = start + emoji.length;
-    }, 50);
-  };
-
-  const handleAppendTag = (tag: string) => {
-    setDraftContent((prev) => prev.trim() + ` #${tag}`);
-  };
-
-  const handleEditBodyPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const text = e.clipboardData.getData("text");
-    if (text) {
-      e.preventDefault();
-      const sanitized = text
-        .replace(/\r\n/g, "\n")
-        .replace(/\u00A0/g, " ")
-        .replace(/\u3000/g, " ");
-
-      const textarea = e.currentTarget;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const val = textarea.value;
-      const nextVal = val.substring(0, start) + sanitized + val.substring(end);
-      setDraftContent(nextVal);
-
-      setTimeout(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + sanitized.length;
-      }, 0);
-    }
   };
 
   useEffect(() => {
@@ -341,7 +200,6 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     setFirstTokenReceived(false);
     setInput("");
     setContentBlocks([]);
-    setIsEditingText(false);
     resetForThreadSwitch(threadId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
@@ -420,56 +278,18 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         handlePaste,
         messages,
 
-        rightTab,
-        setRightTab,
-        selectedEvidence,
-        setSelectedEvidence,
-        viewMode,
-        setViewMode,
-        isEditingText,
-        setIsEditingText,
         draftTitle,
         setDraftTitle,
         draftContent,
         setDraftContent,
-        carouselIndex,
-        setCarouselIndex,
-        carouselImages,
-        feishuChats,
-        setFeishuChats,
-        selectedChatId,
-        setSelectedChatId,
-        isFetchingChats,
-        setIsFetchingChats,
-        isSendingNotification,
-        setIsSendingNotification,
-        isFeishuActionPending,
-        setIsFeishuActionPending,
         isDirty,
-        syncStepsVisible,
-        setSyncStepsVisible,
-        syncStep,
-        setSyncStep,
         isSyncing,
         setIsSyncing,
-        isFlying,
-        setIsFlying,
-        showCommandPalette,
-        setShowCommandPalette,
-        cmdSearch,
-        setCmdSearch,
-        bitableUrl,
-        wikiUrl,
         lastSavedTitle,
         lastSavedContent,
 
         handleExecuteCommand,
         handleSyncToFeishu,
-        handleSendNotification,
-        handleInsertEmoji,
-        handleAppendTag,
-        handleEditBodyPaste,
-        textareaRef,
       }}
     >
       <ThreadActionsProvider value={{ submitText }}>{children}</ThreadActionsProvider>

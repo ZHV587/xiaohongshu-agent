@@ -1,6 +1,5 @@
 import { createContext, useContext, RefObject } from "react";
 import { Message } from "@langchain/langgraph-sdk";
-import { SourceEvidence } from "./types";
 
 export interface ThreadContextProps {
   threadId: string | null;
@@ -26,58 +25,20 @@ export interface ThreadContextProps {
   handlePaste: (e: any) => void;
   messages: Message[];
 
-  // Workstation states
-  rightTab: "mock" | "feishu" | "evidence";
-  setRightTab: (tab: "mock" | "feishu" | "evidence") => void;
-  selectedEvidence: SourceEvidence | null;
-  setSelectedEvidence: (ev: SourceEvidence | null) => void;
-  viewMode: "detail" | "feed";
-  setViewMode: (mode: "detail" | "feed") => void;
-  isEditingText: boolean;
-  setIsEditingText: (editing: boolean) => void;
+  // 草稿工作台状态
   draftTitle: string;
   setDraftTitle: (title: string) => void;
   draftContent: string;
   setDraftContent: (content: string) => void;
-  carouselIndex: number;
-  setCarouselIndex: (i: number | ((prev: number) => number)) => void;
-  carouselImages: string[];
-  feishuChats: any[];
-  setFeishuChats: (chats: any[]) => void;
-  selectedChatId: string;
-  setSelectedChatId: (id: string) => void;
-  isFetchingChats: boolean;
-  setIsFetchingChats: (fetching: boolean) => void;
-  isSendingNotification: boolean;
-  setIsSendingNotification: (sending: boolean) => void;
-  isFeishuActionPending: boolean;
-  setIsFeishuActionPending: (pending: boolean) => void;
-  syncStepsVisible: boolean;
-  setSyncStepsVisible: (visible: boolean) => void;
-  syncStep: number;
-  setSyncStep: (step: number) => void;
+  isDirty: boolean;
   isSyncing: boolean;
   setIsSyncing: (syncing: boolean) => void;
-  isFlying: boolean;
-  setIsFlying: (flying: boolean) => void;
-  isDirty: boolean;
-  showCommandPalette: boolean;
-  setShowCommandPalette: (show: boolean) => void;
-  cmdSearch: string;
-  setCmdSearch: (search: string) => void;
   lastSavedTitle: string;
   lastSavedContent: string;
-  bitableUrl: string | null;
-  wikiUrl: string | null;
 
   // Actions
   handleExecuteCommand: (cmd: string) => void;
   handleSyncToFeishu: () => void;
-  handleSendNotification: () => void;
-  handleInsertEmoji: (emoji: string) => void;
-  handleAppendTag: (tag: string) => void;
-  handleEditBodyPaste: (e: any) => void;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
 export const ThreadContext = createContext<ThreadContextProps | null>(null);
