@@ -1,115 +1,128 @@
-# 前端死代码/假数据清理 + 后端 `_repository` 去重 设计
+# 前端旧 Thread() 生态死代码清除(含假数据)+ 后端 `_repository` 去重 设计
 
-> 状态:待评审 · 日期:2026-07-01 · 范围:前端死子树清理(含假数据)+ 后端 P1 去重
+> 状态:待评审 · 日期:2026-07-01 · 范围:前端旧 UI 死代码彻底清除(方案 C)+ 后端 P1 去重
+> 权威依据:knip(死文件检测)+ 精确 import 追踪。**不用 `grep 单词` 判死活**(子串会误判,本轮自审已两次被骗)。
 
 ## 目标
 
-一轮低风险清理,兑现两个既有目标,**不删减任何在用功能**:
-
-1. **真实数据铁律**:清除前端仅存的硬编码假业务数据(`PhoneSimulator` 的「张潇潇/露营」假博主假笔记、`usePreviewState` 的 3 张 Unsplash 假配图),连同承载它们的、生产入口零引用的旧 `Thread()` 三栏 UI 死子树。
-2. **本轮解耦收尾(P1)**:把 `data_foundation/tools.py` 里与 `studio_shared.repository()` 逐字重复的 `_repository()` 上下文管理器收敛掉——这是上一轮三层解耦想消灭的复制粘贴中漏掉的最后一处。
-
-## 非目标(明确排除,留待下一轮)
-
-- 后端 P2(`repositories/resource.py` 1110 行拆分)、P4(`internal_api.py` 抽 `internal_auth.py`)——结构性重构,单独评估。
-- `ThreadContext` 巨型 context 瘦身(删 `viewMode`/`rightTab`/`isFlying`/`syncStep` 等死字段)——属大 context 拆分,回归面大,下一轮。
-- `useFeishuWorkspaceState` / `useWorkbenchTabsState` 相关灰色字段——虽当前 `StudioShell` 无 UI 入口,但飞书通知牵扯真实 SDK 接线(见硬约束),本轮一律不碰。
+1. **真实数据铁律**:清除前端仅存的硬编码假业务数据——`PhoneSimulator` 的「张潇潇/露营」假博主假笔记、`usePreviewState` 的 3 张 Unsplash 假配图。
+2. **彻底删死代码(方案 C)**:删除旧 `Thread()` 三栏 UI 的整片死代码生态(~30 文件),并改造仍在调用死 hook 的活 `ThreadStateProvider`、瘦身 `ThreadContext`,使死 hook 可被彻底移除。
+3. **后端 P1 去重**:`data_foundation/tools.py` 的 `_repository()` 收敛到 `studio_shared.repository()`。
 
 ## 硬约束:保留全部 LangGraph SDK 官方接线
 
-前端与 agent 的官方集成契约是 **LangGraph SDK streaming client**(不是 deepagents——deepagents 只管后端)。这套接线全部活在 `ThreadStateProvider` 内,本轮**一字不动**:
+前端↔agent 的官方契约是 **LangGraph SDK streaming client**(非 deepagents,deepagents 只管后端)。以下一字不动:
+- `stream.submit({ messages, context, ...patch })`、`context`/state patch(后端 `InjectedState` 接)、`stream.*`
+- `submitText`/`handleSubmit`/`handleRegenerate`、草稿自动保存、会话切换、错误处理
+- 活 handler `handleExecuteCommand`(润色/瘦身/话题按钮)、`handleSyncToFeishu`(飞书同步,调 `sync_copy_to_feishu` 工具)
 
-- `stream.submit({ messages, context, ...patch })`([ThreadStateProvider.tsx:167](../../web/src/components/thread/ThreadStateProvider.tsx))— 官方提交入口
-- `context` / state patch — 前端喂权威数据给 agent 的官方通道(后端 `InjectedState` 接)
-- `submitText` / `handleSubmit` / `handleRegenerate` / 飞书 HITL(`handleSyncToFeishu`/`handleSendNotification`)/ 草稿自动保存 / 会话切换 — 全保留
+改造 provider 时,只摘除**死 UI 状态**(永不被任何活组件读取的字段),活 handler 的 `submitText`/`stream.submit` 调用链完整保留。
 
-判据:凡触碰 `stream.submit`、`context`、`stream.*`、飞书工具调用的代码,一律视为官方接线,不在删除范围。删除对象仅限**纯展示、零 SDK 调用、且已被 `StudioShell` 取代**的旧 UI 残骸。
+---
+
+## 前端:活消费边界(已核实,决定去留)
+
+`studio/` 活 UI 经 `useThread()` 实际消费的字段(**保留**):
+`messages`、`isLoading`、`submitText`、`threadId`/`setThreadId`、`draftTitle`/`draftContent`/`setDraftTitle`/`setDraftContent`、`handleExecuteCommand`、`handleSyncToFeishu`、`selectedEvidence`/`setSelectedEvidence`(⚠️ 见下)。
+
+### 陷阱:混住活字段的死 hook
+
+四个「死 hook」并非全死,逐字段甄别:
+
+| hook | 死字段(删) | 活字段(留) |
+|---|---|---|
+| `usePreviewState` | `viewMode`/`setViewMode`、`carouselIndex`/`setCarouselIndex`、`carouselImages`(**假数据**) | `isEditingText`/`setIsEditingText`(provider 原位编辑器自适应高度用,[:129](../../web/src/components/thread/ThreadStateProvider.tsx)/[:344](../../web/src/components/thread/ThreadStateProvider.tsx)) |
+| `useWorkbenchTabsState` | `rightTab`/`setRightTab` | **`selectedEvidence`/`setSelectedEvidence`**(`CreationScreen`/`StudioShell`/`StudioContext` 活用) |
+| `useCommandPaletteState` | `showCommandPalette`/`setShowCommandPalette`、`cmdSearch`/`setCmdSearch` | 无(但 `handleExecuteCommand` 内部调 `setShowCommandPalette`——见改造) |
+| `useFeishuWorkspaceState` | `feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification` 及其 setter | 无(但 `handleSyncToFeishu` 内部调 `setIsFeishuActionPending`——见改造) |
+
+因存在活字段/活 handler 依赖,**不能整删 4 个 hook 文件**;需按下述改造把活逻辑就地保留、死状态移除。
 
 ---
 
 ## 前端改动
 
-### 现状(已核实)
+### A. 删除的死文件(knip 确认 + 精确 import 复核)
 
-生产入口链:`page.tsx` → `AppShell`([AppShell.tsx](../../web/src/components/AppShell.tsx))→ `ThreadStateProvider`(活,持全部 SDK 接线)→ `StudioProvider` → `StudioShell`。
+旧 `Thread()` 生态,`studio/` 零 import:
 
-旧 `Thread()` 三栏组件([thread/index.tsx](../../web/src/components/thread/index.tsx))**全项目零 import**,是死根。它拖着一棵只由它引用的展示子树。活 UI(`studio/`)对这棵子树的字段消费**仅一处**:`StudioContext.tsx:482-484` 调 `t.handleExecuteCommand(...)`(润色/瘦身/话题三个活按钮)——该函数活在 `ThreadStateProvider`,依赖 `submitText` + `setShowCommandPalette`,**不依赖**被删文件。
+- 组件:`index.tsx`(死根)、`ChatTimeline.tsx`、`ComposerPanel.tsx`、`RightInspector.tsx`、`PhoneSimulator.tsx`(**假数据**)、`CommandPalette.tsx`、`EvidenceInspector.tsx`、`MultimodalPreview.tsx`、`ContentBlocksPreview.tsx`
+- `messages/` 整个目录(9 文件:ai/human/copy-card/topic-cards/search-cards/panel-card/evidence-time/generic-interrupt/shared)
+- `agent-inbox/` 整个目录
+- 辅助:`markdown-text.tsx`、`syntax-highlighter.tsx`、`markdown-styles.css`、`artifact-hooks.tsx`、`artifact-slot.tsx`
+- lib/hooks:`lib/tool-render.tsx`、`lib/evidence-rank.ts`、`lib/agent-inbox-interrupt.ts`、`hooks/useMediaQuery.tsx`
+- 根目录:`web/mockup.html`(设计原型,含假数据)
 
-### A. 删除的文件(纯展示死代码,零 SDK 接线)
+**保留(边界):** `artifact.tsx` + `artifact-context.ts`(page.tsx 的 `ArtifactProvider` 活用)、`ThreadContext.tsx`、`ThreadStateProvider.tsx`、`useThreadDraftState.ts`、`history/`(被 `AdminConfigPanel` 活用)、`utils.ts`、`types.ts`。
 
-| 文件 | 理由 |
-|---|---|
-| `web/src/components/thread/index.tsx` | 死根 `Thread()`,零 import |
-| `web/src/components/thread/PhoneSimulator.tsx` | **含假数据**(张潇潇/露营/写死标签),仅 `index.tsx` 引用 |
-| `web/src/components/thread/ChatTimeline.tsx` | 仅 `index.tsx` 引用 |
-| `web/src/components/thread/ComposerPanel.tsx` | 仅 `ChatTimeline` 引用 |
-| `web/src/components/thread/RightInspector.tsx` | 仅 `index.tsx` 引用 |
-| `web/src/components/thread/CommandPalette.tsx` | 命令面板**弹窗 UI**,仅 `index.tsx`/`ComposerPanel` 引用(注:state hook `useCommandPaletteState` 是活的,**保留**) |
-| `web/mockup.html` | 根目录设计原型(63KB,含假数据),Next 不 serve、无引用 |
+> 每个删除文件先 `grep "import.*<名>"` 精确复核活引用为零;最终以 knip 复跑 + `tsc --noEmit` 零错误为准。测试文件(`preview-state.test.ts`/`command-palette-state.test.ts`/`feishu-workspace-state.test.ts` 等)随被测死代码一并删除。
 
-> 删除前逐一 `grep` 复核引用数,确保除死子树内部外无活引用(见测试策略)。
+### B. 死 hook 的活字段迁移 + 文件删除
 
-### B. 就地清理假数据(保留活逻辑)
+1. **`usePreviewState.ts` → 删文件**;`isEditingText` 活逻辑迁入 `ThreadStateProvider` 本地 `useState`(一行 `const [isEditingText, setIsEditingText] = useState(false)`)。假数据(`carouselImages`)随文件删除消失。
+2. **`useWorkbenchTabsState.ts` → 删文件**;`selectedEvidence`/`setSelectedEvidence` 迁入 provider 本地 `useState<SourceEvidence | null>(null)`。`rightTab` 死状态丢弃。
+3. **`useCommandPaletteState.ts` → 删文件**;`showCommandPalette`/`cmdSearch` 死状态丢弃(见 C 对 `handleExecuteCommand` 的处理)。
+4. **`useFeishuWorkspaceState.ts` → 删文件**;死状态丢弃(见 C 对 `handleSyncToFeishu` 的处理)。
 
-`web/src/components/thread/usePreviewState.ts` **混住活与死**:
-- **活**:`isEditingText`/`setIsEditingText` 被 `ThreadStateProvider` 原位编辑器自适应高度逻辑消费([:129](../../web/src/components/thread/ThreadStateProvider.tsx)、[:344](../../web/src/components/thread/ThreadStateProvider.tsx))。
-- **死+假**:`carouselImages`(3 张 Unsplash 假图)、`viewMode`、`carouselIndex` 仅被已删的 `PhoneSimulator` 读。
+### C. `ThreadStateProvider.tsx` 改造(保留活逻辑,移除死状态)
 
-**做法**:保留 `usePreviewState` 结构不动,仅把 `createPreviewInitialState()` 里的 `carouselImages` 假 URL 数组改为 `[]`。这样假数据 100% 清除、`isEditingText` 活逻辑零影响、`ThreadContext` 形状不变(死字段留空,清理留待下一轮 context 瘦身)。
+- 删除对 4 个死 hook 的 import 与调用;`isEditingText`、`selectedEvidence` 改为本地 `useState`。
+- **`handleExecuteCommand`**:保留(活)。移除内部 `setShowCommandPalette(false)`(命令面板弹窗已删,该状态无意义);`submitText(...)` 调用链不动。
+- **`handleSyncToFeishu`**:保留(活)。移除内部对死状态的 set(`setIsFlying`/`setSyncStep`/`setSyncStepsVisible`/`setIsFeishuActionPending`——这些字段无活 UI 读取);保留 `submitText(sync_copy_to_feishu ...)` 与 `setIsSyncing` 守卫逻辑(防重复提交,`isSyncing` 保留为本地态)。
+- **删除死 handler**:`handleSendNotification`、`handleInsertEmoji`、`handleAppendTag`(均无活引用)。
+- 清理相关本地 `useState`:`isFlying`/`syncStep`/`syncStepsVisible`/`bitableUrl`/`wikiUrl` 等仅死 UI 用的状态,连同 [:94-111](../../web/src/components/thread/ThreadStateProvider.tsx) 的 bitable/wiki 拉取 `useEffect`(仅喂死字段)一并移除——**逐个 grep 确认无活消费方**后删。
 
-> 与后端一致的空态语义:`StudioContext.tsx` 的配图早已是 `useMemo(() => [], [])` 真实空容器 + 按 `images.length` 守卫。此改动使 `usePreviewState` 对齐同一「无源即空」范式。
+### D. `ThreadContext.tsx` 瘦身
 
-### C. `ThreadStateProvider` 不改
-
-`usePreviewState` 保留 → provider 对它的调用与灌进 context 的字段全部不动。`handleExecuteCommand`/`submitText`/飞书 HITL/草稿全保留。**前端唯一实际改动是 B 的一行数组 + A 的删文件。**
+从 `ThreadContextProps` interface 与 provider `value` 中移除所有死字段:`rightTab`/`viewMode`/`carouselIndex`/`carouselImages`/`showCommandPalette`/`cmdSearch`/`feishuChats`/`selectedChatId`/`isFetchingChats`/`isSendingNotification`/`isFeishuActionPending`/`syncStepsVisible`/`syncStep`/`isFlying`/`bitableUrl`/`wikiUrl` 及死 handler。保留活字段(见「活消费边界」)。以 `tsc --noEmit` 零错误确认无活消费方遗漏。
 
 ---
 
 ## 后端改动(P1)
 
-`data_foundation/tools.py:42` 的 `_repository()` 与 `data_foundation/studio_shared.py:33` 的 `repository()` 实现逐字相同(`connect()` → `ResourceRepository` → `close()`,均 `@contextmanager`)。
+`tools.py:42` 的 `_repository()` 与 `studio_shared.py:33` 的 `repository()` 实现逐字相同。
 
-**做法**:
-1. 删除 `tools.py:41-47` 的 `_repository()` 定义。
-2. `tools.py:26` 已有 `from data_foundation.studio_shared import is_admin_open_id`,扩为 `import (is_admin_open_id, repository as _repository)`——用 `as _repository` 别名,**14 处调用点** `with _repository() as repo`([tools.py](../../data_foundation/tools.py) 行 148/193/243/324/356/378/387/428/450/472/494/514/580)**无需逐一改名**,零调用点改动。
-3. 清理因删定义而不再使用的 import:`Iterator`([:5](../../data_foundation/tools.py))、`contextmanager`([:6](../../data_foundation/tools.py))、`ResourceRepository`([:32](../../data_foundation/tools.py))、`connect`——**前提是删定义后模块内确无其他使用者**;逐个 `grep` 确认后再删,有他用则保留。
+1. 删 `tools.py:41-47` 的 `_repository()` 定义。
+2. `tools.py:26` 的 import 扩为 `from data_foundation.studio_shared import is_admin_open_id, repository as _repository`——用 `as _repository` 别名,**14 处调用点**(148/193/243/324/356/378/387/428/450/472/494/514/580)零改名。
+3. 清理因删定义不再使用的 import:`Iterator`([:5](../../data_foundation/tools.py))、`contextmanager`([:6](../../data_foundation/tools.py))、`ResourceRepository`([:32](../../data_foundation/tools.py))、`connect`——逐个 grep 确认模块内无他用后删,有他用则留。
 
-对 deepagents 的拓展面零影响:`@tool` 装饰、`tools=` 列表挂载、`RunnableConfig` 取身份全不变;改的仅是工具函数体内部 db helper 的来源。
+对 deepagents 拓展面零影响:`@tool`/`tools=`/`RunnableConfig` 全不变,仅工具函数体内部 db helper 来源收敛。
 
 ---
 
 ## 测试策略
 
-### 前端
-
-1. **删除前**:对每个待删文件 `grep -rn "<basename>" web/src` 复核,确认引用仅来自死子树内部(`index.tsx` / 被删链)。
-2. **静态验证**:`cd web && npx tsc --noEmit`(类型零错误)+ `npx eslint src`(无 no-unused/no-undef)——证明无活代码引用被删符号。
-3. **构建**:`cd web && npm run build` 通过。
-4. **运行时验证(preview 工具)**:起 dev server → `StudioShell` 正常渲染 → 三个活按钮(润色/瘦身/话题)仍触发 `submitText`(console/network 见 stream 提交)→ 草稿编辑器自适应高度正常(`isEditingText` 活逻辑未断)→ 全站 `grep` 确认「张潇潇」「unsplash」「露营」假数据在 `web/src` 生产路径零残留。
+### 前端(权威工具,非 grep)
+1. **knip 复跑**:`npx knip` —— 删除后 `thread/` 死文件清单应清空(仅剩本设计保留的活文件)。
+2. **类型**:`cd web && npx tsc --noEmit` 零错误(证明 context 瘦身无活消费方遗漏)。
+3. **lint**:`npx eslint src` 无 no-unused/no-undef。
+4. **单测**:`node scripts/run-unit-tests.mjs`(删死 hook 测试后应全绿)。
+5. **构建**:`npm run build` 通过。
+6. **运行时(preview 工具)**:`StudioShell` 正常渲染 → 润色/瘦身/话题按钮触发 `submitText`(network 见 stream 提交)→ 飞书同步按钮触发 `sync_copy_to_feishu`(HITL 确认流)→ 草稿编辑器自适应高度正常 → 全站确认「张潇潇/unsplash/露营」假数据在生产路径零残留。
 
 ### 后端
-
-1. `uv run pytest tests/data_foundation -q` 全绿(工具行为不变)。
+1. `uv run pytest tests/data_foundation -q` 全绿。
 2. `uv run python scripts/runtime_import_smoke.py` — `agent=OK`,无循环 import。
-3. agent 装配 smoke:`import agent` 后工具计数不变(去重不改工具数量)。
+3. `import agent` 工具计数不变(去重不改工具数)。
 
 ## 部署与验证
-
-1. 本地发布前门:后端 `uv run pytest tests/data_foundation -q` + `web` 三件套(tsc/eslint/build)+ `git diff --check`。
-2. 推送:`git -c http.proxy= -c https.proxy= push origin master`(失败改默认代理 `git push`,见项目 memory)。
-3. 部署:`uv run python scripts/deploy.py`(pull → langgraph build → compose up → 健康检查 + smoke)。
-4. 生产验证:登录 → `StudioShell` 正常 → 润色/瘦身/话题按钮触发对话 → 页面无假数据。
+1. 发布前门:后端 pytest + web(knip/tsc/eslint/unit/build)+ `git diff --check`。
+2. 推送:`git -c http.proxy= -c https.proxy= push origin master`(失败改默认代理 `git push`)。
+3. 部署:`uv run python scripts/deploy.py`。
+4. 生产验证:登录 → `StudioShell` 正常 → 三个活按钮 + 飞书同步触发对话 → 页面无假数据。
 
 ## 风险
 
 | 风险 | 缓解 |
 |---|---|
-| 误删活文件 | 删前逐一 grep 复核引用;tsc+eslint 兜底 |
-| `usePreviewState` 活字段 `isEditingText` 被牵动 | 只改 `carouselImages` 一行,不动 hook 结构与其余字段 |
-| P1 删 import 误删仍在用的 | 逐个 grep 确认无其他使用者再删,有他用则留 |
-| 触碰 SDK 官方接线 | 硬约束:凡碰 `stream.submit`/`context`/飞书工具的代码不在删除范围 |
+| context 瘦身误删活字段致运行时 undefined | `selectedEvidence` 等活字段已核出并保留;`tsc --noEmit` 强制全消费方类型对齐兜底 |
+| 活 handler 内死 setter 移除后残留悬空引用 | 逐 handler 核内部依赖;编译期 + eslint no-undef 兜底 |
+| knip 误报(漏动态入口)误删活文件 | knip 结果 + 精确 import 复核双重确认;`tsc`/`build` 最终裁决 |
+| 删 artifact-hooks/slot 波及活 artifact.tsx | 已核实 `artifact.tsx`/`artifact-context.ts` 活、`artifact-hooks`/`artifact-slot` 仅死 `messages/ai` 用 |
+| P1 删 import 误删仍用的 | 逐个 grep,有他用则留 |
+| 触碰 SDK 官方接线 | 硬约束:submit/context/stream/活 handler 的 submitText 链不动 |
 
 ## 提交规划
-
-1. `fix(web): 清除 PhoneSimulator/usePreviewState 假业务数据 + 删旧 Thread() 死代码子树`
-2. `refactor(data_foundation): tools.py 复用 studio_shared.repository(消除 _repository 复制)`
+1. `fix(web): 删除旧 Thread() 生态死代码(含 PhoneSimulator 假数据)+ 迁移活字段至 provider`
+2. `refactor(web): ThreadContext 瘦身——移除死 UI 状态字段`
+3. `refactor(data_foundation): tools.py 复用 studio_shared.repository(消除 _repository 复制)`
