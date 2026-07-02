@@ -32,6 +32,21 @@ thinking 参数值定为 `{"type":"adaptive","display":"summarized"}`(Opus 4.7+ 
 
 **非目标**:openai/google provider 的 reasoning(形态不同:`additional_kwargs.reasoning`),本轮不做——生产是 anthropic,留待需要时扩展。前端解析层设计为"有块则渲染",未来这些 provider 的块接进来时前端可复用。
 
+## 3.5 官方扩展性核查(守 README 铁律:不 fork / 不 monkey-patch / 不碰私有字段)
+
+已逐点对照源码,全部走官方扩展点:
+
+| 环节 | 用法 | 官方证据 |
+|---|---|---|
+| 开 thinking | `ChatAnthropic(thinking=...)` | langchain-anthropic 公开 `Field`(chat_models.py:1002) |
+| temperature 联动 | 构造参数 | 官方公开参数 |
+| rubric 传模型 | `RubricMiddleware(model=<BaseChatModel>)` | RubricMiddleware docstring 明示 model 接受 `BaseChatModel`(rubric.py:321-322) |
+| rubric override | `model.model_copy(update=...)` | pydantic 原生方法,非 hack;实测不污染原实例 |
+| thinking 块流出 | 随 `DeepAgentState.messages` 官方通道(`AnyMessage` + 官方 `_messages_delta_reducer`,graph.py:67) | thinking 是标准 message content 块,与第一层 tool_calls/ToolMessage **同一条官方数据流**,非旁路 |
+| 前端收块 | LangGraph SDK `streamMode:["values"]` messages 快照 | 第一层已在用的同一官方通道 |
+
+`RegistryRoutedChatModel` 本身是项目既有的、走 `resolve_model` 官方扩展点的 `BaseChatModel` 子类(见 rubric_model.py 顶部注释论证);第二层只在其唯一出口 `_resolve()` 加一层 pydantic `model_copy`,不改其官方性。前端不碰任何私有字段,只多解析一种已在流里的官方 block 类型。
+
 ## 4. 后端设计
 
 ### 4.1 `_build_chat_model` 加 thinking 参数 + temperature 联动
