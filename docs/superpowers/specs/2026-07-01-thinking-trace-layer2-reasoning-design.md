@@ -229,3 +229,13 @@ if (r) reasoningParts.push(r);   // reasoningParts 是轮级数组,flushRun 时 
 - 配置:`.env` / config-center 新增 `LLM_THINKING`(默认 summarized)。
 - 部署:改后端,需 `langgraph build` 重新出镜像 + `docker compose up -d`。
 - provider 兼容:openai/google 全程不受影响(thinking 只在 anthropic 分支消费,前端无块则不显示)。
+
+## 9. 取舍与已知代价(用户已确认接受)
+
+以下是完整做第二层、默认 `summarized` 开启的已知代价,部署者应知情:
+
+- **temperature 行为改动**:开 thinking 时主/子 agent 的 temperature 从 0.7 强制拉到 1(Anthropic 硬约束)。文案生成的创意度/发散度可能变化。若发现文案风格漂移,可 `LLM_THINKING=off` 恢复 0.7。rubric 评分路径不受影响(已 override 回 0.7)。
+- **token 成本上升**:每轮主/子 agent 调用额外生成 summarized reasoning token(opus-4-8 为最贵模型)。这是默认开启的持续成本。
+- **信息密度**:一轮对话在聊天区叠加"推理小节 + 工具步骤 + 日志 + 正文 + 选题卡"。已用折叠(推理小节、已完成 N 步)缓解,但密度高于第一层。
+- **两个目标的关系**:第二层同时达成"根治 reasoning 混入正文"(开 thinking 后思考走独立块,不再进 text)与"展示模型推理"。前者也可用更轻的方式(纯前端过滤/prompt 约束)单独解决;本设计选择用开 thinking 一并达成两者,是用户明确的取舍。
+- **默认值**:`LLM_THINKING` 默认 `summarized`(开)。这是激进默认——所有 anthropic 部署即时生效。保守部署可在 config-center 或 .env 设 `off`。
