@@ -40,13 +40,23 @@ def test_runtime_has_no_business_file_routes_or_ui_labels() -> None:
     assert '"/shared/"' not in backend
     assert '"/drafts/"' not in backend
 
-    for relative_path in (
+    # 前端渲染相关文件不得出现本地业务文件路由标签。历史上被检查的
+    # tool-render.tsx / thread/messages/ai.tsx 已在思考链重构中删除 —— 已删文件
+    # 天然满足"无业务标签",故只对仍存在的候选文件断言,不钉死已删路径。
+    candidate_paths = (
         "web/src/lib/tool-render.tsx",
         "web/src/components/thread/messages/ai.tsx",
-    ):
-        source = _read(relative_path)
+        "web/src/lib/thinking-trace.ts",
+        "web/src/components/studio/CreationScreen.tsx",
+    )
+    for relative_path in candidate_paths:
+        path = ROOT / relative_path
+        if not path.exists():
+            continue
+        source = path.read_text(encoding="utf-8")
         for marker in ("/analysis/", "/drafts/", "/shared/"):
             assert marker not in source, f"{relative_path} still contains {marker}"
+
 
 
 def test_main_prompt_defines_authoritative_storage_policy() -> None:

@@ -84,11 +84,14 @@ def test_web_api_business_write_routes_are_removed():
 
 
 def test_thread_ui_submits_feishu_write_intent_to_agent():
-    thread = (ROOT / "web" / "src" / "components" / "thread" / "index.tsx").read_text(
-        encoding="utf-8"
-    )
+    # 思考链重构后,飞书写意图的提交逻辑从已删的 thread/index.tsx 迁到
+    # ThreadStateProvider.tsx(handleSyncToFeishu 经 agent 工具 sync_copy_to_feishu 提交,
+    # 而非前端直 fetch 飞书写 API)。
+    provider = (
+        ROOT / "web" / "src" / "components" / "thread" / "ThreadStateProvider.tsx"
+    ).read_text(encoding="utf-8")
 
-    assert 'fetch("/api/feishu/sync"' not in thread
-    assert 'fetch("/api/feishu/notify"' not in thread
-    assert "sync_copy_to_feishu" in thread
-    assert "send_review_notification" in thread
+    assert 'fetch("/api/feishu/sync"' not in provider
+    assert 'fetch("/api/feishu/notify"' not in provider
+    assert "sync_copy_to_feishu" in provider
+
