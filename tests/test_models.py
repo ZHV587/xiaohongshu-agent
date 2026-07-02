@@ -180,7 +180,7 @@ def test_initial_placeholder_uses_strongest_no_network(monkeypatch):
         raise AssertionError("build_initial_placeholder_model 不得触发网络探测")
 
     monkeypatch.setattr(models_mod, "discover_models", boom)
-    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key, **kw: f"M:{mid}@{url}")
     assert build_initial_placeholder_model() == "M:claude-opus-4-8@https://gw1/v1"
 
 
@@ -199,7 +199,7 @@ def test_build_pool_from_config_empty_raises_no_fallback(monkeypatch):
     from models import build_pool_from_config
     models_mod._DISCOVER_CACHE.clear()
     monkeypatch.setattr(models_mod, "discover_models", lambda url, key, **kw: None)
-    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key, **kw: f"M:{mid}@{url}")
     import pytest
     with pytest.raises(RuntimeError):
         build_pool_from_config({
@@ -213,7 +213,7 @@ def test_build_pool_from_config_no_intersection_raises(monkeypatch):
     from models import build_pool_from_config
     models_mod._DISCOVER_CACHE.clear()
     monkeypatch.setattr(models_mod, "discover_models", lambda url, key, **kw: ["only-cheap-x"])
-    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key: f"M:{mid}@{url}")
+    monkeypatch.setattr(models_mod, "_build_chat_model", lambda mid, url, key, **kw: f"M:{mid}@{url}")
     import pytest
     with pytest.raises(RuntimeError):
         build_pool_from_config({
@@ -526,4 +526,42 @@ def test_build_chat_model_providers(monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     model_default = _build_chat_model("gpt-4o", "https://api.openai.com/v1", "fake-key")
     assert isinstance(model_default, ChatOpenAI)
+
+
+def test_thinking_from_config():
+    from models import _thinking_from_config
+    # 非 anthropic → None
+    assert _thinking_from_config({"LLM_THINKING": "summarized"}, "openai") is None
+    assert _thinking_from_config({"LLM_THINKING": "summarized"}, "google_genai") is None
+    # anthropic + off → None
+    assert _thinking_from_config({"LLM_THINKING": "off"}, "anthropic") is None
+    # anthropic + 默认(未设)→ adaptive dict
+    assert _thinking_from_config({}, "anthropic") == {"type": "adaptive", "display": "summarized"}
+    # anthropic + summarized → adaptive dict
+    assert _thinking_from_config({"LLM_THINKING": "summarized"}, "anthropic") == {"type": "adaptive", "display": "summarized"}
+
+
+def test_build_chat_model_anthropic_thinking_sets_temperature_1(monkeypatch):
+    from models import _build_chat_model
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    m = _build_chat_model("claude-opus-4-8", "https://gw/v1", "k",
+                          provider="anthropic", thinking={"type": "adaptive", "display": "summarized"})
+    assert m.thinking == {"type": "adaptive", "display": "summarized"}
+    assert m.temperature == 1
+
+
+def test_build_chat_model_anthropic_no_thinking_keeps_temperature_07(monkeypatch):
+    from models import _build_chat_model
+    m = _build_chat_model("claude-opus-4-8", "https://gw/v1", "k", provider="anthropic", thinking=None)
+    assert m.thinking is None
+    assert m.temperature == 0.7
+
+
+def test_build_chat_model_openai_ignores_thinking():
+    from models import _build_chat_model
+    from langchain_openai import ChatOpenAI
+    # openai 分支即便传 thinking 也不消费,不报错
+    m = _build_chat_model("gpt-4o", "https://api.openai.com/v1", "k", provider="openai",
+                          thinking={"type": "adaptive"})
+    assert isinstance(m, ChatOpenAI)
 

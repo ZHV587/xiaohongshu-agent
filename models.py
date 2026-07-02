@@ -84,7 +84,18 @@ def discover_models(base_url: str, api_key: str, *, force: bool = False) -> list
     return result
 
 
-def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: str | None = None) -> BaseChatModel:
+def _thinking_from_config(values: dict, provider: str) -> dict | None:
+    """仅 anthropic 且 LLM_THINKING != off 时返回 thinking dict,否则 None。
+    thinking 值显式经此解析后传入 _build_chat_model,不在构造函数内读进程 env。"""
+    if provider != "anthropic":
+        return None
+    mode = (values.get("LLM_THINKING") or "summarized").strip().lower()
+    if mode == "off":
+        return None
+    return {"type": "adaptive", "display": "summarized"}
+
+
+def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: str | None = None, thinking: dict | None = None) -> BaseChatModel:
     """按铁律一构造模型实例:默认 openai 兼容(provider=openai + 网关 base_url/key);
     provider=anthropic 走 ChatAnthropic + 同网关 base_url 的 Anthropic 原生 /v1/messages。
 
@@ -104,14 +115,15 @@ def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: s
         anthropic_base = base_url.rstrip("/")
         if anthropic_base.endswith("/v1"):
             anthropic_base = anthropic_base[: -len("/v1")]
-        return ChatAnthropic(
-            model=model_id,
-            api_key=api_key,
-            base_url=anthropic_base,
-            temperature=0.7,
-            timeout=_TIMEOUT,
-            max_retries=2,
-        )
+        kwargs = dict(model=model_id, api_key=api_key, base_url=anthropic_base,
+                      timeout=_TIMEOUT, max_retries=2)
+        if thinking:
+            # extended thinking 硬约束:temperature 必须=1(否则 Anthropic 400)。
+            kwargs["thinking"] = thinking
+            kwargs["temperature"] = 1
+        else:
+            kwargs["temperature"] = 0.7
+        return ChatAnthropic(**kwargs)
     elif provider == "google_genai":
         from langchain_google_genai import ChatGoogleGenerativeAI
         # 同走网关 base_url(铁律一:所有 provider 统一经网关,不直连公网官方域名)。
