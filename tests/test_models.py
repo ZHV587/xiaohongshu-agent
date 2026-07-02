@@ -565,3 +565,36 @@ def test_build_chat_model_openai_ignores_thinking():
                           thinking={"type": "adaptive"})
     assert isinstance(m, ChatOpenAI)
 
+
+def test_build_pool_passes_thinking_for_anthropic(monkeypatch):
+    import models as models_mod
+    captured = {}
+    def fake_build(mid, url, key, *, provider=None, thinking=None):
+        captured["thinking"] = thinking
+        captured["provider"] = provider
+        return f"M:{mid}"
+    monkeypatch.setattr(models_mod, "_build_chat_model", fake_build)
+    monkeypatch.setattr(models_mod, "discover_models", lambda url, key, force=False: ["claude-opus-4-8"])
+    models_mod.build_pool_from_config({
+        "LLM_PROVIDER": "anthropic", "LLM_BASE_URL": "https://gw/v1",
+        "LLM_API_KEY": "k", "LLM_QUALITY_MODELS": "claude-opus-4-8",
+        "LLM_THINKING": "summarized",
+    })
+    assert captured["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_build_pool_no_thinking_when_off(monkeypatch):
+    import models as models_mod
+    captured = {}
+    def fake_build(mid, url, key, *, provider=None, thinking=None):
+        captured["thinking"] = thinking
+        return f"M:{mid}"
+    monkeypatch.setattr(models_mod, "_build_chat_model", fake_build)
+    monkeypatch.setattr(models_mod, "discover_models", lambda url, key, force=False: ["claude-opus-4-8"])
+    models_mod.build_pool_from_config({
+        "LLM_PROVIDER": "anthropic", "LLM_BASE_URL": "https://gw/v1",
+        "LLM_API_KEY": "k", "LLM_QUALITY_MODELS": "claude-opus-4-8",
+        "LLM_THINKING": "off",
+    })
+    assert captured["thinking"] is None
+

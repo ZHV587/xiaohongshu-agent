@@ -117,7 +117,7 @@ def _build_chat_model(model_id: str, base_url: str, api_key: str, *, provider: s
             anthropic_base = anthropic_base[: -len("/v1")]
         kwargs = dict(model=model_id, api_key=api_key, base_url=anthropic_base,
                       timeout=_TIMEOUT, max_retries=2)
-        if thinking:
+        if thinking is not None:
             # extended thinking 硬约束:temperature 必须=1(否则 Anthropic 400)。
             kwargs["thinking"] = thinking
             kwargs["temperature"] = 1
@@ -192,7 +192,8 @@ def build_initial_placeholder_model() -> BaseChatModel:
     # 显式按权威 provider 构造占位(import 期 os.environ 已含 .env 注入的 LLM_PROVIDER);
     # 不传则回退默认 openai,会让占位在 registry 空窗口期用错协议(假流式)。
     provider = (os.environ.get("LLM_PROVIDER") or "openai").strip().lower()
-    return _build_chat_model(whitelist[0], base_url, api_key, provider=provider)
+    thinking = _thinking_from_config(dict(os.environ), provider)
+    return _build_chat_model(whitelist[0], base_url, api_key, provider=provider, thinking=thinking)
 
 
 _COOLDOWN_SECONDS = 30.0
@@ -308,6 +309,7 @@ def build_pool_from_config(values: dict[str, str], *, force_discover: bool = Fal
 
     # provider 从配置快照显式解析(不改进程级 os.environ —— 杜绝并发构池跨线程串值,见 _build_chat_model)。
     provider = (values.get("LLM_PROVIDER") or os.environ.get("LLM_PROVIDER") or "openai")
+    thinking = _thinking_from_config(values, provider.strip().lower())
     # 先探测每个网关的可用清单(一次),再按白名单序匹配,保证质量优先序。
     # 探测是阻塞 httpx.get(每个 _DISCOVER_TIMEOUT=5s),串行时 N 个网关全挂会
     # 累加阻塞 N×5s,拖慢启动对齐/定时健康探测/配置 verify。改并发探测:墙钟
@@ -329,7 +331,7 @@ def build_pool_from_config(values: dict[str, str], *, force_discover: bool = Fal
                 pool.append(ModelCandidate(
                     gateway_name=gw_name,
                     model_id=model_id,
-                    model=_build_chat_model(model_id, base_url, api_key, provider=provider),
+                    model=_build_chat_model(model_id, base_url, api_key, provider=provider, thinking=thinking),
                 ))
 
     if not pool:
