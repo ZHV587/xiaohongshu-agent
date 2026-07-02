@@ -244,3 +244,15 @@ def test_project_config_to_env_empty_value_clears(monkeypatch):
     import os
 
     assert os.environ["FEISHU_BITABLE_TABLE_ID"] == ""
+
+
+def test_llm_thinking_is_editable_not_secret():
+    from config_center import EDITABLE_KEYS, SECRET_KEYS, DEPLOY_ONLY_KEYS
+    assert "LLM_THINKING" in EDITABLE_KEYS
+    assert "LLM_THINKING" not in SECRET_KEYS
+    assert "LLM_THINKING" not in DEPLOY_ONLY_KEYS
+
+
+def test_llm_thinking_triggers_pool_rebuild():
+    from data_foundation.internal_api import _MODEL_POOL_KEYS
+    assert "LLM_THINKING" in _MODEL_POOL_KEYS
