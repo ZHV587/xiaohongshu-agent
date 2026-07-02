@@ -131,7 +131,13 @@ def _resolve(self) -> BaseChatModel:
 
 - `model_copy` 是 pydantic 原生(非 hack),实测:override 后不返回 thinking 块、content 退回 str、**原池实例不受污染**(主/子 agent 仍用带 thinking 的同一实例)。
 - `getattr(model, "thinking", None) is not None` 守卫:非 ChatAnthropic(openai/google)或未开 thinking 时原样返回,不报错、不多余 copy。
+- `temperature=0.7` 是项目 `_build_chat_model` 全 provider 既有默认值(models.py 三分支均 0.7),此处 override 回 0.7 = 恢复项目原值,非新假设。
 - 主 agent、子 agent 的 `ModelRouterMiddleware` 路径**不经过 `_resolve`**,保留 thinking。
+
+**多轮/热切安全性(已实测坐实,关键)**:选 `display:"summarized"` 而非全量 `{"type":"enabled"}` CoT,恰好绕开 Anthropic 最麻烦的签名校验——实测 summarized 的 thinking 块**不带 `signature`**。故:
+- **on→off 热切**:关 thinking 的模型收到 checkpoint 里带 thinking 块的历史消息,**实测正常回复不报错**(无签名 → 不触发签名一致性校验)。
+- **rubric grader**:`model_copy(thinking=None)` + `with_structured_output` 收带 thinking 块历史,**实测正常结构化输出**。
+- 若未来改用全量 `{"type":"enabled"}`(带 signature),则 checkpointer 多轮 + 热切场景需重新验证签名保留问题——本设计固定用 summarized,不踩此雷。
 
 ## 5. 前端设计(能力探测:有块则渲染,无则隐藏)
 
@@ -143,18 +149,21 @@ def _resolve(self) -> BaseChatModel:
 
 在 `web/src/lib/thinking-trace.ts` 新增(与第一层解析器同文件,职责相关):
 
+**TS 类型注意(已核实)**:langgraph-sdk 的 `MessageContentComplex` 只有 `text | image_url`,**无 `thinking` 块类型**。直接 `b.type==="thinking"` / `b.thinking` 在 strict 下报"属性不存在"。故先把块窄化为 `Record<string, unknown>` 再读:
+
 ```typescript
 /** 从一条 AI 消息的 content 提取模型原生 reasoning 文本。
  *  兼容:Anthropic thinking 块 {type:"thinking", thinking:"..."};
  *  未来可扩展 openai {type:"reasoning"} / additional_kwargs.reasoning。
- *  无 reasoning → 返回空串(能力探测:没有就不显示)。 */
+ *  无 reasoning → 返回空串(能力探测:没有就不显示)。
+ *  SDK content 类型不含 thinking 块,故经 unknown 收窄读取,避免 tsc 报错。 */
 export function extractReasoning(content: Message["content"]): string {
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
-  for (const b of content) {
-    if (b && typeof b === "object") {
-      if (b.type === "thinking" && typeof b.thinking === "string") parts.push(b.thinking);
-    }
+  for (const raw of content) {
+    if (!raw || typeof raw !== "object") continue;
+    const b = raw as Record<string, unknown>;
+    if (b.type === "thinking" && typeof b.thinking === "string") parts.push(b.thinking);
   }
   return parts.join("").trim();
 }
@@ -204,7 +213,7 @@ if (r) reasoningParts.push(r);   // reasoningParts 是轮级数组,flushRun 时 
 - 运行:`uv run pytest`。
 
 **前端**:
-- `extractReasoning`:thinking 块 → 提取文本;无块 → 空串;非数组 content → 空串。
+- `extractReasoning`:thinking 块 → 提取文本;无块 → 空串;非数组 content → 空串;**SDK content 类型无 thinking 块,经 unknown 收窄读取,tsc strict 须过**。
 - `deriveTimeline`:AI 消息带 thinking 块 → run.reasoning 非空;无 → undefined;reasoning 与 prose 同条最终消息时 reasoning **不随 flush 丢失**;纯 reasoning 无工具轮(steps 空)也 flush 出 thinking item;一轮多段 reasoning 按序拼接。
 - 运行:`npm run test:unit` + tsc + eslint。
 
