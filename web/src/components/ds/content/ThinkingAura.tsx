@@ -7,7 +7,7 @@ import { useState, useEffect, type CSSProperties, type HTMLAttributes } from "re
  * breathing coral dot, a stepper of statuses (done / active /
  * pending), and an optional collapsible log of raw thoughts.
  *
- * Faithfully ported 1:1 from design_system/components/content/ThinkingAura.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/content/ThinkingAura.jsx.
  */
 type StepState = "done" | "active" | "pending";
 

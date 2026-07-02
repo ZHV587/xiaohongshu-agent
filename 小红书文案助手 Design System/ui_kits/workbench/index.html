@@ -6,6 +6,85 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>小红书文案助手 · 工作台</title>
+<!-- 内联渲染错误兜底（纯内联、零外部请求）：当 CDN（React/ReactDOM/Babel）断网加载失败，
+     或本地脚本就绪后渲染仍抛错时，向 #root 写入可读错误提示而非留白。仅在出错时接管展示，
+     成功渲染时不介入；本脚本自身不发起任何外部请求，故不违反离线「无外部请求」保证。 -->
+<script>
+(function () {
+  var LAST_ERROR = null;
+  function note(msg) { if (msg && !LAST_ERROR) { LAST_ERROR = msg; } }
+  // 资源加载错误（含 unpkg CDN 脚本断网）只在捕获阶段冒泡到 window
+  window.addEventListener('error', function (ev) {
+    if (ev && ev.target && (ev.target.src || ev.target.href)) {
+      note('资源加载失败: ' + (ev.target.src || ev.target.href));
+    } else if (ev) {
+      note((ev.message || '脚本执行错误') + (ev.filename ? ' @ ' + ev.filename : ''));
+    }
+  }, true);
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev && ev.reason;
+    note('未处理的 Promise 异常: ' + String((r && r.message) || r || ''));
+  });
+  window.onerror = function (msg, src, line, col, err) {
+    note((err && err.message) || msg || '脚本执行错误');
+    return false;
+  };
+
+  function missingDeps() {
+    var m = [];
+    if (typeof window.React === 'undefined') { m.push('React'); }
+    if (typeof window.ReactDOM === 'undefined') { m.push('ReactDOM'); }
+    if (typeof window.Babel === 'undefined') { m.push('Babel'); }
+    return m;
+  }
+
+  function render(title, detail) {
+    var root = document.getElementById('root');
+    if (!root || root.childElementCount > 0) { return; } // 已成功渲染则不接管
+    root.setAttribute('style', 'min-height:100vh;margin:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#faf8f5;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;');
+    var box = document.createElement('div');
+    box.setAttribute('style', 'max-width:520px;width:100%;background:#ffffff;border:1px solid rgba(229,46,64,0.16);border-left:4px solid #e52e40;border-radius:16px;padding:28px 30px;box-shadow:0 6px 18px rgba(229,46,64,0.10);');
+    var h = document.createElement('div');
+    h.setAttribute('style', 'font-size:16px;font-weight:700;color:#e52e40;margin:0 0 10px;');
+    h.textContent = '⚠ ' + title;
+    var p = document.createElement('div');
+    p.setAttribute('style', 'font-size:14px;line-height:1.7;color:#1a1a1c;margin:0 0 12px;');
+    p.textContent = detail;
+    box.appendChild(h);
+    box.appendChild(p);
+    if (LAST_ERROR) {
+      var code = document.createElement('pre');
+      code.setAttribute('style', 'font-size:11px;line-height:1.5;color:#6b6b70;background:#faf8f5;border-radius:8px;padding:10px 12px;margin:0 0 12px;white-space:pre-wrap;word-break:break-all;');
+      code.textContent = String(LAST_ERROR);
+      box.appendChild(code);
+    }
+    var hint = document.createElement('div');
+    hint.setAttribute('style', 'font-size:12px;line-height:1.6;color:#8a8a90;border-top:1px solid #f4f2ee;padding-top:12px;');
+    hint.textContent = '本 kit 为原型参考，依赖 unpkg CDN（React / ReactDOM / Babel），仅联网可用。请检查网络连接后刷新页面。';
+    box.appendChild(hint);
+    root.appendChild(box);
+  }
+
+  function check() {
+    var root = document.getElementById('root');
+    if (!root || root.childElementCount > 0) { return; } // 渲染成功，不接管
+    var missing = missingDeps();
+    if (missing.length > 0) {
+      render('UI kit 渲染失败：' + missing.join(' / ') + ' 未能加载',
+             '无法从 CDN 加载 ' + missing.join('、') + '，页面无法渲染，请检查网络连接（本 kit 为原型参考，依赖 unpkg CDN，仅联网可用）。');
+    } else {
+      render('UI kit 渲染失败',
+             '依赖脚本已加载，但页面渲染时发生错误，未能生成界面。');
+    }
+  }
+
+  // 依赖脚本（含浏览器内 Babel 转译的 src 脚本）为异步加载/执行，
+  // 故在 load 事件后再留出一段时间做就绪检查，避免误判正常渲染为失败。
+  function schedule() { setTimeout(check, 1500); }
+  if (document.readyState === 'complete') { schedule(); }
+  else { window.addEventListener('load', schedule); }
+})();
+</script>
 <link rel="stylesheet" href="../../styles.css" />
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>

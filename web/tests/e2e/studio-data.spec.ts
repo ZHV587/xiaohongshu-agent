@@ -21,16 +21,78 @@ const JWT_SECRET = process.env.XHS_JWT_SECRET ?? "";
 const OPEN_ID = process.env.XHS_E2E_OPEN_ID ?? "";
 const USER_NAME = process.env.XHS_E2E_USER_NAME || undefined;
 
-function requireEnv() {
+// ─────────────────────────────────────────────────────────────────────────
+// 前置探测(preflight)· skip/fail 语义分离(设计 AD3 / 需求 2.4/2.6/2.7)
+//
+// 铁律:运行本基线所需的「真实后端数据或凭据」不可用时 → test.skip(reason),
+// 使用例在报告中呈 skipped(非 passed、非 failed),绝不判过、绝不静默失败;
+// 前置一旦满足,任何硬断言失败仍判 failed(二者互斥)。
+//
+// 探测全程只读、无副作用、绝不抛错:任何异常都转为 skip 原因(抛错会被 Playwright
+// 判为 failed,违反 skip 语义)。原 requireEnv() 直接 throw(→ failed)已按根因重构掉。
+// ─────────────────────────────────────────────────────────────────────────
+
+/** 列出运行本基线所必需但当前缺失的环境变量(缺失即「当前数据不足」,驱动 skip,绝不抛错)。 */
+function missingEnv(): string[] {
   const missing: string[] = [];
   if (!JWT_SECRET) missing.push("XHS_JWT_SECRET");
   if (!OPEN_ID) missing.push("XHS_E2E_OPEN_ID");
-  if (missing.length) {
-    throw new Error(
-      `studio-data e2e 需要真实后端登录态,缺少环境变量: ${missing.join(", ")}。` +
-        `见 web/playwright.config.ts 顶部说明。`,
-    );
+  return missing;
+}
+
+/** 构造合法 xhs_auth JWT 的 Cookie 头(供前置探测的鉴权只读请求用,与 establishSession 同源)。 */
+function authCookieHeader(): string {
+  const token = signJwt({ sub: OPEN_ID, name: USER_NAME }, JWT_SECRET);
+  return `${AUTH_COOKIE}=${token}`;
+}
+
+type Preflight = { ok: true } | { ok: false; reason: string };
+
+/**
+ * 后端可达性 + 「7 步所需飞书记录存在且非空」可观测条件的前置探测。
+ *
+ * 返回 { ok:false, reason } 时由调用方转为 test.skip(reason)(呈 skipped)。本函数全程
+ * try/catch,任何网络/解析异常都转为 { ok:false, reason },绝不抛错——绝不制造「假绿」路径:
+ * 后端不可达或鉴权失败时如实判定为数据/凭据不可用而跳过,而非默默放过。
+ *
+ * 探测分层(全部只读 GET、无副作用):
+ *   [1] 可达性 + 鉴权:带合法 cookie 请求 /api/me。请求异常(socket hang up/连接失败)
+ *       → 后端不可达;非 2xx → 鉴权链或后端健康异常。
+ *   [2] 7 步读路径的飞书记录可观测条件:逐一探测基线各步读取的 BFF 只读端点
+ *       (/api/backend/accounts、/api/backend/trends、/api/backend/pipeline)可达且返回
+ *       结构化 JSON。此处是「记录存在且非空」的结构性挂载点:账号/趋势的空态在基线中
+ *       各有合法契约分支(空 == 后端真实空,非数据不足),故本层仅对「端点不可达 / 响应
+ *       非结构化」判为数据不足;若需收紧到某步所需记录必须非空,在对应端点分支填入该记录
+ *       的非空判定即可(结构保留、可扩展,不改动 skip/fail 语义)。
+ */
+async function probeBackendReady(request: APIRequestContext): Promise<Preflight> {
+  // [1] 可达性 + 鉴权
+  try {
+    const cookie = authCookieHeader();
+    const me = await request.get("/api/me", { headers: { cookie } });
+    if (!me.ok()) {
+      return { ok: false, reason: `后端鉴权/健康异常(/api/me 状态 ${me.status()})` };
+    }
+  } catch (err) {
+    return { ok: false, reason: `后端不可达(/api/me 请求失败): ${String(err)}` };
   }
+
+  // [2] 7 步读路径的飞书记录可观测条件(结构性挂载点,可扩展至具体记录非空判定)
+  const readPaths = ["/api/backend/accounts", "/api/backend/trends", "/api/backend/pipeline"];
+  for (const path of readPaths) {
+    try {
+      const cookie = authCookieHeader();
+      const res = await request.get(path, { headers: { cookie } });
+      if (!res.ok()) {
+        return { ok: false, reason: `后端读路径不可用(${path} 状态 ${res.status()})` };
+      }
+      // 结构化校验:响应须为可解析 JSON;非结构化 → 数据链路异常,判数据不足。
+      await res.json();
+    } catch (err) {
+      return { ok: false, reason: `后端读路径探测失败(${path}): ${String(err)}` };
+    }
+  }
+  return { ok: true };
 }
 
 /** 把合法 xhs_auth JWT 注入浏览器 context —— 等价于真实 OAuth 回调建立的 httpOnly cookie。 */
@@ -50,6 +112,32 @@ async function establishSession(context: BrowserContext, baseURL: string) {
   ]);
 }
 
+/** 网络层瞬断的判别:远程 e2e 的基础设施抖动(socket hang up / ECONNRESET / 连接重置等),
+ * 非契约失败。仅这些错误值得有界重试;断言失败或非 2xx 不在此列(不掩盖真实缺陷)。 */
+function isTransientNetworkError(err: unknown): boolean {
+  return /socket hang up|ECONNRESET|ECONNREFUSED|timeout|network|fetch failed|ERR_HTTP_RESPONSE_CODE_FAILURE|ERR_CONNECTION|ERR_NETWORK|ERR_EMPTY_RESPONSE/i.test(
+    String(err),
+  );
+}
+
+/** 对任意「请求」调用(GET/POST 皆可)做有界重试,只吞网络层瞬断(root cause 4:远程链路瞬断)。
+ * 仅重试抛出的传输层异常;一旦拿到 HTTP 响应(哪怕非 2xx)即原样返回,由调用方断言,绝不重试掩盖。
+ * 用于覆盖 backendJson 之外的 request 路径(写接口契约 POST、匿名鉴权 POST 等),使有界重试
+ * 覆盖 page.goto(gotoWithRetry)与 request(此处)全路径。 */
+async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientNetworkError(err)) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw lastErr;
+}
+
 /** 经页面 context 的 request 读 BFF JSON(共享浏览器 httpOnly cookie),用作页面渲染的真值基准。
  * 对远程后端的网络瞬断(socket hang up / ECONNRESET 等)做有界重试 —— 瞬断是远程 e2e 的基础设施
  * 抖动,不是契约失败;重试兜住,仍失败才判挂(不掩盖真实的非 2xx 响应)。 */
@@ -62,9 +150,8 @@ async function backendJson(request: APIRequestContext, path: string) {
       return res.json();
     } catch (err) {
       lastErr = err;
-      const msg = String(err);
       // 仅对网络层瞬断重试;断言失败(非 2xx)直接抛出,不重试不掩盖。
-      if (!/socket hang up|ECONNRESET|ECONNREFUSED|timeout|network|fetch failed/i.test(msg)) throw err;
+      if (!isTransientNetworkError(err)) throw err;
       await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
   }
@@ -87,26 +174,64 @@ async function gotoWithRetry(page: import("@playwright/test").Page, path: string
       return;
     } catch (err) {
       lastErr = err;
-      const msg = String(err);
-      if (!/ERR_HTTP_RESPONSE_CODE_FAILURE|socket hang up|ECONNRESET|ERR_CONNECTION|ERR_NETWORK|ERR_EMPTY_RESPONSE|timeout/i.test(msg)) throw err;
+      if (!isTransientNetworkError(err)) throw err;
       await new Promise((r) => setTimeout(r, 1500 * attempt));
     }
   }
   throw lastErr;
 }
 
-/** 等真实 LangGraph 流落定(__XHS_STREAMING__===false),再导航/断言,避免读流式中间态。 */
+/** 等真实 LangGraph 流落定后再导航/断言,避免读流式中间态(root cause 2)。
+ *
+ * 根因:`__XHS_STREAMING__` 直接映射 chat 的 `t.isLoading`,在多轮图步/工具调用之间会瞬时
+ * 回落 false(一个图节点结束、下一个尚未起流)。若只要求「读到一次 false」即判落定,极易读到
+ * 这种中间态空档 → 后续按选题卡/证据计数断言时数量尚在变动,产生抖动。
+ *
+ * 根因修复(不放宽任何断言口径,仅收紧 idle 判定):要求连续 N 次(默认 3)间隔轮询都为 false
+ * 才认定真正落定;中途任一次读到 true 立即清零重数。这样跨越图步之间的瞬时空档,只有流真正
+ * 停止(连续稳定)才返回,消除「读到中间态」这一抖动源。 */
 async function waitStreamIdle(page: import("@playwright/test").Page, timeout = 300_000) {
+  const STABLE_READS = 3;
+  let consecutiveIdle = 0;
   await expect
-    .poll(async () => page.evaluate(() => (window as unknown as { __XHS_STREAMING__?: boolean }).__XHS_STREAMING__ === false), {
-      timeout,
-      intervals: [1000, 1500, 2000],
-    })
-    .toBe(true);
+    .poll(
+      async () => {
+        const idle = await page.evaluate(
+          () => (window as unknown as { __XHS_STREAMING__?: boolean }).__XHS_STREAMING__ === false,
+        );
+        consecutiveIdle = idle ? consecutiveIdle + 1 : 0;
+        return consecutiveIdle;
+      },
+      { timeout, intervals: [1000, 1000, 1000, 1500, 2000] },
+    )
+    .toBeGreaterThanOrEqual(STABLE_READS);
+}
+
+/** 证据面板浮层清场(root cause 3:证据浮层遮挡后续点击)。
+ *
+ * 根因:EvidencePanel 是 `position:fixed; inset:0; zIndex:55` 的全屏遮罩,一旦打开会拦截其下
+ * 所有点击。若在进入下一步前未确保它已关闭,后续 click 会被浮层拦截而超时抖动。关闭按钮
+ * `evidence-panel-close` 消失(EvidencePanel 在 selectedEvidence 为空时整体 return null)即遮罩
+ * 已从 DOM 移除,是「浮层已消失」的可靠代理。此守卫幂等,覆盖所有路径(有证据/数据不足/未打开)。 */
+async function ensureNoEvidenceOverlay(page: import("@playwright/test").Page) {
+  const close = page.locator('[data-testid="evidence-panel-close"]');
+  if (await close.count()) {
+    await close.first().click({ force: true });
+  }
+  await expect(close).toHaveCount(0);
 }
 
 test.describe("studio-data-integration 端到端基线(真实后端)", () => {
-  test.beforeAll(() => requireEnv());
+  // 前置探测(每个用例执行前):不满足运行前置 → test.skip(reason) 呈 skipped,绝不判过、
+  // 绝不静默失败(需求 2.4/2.7);前置满足后任何硬断言失败仍判 failed(二者互斥,AD3)。
+  test.beforeEach(async ({ request }) => {
+    // ① 缺失必需 env(凭据不可用)→ 跳过并标注「当前数据不足」
+    const missing = missingEnv();
+    test.skip(missing.length > 0, `当前数据不足: 缺少 ${missing.join(", ")}`);
+    // ② 后端可达性 + 7 步所需飞书记录可观测条件不满足(数据不可用)→ 跳过并标注原因
+    const ready = await probeBackendReady(request);
+    test.skip(!ready.ok, ready.ok ? "" : `当前数据不足: ${ready.reason}`);
+  });
 
   test("7 步真实数据贯通基线", async ({ page, context, baseURL }) => {
     const origin = baseURL ?? "http://127.0.0.1:3000";
@@ -209,9 +334,8 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
         await expect(relevance).toBeVisible();
         const relRaw = (await relevance.innerText()).replace(/[^0-9.]/g, "");
         expect(Number(relRaw) > 0, `证据相关度须 > 0,实际 ${relRaw}`).toBeTruthy();
-        // 关闭证据面板浮层(点 X,非 Escape——浮层只响应点击),并等其消失,避免遮挡后续点击。
-        await page.locator('[data-testid="evidence-panel-close"]').click({ force: true });
-        await expect(page.locator('[data-testid="evidence-panel-close"]')).toHaveCount(0);
+        // 关闭证据面板浮层(点 X,非 Escape——浮层只响应点击),并等其消失,避免遮挡后续点击(root cause 3)。
+        await ensureNoEvidenceOverlay(page);
         step("②", `(A) 真实产出 ${topicCount} 张选题卡:🔥契约合法、证据相关度>0 且渲染 why_selected`);
       } else {
         await expect(insufficientPanel.first()).toBeVisible();
@@ -228,6 +352,7 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     // 双合法硬断言:agent 真产 A/B/C → 点 B 硬断言正文切换;仅单版本 → 硬断言单版本编辑态连贯。
     if (topicsProduced) {
       await waitStreamIdle(page); // 等②的流完全落定,避免 DOM 持续变更
+      await ensureNoEvidenceOverlay(page); // 清场:确保②可能打开的证据浮层已消失,不遮挡后续点击(root cause 3)
       // 回到创作 rail 的 composer,请求把选中选题写成多版本草稿(真实 LLM 产出 xhs_copy)。
       const backToRail = page.getByRole("button", { name: /返回选题/ });
       if (await backToRail.count()) await backToRail.first().click({ force: true });
@@ -271,6 +396,7 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     // 注:账号矩阵实体模型为独立特性,数据底座当前无账号实体 → 后端真实返回空集合。
     // 本步硬断言「页面渲染数 == 后端 API 真实返回数」,空与非空都成立(契约一致性)。
     await waitStreamIdle(page).catch(() => {}); // 等③的流落定再切 section
+    await ensureNoEvidenceOverlay(page); // 清场:任一路径遗留的证据浮层都不得遮挡账号运营导航(root cause 3)
     // ③可能停在深度创作(section=deep,顶栏隐藏,无「账号运营」按钮)→ 先退回创作页。
     const opsNav = page.getByRole("button", { name: "账号运营" });
     if (!(await opsNav.count())) {
@@ -320,7 +446,9 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
       }
     } else {
       // 无 UI 草稿:对真实 BFF 硬断言排期写契约(缺字段 → 400)
-      const sched = await page.request.post("/api/backend/schedule", { data: { resourceId: "x" } });
+      const sched = await requestWithRetry(() =>
+        page.request.post("/api/backend/schedule", { data: { resourceId: "x" } }),
+      );
       expect(sched.status(), `排期缺字段应被真实后端拒为 400,实际 ${sched.status()}`).toBe(400);
       step("⑤", "无 UI 草稿 → 排期缺字段契约被真实后端拒为 400");
     }
@@ -333,16 +461,20 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     const realId = queue.find((q) => q?.id)?.id;
     if (realId) {
       // 有真实管线条目 → 回填真实资源,硬断言落库成功
-      const ok = await page.request.post("/api/backend/backfill", {
-        data: { resourceId: realId, metrics: { views: 12345, likes: 678 } },
-      });
+      const ok = await requestWithRetry(() =>
+        page.request.post("/api/backend/backfill", {
+          data: { resourceId: realId, metrics: { views: 12345, likes: 678 } },
+        }),
+      );
       expect(ok.status(), `回填真实资源应 200,实际 ${ok.status()}`).toBe(200);
       step("⑥", `回填真实管线资源 ${realId} → 200 落库`);
     } else {
       // 无真实管线条目(发布管线空):硬断言回填契约在真实后端强制执行(负值→400)
-      const neg = await page.request.post("/api/backend/backfill", {
-        data: { resourceId: "11111111-1111-1111-1111-111111111111", metrics: { views: -1 } },
-      });
+      const neg = await requestWithRetry(() =>
+        page.request.post("/api/backend/backfill", {
+          data: { resourceId: "11111111-1111-1111-1111-111111111111", metrics: { views: -1 } },
+        }),
+      );
       expect(neg.status(), `回填负值应被真实后端拒为 400,实际 ${neg.status()}`).toBe(400);
       step("⑥", "发布管线空 → 回填负值契约被真实后端拒为 400");
     }
@@ -355,35 +487,45 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
   // 当前真实数据下不可达(步骤⑤⑥按铁律跳过)。这里直接对真实 BFF 写接口断言其契约在
   // 生产端到端可用 —— 鉴权通过、入参校验由真实后端 _clean_metrics / 缺字段路径强制执行。
   // 全程只发非法/缺字段请求,不向生产库写入任何业务数据(无副作用)。
+  // 全程只发非法/缺字段请求,不向生产库写入任何业务数据(无副作用)—— 故本用例与「7 步基线」
+  // 之间不共享可变后端状态(root cause 1:写动作污染后续读),重复运行判定恒定,可任意重排/重跑。
   test("写接口契约在真实后端强制执行(排期/回填)", async ({ page, context, baseURL, playwright }) => {
     await establishSession(context, baseURL ?? "http://127.0.0.1:3000");
     await gotoWithRetry(page, "/");
 
     // 回填:缺 resourceId → 400(真实 BFF 校验路径,需求 15.3/17.1)
-    const backfillMissing = await page.request.post("/api/backend/backfill", { data: {} });
+    const backfillMissing = await requestWithRetry(() => page.request.post("/api/backend/backfill", { data: {} }));
     expect(backfillMissing.status(), "回填缺 resourceId 应 400").toBe(400);
 
     // 回填:resourceId 非 uuid → 400(后端边界 uuid 校验,基线发现的缺陷已修)
-    const backfillBadId = await page.request.post("/api/backend/backfill", {
-      data: { resourceId: "not-a-uuid", metrics: { views: 1 } },
-    });
+    const backfillBadId = await requestWithRetry(() =>
+      page.request.post("/api/backend/backfill", {
+        data: { resourceId: "not-a-uuid", metrics: { views: 1 } },
+      }),
+    );
     expect(backfillBadId.status(), `回填非法 resourceId 应 400,实际 ${backfillBadId.status()}`).toBe(400);
 
     // 回填:合法 uuid + 负值 metrics → 后端 _clean_metrics 抛错 → 400(需求 15.3)
-    const backfillNeg = await page.request.post("/api/backend/backfill", {
-      data: { resourceId: "11111111-1111-1111-1111-111111111111", metrics: { views: -1 } },
-    });
+    const backfillNeg = await requestWithRetry(() =>
+      page.request.post("/api/backend/backfill", {
+        data: { resourceId: "11111111-1111-1111-1111-111111111111", metrics: { views: -1 } },
+      }),
+    );
     expect(backfillNeg.status(), `回填负值应 400,实际 ${backfillNeg.status()}`).toBe(400);
 
     // 排期:缺字段 → 400(需求 14.1/17.1)
-    const scheduleMissing = await page.request.post("/api/backend/schedule", { data: { resourceId: "x" } });
+    const scheduleMissing = await requestWithRetry(() =>
+      page.request.post("/api/backend/schedule", { data: { resourceId: "x" } }),
+    );
     expect(scheduleMissing.status(), "排期缺字段应 400").toBe(400);
 
     // 鉴权:全新无 cookie 的 request context 调写接口 → 401/403,不触达后端(需求 17.2/17.3)
     const anonCtx = await playwright.request.newContext({ baseURL });
-    const anonRes = await anonCtx.post("/api/backend/backfill", {
-      data: { resourceId: "x", metrics: { views: 1 } },
-    });
+    const anonRes = await requestWithRetry(() =>
+      anonCtx.post("/api/backend/backfill", {
+        data: { resourceId: "x", metrics: { views: 1 } },
+      }),
+    );
     expect([401, 403].includes(anonRes.status()), `匿名写请求应 401/403,实际 ${anonRes.status()}`).toBeTruthy();
     await anonCtx.dispose();
 

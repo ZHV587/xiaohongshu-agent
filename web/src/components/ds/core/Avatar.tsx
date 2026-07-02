@@ -6,7 +6,7 @@ import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
  * Avatar — circular user/agent mark. Renders initials on a
  * coral-tint disc by default, or the 🍠 agent glyph, or an image.
  *
- * Faithfully ported 1:1 from design_system/components/core/Avatar.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/core/Avatar.jsx.
  */
 type AvatarVariant = "coral" | "solid" | "neutral" | "agent";
 

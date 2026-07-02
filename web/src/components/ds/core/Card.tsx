@@ -7,7 +7,7 @@ import { useState, type CSSProperties, type HTMLAttributes, type ReactNode } fro
  * + low shadow. `interactive` adds a coral hover lift (used for
  * clickable topic / sync cards). `tone` tints the whole card.
  *
- * Faithfully ported 1:1 from design_system/components/core/Card.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/core/Card.jsx.
  */
 type CardTone = "default" | "sunken" | "coral";
 type CardPadding = "none" | "sm" | "md" | "lg";

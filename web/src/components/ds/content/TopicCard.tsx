@@ -7,7 +7,7 @@ import { useState, type CSSProperties, type HTMLAttributes, type ReactNode } fro
  * coral index, title + rationale, and a "hot rate" 爆款率 badge.
  * Clickable; lifts to coral on hover (the signature interaction).
  *
- * Faithfully ported 1:1 from design_system/components/content/TopicCard.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/content/TopicCard.jsx.
  */
 export interface TopicCardProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"> {
   index?: number;

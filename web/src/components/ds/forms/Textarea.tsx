@@ -7,7 +7,7 @@ import { useState, type CSSProperties, type ReactNode, type Ref, type TextareaHT
  * Input. Optional footer slot for char-count / actions, matching
  * the workbench composer and the in-place note editor.
  *
- * Faithfully ported 1:1 from design_system/components/forms/Textarea.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/forms/Textarea.jsx.
  */
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   footer?: ReactNode;

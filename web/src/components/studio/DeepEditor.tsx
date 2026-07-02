@@ -101,18 +101,10 @@ export function DeepEditor() {
                       <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.04), rgba(0,0,0,0.4))" }} />
                       {cover && <textarea value={note.cover} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => actions.updateField("cover", e.target.value)} rows={3} placeholder="封面大字报…" style={{ position: "absolute", top: 10, left: 10, right: 10, border: "none", background: "transparent", resize: "none", color: "#fff", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 17, lineHeight: 1.15, textShadow: "0 2px 6px rgba(0,0,0,0.55)", outline: "none" }} />}
                       <span style={{ position: "absolute", bottom: 7, left: 7, fontSize: 8, fontWeight: 700, color: cover ? "var(--primary)" : "#fff", background: cover ? "#fff" : "rgba(0,0,0,0.34)", padding: "1px 6px", borderRadius: 999 }}>{cover ? "封面" : role}</span>
-                      <button onClick={() => actions.toast("🎨 AI 生图功能即将推出")} title="AI 重新生图" style={{ position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.92)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icon name="wand-2" size={11} color="var(--primary)" /></button>
                     </div>
                   </div>
                 );
               })}
-              <button onClick={() => actions.toast("🖼️ AI 生图功能即将推出")} style={{ width: 148, flexShrink: 0, aspectRatio: "3 / 4", borderRadius: "var(--radius-md)", border: "1px dashed var(--border-strong)", background: "var(--oats-light)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: "var(--text-subtle)" }}>
-                <Icon name="image-plus" size={20} /><span style={{ fontSize: 10, fontWeight: 600 }}>AI 生成配图</span><span style={{ fontSize: 8 }}>3:4 · 1080×1440</span>
-              </button>
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Button variant="soft" size="sm" leftIcon={<Icon name="wand-2" size={13} />} onClick={() => actions.toast("🎨 AI 生成封面功能即将推出")}>AI 生成封面</Button>
-              <Button variant="ghost" size="sm" leftIcon={<Icon name="images" size={13} />} onClick={() => actions.toast("🖼️ AI 全套图集生成功能即将推出")}>一键生成全套图集</Button>
             </div>
           </div>
           {/* 标题 */}

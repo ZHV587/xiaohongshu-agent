@@ -1,7 +1,7 @@
 "use client";
 
 // Studio shared UI helpers — faithfully ported from
-// design_system/ui_kits/studio/ui.jsx (Eyebrow / PanelHead) +
+// 小红书文案助手 Design System/ui_kits/studio/ui.jsx (Eyebrow / PanelHead) +
 // the workbench ui.jsx. The prototype's CSS-mask Icon is replaced
 // by ds/Icon (lucide-react). Inline styles preserved 1:1.
 

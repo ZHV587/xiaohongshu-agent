@@ -8,7 +8,7 @@ import { useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode
  * (coral-tint) variants. Press shrinks slightly; primary carries
  * a coral glow shadow.
  *
- * Faithfully ported 1:1 from design_system/components/core/Button.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/core/Button.jsx.
  */
 type ButtonVariant = "primary" | "secondary" | "soft" | "ghost";
 type ButtonSize = "sm" | "md" | "lg";

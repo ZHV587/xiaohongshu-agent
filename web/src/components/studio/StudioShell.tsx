@@ -1,7 +1,7 @@
 "use client";
 
 // StudioShell — the 创作运营工作室 root composition. Faithful to
-// design_system/ui_kits/studio/app.jsx (StudioApp) MINUS the prototype
+// 小红书文案助手 Design System/ui_kits/studio/app.jsx (StudioApp) MINUS the prototype
 // scaffolding: no Scaler (real responsive instead of 1360px letterbox),
 // no Tweaks panel (production ships the default config only), no
 // ReactDOM.render (Next mounts via AppShell → page.tsx).

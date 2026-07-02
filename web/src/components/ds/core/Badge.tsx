@@ -7,7 +7,7 @@ import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
  * semantic surfaces: synced (green), draft (gray), hot (coral),
  * topic (blue), info. Pill or chip (squared) shape.
  *
- * Faithfully ported 1:1 from design_system/components/core/Badge.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/core/Badge.jsx.
  */
 type BadgeTone = "neutral" | "synced" | "hot" | "topic" | "info" | "coral" | "draft";
 

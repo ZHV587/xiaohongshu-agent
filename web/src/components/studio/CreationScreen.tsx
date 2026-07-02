@@ -158,7 +158,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
       <div style={{ padding: 18, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <Textarea rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="继续追问，或让 🍠 调整选题方向 / 改写文案…" footer={<>
-            <button onClick={() => actions.toast("⌨️ 润色工具箱（Ctrl+P）— 示意")} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}>
+            <button onClick={() => actions.polish()} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}>
               <kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>润色工具箱</span>
             </button>

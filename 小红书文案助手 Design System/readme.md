@@ -216,3 +216,44 @@ Brand specimens shown in the Design System tab.
     (effect-feedback loop). Tweak `承载`: 独立页面 / 会话内（agent 驱动，
     一个会话完成所有运营动作）/ 同屏融合（chat + 看板）.
   Both kits are also registered as **Starting Points**.
+
+---
+
+## UI kit 运行依赖与「仅联网可用」限制
+
+`ui_kits/studio/` 与 `ui_kits/workbench/` 两个原型都是**浏览器内直出**的
+React 原型:`.jsx` 通过 `type="text/babel"` 在浏览器里即时转译运行。它们
+依赖以下从 CDN(unpkg)加载的运行时,逐项如下:
+
+| 依赖 | 版本 | 来源 | 用途 |
+|---|---|---|---|
+| `react` | `18.3.1` | unpkg(`react.development.js`,development UMD) | React 运行时 |
+| `react-dom` | `18.3.1` | unpkg(`react-dom.development.js`,development UMD) | DOM 渲染 |
+| `@babel/standalone` | `7.29.0` | unpkg(`babel.min.js`) | 浏览器内 JSX 转译 |
+
+本地资源(**不依赖网络**,随仓库提供):
+
+- `_ds_bundle.js` — 设计系统组件包(`window.DesignSystem_71831b.*`)。
+- `../../styles.css` — 设计令牌与全局样式入口。
+
+> **⚠️ UI kit 为原型参考,依赖上述 CDN,仅联网可用。** 断网环境下 react /
+> react-dom / @babel/standalone 无法从 unpkg 加载,原型将无法渲染。这些 kit
+> 定位为设计参考产物,不是生产交付物;生产前端在 `web/` 中以打包方式独立构建,
+> 不依赖这些 CDN。
+
+### 离线/联网决策(状态记录)
+
+- **决策:** 采纳「仅文档化 CDN 限制」的轻量路径 —— **不做离线 vendoring**
+  (不把 react / react-dom / @babel/standalone 下载为本地产物,也不引入构建步骤)。
+- **结论:** UI kit 保持当前 CDN 加载方式,「仅联网可用」作为**已知限制**在此
+  文档记录;同时在两个 `index.html` 注入纯内联的渲染错误兜底,使断网时向用户
+  呈现可读错误提示而非白屏(见各 `index.html` 内联脚本)。
+- **理由:** UI kit 为原型参考而非生产交付物,离线 vendoring 需引入约 2MB 本地
+  产物与额外构建步骤,收益低于成本。
+- **日期:** 2026-07-02
+
+---
+
+## 规格状态（Spec status）
+
+- **thinking-chain-wiring:已实现并关闭(思考链为 deepagents 原生流真实投影)。** 详见 `.kiro/specs/thinking-chain-wiring/CLOSURE.md`;占位交互清理归属 `design-system-hardening` 规格 R5。

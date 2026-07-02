@@ -1,5 +1,5 @@
 // 小红书文案体检 — extensible rule library, faithfully ported from
-// design_system/ui_kits/studio/data.js (checkRules) + ui.jsx
+// 小红书文案助手 Design System/ui_kits/studio/data.js (checkRules) + ui.jsx
 // (computeChecks / scoreOf). This is REAL rule logic (regex evaluation),
 // not mock business data — it powers the live, instant 文案体检 feedback
 // as the user types. The authoritative score is ALSO computed server-side

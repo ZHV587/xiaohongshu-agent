@@ -7,7 +7,7 @@ import type { HTMLAttributes, ReactNode } from "react";
  * shell with a notch; children render as the screen. Used by the
  * right-canvas note preview.
  *
- * Faithfully ported 1:1 from design_system/components/device/PhoneFrame.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/device/PhoneFrame.jsx.
  */
 export interface PhoneFrameProps extends HTMLAttributes<HTMLDivElement> {
   width?: number;

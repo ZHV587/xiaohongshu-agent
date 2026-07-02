@@ -27,3 +27,11 @@ test("thinking items use ThinkingAura with defaultCollapsed on done runs", () =>
 test("no dead m.thinking branch remains", () => {
   assert.doesNotMatch(src, /m\.thinking/);
 });
+
+test("润色工具箱 wires to real actions.polish(), not a placeholder toast", () => {
+  // R5.6 / 6.1: 润色控件走真实 actions.polish() 链路
+  assert.match(src, /actions\.polish\(\)/);
+  assert.match(src, /润色工具箱/);
+  // 不保留任何「即将推出/示意」占位提示
+  assert.doesNotMatch(src, /即将推出|示意/);
+});

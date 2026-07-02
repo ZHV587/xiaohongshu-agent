@@ -7,7 +7,7 @@ import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
  * clamped title, author + like count. `dim` renders a faded
  * placeholder (neighbouring feed cards).
  *
- * Faithfully ported 1:1 from design_system/components/device/NoteCard.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/device/NoteCard.jsx.
  */
 export interface NoteCardProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"> {
   image?: string | null;

@@ -7,7 +7,7 @@ import { useState, type CSSProperties, type HTMLAttributes, type ReactNode } fro
  * coral when emphasised. `addable` shows a + affordance for the
  * smart-recommendation tag picker.
  *
- * Faithfully ported 1:1 from design_system/components/content/HashtagTag.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/content/HashtagTag.jsx.
  */
 type HashtagTone = "topic" | "coral" | "plain";
 

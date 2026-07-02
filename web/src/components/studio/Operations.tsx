@@ -3,7 +3,7 @@
 // 账号运营 screen — 数据看板 · 选题库/爆款拆解 · 内容日历/排期 · 数据回填.
 // hosting 变体已废弃:固定走默认「独立页面」page(OpsPage)。
 
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { Badge, Button, Card, Icon, StatCard, type BadgeProps } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/StudioContext";
@@ -48,7 +48,7 @@ interface AccountRailProps {
 }
 
 function AccountRail({ selected, onSelect }: AccountRailProps) {
-  const { actions, accounts, loadState } = useStudio();
+  const { accounts, loadState } = useStudio();
   const dot = (tone: Tone): CSSProperties => ({ width: 26, height: 26, borderRadius: "999px", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, background: tone === "coral" ? "var(--accent-surface)" : tone === "topic" ? "var(--topicblue-light)" : "var(--oats-dark)", color: tone === "coral" ? "var(--primary)" : tone === "topic" ? "var(--topicblue-default)" : "var(--text-body)" });
   const Item = ({ id, label, sub, initial, tone, active }: { id: string; label: string; sub: string; initial: string; tone: Tone; active: boolean }) => (
     <button onClick={() => onSelect(id)} style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 11px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", borderLeft: active ? "2px solid var(--primary)" : "2px solid transparent", background: active ? "var(--oats-dark)" : "transparent" }}>
@@ -70,7 +70,6 @@ function AccountRail({ selected, onSelect }: AccountRailProps) {
         <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
         {accounts.map((a) => <Item key={a.id} id={a.id} label={a.handle} sub={`${a.niche} · ${a.fans}`} initial={a.initial} tone={a.tone} active={selected === a.id} />)}
         {loadState.accounts !== "ready" && <StateNote status={loadState.accounts} empty="暂无账号" />}
-        <button onClick={() => actions.toast("➕ 接入新账号：扫码授权小红书账号（示意）")} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, padding: "8px 11px", border: "1px dashed var(--border-strong)", borderRadius: "var(--radius-sm)", background: "transparent", cursor: "pointer", color: "var(--text-subtle)", fontSize: "var(--text-xs)" }}><Icon name="plus" size={13} /> 接入新账号</button>
       </div>
     </aside>
   );
@@ -81,7 +80,7 @@ interface MatrixOverviewProps {
 }
 
 function MatrixOverview({ onOpen }: MatrixOverviewProps) {
-  const { actions, accounts, loadState } = useStudio();
+  const { accounts, loadState } = useStudio();
   const sum = (k: "fansNum" | "dFans" | "posts" | "hot") => accounts.reduce((s, a) => s + a[k], 0);
   const fmt = (n: number) => (n >= 10000 ? (n / 10000).toFixed(1) + "w" : n.toLocaleString());
   const avgHot = accounts.length ? Math.round(sum("hot") / accounts.length) : 0;
@@ -94,7 +93,6 @@ function MatrixOverview({ onOpen }: MatrixOverviewProps) {
           <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-xl)" }}>账号矩阵总览</div>
           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 3 }}>{accounts.length} 个账号 · 近 7 天 · 数据底座聚合（performance_metric）</div>
         </div>
-        <Button variant="secondary" size="sm" leftIcon={<Icon name="download" size={13} />} onClick={() => actions.toast("📊 矩阵周报导出功能即将推出")}>导出矩阵周报</Button>
       </div>
       <section>
         <Eyebrow style={{ marginBottom: 10 }}>矩阵聚合</Eyebrow>
@@ -138,7 +136,15 @@ interface DashboardBodyProps {
 }
 
 function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
-  const { actions, dashboard, user, loadState } = useStudio();
+  const { dashboard, user, loadState } = useStudio();
+  const backfillRef = useRef<HTMLElement>(null);
+  const focusBackfill = () => {
+    const node = backfillRef.current;
+    if (!node) return;
+    node.scrollIntoView({ behavior: "smooth", block: "start" });
+    // 聚焦回填表单首个可编辑输入,产生真实可观察结果(而非「示意」toast)。
+    node.querySelector<HTMLElement>("input, textarea, [contenteditable]")?.focus();
+  };
   const acct = account || { handle: user.handle, fans: user.fans, niche: "" };
   return (
     <div style={{ padding: dense ? 16 : 28, maxWidth: 1180, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
@@ -149,8 +155,7 @@ function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
             <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 3 }}>粉丝 {acct.fans}{acct.niche ? ` · ${acct.niche}` : ""} · 近 7 天 · 数据底座 / 飞书同步</div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" size="sm" leftIcon={<Icon name="download" size={13} />} onClick={() => actions.toast("📄 该账号周报导出功能即将推出")}>导出周报</Button>
-            <Button variant="primary" size="sm" leftIcon={<Icon name="pencil" size={13} />} onClick={() => actions.toast("✏️ 下拉到「数据回填」即可录入真实表现")}>数据回填</Button>
+            <Button variant="primary" size="sm" leftIcon={<Icon name="pencil" size={13} />} onClick={focusBackfill}>数据回填</Button>
           </div>
         </div>
       )}
@@ -173,7 +178,7 @@ function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
       <CalendarSection accountFilter={account ? account.initial : null} />
 
       {!dense && <PublishPipeline account={account} />}
-      {!dense && <BackfillSection />}
+      {!dense && <BackfillSection sectionRef={backfillRef} />}
     </div>
   );
 }
@@ -277,12 +282,12 @@ function CalendarSection({ accountFilter = null }: CalendarSectionProps) {
 }
 
 // 数据回填
-function BackfillSection() {
+function BackfillSection({ sectionRef }: { sectionRef?: React.Ref<HTMLElement> }) {
   const { actions } = useStudio();
   const [vals, setVals] = useState<{ views: string; likes: string; saves: string; comments: string }>({ views: "", likes: "", saves: "", comments: "" });
   const set = (k: "views" | "likes" | "saves" | "comments") => (v: string) => setVals((p) => ({ ...p, [k]: v }));
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <section ref={sectionRef} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <PanelHead icon="clipboard-pen" title="数据回填" sub="发布后录入真实表现，沉淀回飞书 → 训练下一轮选题" right={<Badge tone="info">效果反馈闭环</Badge>} />
       <Card padding="md">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
@@ -292,7 +297,6 @@ function BackfillSection() {
           <StatCard label="评论" value={vals.comments} editable onValueChange={set("comments")} />
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <Button variant="ghost" size="sm" onClick={() => actions.toast("📥 从小红书后台自动导入即将推出;当前请手动填写真实数据")}>从小红书后台导入</Button>
           <Button variant="primary" size="sm" leftIcon={<Icon name="cloud-upload" size={13} />} onClick={() => actions.backfillSave({ views: vals.views, likes: vals.likes, collects: vals.saves, comments: vals.comments })}>保存并同步飞书</Button>
         </div>
       </Card>

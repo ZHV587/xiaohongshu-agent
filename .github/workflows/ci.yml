@@ -49,3 +49,48 @@ jobs:
       - name: Run full test suite (DB tests included)
         # 跑全量;DB 测试因 TEST_XHS_DATABASE_URL 已设而真执行。
         run: uv run pytest -q
+
+  # studio-data 端到端真实后端基线门禁(与 python-tests 并列、互相独立)。
+  # skip/fail 语义分离:真实后端数据/凭据不可用 → 前置 test.skip → Playwright 退出码 0 →
+  # 作业成功但在运行摘要记「当前数据不足」;代码缺陷或基础设施故障使其非 0 退出 → 作业失败 → 阻断合并。
+  # 秘钥经仓库 Secrets 注入,指向具备飞书数据的真实后端。
+  web-e2e-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.5.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: web
+      - name: Install Playwright browser (chromium)
+        run: pnpm exec playwright install --with-deps chromium
+        working-directory: web
+      - name: Run studio-data E2E baseline (gated)
+        working-directory: web
+        shell: bash
+        env:
+          XHS_E2E_BASE_URL: ${{ secrets.XHS_E2E_BASE_URL }}
+          XHS_JWT_SECRET: ${{ secrets.XHS_JWT_SECRET }}
+          XHS_E2E_OPEN_ID: ${{ secrets.XHS_E2E_OPEN_ID }}
+          XHS_E2E_USER_NAME: ${{ secrets.XHS_E2E_USER_NAME }}
+        run: |
+          # 捕获输出以便区分 skipped/failed;PIPESTATUS[0] 取 Playwright 真实退出码。
+          pnpm exec playwright test 2>&1 | tee playwright-output.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "### web-e2e-baseline:失败(退出码 ${status})—— 阻断合并" >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
+          if grep -q "当前数据不足" playwright-output.log || grep -Eq "[1-9][0-9]* skipped" playwright-output.log; then
+            echo "### web-e2e-baseline:当前数据不足" >> "$GITHUB_STEP_SUMMARY"
+            echo "真实后端数据/凭据不可用,studio-data 基线用例已全部跳过(退出码 0,不阻断合并)。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### web-e2e-baseline:通过 —— studio-data 基线已针对真实后端执行。" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,5 +1,5 @@
 // 小红书文案助手 Design System — production component barrel.
-// Faithful 1:1 TSX ports of design_system/components/* (inline-style,
+// Faithful 1:1 TSX ports of 小红书文案助手 Design System/components/* (inline-style,
 // token-driven). Replaces the prototype's `window.DesignSystem_71831b`
 // global namespace — kit screens import from "@/components/ds".
 

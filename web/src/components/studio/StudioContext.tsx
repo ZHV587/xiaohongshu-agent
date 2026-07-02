@@ -460,6 +460,23 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [showToast, pipelineRes],
   );
 
+  // polish：走既有 handleExecuteCommand("polish") 真实润色流式链路（R5.2 已接入）。
+  // R5.3 失败态：
+  //  · 异步失败/超时 —— submitText → stream.submit 的错误经 ThreadStateProvider 监听
+  //    stream.error 的副作用统一弹 toast（与 chooseTopic/say/schedule/backfill 同源的
+  //    失败提示模式），polish 天然继承。
+  //  · 同步抛错 —— 此处 try/catch 兜底，避免事件处理器内未捕获抛出而无任何用户可见提示。
+  //  · 草稿保全 —— 全程不写 draftTitle/draftContent；草稿仅由成功的 AI 响应经
+  //    useThreadDraftState.parseAiDraft 派生更新，失败时用户既有草稿保持不变
+  //    （不产生部分写入或状态丢失）。
+  const polish = useCallback(() => {
+    try {
+      t.handleExecuteCommand("polish");
+    } catch (err) {
+      showToast(`润色失败：${err instanceof Error ? err.message : "未知错误"}`);
+    }
+  }, [t, showToast]);
+
   const store: StudioStore = {
     section: sectionVal,
     setSection,
@@ -490,7 +507,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       updateField,
       addTag,
       removeTag,
-      polish: () => t.handleExecuteCommand("polish"),
+      polish,
       shorten: () => t.handleExecuteCommand("shorten"),
       addTags: () => t.handleExecuteCommand("tags"),
       schedule,

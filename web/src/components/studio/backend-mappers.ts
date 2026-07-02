@@ -172,8 +172,12 @@ export function groupQueueByStage(queue: readonly PublishItem[]): Record<Publish
     measured: [],
   };
   for (const item of queue) {
-    const bucket = groups[item.stage];
-    if (bucket) bucket.push(item);
+    // 仅匹配三个已知 own-property 阶段键；避免 item.stage 命中 Object.prototype
+    // 成员（如 "valueOf"/"toString"/"constructor"）时 groups[item.stage] 解析为
+    // 原型链上的函数而误过 truthiness 守卫，导致 bucket.push 抛 TypeError。
+    if (Object.hasOwn(groups, item.stage) && Array.isArray(groups[item.stage])) {
+      groups[item.stage].push(item);
+    }
   }
   return groups;
 }

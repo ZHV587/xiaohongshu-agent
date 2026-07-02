@@ -8,7 +8,7 @@ import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
  * and an optional leading icon chip. `editable` renders the value as
  * an inline field for 数据回填 (manual metric entry).
  *
- * Faithfully ported 1:1 from design_system/components/data/StatCard.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/data/StatCard.jsx.
  */
 type StatTone = "neutral" | "coral" | "topic" | "success";
 

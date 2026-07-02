@@ -7,7 +7,7 @@ import { useState, type CSSProperties, type InputHTMLAttributes, type ReactNode 
  * brightens to white with a coral ring on focus. Optional
  * leading icon and trailing slot (e.g. kbd hint / char count).
  *
- * Faithfully ported 1:1 from design_system/components/forms/Input.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/forms/Input.jsx.
  */
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   leadingIcon?: ReactNode;

@@ -59,7 +59,7 @@
   --sidebar-ring: #e52e40;
 
   /* ════════════════════════════════════════════════════════════
-     Design System tokens (design_system/tokens/*) — 1:1 源
+     Design System tokens (小红书文案助手 Design System/tokens/*) — 1:1 源
      These power the faithfully-ported ds/* + studio/* inline styles.
      ════════════════════════════════════════════════════════════ */
 
@@ -243,7 +243,7 @@
   --sidebar-border: #222226;
   --sidebar-ring: #ff3b54;
 
-  /* Design System tokens — dark overrides (design_system/tokens/colors.css .dark) */
+  /* Design System tokens — dark overrides (小红书文案助手 Design System/tokens/colors.css .dark) */
   --surface-card: #131315;
   --surface-sunken: #1e1e22;
   --surface-raised: #1c1c1e;
@@ -443,7 +443,7 @@
   animation: shake 0.4s ease-in-out;
 }
 
-/* ── Design System motion (design_system/tokens/motion.css) ── */
+/* ── Design System motion (小红书文案助手 Design System/tokens/motion.css) ── */
 @keyframes xhs-ping {
   75%,
   100% {
@@ -489,7 +489,7 @@
   }
 }
 
-/* ── Studio kit helpers (design_system/ui_kits/studio/index.html <style>) ── */
+/* ── Studio kit helpers (小红书文案助手 Design System/ui_kits/studio/index.html <style>) ── */
 .cs::-webkit-scrollbar {
   width: 7px;
   height: 7px;

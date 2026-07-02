@@ -7,7 +7,7 @@ import { useState, type CSSProperties, type ReactNode, type SelectHTMLAttributes
  * (oats rest, coral focus, chevron affordance). Pass an `options`
  * array of {value,label} or plain strings, or use children.
  *
- * Faithfully ported 1:1 from design_system/components/forms/Select.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/forms/Select.jsx.
  */
 type SelectOption = string | { value: string; label: string };
 

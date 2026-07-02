@@ -7,7 +7,7 @@ import { useState, type ButtonHTMLAttributes, type CSSProperties } from "react";
  * affordances (log-out, share, carousel arrows). Defaults to a
  * quiet ghost that warms to coral on hover.
  *
- * Faithfully ported 1:1 from design_system/components/core/IconButton.jsx.
+ * Faithfully ported 1:1 from 小红书文案助手 Design System/components/core/IconButton.jsx.
  */
 type IconButtonSize = "sm" | "md" | "lg";
 type IconButtonVariant = "ghost" | "soft" | "solid" | "surface";
