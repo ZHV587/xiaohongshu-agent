@@ -109,6 +109,45 @@ create table if not exists resource_events (
 create index if not exists idx_resource_events_tenant_recent
   on resource_events (tenant_id, created_at desc);
 
+create table if not exists agent_trace_events (
+  id uuid primary key default gen_random_uuid(),
+  event_id text not null unique,
+  tenant_id text not null,
+  thread_id text,
+  run_id text not null,
+  turn_id text not null,
+  trace_id text not null,
+  seq int not null check (seq > 0),
+  event_type text not null,
+  schema_version int not null default 1,
+  stage_id text,
+  tool_call_id text,
+  tool_name text,
+  attempt int,
+  parent_id text,
+  label text not null,
+  visibility text not null check (visibility in ('user', 'admin', 'debug')),
+  status text,
+  summary text,
+  metrics jsonb not null default '{}'::jsonb,
+  safe_args jsonb not null default '{}'::jsonb,
+  safe_result jsonb not null default '{}'::jsonb,
+  error_code text,
+  error_message text,
+  started_at timestamptz,
+  ended_at timestamptz,
+  duration_ms int,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, trace_id, seq)
+);
+
+create index if not exists idx_agent_trace_thread_recent
+  on agent_trace_events (tenant_id, thread_id, created_at desc);
+create index if not exists idx_agent_trace_run_recent
+  on agent_trace_events (tenant_id, run_id, created_at desc);
+create index if not exists idx_agent_trace_trace_recent
+  on agent_trace_events (tenant_id, trace_id, created_at desc);
+
 create table if not exists resource_edges (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
