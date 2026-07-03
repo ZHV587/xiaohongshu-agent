@@ -4,6 +4,8 @@
 # ---- deps:装依赖(含 dev,build 需要)----
 FROM node:20-alpine AS deps
 WORKDIR /app
+ENV NPM_CONFIG_AUDIT=false
+ENV NPM_CONFIG_FUND=false
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 COPY package.json package-lock.json ./
 RUN npm ci
