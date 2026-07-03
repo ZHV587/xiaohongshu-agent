@@ -170,7 +170,6 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   let atoms: Atom[] = [];
   let logs: ThinkingLog[] = [];
   let runOpen = false;
-  let runDone = false;
 
   // 把原子记录按「同名连续」折叠成语义步骤;每组状态 = 组内全部 done 才 done。
   const foldSteps = (): ThinkingStep[] => {
@@ -192,16 +191,14 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
 
   const buildRunItem = (): TimelineItem | null => {
     if (!runOpen || atoms.length === 0) return null;
-    // spec OR: runDone = prose was seen  OR  all atoms are done
     const allAtomsDone = atoms.length > 0 && atoms.every((a) => a.done);
-    return { kind: "thinking", run: { steps: foldSteps(), logs, done: runDone || allAtomsDone } };
+    return { kind: "thinking", run: { steps: foldSteps(), logs, done: allAtomsDone } };
   };
 
   const resetRun = () => {
     atoms = [];
     logs = [];
     runOpen = false;
-    runDone = false;
   };
 
   const flushRun = () => {
@@ -232,11 +229,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       }
       const prose = proseOf(m.content);
       if (prose) {
-        runDone = true;
         out.push({ kind: "ai", text: prose });
-        const item = buildRunItem();
-        if (item) out.push(item);
-        resetRun();
       }
       continue;
     }

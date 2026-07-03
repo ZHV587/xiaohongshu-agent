@@ -88,6 +88,28 @@ test("completed thinking run appears below the final AI output", () => {
   );
 });
 
+test("tool call with progress prose still keeps completed trace below the final answer", () => {
+  const tl = deriveTimeline([
+    human("出选题"),
+    {
+      type: "ai",
+      content: "我先检索相关素材作为选题依据。",
+      tool_calls: [{ id: "c1", name: "semantic_search_resources", args: { query: "职场穿搭" } }],
+    } as unknown as Message,
+    toolMsg("c1"),
+    aiText("这是最终选题建议"),
+  ]);
+  assert.deepEqual(
+    tl.map((item) => item.kind),
+    ["user", "ai", "ai", "thinking"],
+    "progress prose and final answer should both appear before the completed trace",
+  );
+  const thinking = tl[3];
+  assert.ok(thinking.kind === "thinking");
+  assert.equal(thinking.run.done, true);
+  assert.equal(thinking.run.steps[0].label, "按语义找相关素材");
+});
+
 test("consecutive same-name tools fold into one step but keep per-call logs", () => {
   const tl = deriveTimeline([
     human("精读"),
