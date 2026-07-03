@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { captureDiagnostics, expectDesktopHealthy, installDsMocks, openTweaks } from "./ds-desktop-helpers";
+import { captureDiagnostics, expectDesktopHealthy, expectNoPrototypeExploration, installDsMocks } from "./ds-desktop-helpers";
 
 test.describe("design-system desktop parity UAT", () => {
-  test("studio route exercises Tweaks, response UI, thinking logs, and desktop health", async ({ page }) => {
+  test("studio route exercises final response UI, thinking logs, and desktop health", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 960 });
     const diagnostics = captureDiagnostics(page);
     await installDsMocks(page, "dense");
@@ -17,19 +17,16 @@ test.describe("design-system desktop parity UAT", () => {
     const collapse = page.getByRole("button", { name: /收起分析详情/ });
     if (await collapse.count()) await collapse.first().click();
 
-    await openTweaks(page);
-    await page.getByText("左右分栏").click();
-    await expect(page.getByText("创作栏", { exact: true })).toBeVisible();
-    await page.getByText("仅创作栏").click();
-    await expect(page.getByText("进入完整创作栏")).toBeVisible();
-    await page.getByText("分步流程").click();
-    await expect(page.getByText("第 3 步 · 正文")).toBeVisible();
-    await page.getByText("多栏工作台").click();
-    await expect(page.getByText("飞书资料 · 证据")).toBeVisible();
-    await page.getByText("会话内").click();
-    await expect(page.getByText("一个会话里完成全部运营动作")).toBeVisible();
-    await page.getByText("同屏融合").click();
-    await expect(page.getByText("运营助手")).toBeVisible();
+    await expectNoPrototypeExploration(page);
+    await expect(page.getByText("选题卡", { exact: true })).toBeVisible();
+    await page.locator('[data-testid="topic-card"]').first().click();
+    const deepButton = page.getByRole("button", { name: "进入深度创作" });
+    await expect(deepButton).toBeVisible();
+    await deepButton.click();
+    await expect(page.getByText("文案体检 · 定稿")).toBeVisible();
+    await page.getByRole("button", { name: "返回" }).click();
+    await page.getByRole("button", { name: "账号运营" }).click();
+    await expect(page.getByText("账号矩阵总览")).toBeVisible();
 
     await expectDesktopHealthy(page, diagnostics);
   });
@@ -74,11 +71,9 @@ test.describe("design-system desktop parity UAT", () => {
 
     await page.goto("/");
     await expect(page.getByText("开始一场创作对话")).toBeVisible();
-    await openTweaks(page);
+    await expectNoPrototypeExploration(page);
     await page.getByRole("button", { name: "账号运营" }).click();
     await expect(page.getByText("暂无账号", { exact: false }).first()).toBeVisible();
-    await page.getByText("会话内").click();
-    await expect(page.getByText("暂无表现数据", { exact: false }).first()).toBeVisible();
 
     const unsafeText = await page.locator("body").innerText();
     expect(unsafeText).not.toMatch(/undefined|null|NaN|\[object Object\]/);

@@ -10,46 +10,25 @@ import { useStudio } from "@/components/studio/useStudio";
 import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
 
-export type RightLayout = "stack" | "split" | "composer";
 const RESPONSE_LOADING_TEXT = "正在思考并检索数据底座";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
 
-export function CreationScreen({ rightLayout = "stack" }: { rightLayout?: RightLayout }) {
+export function CreationScreen() {
   const { note, actions } = useStudio();
   const [detailId, setDetailId] = useState<number | null>(null);
-  const rightWidth = rightLayout === "split" ? 620 : 400;
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
       <Recents onNew={() => { setDetailId(null); actions.newChat(); }} compact />
       <ChatColumn showTopics={false} />
-      <section style={{ width: rightWidth, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
+      <section style={{ width: 400, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
         <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           {detailId
             ? <TopicDetail topicId={detailId} onBack={() => setDetailId(null)} />
             : (
-              <>
-                {rightLayout === "split" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.05fr) minmax(220px, 0.95fr)", gap: 14, alignItems: "start" }}>
-                    <TopicRail orientation="horizontal" chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, position: "sticky", top: 0 }}>
-                      <SelectedTopicBar onBrowse={() => setDetailId(null)} />
-                      <DraftSnapshot />
-                    </div>
-                  </div>
-                )}
-                {rightLayout === "composer" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <SelectedTopicBar onBrowse={() => setDetailId(null)} />
-                    <DraftSnapshot expanded />
-                  </div>
-                )}
-                {rightLayout !== "split" && rightLayout !== "composer" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <TopicRail orientation="vertical" chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
-                    <div style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", lineHeight: 1.6, padding: "6px 8px", background: "var(--oats-light)", borderRadius: "var(--radius-sm)" }}>点选题卡看详情 → 再进入<b style={{ color: "var(--primary)" }}>深度创作</b></div>
-                  </div>
-                )}
-              </>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <TopicRail chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
+                <div style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", lineHeight: 1.6, padding: "6px 8px", background: "var(--oats-light)", borderRadius: "var(--radius-sm)" }}>点选题卡看详情 → 再进入<b style={{ color: "var(--primary)" }}>深度创作</b></div>
+              </div>
             )}
         </div>
       </section>
@@ -58,13 +37,12 @@ export function CreationScreen({ rightLayout = "stack" }: { rightLayout?: RightL
 }
 
 // 选题卡 rail
-function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal" | "vertical"; chosen: number | null; onChoose: (t: Topic) => void }) {
+function TopicRail({ chosen, onChoose }: { chosen: number | null; onChoose: (t: Topic) => void }) {
   const { topics, evidence, images, actions } = useStudio();
-  const horizontal = orientation === "horizontal";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
       <PanelHead icon="lightbulb" title="选题卡" sub="数据底座检索 · 加权排序 · 点击进入创作" right={<Button variant="ghost" size="sm" leftIcon={<Icon name="refresh-cw" size={12} />} onClick={() => actions.say("再换一批不同角度的选题")}>换一批</Button>} />
-      <div style={{ display: "grid", gridTemplateColumns: horizontal ? "repeat(3, minmax(128px, 1fr))" : "1fr 1fr", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {topics.map((t) => {
           const on = t.id === chosen;
           const evCount = (evidence[t.id] || { items: [] }).items.length;
@@ -343,7 +321,7 @@ function EvidenceScoreBar({ label, val, color, testid }: { label: string; val: n
   );
 }
 
-// 热点趋势雷达 — 外部实时信号（区别于内部历史沉淀），驱动探索型选题
+// 热点趋势雷达 — 外部实时信号（区别于内部历史沉淀），驱动实时选题。
 function TrendingTopics() {
   const { trends, actions } = useStudio();
   const toneBg: Record<string, string> = { hot: "var(--hot-surface)", coral: "var(--accent-surface)", topic: "var(--topicblue-light)" };
@@ -352,11 +330,11 @@ function TrendingTopics() {
     <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-lg)", padding: 12, display: "flex", flexDirection: "column", gap: 9, boxShadow: "var(--shadow-sm)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Icon name="radar" size={15} color="var(--primary)" /><span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>热点趋势雷达</span><span style={{ fontSize: 9, color: "var(--text-subtle)" }}>· 平台实时上升</span></div>
-        <span style={{ fontSize: 9, color: "var(--text-subtle)" }}>探索新题材 · 不只追历史</span>
+        <span style={{ fontSize: 9, color: "var(--text-subtle)" }}>实时信号 · 辅助选题</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
         {trends.map((t) => (
-          <button key={t.tag} data-testid="trend-row" onClick={() => actions.say(`基于热点「${t.tag}」出几个探索性选题`)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--oats-light)", cursor: "pointer", textAlign: "left" }}>
+          <button key={t.tag} data-testid="trend-row" onClick={() => actions.say(`基于热点「${t.tag}」出几个可发布选题`)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--oats-light)", cursor: "pointer", textAlign: "left" }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: toneFg[t.tone], background: toneBg[t.tone], borderRadius: 6, padding: "2px 6px", flexShrink: 0 }}>{t.heat}</span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text-body)" }}>#{t.tag}</span>

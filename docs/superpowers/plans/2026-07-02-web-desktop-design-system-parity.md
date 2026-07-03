@@ -1,5 +1,7 @@
 # Web Desktop Design System Parity Implementation Plan
 
+> **Superseded on 2026-07-03:** This plan is no longer the production execution source of truth. It treated Studio `Tweaks`, multi-layout exploration variants, and Workbench phone preview as parity targets. The user has since clarified that production must implement only the final approved web desktop experience. Use `docs/superpowers/plans/2026-07-03-web-production-final-design-system-alignment.md` instead.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bring the Web desktop production UI into complete 1:1 alignment with `小红书文案助手 Design System/` for the Studio and Workbench starting points, while explicitly excluding mobile responsiveness for now.

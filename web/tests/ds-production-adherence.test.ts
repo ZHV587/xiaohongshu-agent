@@ -75,16 +75,17 @@ test("each manifest DS component has a production usage outside the DS library",
 test("design-system desktop starting points have production parity tests", () => {
   const uiTests = read("tests", "ds-ui-kit-alignment.test.ts");
   const requiredTestNames = [
-    "studio production shell exposes the DS Tweaks variants",
-    "creation screen supports all DS right-panel layouts",
-    "deep creation supports all DS forms and supporting panels",
-    "operations screen supports all DS hosting variants",
+    "studio production shell uses the fixed final screen composition",
+    "creation screen uses the fixed final right panel",
+    "deep creation uses the fixed final immersive editor",
+    "operations screen uses the fixed final page hosting",
     "workbench starting point has a production entry and DS interaction affordances",
     "workbench right canvas carries the DS bottom copy bar",
     "workbench command palette mirrors the DS searchable palette",
     "workbench feishu sync mirrors the DS sync cards and flip auth",
     "workbench right canvas focuses on Feishu sync without mobile preview tabs",
     "production desktop removes mobile preview surfaces",
+    "production desktop does not ship prototype exploration controls",
     "desktop shells expose accessible landmarks and keyboard focus affordances",
   ];
 

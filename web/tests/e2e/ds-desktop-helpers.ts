@@ -258,10 +258,10 @@ export async function expectDesktopHealthy(page: Page, diagnostics: Diagnostics)
   expect(diagnostics.consoleErrors).toEqual([]);
 }
 
-export async function openTweaks(page: Page) {
-  const launcher = page.getByRole("button", { name: /Tweaks/ });
-  if (await launcher.count()) await launcher.first().click();
-  await expect(page.getByText("Tweaks · 方案探索").first()).toBeVisible();
+export async function expectNoPrototypeExploration(page: Page) {
+  await expect(page.getByRole("button", { name: /Tweaks/ })).toHaveCount(0);
+  await expect(page.getByText("Tweaks · 方案探索")).toHaveCount(0);
+  await expect(page.getByText("方案探索")).toHaveCount(0);
 }
 
 export async function screenshotNonBlank(page: Page, testInfo: TestInfo, name: string) {

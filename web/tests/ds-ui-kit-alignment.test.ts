@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -14,24 +14,25 @@ function assertIncludes(source: string, needles: string[], label: string) {
   assert.deepEqual(missing, [], `${label} is missing expected DS UI-kit markers`);
 }
 
-test("studio production shell exposes the DS Tweaks variants", () => {
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    return statSync(path).isDirectory() ? walk(path) : [path];
+  });
+}
+
+test("studio production shell uses the fixed final screen composition", () => {
   const shell = read("src", "components", "studio", "StudioShell.tsx");
-  assertIncludes(shell, ["TweaksPanel", "rightLayout", "deepForm", "opsHosting"], "StudioShell");
-  assert.ok(!shell.includes("no Tweaks panel"), "StudioShell must not document Tweaks as intentionally removed");
+  assertIncludes(shell, ["StudioTopBar", "<CreationScreen />", "<DeepCreation />", "<Operations />", "EvidencePanel"], "StudioShell");
+  assert.doesNotMatch(shell, /Tweaks|方案探索|rightLayout|deepForm|opsHosting|useState/);
 });
 
-test("creation screen supports all DS right-panel layouts", () => {
+test("creation screen uses the fixed final right panel", () => {
   const creation = read("src", "components", "studio", "CreationScreen.tsx");
   assertIncludes(
     creation,
     [
-      'type RightLayout = "stack" | "split" | "composer"',
-      "rightLayout",
       "SelectedTopicBar",
-      "orientation=\"horizontal\"",
-      "orientation=\"vertical\"",
-      'rightLayout === "split"',
-      'rightLayout === "composer"',
       "DraftSnapshot",
       "TopicRail",
       "EvidencePanel",
@@ -40,44 +41,32 @@ test("creation screen supports all DS right-panel layouts", () => {
     ],
     "CreationScreen",
   );
-  assert.ok(!creation.includes("固定走默认"), "CreationScreen must not hard-code the default DS layout only");
+  assert.doesNotMatch(creation, /RightLayout|rightLayout|orientation="horizontal"|仅创作栏|左右分栏/);
 });
 
-test("deep creation supports all DS forms and supporting panels", () => {
+test("deep creation uses the fixed final immersive editor", () => {
   const deep = read("src", "components", "studio", "DeepCreation.tsx");
   const deepEditor = read("src", "components", "studio", "DeepEditor.tsx");
   const source = `${deep}\n${deepEditor}`;
   assertIncludes(
     source,
     [
-      'type DeepForm = "immersive" | "flow" | "workspace"',
-      "DeepImmersive",
-      "DeepFlow",
-      "DeepWorkspace",
-      "BigEditor",
-      "AssistantPanel",
-      "EvidenceRail",
-      "StepCards",
       "Version",
       "话题标签",
       "文案体检",
-      'form === "flow"',
-      'form === "workspace"',
+      "DeepEditor",
     ],
     "DeepCreation",
   );
-  assert.ok(!deep.includes("旧原型的 form=\"flow\"/\"workspace\" 分支不可达"), "DeepCreation must not remove DS form variants");
+  assert.doesNotMatch(deep, /DeepForm|form =|DeepFlow|DeepWorkspace|StepCards|分步流程|多栏工作台/);
 });
 
-test("operations screen supports all DS hosting variants", () => {
+test("operations screen uses the fixed final page hosting", () => {
   const operations = read("src", "components", "studio", "Operations.tsx");
   assertIncludes(
     operations,
     [
-      'type OpsHosting = "page" | "inline" | "hybrid"',
       "OpsPage",
-      "OpsInline",
-      "OpsHybrid",
       "AccountRail",
       "DashboardBody",
       "CalendarSection",
@@ -85,12 +74,10 @@ test("operations screen supports all DS hosting variants", () => {
       "BackfillSection",
       "PipelineSection",
       "StateNote",
-      'hosting === "inline"',
-      'hosting === "hybrid"',
     ],
     "Operations",
   );
-  assert.ok(!operations.includes("hosting 变体已废弃"), "Operations must not remove DS hosting variants");
+  assert.doesNotMatch(operations, /OpsHosting|hosting|OpsInline|OpsHybrid|会话内|同屏融合|发起运营动作/);
 });
 
 test("workbench starting point has a production entry and DS interaction affordances", () => {
@@ -329,36 +316,38 @@ test("desktop shells expose accessible landmarks and keyboard focus affordances"
   assert.match(shell, /<nav\s+aria-label="工作区切换"/, "Studio top nav must have an accessible label");
   assert.ok(globals.includes(".sr-only"), "globals.css must provide a hidden-but-readable text utility");
   assert.ok(globals.includes(":focus-visible"), "globals.css must keep keyboard focus visible on raw controls");
-  assert.ok(!studioShell.includes('transition: "width'), "Tweaks panel must not animate layout width");
+  assert.doesNotMatch(studioShell, /Tweaks|方案探索/, "StudioShell must not expose prototype exploration controls");
 });
 
-test("studio tweaks uses the design-system panel controls in production", () => {
-  const shell = read("src", "components", "studio", "StudioShell.tsx");
-  assertIncludes(shell, ['from "./TweaksPanel"', "<TweaksPanel", "<TweakSection", "<TweakRadio"], "StudioShell Tweaks wiring");
+test("production desktop does not ship prototype exploration controls", () => {
+  const srcFiles = walk(join(webRoot, "src"))
+    .filter((path) => /\.(ts|tsx)$/.test(path))
+    .map((path) => readFileSync(path, "utf8"))
+    .join("\n");
 
-  const tweaksPath = join(webRoot, "src", "components", "studio", "TweaksPanel.tsx");
-  assert.ok(existsSync(tweaksPath), "TweaksPanel.tsx must exist as a reusable production DS control shell");
-  const tweaks = read("src", "components", "studio", "TweaksPanel.tsx");
-  assertIncludes(
-    tweaks,
-    [
-      "twk-panel",
-      "twk-body",
-      "twk-seg-thumb",
-      "TweakRadio",
-      "TweakSelect",
-      "TweakToggle",
-      "TweakNumber",
-      "TweakColor",
-      "ResizeObserver",
-      "__activate_edit_mode",
-      "__edit_mode_available",
-      'role="radiogroup"',
-      'role="radio"',
-      "onPointerDown",
-    ],
+  for (const marker of [
     "TweaksPanel",
-  );
+    "TweakRadio",
+    "TweakSection",
+    "TweakSelect",
+    "TweakToggle",
+    "TweakNumber",
+    "TweakColor",
+    "Tweaks · 方案探索",
+    "方案探索",
+    "探索性选题",
+    "__activate_edit_mode",
+    "__edit_mode_available",
+    "rightLayout",
+    "deepForm",
+    "opsHosting",
+    "OpsInline",
+    "OpsHybrid",
+    "DeepFlow",
+    "DeepWorkspace",
+  ]) {
+    assert.ok(!srcFiles.includes(marker), `production desktop must not include prototype exploration marker: ${marker}`);
+  }
 });
 
 test("brand guidelines and motion are represented in production globals", () => {

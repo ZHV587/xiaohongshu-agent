@@ -1,5 +1,5 @@
 import { test } from "@playwright/test";
-import { captureDiagnostics, expectDesktopHealthy, installDsMocks, openTweaks, screenshotNonBlank } from "./ds-desktop-helpers";
+import { captureDiagnostics, expectDesktopHealthy, expectNoPrototypeExploration, installDsMocks, screenshotNonBlank } from "./ds-desktop-helpers";
 
 test.describe("design-system desktop visual spot checks", () => {
   test("captures Studio and Workbench desktop states", async ({ page }, testInfo) => {
@@ -8,17 +8,16 @@ test.describe("design-system desktop visual spot checks", () => {
     await installDsMocks(page, "dense");
 
     await page.goto("/?threadId=fixture-thread");
-    await openTweaks(page);
-    await screenshotNonBlank(page, testInfo, "studio-create-stack");
+    await expectNoPrototypeExploration(page);
+    await screenshotNonBlank(page, testInfo, "studio-create-final");
 
-    await page.getByText("左右分栏").click();
-    await screenshotNonBlank(page, testInfo, "studio-create-split");
+    await page.locator('[data-testid="topic-card"]').first().click();
+    await page.getByRole("button", { name: "进入深度创作" }).click();
+    await screenshotNonBlank(page, testInfo, "studio-deep-final");
 
-    await page.getByText("多栏工作台").click();
-    await screenshotNonBlank(page, testInfo, "studio-deep-workspace");
-
-    await page.getByText("同屏融合").click();
-    await screenshotNonBlank(page, testInfo, "studio-ops-hybrid");
+    await page.getByRole("button", { name: "返回" }).click();
+    await page.getByRole("button", { name: "账号运营" }).click();
+    await screenshotNonBlank(page, testInfo, "studio-ops-final");
 
     await page.goto("/?mode=workbench&threadId=fixture-thread");
     await screenshotNonBlank(page, testInfo, "workbench-feishu-sync");
