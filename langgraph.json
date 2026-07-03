@@ -5,7 +5,7 @@
     "ENV UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
     "ENV UV_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
     "ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple",
-    "RUN python -c \"import urllib.request as u; u.urlretrieve('https://registry.npmmirror.com/-/binary/lark-cli/v1.0.58/lark-cli-1.0.58-linux-amd64.tar.gz','/tmp/lc.tgz')\" && tar -xzf /tmp/lc.tgz -C /tmp && install -m 0755 /tmp/lark-cli /usr/local/bin/lark-cli && rm -rf /tmp/lc.tgz /tmp/lark-cli /tmp/LICENSE /tmp/README.md /tmp/CHANGELOG.md && lark-cli --version"
+    "RUN mkdir -p /usr/local/bin && python -c \"import urllib.request as u; u.urlretrieve('https://registry.npmmirror.com/-/binary/lark-cli/v1.0.58/lark-cli-1.0.58-linux-amd64.tar.gz','/tmp/lc.tgz')\" && tar -xzf /tmp/lc.tgz -C /tmp && install -m 0755 /tmp/lark-cli /usr/local/bin/lark-cli && rm -rf /tmp/lc.tgz /tmp/lark-cli /tmp/LICENSE /tmp/README.md /tmp/CHANGELOG.md && lark-cli --version"
   ],
   "graphs": {
     "xhs_agent": "./agent.py:agent"
