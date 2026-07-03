@@ -216,6 +216,24 @@ test("workbench conversation response mirrors DS ChatPane states", () => {
   );
 });
 
+test("desktop chat composers send on Enter without breaking multiline or IME input", () => {
+  const creation = read("src", "components", "studio", "CreationScreen.tsx");
+  const workbench = read("src", "components", "workbench", "WorkbenchShell.tsx");
+  const source = `${creation}\n${workbench}`;
+  assertIncludes(
+    source,
+    [
+      "handleComposerKeyDown",
+      "event.key !== \"Enter\"",
+      "event.shiftKey",
+      "event.nativeEvent.isComposing",
+      "event.preventDefault()",
+      "sendDraft()",
+    ],
+    "Desktop chat composer keyboard behavior",
+  );
+});
+
 test("workbench sidebar mirrors DS Sidebar with real recents wiring", () => {
   const workbench = read("src", "components", "workbench", "WorkbenchShell.tsx");
   assertIncludes(

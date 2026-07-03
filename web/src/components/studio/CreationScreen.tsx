@@ -2,7 +2,7 @@
 
 // 创作 screen — recents · chat · right panel (选题卡 + 创作栏).
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import Image from "next/image";
 import { Avatar, Badge, Button, Card, TopicCard, ThinkingAura, Textarea, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
@@ -137,6 +137,16 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
   const { topics, timeline, trends, actions } = useStudio();
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sendDraft = () => {
+    if (!draft.trim()) return;
+    actions.say(draft);
+    setDraft("");
+  };
+  const handleComposerKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    sendDraft();
+  };
   const lastRunSteps = (() => {
     for (let i = timeline.length - 1; i >= 0; i--) {
       const it = timeline[i];
@@ -234,12 +244,12 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
 
       <div style={{ padding: 18, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          <Textarea rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="继续追问，或让 🍠 调整选题方向 / 改写文案…" footer={<>
+          <Textarea rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="继续追问，或让 🍠 调整选题方向 / 改写文案…" footer={<>
             <button onClick={() => actions.polish()} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}>
               <kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>润色工具箱</span>
             </button>
-            <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={() => { if (draft.trim()) { actions.say(draft); setDraft(""); } }}>生成</Button>
+            <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={sendDraft}>生成</Button>
           </>} />
         </div>
       </div>

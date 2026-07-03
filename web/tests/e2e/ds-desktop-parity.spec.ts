@@ -79,4 +79,30 @@ test.describe("design-system desktop parity UAT", () => {
     expect(unsafeText).not.toMatch(/undefined|null|NaN|\[object Object\]/);
     await expectDesktopHealthy(page, diagnostics);
   });
+
+  test("composer keyboard sends with Enter and preserves Shift+Enter newlines", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const diagnostics = captureDiagnostics(page);
+    await installDsMocks(page, "empty");
+
+    await page.goto("/?threadId=fixture-thread");
+    const composer = page.getByPlaceholder(/继续追问/);
+    await expect(composer).toBeVisible();
+
+    await composer.fill("按咖啡店探店出 3 个选题");
+    await Promise.all([
+      page.waitForRequest((request) => request.url().includes("/runs/stream"), { timeout: 5000 }),
+      composer.press("Enter"),
+    ]);
+    await expect(composer).toHaveValue("");
+
+    await page.waitForTimeout(100);
+    await composer.fill("第一行");
+    const noSend = page.waitForRequest((request) => request.url().includes("/runs/stream"), { timeout: 500 }).catch(() => null);
+    await composer.press("Shift+Enter");
+    await expect(composer).toHaveValue("第一行\n");
+    expect(await noSend).toBeNull();
+
+    await expectDesktopHealthy(page, diagnostics);
+  });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Avatar, Badge, Button, Card, Icon, IconButton, Input, Select, Textarea, ThinkingAura, TopicCard } from "@/components/ds";
 import { useStudio } from "@/components/studio/useStudio";
 import { AdminConfigPanel } from "@/components/studio/AdminConfigPanel";
@@ -198,6 +198,16 @@ function ChatPane({ onOpenPalette }: { onOpenPalette: () => void }) {
   const [draft, setDraft] = useState("");
   const writing = timeline.some((item) => item.kind === "thinking" && !item.run.done);
   const selectedTopic = topics.find((topic) => topic.id === note.topicId);
+  const sendDraft = () => {
+    if (!draft.trim()) return;
+    actions.say(draft);
+    setDraft("");
+  };
+  const handleComposerKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    sendDraft();
+  };
   return (
     <section style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: "var(--background)" }}>
       <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
@@ -279,11 +289,12 @@ function ChatPane({ onOpenPalette }: { onOpenPalette: () => void }) {
           rows={2}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={handleComposerKeyDown}
           placeholder="继续追问，或让 🍠 调整选题方向 / 改写文案…"
           footer={<>
             <button onClick={onOpenPalette} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}><kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd><span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>润色工具箱</span></button>
             <button type="button" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer", color: "var(--text-muted)", fontSize: "var(--text-xs)" }}><Icon name="paperclip" size={12} /> 图片或 PDF</button>
-            <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={() => { if (draft.trim()) { actions.say(draft); setDraft(""); } }}>生成</Button>
+            <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={sendDraft}>生成</Button>
           </>}
         />
       </div>
