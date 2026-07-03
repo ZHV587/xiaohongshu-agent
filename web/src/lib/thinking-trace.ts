@@ -6,6 +6,8 @@ import { parseXhsBlocks } from "@/lib/xhs-blocks";
 export interface ThinkingStep {
   label: string;
   state: "done" | "active" | "pending";
+  description?: string;
+  result?: string;
 }
 
 export interface ThinkingLog {
@@ -225,6 +227,8 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         steps: presentation.userStages.map((stage) => ({
           label: stage.title,
           state: presentation.status === "done" ? "done" : "active",
+          description: stage.intent,
+          result: stage.resultText,
         })),
         logs: presentation.userStages.map((stage) => ({
           text: stage.metricsText ?? stage.summary,

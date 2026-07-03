@@ -14,6 +14,8 @@ type StepState = "done" | "active" | "pending";
 export interface ThinkingStep {
   label: string;
   state?: StepState;
+  description?: string;
+  result?: string;
 }
 
 export type ThinkingLog = string | { time?: string; text?: string };
@@ -42,6 +44,7 @@ export function ThinkingAura({
   });
   const collapsed = collapsedState.source === defaultCollapsed ? collapsedState.value : defaultCollapsed;
   const setCollapsed = (value: boolean) => setCollapsedState({ source: defaultCollapsed, value });
+  const collapsedTitle = title === "工作轨迹" ? `查完 ${steps.length} 步` : title;
 
   if (collapsed) {
     return (
@@ -58,7 +61,7 @@ export function ThinkingAura({
           <span style={{ position: "relative", borderRadius: "var(--radius-full)", width: 8, height: 8, background: "var(--success)" }} />
         </span>
         <span style={{ fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-xs)", color: "var(--text-body)" }}>
-          🍠 查完 {steps.length} 步
+          🍠 {collapsedTitle}
         </span>
         <span style={{ color: "var(--primary)", fontSize: "var(--text-2xs)" }}>▾</span>
       </div>
@@ -103,13 +106,25 @@ export function ThinkingAura({
         )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
         {steps.map((s, i) => {
           const st: StepState = s.state || "pending";
           return (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "var(--text-xs)", color: stateColor[st], fontWeight: (st === "active" ? "var(--weight-semibold)" : "var(--weight-regular)") as CSSProperties["fontWeight"] }}>
-              <span style={{ width: 14, textAlign: "center", display: "inline-block", animation: st === "active" ? "spin 1.4s linear infinite" : "none" }}>{stateIcon[st]}</span>
-              <span>{s.label}</span>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "14px 1fr", columnGap: "0.5rem", rowGap: "0.25rem", fontSize: "var(--text-xs)" }}>
+              <span style={{ width: 14, textAlign: "center", display: "inline-block", color: stateColor[st], animation: st === "active" ? "spin 1.4s linear infinite" : "none" }}>{stateIcon[st]}</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", minWidth: 0 }}>
+                <span style={{ color: stateColor[st], fontWeight: (st === "active" ? "var(--weight-semibold)" : "var(--weight-bold)") as CSSProperties["fontWeight"] }}>{s.label}</span>
+                {s.description && (
+                  <span style={{ color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>
+                    {s.description}
+                  </span>
+                )}
+                {s.result && (
+                  <span style={{ color: "var(--text-body)", lineHeight: "var(--leading-relaxed)", background: "var(--oats-light)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "0.35rem 0.5rem" }}>
+                    结果：{s.result}
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}

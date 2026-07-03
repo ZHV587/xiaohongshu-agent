@@ -42,6 +42,13 @@ test("ThinkingAura accepts defaultCollapsed prop", () => {
   assert.match(src, /defaultCollapsed\??:\s*boolean/);
 });
 
+test("ThinkingAura renders step purpose and result details", () => {
+  assert.match(src, /description\??:\s*string/);
+  assert.match(src, /result\??:\s*string/);
+  assert.match(src, /s\.description/);
+  assert.match(src, /s\.result/);
+});
+
 test("ThinkingAura renders a collapsed summary with step count", () => {
   // 摘要头显示「查完 N 步」,N 来自 steps.length
   assert.match(src, /查完/);

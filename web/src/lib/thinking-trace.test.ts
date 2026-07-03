@@ -57,6 +57,9 @@ const officialPresentation: TracePresentation = {
       id: "retrieve",
       title: "查找相关素材",
       summary: "找到 12 条，采用 3 条",
+      intent: "先确认有没有可用素材，避免凭空给建议。",
+      action: "从数据底座检索与你需求相关的笔记和历史素材。",
+      resultText: "找到 12 条相关素材，采用 3 条作为本次回答依据。",
       statusText: "已完成",
       metricsText: "找到 12 条，采用 3 条",
       sourceEventIds: ["e1"],
@@ -118,6 +121,8 @@ test("official trace presentation mounts below the matching assistant answer", (
   assert.ok(thinking.kind === "thinking");
   assert.equal(thinking.run.presentation?.userSummary, "查完 1 步");
   assert.equal(thinking.run.steps[0].label, "查找相关素材");
+  assert.equal(thinking.run.steps[0].description, "先确认有没有可用素材，避免凭空给建议。");
+  assert.equal(thinking.run.steps[0].result, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
   assert.equal(thinking.run.logs[0].text, "找到 12 条，采用 3 条");
 });
 

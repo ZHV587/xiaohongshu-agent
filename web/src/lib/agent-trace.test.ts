@@ -59,10 +59,66 @@ test("presentation uses friendly Chinese and preserves source ids", () => {
   const presentation = toTracePresentation(state);
 
   assert.equal(presentation.traceId, "trace-1");
-  assert.match(presentation.userSummary, /查完/);
-  assert.equal(presentation.userStages[0].title, "查找相关素材");
+  assert.match(presentation.userSummary, /已完成素材核验/);
+  assert.equal(presentation.userStages[0].title, "核验素材依据");
   assert.equal(presentation.userStages[0].metricsText, "找到 12 条，采用 3 条");
   assert.deepEqual(presentation.userStages[0].sourceEventIds, ["e2"]);
+});
+
+test("presentation explains what happened instead of naming a tool", () => {
+  const state = reduceTraceEvents(undefined, [
+    event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
+    event({
+      event_id: "e2",
+      seq: 2,
+      tool_name: "semantic_search_resources",
+      label: "tool completed",
+      metrics: { found_count: 12, used_count: 3 },
+    }),
+    event({ event_id: "e3", seq: 3, type: "xhs.trace.run.completed", label: "run completed" }),
+  ]);
+
+  const presentation = toTracePresentation(state);
+  const [stage] = presentation.userStages;
+
+  assert.equal(presentation.userSummary, "已完成素材核验：找到 12 条，采用 3 条");
+  assert.equal(stage.title, "核验素材依据");
+  assert.equal(stage.intent, "先确认有没有可用素材，避免凭空给建议。");
+  assert.equal(stage.action, "从数据底座检索与你需求相关的笔记和历史素材。");
+  assert.equal(stage.resultText, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
+});
+
+test("presentation folds started and completed events into one user step", () => {
+  const state = reduceTraceEvents(undefined, [
+    event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
+    event({
+      event_id: "e2",
+      seq: 2,
+      type: "xhs.trace.tool.started",
+      stage_id: "retrieve",
+      tool_call_id: "call-1",
+      tool_name: "semantic_search_resources",
+      label: "tool started",
+    }),
+    event({
+      event_id: "e3",
+      seq: 3,
+      type: "xhs.trace.tool.completed",
+      stage_id: "retrieve",
+      tool_call_id: "call-1",
+      tool_name: "semantic_search_resources",
+      label: "tool completed",
+      metrics: { found_count: 12, used_count: 3 },
+    }),
+    event({ event_id: "e4", seq: 4, type: "xhs.trace.run.completed", label: "run completed" }),
+  ]);
+
+  const presentation = toTracePresentation(state);
+
+  assert.equal(presentation.userStages.length, 1);
+  assert.deepEqual(presentation.userStages[0].sourceEventIds, ["e2", "e3"]);
+  assert.equal(presentation.userStages[0].statusText, "已完成");
+  assert.equal(presentation.userStages[0].resultText, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
 });
 
 test("ordinary presentation hides engineering words", () => {
@@ -96,6 +152,6 @@ test("ordinary presentation hides engineering words", () => {
   ]) {
     assert.equal(visible.includes(word), false, `ordinary UI leaked ${word}`);
   }
-  assert.match(visible, /查找相关素材/);
+  assert.match(visible, /核验素材依据/);
   assert.match(visible, /找到 12 条/);
 });

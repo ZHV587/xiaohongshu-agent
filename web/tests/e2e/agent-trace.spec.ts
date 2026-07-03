@@ -115,7 +115,7 @@ test.describe("official agent trace browser acceptance", () => {
     ]);
 
     const answer = page.getByText("这是最终定版回答", { exact: false });
-    const traceSummary = page.getByText("查完 1 步").first();
+    const traceSummary = page.getByText("已完成素材核验：找到 12 条，采用 3 条").first();
     await expect(answer).toBeVisible();
     await expect(traceSummary).toBeVisible();
 
@@ -126,8 +126,9 @@ test.describe("official agent trace browser acceptance", () => {
     expect(traceBox!.y).toBeGreaterThan(answerBox!.y);
 
     await traceSummary.click();
-    await expect(page.getByText("查找相关素材").first()).toBeVisible();
-    await expect(page.getByText("找到 12 条，采用 3 条").first()).toBeVisible();
+    await expect(page.getByText("核验素材依据").first()).toBeVisible();
+    await expect(page.getByText("先确认有没有可用素材，避免凭空给建议。").first()).toBeVisible();
+    await expect(page.getByText("找到 12 条相关素材，采用 3 条作为本次回答依据。").first()).toBeVisible();
 
     const bodyText = await page.locator("body").innerText();
     for (const word of ["trace", "run", "tool", "custom", "debug", "schema", "payload"]) {
