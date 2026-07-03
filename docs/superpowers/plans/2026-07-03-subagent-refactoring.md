@@ -43,11 +43,13 @@
 - `uv run python scripts/dbskill_audit.py`：通过。
 - `uv run pytest -q`：589 passed, 125 skipped。
 
-## 5. 生产部署前确认
+## 5. 生产部署确认
 
 - [x] 本地全量测试通过。
 - [x] 子代理定义未使用私有字段。
 - [x] 文档未要求私有 tracing hook。
 - [x] 旧 Skill 文件已删除。
-- [ ] 推送到远端仓库。
-- [ ] 部署到生产服务器。
+- [x] 推送到远端仓库。
+- [x] 部署到生产服务器。
+- [x] 生产健康检查通过：`module.scheduler=healthy`、`module.database=healthy`、`public_http_status=200`。
+- [x] 生产浏览器 UAT 通过：桌面端登录态页面可打开，Enter 可发送消息，对话响应落地，无 console error、page error、request failure 或 4xx/5xx。
