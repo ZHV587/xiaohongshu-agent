@@ -14,7 +14,7 @@ test.describe("design-system desktop parity UAT", () => {
 
     await page.getByText("已完成 1 步").first().click();
     await expect(page.getByText("search_data_foundation", { exact: false }).first()).toBeVisible();
-    const collapse = page.getByRole("button", { name: /收起分析详情/ });
+    const collapse = page.getByRole("button", { name: /收起执行详情/ });
     if (await collapse.count()) await collapse.first().click();
 
     await expectNoPrototypeExploration(page);

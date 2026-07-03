@@ -3,9 +3,9 @@
 import { useState, type CSSProperties, type HTMLAttributes } from "react";
 
 /**
- * ThinkingAura (思维微光) — the agent's live reasoning panel. A
+ * ThinkingAura — the agent's visible work trace. A
  * breathing coral dot, a stepper of statuses (done / active /
- * pending), and an optional collapsible log of raw thoughts.
+ * pending), and an optional collapsible log of tool/action details.
  *
  * Faithfully ported 1:1 from 小红书文案助手 Design System/components/content/ThinkingAura.jsx.
  */
@@ -27,7 +27,7 @@ export interface ThinkingAuraProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 export function ThinkingAura({
-  title = "思考轨迹 (Thinking Aura)",
+  title = "工作轨迹",
   steps = [],
   logs = null,
   defaultOpen = false,
@@ -98,7 +98,7 @@ export function ThinkingAura({
             onClick={() => setOpen((o) => !o)}
             style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-2xs)", display: "inline-flex", alignItems: "center", gap: "0.2rem" }}
           >
-            {open ? "收起分析详情 ▴" : "展开分析详情 ▾"}
+            {open ? "收起执行详情 ▴" : "展开执行详情 ▾"}
           </button>
         )}
       </div>

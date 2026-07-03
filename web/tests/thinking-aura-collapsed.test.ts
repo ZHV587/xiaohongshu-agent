@@ -9,16 +9,16 @@ const src = readFileSync(
 );
 const globals = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
 
-test("ThinkingAura mirrors the DS source contract", () => {
+test("ThinkingAura presents a Codex-style work trace, not raw chain-of-thought", () => {
   for (const marker of [
-    "思考轨迹 (Thinking Aura)",
+    "工作轨迹",
     "steps",
     "logs",
     "defaultOpen",
     "defaultCollapsed",
     "xhs-ping",
-    "收起分析详情",
-    "展开分析详情",
+    "收起执行详情",
+    "展开执行详情",
     "done",
     "active",
     "pending",
@@ -29,6 +29,8 @@ test("ThinkingAura mirrors the DS source contract", () => {
   ]) {
     assert.ok(src.includes(marker), `missing ThinkingAura marker: ${marker}`);
   }
+  assert.ok(!src.includes("思考轨迹"), "ThinkingAura should not present raw chain-of-thought wording");
+  assert.ok(!src.includes("Thinking Aura"), "ThinkingAura should not expose internal component naming");
 });
 
 test("ThinkingAura motion tokens exist in globals", () => {
