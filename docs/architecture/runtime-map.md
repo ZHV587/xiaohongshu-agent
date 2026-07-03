@@ -78,11 +78,11 @@ flowchart LR
   Registry --> Router["Router middleware"]
   Router --> MainAgent["Main agent"]
   Router --> Subagents["Subagents"]
-  Router --> Rubric["Rubric / grading"]
   Registry --> RuntimeFacts["Runtime facts"]
 ```
 
-Config Center is the runtime authority for editable model and integration configuration. The model registry loads active pool metadata from that authority. Router middleware selects models for the main agent, subagents, and rubric paths. Runtime facts should report model availability without exposing secrets.
+Config Center is the runtime authority for editable model and integration configuration. The model registry loads active pool metadata from that authority. Router middleware selects models for the main agent and subagents. Runtime facts should report model availability without exposing secrets.
+Runtime rubric grading is intentionally absent from the production graph while DeepAgents `RubricMiddleware` remains beta; quality enforcement lives in structured output contracts, retrieval-grounding rules, frontend checks, and stable external evaluation workflows.
 
 ## Background Flow
 

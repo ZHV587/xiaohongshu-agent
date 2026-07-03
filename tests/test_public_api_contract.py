@@ -33,7 +33,6 @@ def test_deepagents_toplevel_public_exports():
     expected = {
         "FilesystemPermission",
         "HarnessProfileConfig",
-        "RubricMiddleware",
         "create_deep_agent",
         "register_harness_profile",
     }
@@ -45,7 +44,7 @@ def test_deepagents_toplevel_public_exports():
 
 
 def test_langchain_middleware_public_exports():
-    """models.py / middlewares.py / content_rubric.py 依赖的中间件符号必须在
+    """models.py / middlewares.py 依赖的中间件符号必须在
     langchain.agents.middleware 顶层 __all__(不走 .types 等内部子模块)。"""
     import langchain.agents.middleware as mw
 

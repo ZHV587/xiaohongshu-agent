@@ -13,12 +13,12 @@ def test_pyproject_packages_imported_root_modules():
         "auth",
         "backends",
         "config_center",
-        "content_rubric",
         "middlewares",
         "model_health",
         "model_registry",
         "models",
         "prompts",
-        "rubric_model",
         "subagents_executor",
     } <= py_modules
+    assert "content_rubric" not in py_modules
+    assert "rubric_model" not in py_modules

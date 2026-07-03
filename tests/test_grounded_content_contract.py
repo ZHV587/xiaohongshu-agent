@@ -4,8 +4,8 @@
 - **检索口径**(检索顺序、检索工具、mode 三态、时效/防伪)是 MAIN_SYSTEM_PROMPT §6
   《检索与证据规约》的**唯一事实源**。各创作技能不再重述检索口径,只引用 §6。
 - **输出协议契约**(xhs_topics/xhs_copy fence + evidence schema)是 MAIN_SYSTEM_PROMPT 的
-  唯一事实源 —— 前端 xhs-blocks.ts 与 content_rubric 硬依赖,渐进式披露下 agent 可能不读
-  skill,故协议常驻 prompt。SKILL.md 不内嵌 JSON 块,只引用 prompt 的「输出协议」。
+  唯一事实源 —— 前端 xhs-blocks.ts 与持久化工具硬依赖,渐进式披露下 agent 可能不读 skill,
+  故协议常驻 prompt。SKILL.md 不内嵌 JSON 块,只引用 prompt 的「输出协议」。
 - **差异化工作流 know-how**(两步流、save_*/sync_* 落库时机、效果反馈、风格沉淀、质量检查)
   是 topic-content/SKILL.md 的唯一事实源,prompt 不重复。
 - **跨边界硬约束**(不编造、数据不足明示)prompt 是每轮兜底,skill 自包含也带一份。

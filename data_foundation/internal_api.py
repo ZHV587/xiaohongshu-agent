@@ -438,8 +438,9 @@ async def internal_model_status(request: Request) -> JSONResponse:
     hot_reload 各路径的"当前部署模式下是否实际生效":
     - main_agent / server_async / subagents:ModelRouterMiddleware 每次调用实时读 registry,
       恒可热切。
-    - rubric / embedding_index_profiles:依赖 config-center 驱动 registry/索引 profile,
-      env 模式下 registry 不被 reload、profile 走重启边界,故等于 config_center_enabled。
+    - embedding_index_profiles:依赖 config-center 驱动索引 profile,env 模式下 profile
+      走重启边界,故等于 config_center_enabled。
+    - runtime rubric:DeepAgents RubricMiddleware 仍是 beta,不接入生产 graph,故不作为热切路径上报。
     registry 明细(版本/活跃模型)best-effort:同进程能拿到 agent.model_registry 则附带,
     取不到(测试/未装配)不影响 hot_reload 事实。
     """
@@ -462,7 +463,6 @@ async def internal_model_status(request: Request) -> JSONResponse:
             "main_agent": True,
             "server_async": True,
             "subagents": True,
-            "rubric": cc,
             "embedding_index_profiles": cc,
         },
     })

@@ -44,7 +44,6 @@
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
-    "react-syntax-highlighter": "^15.6.1",
     "recharts": "^2.15.3",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
@@ -64,7 +63,6 @@
     "@types/node": "^22.15.18",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/react-syntax-highlighter": "^15.5.13",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.5.0",
     "dotenv": "^16.5.0",
@@ -74,8 +72,8 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "fast-check": "^4.8.0",
     "globals": "^17.6.0",
-    "next": "^15.5.18",
-    "postcss": "^8.5.13",
+    "next": "15.5.20",
+    "postcss": "8.5.16",
     "prettier": "^3.8.3",
     "prettier-plugin-tailwindcss": "^0.8.0",
     "tailwind-scrollbar": "^4.0.2",
@@ -84,6 +82,7 @@
     "typescript-eslint": "^8.59.1"
   },
   "overrides": {
+    "postcss": "8.5.16",
     "react-is": "^19.0.0-rc-69d4b800-20241021"
   },
   "pnpm": {
@@ -100,6 +99,7 @@
       "minimatch@9>brace-expansion": "^5.0.5",
       "eslint>ajv": "^6.14.0",
       "mdast-util-to-hast": "^13.2.1",
+      "postcss": "8.5.16",
       "refractor>prismjs": "^1.30.0"
     }
   },

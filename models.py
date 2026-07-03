@@ -174,13 +174,14 @@ def _read_whitelist() -> list[str]:
 def build_initial_placeholder_model() -> BaseChatModel:
     """构造 import-time 装配占位模型,**不探测、不联网**。
 
-    create_deep_agent / RubricMiddleware / 子智能体装配在模块 import 阶段(server
-    lifespan 之前、registry 尚不存在时)各需一个 BaseChatModel 实例。此函数从 env 读
+    create_deep_agent / 子智能体装配在模块 import 阶段(server lifespan 之前、
+    registry 尚不存在时)各需一个 BaseChatModel 实例。此函数从 env 读
     网关与白名单,直接用白名单首个(质量序最强)@ 网关一构一个实例,不做任何网络探测。
 
-    这是占位,不是运行时配置源:接客后主/子 agent 经 ModelRouterMiddleware、rubric 经
-    RegistryRoutedChatModel,都从 registry 取当前最强候选,占位仅在 registry 空(填充前/
-    测试态)时兜底。env 至此退出运行时配置链,config-center 是唯一权威源。
+    这是占位,不是运行时配置源:接客后主/子 agent 经 ModelRouterMiddleware 从
+    registry 取当前最强候选,占位仅在 registry 空(填充前/测试态)时兜底。env
+    至此退出运行时配置链,config-center 是唯一权威源。DeepAgents beta runtime
+    rubric 不接入生产 graph,因此没有独立评分模型热切路径。
     """
     gateways = _read_gateways()
     whitelist = _read_whitelist()

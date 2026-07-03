@@ -464,8 +464,9 @@ def test_model_status_rejects_non_admin(monkeypatch):
     assert response.status_code == 403
 
 
-def test_model_status_env_mode_marks_rubric_and_embedding_as_restart_boundary(monkeypatch):
-    # 无 config-center(纯 env 模式):rubric / embedding 热切不生效(重启边界),路由路径恒可热切。
+def test_model_status_env_mode_marks_embedding_as_restart_boundary(monkeypatch):
+    # 无 config-center(纯 env 模式):embedding 热切不生效(重启边界),路由路径恒可热切。
+    # 运行时 beta rubric 已移出生产 graph,不再作为热切路径上报。
     monkeypatch.delenv("XHS_CONFIG_ENCRYPTION_KEY", raising=False)
     monkeypatch.delenv("XHS_CONFIG_CENTER_PATH", raising=False)
     client = _client(monkeypatch)
@@ -480,11 +481,12 @@ def test_model_status_env_mode_marks_rubric_and_embedding_as_restart_boundary(mo
     assert hot["main_agent"] is True
     assert hot["server_async"] is True
     assert hot["subagents"] is True
-    assert hot["rubric"] is False
+    assert "rubric" not in hot
     assert hot["embedding_index_profiles"] is False
 
 
-def test_model_status_config_center_mode_enables_rubric_and_embedding(monkeypatch, tmp_path):
+def test_model_status_config_center_mode_enables_embedding(monkeypatch, tmp_path):
+    # config-center 只改变真实存在的热切路径。runtime rubric 已移除,不得再上报。
     key = Fernet.generate_key().decode()
     monkeypatch.setenv("XHS_CONFIG_ENCRYPTION_KEY", key)
     monkeypatch.setenv("XHS_CONFIG_CENTER_PATH", str(tmp_path / "config-center.enc"))
@@ -496,7 +498,7 @@ def test_model_status_config_center_mode_enables_rubric_and_embedding(monkeypatc
     payload = response.json()
     assert payload["config_center_enabled"] is True
     hot = payload["hot_reload"]
-    assert hot["rubric"] is True
+    assert "rubric" not in hot
     assert hot["embedding_index_profiles"] is True
 
 

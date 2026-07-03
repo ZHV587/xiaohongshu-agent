@@ -65,7 +65,7 @@ docker compose up -d --build
 - phase-2 模式开启条件：同时设置 `XHS_CONFIG_ENCRYPTION_KEY` 与 `XHS_CONFIG_CENTER_PATH`。开启后 `/api/config` 读写配置中心并返回当前配置版本；未开启时保留 `.env + apply` 的 phase-1 回退。
 - 管理员配置页和 `/api/config` 管理员接口按当前私人项目决策返回明文配置，便于直接检查和修改；日志、错误摘要、outbox payload、telemetry 和普通状态接口仍不得输出密钥。
 - `XHS_INTERNAL_BASE_URL` 与 `XHS_INTERNAL_SECRET` 是 deploy-only 配置，不进入管理员配置中心历史版本或状态 API。
-- 已纳入无重启热切的路径：主 agent 的 `ModelRouterMiddleware` sync/async 调用、子 agent 的 `ModelRouterMiddleware` 调用，以及 rubric 评分模型——后者经 `RegistryRoutedChatModel`(`rubric_model.py`)在每次评分时取 registry 当前最强候选，registry 空时回退 import-time 占位实例，故 config-center 热重载后下一次评分即生效，无需重启。
+- 已纳入无重启热切的路径：主 agent 的 `ModelRouterMiddleware` sync/async 调用，以及子 agent 的 `ModelRouterMiddleware` 调用。DeepAgents `RubricMiddleware` 当前仍是 beta，不接入生产 graph；内容质量约束由主 prompt 结构化协议、检索证据契约、前端即时质检和后续稳定评估服务承接。
 - 模型池构建(`build_pool_from_config`)对多网关的探测为并发执行：墙钟收敛到最慢的单个网关(`_DISCOVER_TIMEOUT`≈5s),与网关数量解耦,加速启动对齐、定时健康探测与配置 verify。
 - `tools/web_bridge_runner.py` 不再是 Web 生产请求主路径；仅允许作为配置恢复或维护工具使用，且 degraded fallback 必须明确返回降级状态。进程内 registry reload 必须通过 LangGraph 后端进程内管理通道或 supervisor/sidecar 完成。
 - Embedding 热生效以配置中心为版本权威：保存 `XHS_EMBEDDING_*` 后配置立即持久化，下一轮 `XHS_SCHEDULER_INTERVAL_SECONDS` scheduler cycle 会用该版本创建或续建 `building` index，回填完成后原子切换为 `active`。

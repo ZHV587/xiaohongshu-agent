@@ -40,6 +40,7 @@ test("Next lint/build config uses supported flat-config plumbing without depreca
 test("deployment configs keep structural fixes without silencing warnings", () => {
   const route = readFromWeb("src", "app", "api", "[..._path]", "route.ts");
   const dockerfile = readFromWeb("Dockerfile");
+  const configStore = readFromWeb("src", "lib", "server", "config-store.ts");
   const langgraph = JSON.parse(readFromRepo("langgraph.json")) as {
     dockerfile_lines?: string[];
     image_distro?: string;
@@ -49,6 +50,8 @@ test("deployment configs keep structural fixes without silencing warnings", () =
   assert.doesNotMatch(route, /langgraph-nextjs-api-passthrough|initApiPassthrough/);
   assert.doesNotMatch(dockerfile, /NEXT_TELEMETRY_DISABLED/);
   assert.doesNotMatch(dockerfile, /NPM_CONFIG_(AUDIT|FUND|UPDATE_NOTIFIER)/);
+  assert.doesNotMatch(configStore, /rubric\s*:/);
+  assert.doesNotMatch(configStore, /rubric .*热切|rubric 评分模型/);
   assert.equal(langgraph.image_distro, "wolfi");
   assert.match(JSON.stringify(langgraph.dockerfile_lines), /mkdir -p \/usr\/local\/bin/);
 });

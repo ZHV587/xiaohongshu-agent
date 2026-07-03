@@ -2,9 +2,9 @@
 // 小红书文案助手 Design System/ui_kits/studio/data.js (checkRules) + ui.jsx
 // (computeChecks / scoreOf). This is REAL rule logic (regex evaluation),
 // not mock business data — it powers the live, instant 文案体检 feedback
-// as the user types. The authoritative score is ALSO computed server-side
-// by the rubric tool (content_rubric.py) per the plan; this client copy is
-// the zero-latency mirror.
+// as the user types. The production authority is the structured content
+// contract plus persisted evidence; these local checks are zero-latency
+// authoring feedback, not a server-side grader mirror.
 
 export interface NoteDraft {
   title: string;
