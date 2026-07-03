@@ -17,8 +17,8 @@ test("ThinkingAura presents a Codex-style work trace, not raw chain-of-thought",
     "defaultOpen",
     "defaultCollapsed",
     "xhs-ping",
-    "收起执行详情",
-    "展开执行详情",
+    "收起记录",
+    "查看做了什么",
     "done",
     "active",
     "pending",
@@ -43,8 +43,8 @@ test("ThinkingAura accepts defaultCollapsed prop", () => {
 });
 
 test("ThinkingAura renders a collapsed summary with step count", () => {
-  // 摘要头显示「已完成 N 步」,N 来自 steps.length
-  assert.match(src, /已完成/);
+  // 摘要头显示「查完 N 步」,N 来自 steps.length
+  assert.match(src, /查完/);
   assert.match(src, /steps\.length/);
 });
 

@@ -58,7 +58,7 @@ export function ThinkingAura({
           <span style={{ position: "relative", borderRadius: "var(--radius-full)", width: 8, height: 8, background: "var(--success)" }} />
         </span>
         <span style={{ fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-xs)", color: "var(--text-body)" }}>
-          🍠 已完成 {steps.length} 步
+          🍠 查完 {steps.length} 步
         </span>
         <span style={{ color: "var(--primary)", fontSize: "var(--text-2xs)" }}>▾</span>
       </div>
@@ -98,7 +98,7 @@ export function ThinkingAura({
             onClick={() => setOpen((o) => !o)}
             style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-2xs)", display: "inline-flex", alignItems: "center", gap: "0.2rem" }}
           >
-            {open ? "收起执行详情 ▴" : "展开执行详情 ▾"}
+            {open ? "收起记录 ▴" : "查看做了什么 ▾"}
           </button>
         )}
       </div>

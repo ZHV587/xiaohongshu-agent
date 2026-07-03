@@ -28,7 +28,7 @@ export const fixtureMessages = [
     id: "m-ai-tool-1",
     type: "ai",
     content: "",
-    tool_calls: [{ id: "call-search-1", name: "search_data_foundation", args: { query: "露营装备 新手 避坑" } }],
+    tool_calls: [{ id: "call-search-1", name: "semantic_search_resources", args: { query: "露营装备 新手 避坑" } }],
   },
   {
     id: "m-tool-1",

@@ -22,7 +22,7 @@ test("renders three kinds: user / thinking / ai", () => {
 test("renders response loading and error states explicitly", () => {
   assert.match(src, /item\.kind === "error"/);
   assert.match(src, /StateNote/);
-  assert.match(src, /正在思考并检索数据底座/);
+  assert.match(src, /正在查素材和历史数据/);
   assert.match(src, /响应失败，请稍后重试/);
 });
 

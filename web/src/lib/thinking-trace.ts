@@ -50,13 +50,13 @@ const SENSITIVE_KEY_RE = /credential|token|authorization|secret|password|dsn|uat
 
 // 工具名 → 中文语义。覆盖 data_foundation/tools.py 与 tools/feishu_actions.py 两来源。
 const TOOL_LABELS: Record<string, string> = {
-  semantic_search_resources: "语义检索数据底座",
-  search_resources: "关键词检索数据底座",
+  semantic_search_resources: "按语义找相关素材",
+  search_resources: "按关键词补查素材",
   search_local_note_cards: "检索本地笔记卡",
-  get_resource: "精读素材原文",
-  graph_expand: "图谱扩展关联",
-  save_generated_topic: "沉淀选题入库",
-  save_generated_copy: "沉淀文案入库",
+  get_resource: "打开原文细看",
+  graph_expand: "顺着图谱找关联",
+  save_generated_topic: "保存选题",
+  save_generated_copy: "保存文案",
   save_user_feedback: "沉淀反馈",
   save_performance_metric: "沉淀效果指标",
   save_session_snapshot: "保存会话快照",
@@ -75,8 +75,10 @@ const TOOL_LABELS: Record<string, string> = {
 
 // task 委派:按 subagent_type 细化;未知/缺失回退通用。
 const SUBAGENT_LABELS: Record<string, string> = {
-  "knowledge-atom-retriever": "委派子任务:知识检索",
-  "persona-distiller": "委派子任务:风格提炼",
+  "knowledge-atom-retriever": "请知识检索助手查证据",
+  "persona-distiller": "请风格提炼助手看样本",
+  "benchmark-analyst": "请对标分析助手拆爆款",
+  "expert-panel-debater": "请专家会商助手给判断",
 };
 
 export function toolLabel(name: string, args: unknown): string {
@@ -86,7 +88,7 @@ export function toolLabel(name: string, args: unknown): string {
         ? (args as { subagent_type?: unknown }).subagent_type
         : undefined;
     if (typeof sub === "string" && SUBAGENT_LABELS[sub]) return SUBAGENT_LABELS[sub];
-    return "委派子任务";
+    return "请子任务助手处理";
   }
   return TOOL_LABELS[name] ?? name;
 }
@@ -245,7 +247,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     out.push({
       kind: "thinking",
       run: {
-        steps: [{ label: "正在思考并检索数据底座", state: "active" }],
+        steps: [{ label: "正在查素材和历史数据", state: "active" }],
         logs: [],
         done: false,
       },

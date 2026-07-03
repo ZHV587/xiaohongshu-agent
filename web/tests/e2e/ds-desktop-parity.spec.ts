@@ -9,12 +9,12 @@ test.describe("design-system desktop parity UAT", () => {
 
     await page.goto("/?threadId=fixture-thread");
     await expect(page.locator("header").getByText("小红书创作运营工作室")).toBeVisible();
-    await expect(page.getByText("已完成 1 步").first()).toBeVisible();
+    await expect(page.getByText("查完 1 步").first()).toBeVisible();
     await expect(page.getByText("已基于数据底座生成选题与草稿", { exact: false })).toBeVisible();
 
-    await page.getByText("已完成 1 步").first().click();
-    await expect(page.getByText("search_data_foundation", { exact: false }).first()).toBeVisible();
-    const collapse = page.getByRole("button", { name: /收起执行详情/ });
+    await page.getByText("查完 1 步").first().click();
+    await expect(page.getByText("按语义找相关素材", { exact: false }).first()).toBeVisible();
+    const collapse = page.getByRole("button", { name: /收起记录/ });
     if (await collapse.count()) await collapse.first().click();
 
     await expectNoPrototypeExploration(page);
@@ -38,9 +38,9 @@ test.describe("design-system desktop parity UAT", () => {
 
     await page.goto("/?mode=workbench&threadId=fixture-thread");
     await expect(page.getByText("v1.2 工作台")).toBeVisible();
-    await expect(page.getByText("已完成 1 步").first()).toBeVisible();
-    await page.getByText("已完成 1 步").first().click();
-    await expect(page.getByText("search_data_foundation", { exact: false }).first()).toBeVisible();
+    await expect(page.getByText("查完 1 步").first()).toBeVisible();
+    await page.getByText("查完 1 步").first().click();
+    await expect(page.getByText("按语义找相关素材", { exact: false }).first()).toBeVisible();
 
     await page.keyboard.press("Control+P");
     await expect(page.getByPlaceholder("输入命令或搜索动作...")).toBeVisible();
@@ -70,7 +70,7 @@ test.describe("design-system desktop parity UAT", () => {
     await installDsMocks(page, "empty");
 
     await page.goto("/");
-    await expect(page.getByText("开始一场创作对话")).toBeVisible();
+    await expect(page.getByText("先说一个方向")).toBeVisible();
     await expectNoPrototypeExploration(page);
     await page.getByRole("button", { name: "账号运营" }).click();
     await expect(page.getByText("暂无账号", { exact: false }).first()).toBeVisible();
@@ -86,7 +86,7 @@ test.describe("design-system desktop parity UAT", () => {
     await installDsMocks(page, "empty");
 
     await page.goto("/?threadId=fixture-thread");
-    const composer = page.getByPlaceholder(/继续追问/);
+    const composer = page.getByPlaceholder(/按职场穿搭出 3 个选题/);
     await expect(composer).toBeVisible();
 
     await composer.fill("按咖啡店探店出 3 个选题");

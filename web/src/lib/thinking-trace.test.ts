@@ -4,11 +4,11 @@ import test from "node:test";
 import { toolLabel, deriveTimeline } from "./thinking-trace";
 
 test("toolLabel maps known data_foundation tools to Chinese", () => {
-  assert.equal(toolLabel("semantic_search_resources", {}), "语义检索数据底座");
-  assert.equal(toolLabel("search_resources", {}), "关键词检索数据底座");
-  assert.equal(toolLabel("get_resource", {}), "精读素材原文");
-  assert.equal(toolLabel("graph_expand", {}), "图谱扩展关联");
-  assert.equal(toolLabel("save_generated_topic", {}), "沉淀选题入库");
+  assert.equal(toolLabel("semantic_search_resources", {}), "按语义找相关素材");
+  assert.equal(toolLabel("search_resources", {}), "按关键词补查素材");
+  assert.equal(toolLabel("get_resource", {}), "打开原文细看");
+  assert.equal(toolLabel("graph_expand", {}), "顺着图谱找关联");
+  assert.equal(toolLabel("save_generated_topic", {}), "保存选题");
 });
 
 test("toolLabel maps feishu action tools", () => {
@@ -17,13 +17,15 @@ test("toolLabel maps feishu action tools", () => {
 });
 
 test("toolLabel resolves task delegation via subagent_type", () => {
-  assert.equal(toolLabel("task", { subagent_type: "knowledge-atom-retriever" }), "委派子任务:知识检索");
-  assert.equal(toolLabel("task", { subagent_type: "persona-distiller" }), "委派子任务:风格提炼");
+  assert.equal(toolLabel("task", { subagent_type: "knowledge-atom-retriever" }), "请知识检索助手查证据");
+  assert.equal(toolLabel("task", { subagent_type: "persona-distiller" }), "请风格提炼助手看样本");
+  assert.equal(toolLabel("task", { subagent_type: "benchmark-analyst" }), "请对标分析助手拆爆款");
+  assert.equal(toolLabel("task", { subagent_type: "expert-panel-debater" }), "请专家会商助手给判断");
 });
 
 test("toolLabel task without subagent_type falls back to generic", () => {
-  assert.equal(toolLabel("task", {}), "委派子任务");
-  assert.equal(toolLabel("task", undefined), "委派子任务");
+  assert.equal(toolLabel("task", {}), "请子任务助手处理");
+  assert.equal(toolLabel("task", undefined), "请子任务助手处理");
 });
 
 test("toolLabel unknown tool falls back to raw name", () => {
@@ -55,7 +57,7 @@ test("tool call without ToolMessage is active", () => {
   const tl = deriveTimeline([human("出选题"), aiCall("c1", "semantic_search_resources", { query: "露营" })]);
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
-  assert.deepEqual(thinking.run.steps, [{ label: "语义检索数据底座", state: "active" }]);
+  assert.deepEqual(thinking.run.steps, [{ label: "按语义找相关素材", state: "active" }]);
   assert.equal(thinking.run.done, false);
 });
 
@@ -68,7 +70,7 @@ test("tool call with matching ToolMessage is done", () => {
   ]);
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
-  assert.deepEqual(thinking.run.steps, [{ label: "语义检索数据底座", state: "done" }]);
+  assert.deepEqual(thinking.run.steps, [{ label: "按语义找相关素材", state: "done" }]);
   assert.equal(thinking.run.done, true);
 });
 
@@ -98,7 +100,7 @@ test("consecutive same-name tools fold into one step but keep per-call logs", ()
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
   assert.equal(thinking.run.steps.length, 1);
-  assert.equal(thinking.run.steps[0].label, "精读素材原文");
+  assert.equal(thinking.run.steps[0].label, "打开原文细看");
   assert.equal(thinking.run.logs.length, 2);
 });
 
@@ -162,7 +164,7 @@ test("write tool log contains only Chinese label, not payload value", () => {
   assert.equal(thinking.run.logs.length, 1);
   const logText = thinking.run.logs[0].text;
   // should only be the Chinese label
-  assert.equal(logText, "沉淀文案入库", "write tool log must equal label only, no payload");
+  assert.equal(logText, "保存文案", "write tool log must equal label only, no payload");
   assert.ok(!logText.includes("SECRET"), "write tool log must not contain payload value");
 });
 
@@ -217,7 +219,7 @@ test("loading context appends an active thinking item when no tool call has star
     {
       kind: "thinking",
       run: {
-        steps: [{ label: "正在思考并检索数据底座", state: "active" }],
+        steps: [{ label: "正在查素材和历史数据", state: "active" }],
         logs: [],
         done: false,
       },

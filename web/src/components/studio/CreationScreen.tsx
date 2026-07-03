@@ -10,7 +10,7 @@ import { useStudio } from "@/components/studio/useStudio";
 import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
 
-const RESPONSE_LOADING_TEXT = "正在思考并检索数据底座";
+const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
 
 export function CreationScreen() {
@@ -27,7 +27,7 @@ export function CreationScreen() {
             : (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <TopicRail chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
-                <div style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", lineHeight: 1.6, padding: "6px 8px", background: "var(--oats-light)", borderRadius: "var(--radius-sm)" }}>点选题卡看详情 → 再进入<b style={{ color: "var(--primary)" }}>深度创作</b></div>
+                <div style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", lineHeight: 1.6, padding: "6px 8px", background: "var(--oats-light)", borderRadius: "var(--radius-sm)" }}>先看依据，再写正文</div>
               </div>
             )}
         </div>
@@ -41,7 +41,7 @@ function TopicRail({ chosen, onChoose }: { chosen: number | null; onChoose: (t: 
   const { topics, evidence, images, actions } = useStudio();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-      <PanelHead icon="lightbulb" title="选题卡" sub="数据底座检索 · 加权排序 · 点击进入创作" right={<Button variant="ghost" size="sm" leftIcon={<Icon name="refresh-cw" size={12} />} onClick={() => actions.say("再换一批不同角度的选题")}>换一批</Button>} />
+      <PanelHead icon="lightbulb" title="选题卡" sub="先看依据 · 再写正文" right={<Button variant="ghost" size="sm" leftIcon={<Icon name="refresh-cw" size={12} />} onClick={() => actions.say("再找一批不同角度的选题")}>再找一批</Button>} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {topics.map((t) => {
           const on = t.id === chosen;
@@ -96,13 +96,13 @@ function SelectedTopicBar({ onBrowse }: { onBrowse: () => void }) {
 
 function DraftSnapshot({ expanded = false }: { expanded?: boolean }) {
   const { note, actions } = useStudio();
-  const body = note.body || "草稿会在这里流式生成。你也可以继续在中间对话框补充方向。";
+  const body = note.body || "草稿会出现在这里。也可以继续补充方向，我会跟着改。";
   return (
     <Card padding="md" tone={note.status === "idle" ? "sunken" : "default"} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <PanelHead icon="feather" title="创作栏" sub="标题 · 正文 · 标签 · 定稿入口" />
       <div>
         <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3, color: note.title ? "var(--text-body)" : "var(--text-subtle)" }}>
-          {note.title || "等待生成标题"}
+          {note.title || "还没开始写标题"}
         </div>
         <p style={{ margin: "8px 0 0", fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)", whiteSpace: "pre-wrap", maxHeight: expanded ? 260 : 120, overflow: "hidden" }}>
           {body}
@@ -166,9 +166,9 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
         {timeline.length === 0 && (
           <div style={{ margin: "auto", maxWidth: 460, textAlign: "center", display: "flex", flexDirection: "column", gap: 12, color: "var(--text-muted)" }}>
             <Avatar glyph="🍠" variant="agent" size={44} />
-            <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", color: "var(--text-body)" }}>开始一场创作对话</div>
+            <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", color: "var(--text-body)" }}>先说一个方向</div>
             <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>
-              说出你的方向(如「按露营装备出选题」),🍠 会基于数据底座检索爆款、提炼带「创作依据」的选题卡,点任意一张进入深度创作。
+              比如「按露营装备出选题」。我先找素材、拆依据，再给你几张可继续写的选题卡。
             </p>
           </div>
         )}
@@ -225,7 +225,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
           <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
             <Avatar glyph="🍠" variant="agent" size={32} />
             <Card padding="md">
-              <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>基于数据底座检索到的爆款资源,提炼了以下方向,每个都附「创作依据」,点击卡片进入创作:</p>
+              <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>我按相关素材整理了几个方向。每张卡都带依据，点进去就能继续写。</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 11 }}>
                 {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t)} />)}
               </div>
@@ -244,12 +244,12 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
 
       <div style={{ padding: 18, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          <Textarea rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="继续追问，或让 🍠 调整选题方向 / 改写文案…" footer={<>
+          <Textarea rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="比如：按职场穿搭出 3 个选题，要有依据…" footer={<>
             <button onClick={() => actions.polish()} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}>
               <kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>润色工具箱</span>
             </button>
-            <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={sendDraft}>生成</Button>
+            <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={sendDraft}>发送</Button>
           </>} />
         </div>
       </div>
