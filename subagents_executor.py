@@ -82,7 +82,7 @@ class CopywritingVersion(BaseModel):
     title: str = Field(description="针对该版本单独起的小红书图文封面文案（首图字样建议）")
     body: str = Field(description="笔记正文，必须有空行、带 Emoji 并严格遵循 anti-ai-copy-taste 规约")
     tags: list[str] = Field(description="精选的 5 个话题标签")
-    cover_visual_layout: str = Field(description="该版本首图视觉排版设计具体建议，以迎合图文生命线")
+    cover_headline_copy: str = Field(description="该版本的首图封面主副标题文案文本，决定首屏曝光点击率")
 
 
 class CopywritingReport(BaseModel):
@@ -248,13 +248,13 @@ def build_copywriting_coprocessor(
 ) -> SubAgent:
     return {
         "name": "copywriting-coprocessor",
-        "description": "文案创作与纠偏协处理器: 隔离加载创作者人设及背景, 撰写初步文案, 自动启动 22 条 AI 指纹自审纠偏迭代, 输出 A/B 双版本及视觉排版建议 CopywritingReport。",
+        "description": "文案创作与纠偏协处理器: 隔离加载创作者人设及背景, 撰写初步文案, 自动启动 22 条 AI 指纹自审纠偏迭代, 输出 A/B 双版本及首图封面文案文本 CopywritingReport。",
         "system_prompt": """你是文案创作与去 AI 腔纠偏协处理器。你负责在隔离上下文中完成文案起草与高精度去 AI 味自审重写全流程。
 
 任务：
 1. 基于主控传入的选题大纲及背景素材（利用 `semantic_search_resources` 和 `get_resource` 精读），输出对比版本。
 2. 生成初稿后，根据 22 条 AI 腔指纹库（如过度使用“总之、首先、不仅如此、我们可以看到”，或结构过于匀速对称）进行强自审纠偏，并将重写过程记录到审计日志中。
-3. 产出 2-3 个对比版本，每个版本必须包含：标题（首图大字建议）、笔记正文（空行排版）、首图视觉排版具体排布建议以满足小红书图文铁律。
+3. 产出 2-3 个对比版本，每个版本必须包含：标题、笔记正文（空行排版）、首图封面主副标题文案内容以配合笔记正文。
 4. 严格按照 CopywritingReport 结构化返回。""",
         "model": initial_model,
         "tools": [get_resource, search_resources, semantic_search_resources],
