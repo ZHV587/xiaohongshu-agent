@@ -1,6 +1,7 @@
 """agent 组装入口。xhs-router 主智能体 + Skills + 4 个执行型子智能体。"""
 import os
 import warnings
+from langchain_core._api import LangChainBetaWarning
 if "NO_PROXY" in os.environ:
     del os.environ["NO_PROXY"]
 if "no_proxy" in os.environ:
@@ -8,7 +9,7 @@ if "no_proxy" in os.environ:
 
 warnings.filterwarnings(
     "ignore",
-    message=r"The middleware `RubricMiddleware` is in beta\..*",
+    category=LangChainBetaWarning,
 )
 
 import langchain
