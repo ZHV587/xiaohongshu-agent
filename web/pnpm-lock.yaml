@@ -74,9 +74,6 @@ importers:
       katex:
         specifier: ^0.16.45
         version: 0.16.45
-      langgraph-nextjs-api-passthrough:
-        specifier: ^0.1.4
-        version: 0.1.4(next@15.5.18(@babel/core@7.29.0)(@playwright/test@1.59.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))
       lodash:
         specifier: ^4.18.1
         version: 4.18.1
@@ -2576,11 +2573,6 @@ packages:
 
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
-
-  langgraph-nextjs-api-passthrough@0.1.4:
-    resolution: {integrity: sha512-qGjHs8AnyP5XxxparmqkW4H6fHLjAgveCQnKzpBg0QhgyCc5wbGXmjCsh6eMgZ0meT+WS2oy31kNlt7OwPqSig==}
-    peerDependencies:
-      next: '*'
 
   langsmith@0.6.0:
     resolution: {integrity: sha512-GGaj5IMRfLv2HXXFzGk9diISMYLTpSTh6fzCZGKxWYW/NqEztIFtnXLq6G/RVhzFRmCykLap1fuC67LVKoQLcg==}
@@ -6197,10 +6189,6 @@ snapshots:
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
-
-  langgraph-nextjs-api-passthrough@0.1.4(next@15.5.18(@babel/core@7.29.0)(@playwright/test@1.59.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)):
-    dependencies:
-      next: 15.5.18(@babel/core@7.29.0)(@playwright/test@1.59.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
 
   langsmith@0.6.0(openai@4.100.0(ws@8.18.2)(zod@4.4.2))(ws@8.18.2):
     dependencies:

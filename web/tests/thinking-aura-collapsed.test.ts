@@ -51,12 +51,7 @@ test("collapsed state is toggleable", () => {
   assert.match(src, /collapsed/);
 });
 
-test("ThinkingAura syncs collapsed state when defaultCollapsed prop changes via useEffect", () => {
-  // 确认组件内有 useEffect 监听 defaultCollapsed 并调用 setCollapsed
-  assert.match(src, /useEffect/);
-  // useEffect 和 setCollapsed 同时出现（effect 体内含 setCollapsed）
-  const effectIdx = src.indexOf("useEffect");
-  const setCollapsedIdx = src.indexOf("setCollapsed", effectIdx);
-  assert.ok(effectIdx !== -1 && setCollapsedIdx !== -1 && setCollapsedIdx > effectIdx,
-    "setCollapsed should appear after useEffect in source");
+test("ThinkingAura syncs collapsed state when defaultCollapsed prop changes", () => {
+  assert.match(src, /source:\s*defaultCollapsed/);
+  assert.match(src, /collapsedState\.source === defaultCollapsed/);
 });

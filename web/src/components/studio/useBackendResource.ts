@@ -73,9 +73,12 @@ export function useBackendResource<T>(
 
   // 保持 fallback / isEmpty 引用稳定，避免把它们放进 effect 依赖导致无谓重拉。
   const fallbackRef = useRef(fallback);
-  fallbackRef.current = fallback;
   const isEmptyRef = useRef(options?.isEmpty);
-  isEmptyRef.current = options?.isEmpty;
+
+  useEffect(() => {
+    fallbackRef.current = fallback;
+    isEmptyRef.current = options?.isEmpty;
+  }, [fallback, options?.isEmpty]);
 
   // 仅以「有效参数」的序列化结果作为依赖，过滤掉 undefined 值（如未选账号）。
   const queryKey = serializeParams(params);
@@ -86,8 +89,11 @@ export function useBackendResource<T>(
     const controller = new AbortController();
     let alive = true;
 
-    setStatus("loading");
-    setError(undefined);
+    queueMicrotask(() => {
+      if (!alive) return;
+      setStatus("loading");
+      setError(undefined);
+    });
 
     const url = queryKey ? `${path}?${queryKey}` : path;
 

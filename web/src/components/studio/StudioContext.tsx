@@ -198,10 +198,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const images: string[] = useMemo(() => [], []);
 
   // 内容日历本地态：以后端排期为准，schedule 写动作做乐观更新 / 失败回滚。
-  const [calendar, setCalendar] = useState<CalendarDay[]>([]);
-  useEffect(() => {
-    setCalendar(calendarRes.data.calendar ?? []);
-  }, [calendarRes.data]);
+  const backendCalendar = useMemo(() => calendarRes.data.calendar ?? [], [calendarRes.data.calendar]);
+  const [calendarOverride, setCalendarOverride] = useState<{
+    source: CalendarDay[];
+    value: CalendarDay[];
+  } | null>(null);
+  const calendar = calendarOverride?.source === backendCalendar ? calendarOverride.value : backendCalendar;
+  const setCalendar = useCallback(
+    (updater: CalendarDay[] | ((current: CalendarDay[]) => CalendarDay[])) => {
+      setCalendarOverride({
+        source: backendCalendar,
+        value: typeof updater === "function" ? updater(calendar) : updater,
+      });
+    },
+    [backendCalendar, calendar],
+  );
 
   const loadState: StudioLoadState = {
     analytics: statusFor(analyticsRes.status, dashboard.length === 0),
@@ -373,6 +384,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           throw new Error(body?.error || `排期失败（${res.status}）`);
         }
         showToast(`已定稿并排期到 ${date} 日 ${time}`);
+        setCalendarOverride(null);
         calendarRes.reload();
       } catch (err) {
         setCalendar(rollbackSchedule(snapshot));
@@ -380,7 +392,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         showToast(`排期失败：${err instanceof Error ? err.message : "未知错误"}`);
       }
     },
-    [calendar, selectedAccount, note.title, copyResourceId, showToast, calendarRes, month.label],
+    [calendar, selectedAccount, note.title, copyResourceId, showToast, calendarRes, month.label, setCalendar],
   );
 
   // backfillSave：先本地校验（口径同后端 _clean_metrics），再 await POST /api/backend/backfill。

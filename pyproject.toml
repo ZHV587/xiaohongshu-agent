@@ -57,10 +57,6 @@ py-modules = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
-filterwarnings = [
-    "ignore:Using `httpx` with `starlette.testclient` is deprecated.*",
-    "ignore:The middleware `RubricMiddleware` is in beta.*",
-]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

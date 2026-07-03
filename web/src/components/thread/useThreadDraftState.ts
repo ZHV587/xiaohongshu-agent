@@ -109,22 +109,26 @@ export function useThreadDraftState(
     }
 
     const next = parseAiDraft(lastMsg.content);
-    setDraftTitle(next.title);
-    setDraftContent(next.content);
-    setLastSavedTitle(next.title);
-    setLastSavedContent(next.content);
-    setIsDirty(false);
+    queueMicrotask(() => {
+      setDraftTitle(next.title);
+      setDraftContent(next.content);
+      setLastSavedTitle(next.title);
+      setLastSavedContent(next.content);
+      setIsDirty(false);
+    });
   }, [messages]);
 
   useEffect(() => {
     const current = { title: draftTitle, content: draftContent };
     localStorage.setItem(buildDraftAutosaveKey(threadId), JSON.stringify(current));
-    setIsDirty(
-      shouldDirtyDraft(current, {
-        title: lastSavedTitle,
-        content: lastSavedContent,
-      }),
-    );
+    queueMicrotask(() => {
+      setIsDirty(
+        shouldDirtyDraft(current, {
+          title: lastSavedTitle,
+          content: lastSavedContent,
+        }),
+      );
+    });
   }, [threadId, draftTitle, draftContent, lastSavedContent, lastSavedTitle]);
 
   const resetForThreadSwitch = (nextThreadId: string | null) => {

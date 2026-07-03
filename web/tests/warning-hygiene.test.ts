@@ -37,13 +37,18 @@ test("Next lint/build config uses supported flat-config plumbing without depreca
   assert.equal(pkg.scripts["lint:fix"], "eslint . --fix");
 });
 
-test("deployment configs suppress known framework recommendation notices", () => {
+test("deployment configs keep structural fixes without silencing warnings", () => {
   const route = readFromWeb("src", "app", "api", "[..._path]", "route.ts");
   const dockerfile = readFromWeb("Dockerfile");
-  const langgraph = JSON.parse(readFromRepo("langgraph.json")) as { image_distro?: string };
+  const langgraph = JSON.parse(readFromRepo("langgraph.json")) as {
+    dockerfile_lines?: string[];
+    image_distro?: string;
+  };
 
-  assert.match(route, /disableWarningLog:\s*true/);
-  assert.match(dockerfile, /NEXT_TELEMETRY_DISABLED=1/);
-  assert.match(dockerfile, /NPM_CONFIG_UPDATE_NOTIFIER=false/);
+  assert.doesNotMatch(route, /disableWarningLog/);
+  assert.doesNotMatch(route, /langgraph-nextjs-api-passthrough|initApiPassthrough/);
+  assert.doesNotMatch(dockerfile, /NEXT_TELEMETRY_DISABLED/);
+  assert.doesNotMatch(dockerfile, /NPM_CONFIG_(AUDIT|FUND|UPDATE_NOTIFIER)/);
   assert.equal(langgraph.image_distro, "wolfi");
+  assert.match(JSON.stringify(langgraph.dockerfile_lines), /mkdir -p \/usr\/local\/bin/);
 });

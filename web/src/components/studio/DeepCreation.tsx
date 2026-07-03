@@ -233,44 +233,46 @@ function ABCompare() {
   const [pair, setPair] = useState<[VersionId, VersionId]>(["A", "B"]);
   if (!note.versions) return null;
   const setSide = (i: number, v: VersionId) => setPair((p) => { const n = [...p] as [VersionId, VersionId]; n[i] = v; return n; });
-  const Col = ({ id, side }: { id: VersionId; side: number }) => {
-    const { note, actions } = useStudio();
-    if (!note.versions) return null;
-    const v = note.versions[id];
-    if (!v) return null;
-    const n = { ...note, title: v.title, body: v.body, tags: v.tags, cover: v.cover, kw: note.kw };
-    const checks = computeChecks(n); const score = scoreOf(checks);
-    const active = note.activeVersion === id;
-    return (
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--surface-card)", border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`, borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", background: active ? "var(--accent-surface)" : "var(--oats-light)" }}>
-          <select value={id} onChange={(e) => setSide(side, e.target.value as VersionId)} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "3px 6px", fontSize: 11, fontWeight: 700, background: "var(--surface-card)", color: "var(--text-body)", cursor: "pointer" }}>
-            {(["A", "B", "C"] as VersionId[]).filter((k) => note.versions?.[k]).map((k) => <option key={k} value={k}>{note.versions![k]!.label}</option>)}
-          </select>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", color: score >= 80 ? "var(--success)" : "var(--warning)" }}>{score}<span style={{ fontSize: 10, color: "var(--text-subtle)", fontWeight: 400 }}>分</span></span>
-            {active && <span style={{ fontSize: 9, color: "var(--primary)", fontWeight: 700 }}>当前</span>}
-          </span>
-        </div>
-        <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-          <h3 style={{ margin: "0 0 10px", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3 }}>{v.title}</h3>
-          <p style={{ margin: 0, fontSize: "var(--text-xs)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", whiteSpace: "pre-wrap" }}>{v.body}</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
-            {v.tags.map((tg) => <span key={tg} style={{ fontSize: 9, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 7px" }}>#{tg}</span>)}
-          </div>
-        </div>
-        <div style={{ padding: 10, borderTop: "1px solid var(--border)" }}>
-          <Button variant={active ? "secondary" : "primary"} size="sm" block disabled={active} onClick={() => { actions.setVersion(id); actions.toast(`✅ 已采用「${v.label}」为当前稿`); }}>{active ? "当前采用中" : "采用此版"}</Button>
-        </div>
-      </div>
-    );
-  };
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: "var(--background)" }}>
       <div style={{ textAlign: "center", padding: "12px 0 4px", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>A·B 并排对比 · 体检分数实时计算，选更优的一版定稿</div>
       <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 14, padding: 16 }}>
-        <Col id={pair[0]} side={0} />
-        <Col id={pair[1]} side={1} />
+        <ABCompareColumn id={pair[0]} side={0} onSelect={setSide} />
+        <ABCompareColumn id={pair[1]} side={1} onSelect={setSide} />
+      </div>
+    </div>
+  );
+}
+
+function ABCompareColumn({ id, side, onSelect }: { id: VersionId; side: number; onSelect: (side: number, version: VersionId) => void }) {
+  const { note, actions } = useStudio();
+  if (!note.versions) return null;
+  const v = note.versions[id];
+  if (!v) return null;
+  const n = { ...note, title: v.title, body: v.body, tags: v.tags, cover: v.cover, kw: note.kw };
+  const checks = computeChecks(n);
+  const score = scoreOf(checks);
+  const active = note.activeVersion === id;
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--surface-card)", border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`, borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", background: active ? "var(--accent-surface)" : "var(--oats-light)" }}>
+        <select value={id} onChange={(e) => onSelect(side, e.target.value as VersionId)} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "3px 6px", fontSize: 11, fontWeight: 700, background: "var(--surface-card)", color: "var(--text-body)", cursor: "pointer" }}>
+          {(["A", "B", "C"] as VersionId[]).filter((k) => note.versions?.[k]).map((k) => <option key={k} value={k}>{note.versions![k]!.label}</option>)}
+        </select>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", color: score >= 80 ? "var(--success)" : "var(--warning)" }}>{score}<span style={{ fontSize: 10, color: "var(--text-subtle)", fontWeight: 400 }}>分</span></span>
+          {active && <span style={{ fontSize: 9, color: "var(--primary)", fontWeight: 700 }}>当前</span>}
+        </span>
+      </div>
+      <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        <h3 style={{ margin: "0 0 10px", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3 }}>{v.title}</h3>
+        <p style={{ margin: 0, fontSize: "var(--text-xs)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", whiteSpace: "pre-wrap" }}>{v.body}</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
+          {v.tags.map((tg) => <span key={tg} style={{ fontSize: 9, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 7px" }}>#{tg}</span>)}
+        </div>
+      </div>
+      <div style={{ padding: 10, borderTop: "1px solid var(--border)" }}>
+        <Button variant={active ? "secondary" : "primary"} size="sm" block disabled={active} onClick={() => { actions.setVersion(id); actions.toast(`✅ 已采用「${v.label}」为当前稿`); }}>{active ? "当前采用中" : "采用此版"}</Button>
       </div>
     </div>
   );

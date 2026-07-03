@@ -3,6 +3,7 @@
 // 创作 screen — recents · chat · right panel (选题卡 + 创作栏).
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import Image from "next/image";
 import { Avatar, Badge, Button, Card, TopicCard, ThinkingAura, Textarea, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
@@ -73,7 +74,7 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
               border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: "var(--surface-card)",
               boxShadow: on ? "var(--shadow-md)" : "var(--shadow-xs)", display: "flex", flexDirection: "column" }}>
                 <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)" }}>
-                {images.length > 0 && <img src={images[(t.id - 1) % images.length]} alt={t.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                {images.length > 0 && <Image src={images[(t.id - 1) % images.length]} alt={t.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
                 <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 58%, rgba(0,0,0,0.42))" }} />
                 <span style={{ position: "absolute", top: 7, left: 7, fontSize: 8, fontWeight: 700, color: "#fff", background: "rgba(0,0,0,0.36)", padding: "2px 7px", borderRadius: 999 }}>{t.angle}</span>
                 {t.hotRate != null && <span data-testid="topic-hot" style={{ position: "absolute", top: 7, right: 7, fontSize: 9, fontWeight: 800, color: "#fff", background: "var(--coral-500)", padding: "2px 6px", borderRadius: 999 }}>🔥{t.hotRate}</span>}
@@ -293,12 +294,6 @@ export function EvidencePanel() {
   if (!e) return null;
   const modeLabel = ({ semantic: "语义检索 (pgvector)", keyword_fallback: "关键词兜底 (Meilisearch)", insufficient_relevance: "数据不足" } as Record<string, string>)[e.mode] || "检索";
   const card: CSSProperties = { background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 12, boxShadow: "var(--shadow-xs)" };
-  const Bar = ({ label, val, color, testid }: { label: string; val: number; color: string; testid?: string }) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)" }}><span>{label}</span><span data-testid={testid} className="font-tabular" style={{ fontWeight: 600, color: "var(--text-body)" }}>{(val * 100).toFixed(1)}%</span></div>
-      <div style={{ height: 6, background: "var(--oats-dark)", borderRadius: 999, overflow: "hidden" }}><div style={{ height: "100%", width: `${val * 100}%`, background: color, transition: "width var(--dur-slow) var(--ease-out)" }} /></div>
-    </div>
-  );
   return (
     <div onClick={actions.closeEvidence} style={{ position: "fixed", inset: 0, background: "rgba(15,15,16,0.35)", zIndex: 55, display: "flex", justifyContent: "flex-end" }}>
       <div onClick={(ev) => ev.stopPropagation()} className="cs slide-in-right" style={{ width: 380, maxWidth: "92vw", height: "100%", background: "var(--background)", boxShadow: "var(--shadow-2xl)", overflowY: "auto" }}>
@@ -323,9 +318,9 @@ export function EvidencePanel() {
           <div style={card}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", paddingBottom: 8, marginBottom: 12 }}><span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>综合排序得分</span><span className="font-tabular" style={{ fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--primary)", fontSize: "var(--text-base)" }}>{e.score.toFixed(4)}</span></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Bar label="相关度 Relevance" val={e.relevance} color="var(--primary)" testid="evidence-relevance" />
-              <Bar label="时效性 Freshness · e⁻⁰·⁰⁵ᵗ" val={e.freshness} color="var(--success)" />
-              <Bar label="爆款表现 Engagement · tanh" val={e.performance} color="var(--amber-500)" />
+              <EvidenceScoreBar label="相关度 Relevance" val={e.relevance} color="var(--primary)" testid="evidence-relevance" />
+              <EvidenceScoreBar label="时效性 Freshness · e⁻⁰·⁰⁵ᵗ" val={e.freshness} color="var(--success)" />
+              <EvidenceScoreBar label="爆款表现 Engagement · tanh" val={e.performance} color="var(--amber-500)" />
             </div>
           </div>
           <div style={{ ...card, fontSize: 10 }}>
@@ -335,6 +330,15 @@ export function EvidencePanel() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function EvidenceScoreBar({ label, val, color, testid }: { label: string; val: number; color: string; testid?: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)" }}><span>{label}</span><span data-testid={testid} className="font-tabular" style={{ fontWeight: 600, color: "var(--text-body)" }}>{(val * 100).toFixed(1)}%</span></div>
+      <div style={{ height: 6, background: "var(--oats-dark)", borderRadius: 999, overflow: "hidden" }}><div style={{ height: "100%", width: `${val * 100}%`, background: color, transition: "width var(--dur-slow) var(--ease-out)" }} /></div>
     </div>
   );
 }

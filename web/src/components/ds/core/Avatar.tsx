@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 
 /**
@@ -50,6 +51,7 @@ export function Avatar({
         flexShrink: 0,
         borderRadius: "var(--radius-full)",
         display: "inline-flex",
+        position: "relative",
         alignItems: "center",
         justifyContent: "center",
         fontFamily: "var(--font-display)",
@@ -63,7 +65,7 @@ export function Avatar({
       {...rest}
     >
       {src ? (
-        <img src={src} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <Image src={src} alt={name} fill sizes={`${size}px`} unoptimized style={{ objectFit: "cover" }} />
       ) : glyph ? (
         <span style={{ fontSize: Math.round(size * 0.56) }}>{glyph}</span>
       ) : (

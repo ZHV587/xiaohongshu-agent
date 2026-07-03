@@ -87,21 +87,29 @@ interface TweaksPanelProps {
 
 export function TweaksPanel({ title = "Tweaks", children }: TweaksPanelProps) {
   const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState({ x: PANEL_PAD, y: PANEL_PAD });
   const dragRef = useRef<HTMLDivElement | null>(null);
-  const offsetRef = useRef({ x: PANEL_PAD, y: PANEL_PAD });
+  const offsetRef = useRef(offset);
+
+  useEffect(() => {
+    offsetRef.current = offset;
+  }, [offset]);
+
+  const commitOffset = useCallback((next: { x: number; y: number }) => {
+    offsetRef.current = next;
+    setOffset(next);
+  }, []);
 
   const clampToViewport = useCallback(() => {
     const panel = dragRef.current;
     if (!panel) return;
     const maxRight = Math.max(PANEL_PAD, window.innerWidth - panel.offsetWidth - PANEL_PAD);
     const maxBottom = Math.max(PANEL_PAD, window.innerHeight - panel.offsetHeight - PANEL_PAD);
-    offsetRef.current = {
+    commitOffset({
       x: Math.min(maxRight, Math.max(PANEL_PAD, offsetRef.current.x)),
       y: Math.min(maxBottom, Math.max(PANEL_PAD, offsetRef.current.y)),
-    };
-    panel.style.right = `${offsetRef.current.x}px`;
-    panel.style.bottom = `${offsetRef.current.y}px`;
-  }, []);
+    });
+  }, [commitOffset]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -141,10 +149,10 @@ export function TweaksPanel({ title = "Tweaks", children }: TweaksPanelProps) {
     const startRight = window.innerWidth - rect.right;
     const startBottom = window.innerHeight - rect.bottom;
     const move = (moveEvent: globalThis.PointerEvent) => {
-      offsetRef.current = {
+      commitOffset({
         x: startRight - (moveEvent.clientX - sx),
         y: startBottom - (moveEvent.clientY - sy),
-      };
+      });
       clampToViewport();
     };
     const up = () => {
@@ -167,7 +175,7 @@ export function TweaksPanel({ title = "Tweaks", children }: TweaksPanelProps) {
         <div
           ref={dragRef}
           className="twk-panel"
-          style={{ right: offsetRef.current.x, bottom: offsetRef.current.y } as CSSProperties}
+          style={{ right: offset.x, bottom: offset.y } as CSSProperties}
         >
           <div className="twk-hd" onPointerDown={onDragStart}>
             <b>{title}</b>
@@ -242,7 +250,10 @@ export function TweakRadio<T extends string>({
   const trackRef = useRef<HTMLDivElement | null>(null);
   const valueRef = useRef(value);
   const [dragging, setDragging] = useState(false);
-  valueRef.current = value;
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   const maxLabel = options.reduce((max, option) => Math.max(max, option.label.length), 0);
   const fitsAsSegments = maxLabel <= ({ 2: 16, 3: 10 }[options.length] ?? 0);
@@ -262,10 +273,16 @@ export function TweakRadio<T extends string>({
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     setDragging(true);
     const initial = segAt(event.clientX);
-    if (initial !== valueRef.current) onChange(initial);
+    if (initial !== valueRef.current) {
+      valueRef.current = initial;
+      onChange(initial);
+    }
     const move = (moveEvent: globalThis.PointerEvent) => {
       const next = segAt(moveEvent.clientX);
-      if (next !== valueRef.current) onChange(next);
+      if (next !== valueRef.current) {
+        valueRef.current = next;
+        onChange(next);
+      }
     };
     const up = () => {
       setDragging(false);

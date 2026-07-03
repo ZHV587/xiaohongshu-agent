@@ -45,6 +45,8 @@ function OpsPage() {
 
 type Tone = Account["tone"];
 
+const accountRailDot = (tone: Tone): CSSProperties => ({ width: 26, height: 26, borderRadius: "999px", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, background: tone === "coral" ? "var(--accent-surface)" : tone === "topic" ? "var(--topicblue-light)" : "var(--oats-dark)", color: tone === "coral" ? "var(--primary)" : tone === "topic" ? "var(--topicblue-default)" : "var(--text-body)" });
+
 interface AccountRailProps {
   selected: string;
   onSelect: (id: string) => void;
@@ -52,16 +54,6 @@ interface AccountRailProps {
 
 function AccountRail({ selected, onSelect }: AccountRailProps) {
   const { accounts, loadState } = useStudio();
-  const dot = (tone: Tone): CSSProperties => ({ width: 26, height: 26, borderRadius: "999px", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, background: tone === "coral" ? "var(--accent-surface)" : tone === "topic" ? "var(--topicblue-light)" : "var(--oats-dark)", color: tone === "coral" ? "var(--primary)" : tone === "topic" ? "var(--topicblue-default)" : "var(--text-body)" });
-  const Item = ({ id, label, sub, initial, tone, active }: { id: string; label: string; sub: string; initial: string; tone: Tone; active: boolean }) => (
-    <button onClick={() => onSelect(id)} style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 11px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", borderLeft: active ? "2px solid var(--primary)" : "2px solid transparent", background: active ? "var(--oats-dark)" : "transparent" }}>
-      <span style={dot(tone)}>{initial}</span>
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: 600, color: active ? "var(--primary)" : "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-        <span style={{ display: "block", fontSize: 9, color: "var(--text-subtle)" }}>{sub}</span>
-      </span>
-    </button>
-  );
   return (
     <aside className="cs" style={{ width: 208, borderRight: "1px solid var(--border)", background: "var(--surface-card)", flexShrink: 0, overflowY: "auto" }}>
       <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -69,12 +61,24 @@ function AccountRail({ selected, onSelect }: AccountRailProps) {
           <Eyebrow>账号矩阵</Eyebrow>
           <span style={{ fontSize: 9, color: "var(--text-subtle)" }}>{accounts.length} 个</span>
         </div>
-        <Item id="all" label="矩阵总览" sub="聚合 · 横向对比" initial="∑" tone="topic" active={selected === "all"} />
+        <AccountRailItem id="all" label="矩阵总览" sub="聚合 · 横向对比" initial="∑" tone="topic" active={selected === "all"} onSelect={onSelect} />
         <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
-        {accounts.map((a) => <Item key={a.id} id={a.id} label={a.handle} sub={`${a.niche} · ${a.fans}`} initial={a.initial} tone={a.tone} active={selected === a.id} />)}
+        {accounts.map((a) => <AccountRailItem key={a.id} id={a.id} label={a.handle} sub={`${a.niche} · ${a.fans}`} initial={a.initial} tone={a.tone} active={selected === a.id} onSelect={onSelect} />)}
         {loadState.accounts !== "ready" && <StateNote status={loadState.accounts} empty="暂无账号" />}
       </div>
     </aside>
+  );
+}
+
+function AccountRailItem({ id, label, sub, initial, tone, active, onSelect }: { id: string; label: string; sub: string; initial: string; tone: Tone; active: boolean; onSelect: (id: string) => void }) {
+  return (
+    <button onClick={() => onSelect(id)} style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 11px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", borderLeft: active ? "2px solid var(--primary)" : "2px solid transparent", background: active ? "var(--oats-dark)" : "transparent" }}>
+      <span style={accountRailDot(tone)}>{initial}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: 600, color: active ? "var(--primary)" : "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ display: "block", fontSize: 9, color: "var(--text-subtle)" }}>{sub}</span>
+      </span>
+    </button>
   );
 }
 

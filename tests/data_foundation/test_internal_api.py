@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from cryptography.fernet import Fernet
-from starlette.testclient import TestClient
+from tests.data_foundation.asgi_client import ASGIClient
 
 
 def _client(monkeypatch, *, secret: str = "internal-secret", admins: str = "ou_admin"):
@@ -9,7 +9,7 @@ def _client(monkeypatch, *, secret: str = "internal-secret", admins: str = "ou_a
     monkeypatch.setenv("XHS_ADMIN_OPEN_IDS", admins)
     import data_foundation.http_app as http_app
 
-    return TestClient(http_app.app)
+    return ASGIClient(http_app.app)
 
 
 def test_internal_ok_rejects_missing_key(monkeypatch):

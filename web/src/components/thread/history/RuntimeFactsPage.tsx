@@ -98,7 +98,7 @@ export function RuntimeFactsPage({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => void load());
     const id = window.setInterval(() => void load(), 15_000);
     return () => window.clearInterval(id);
   }, [load]);

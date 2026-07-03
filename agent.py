@@ -1,16 +1,9 @@
 """agent 组装入口。xhs-router 主智能体 + Skills + 4 个执行型子智能体。"""
 import os
-import warnings
-from langchain_core._api import LangChainBetaWarning
 if "NO_PROXY" in os.environ:
     del os.environ["NO_PROXY"]
 if "no_proxy" in os.environ:
     del os.environ["no_proxy"]
-
-warnings.filterwarnings(
-    "ignore",
-    category=LangChainBetaWarning,
-)
 
 import langchain
 # 生产默认关闭 verbose 调试日志:debug 会把 prompt 与模型 I/O(可能含敏感内容)打进日志,

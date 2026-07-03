@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 
 /**
@@ -56,8 +57,8 @@ export function NoteCard({
       }}
       {...rest}
     >
-      <div style={{ width: "100%", aspectRatio: ratio, overflow: "hidden", background: "var(--accent-surface)" }}>
-        {image && <img src={image} alt={typeof title === "string" ? title : ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+      <div style={{ position: "relative", width: "100%", aspectRatio: ratio, overflow: "hidden", background: "var(--accent-surface)" }}>
+        {image && <Image src={image} alt={typeof title === "string" ? title : ""} fill sizes="220px" unoptimized style={{ objectFit: "cover" }} />}
       </div>
       <div style={{ padding: "0.5rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
         <div

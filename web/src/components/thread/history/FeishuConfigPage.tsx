@@ -11,7 +11,7 @@ function FieldLabel({ htmlFor, children, className = "" }: { htmlFor?: string; c
 }
 
 export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [configs, setConfigs] = useState<any>({
@@ -25,7 +25,6 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
   const [wikiSpaceName, setWikiSpaceName] = useState("小红书爆单手册");
 
   useEffect(() => {
-    setLoading(true);
     fetch("/api/config")
       .then((res) => res.json())
       .then((data) => {

@@ -4,6 +4,7 @@
 // VisualStudio 均绑定真实 Studio 状态与 actions,供深度创作工作台复用。
 
 import { useState } from "react";
+import Image from "next/image";
 import { Badge, Button, Card, Icon } from "@/components/ds";
 import { Eyebrow } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
@@ -52,7 +53,7 @@ export function VisualStudio() {
               return (
                 <div key={role} style={{ width: 148, flexShrink: 0, display: "flex", flexDirection: "column", gap: 5 }}>
                   <div style={{ position: "relative", width: 148, aspectRatio: "3 / 4", borderRadius: "var(--radius-md)", overflow: "hidden", border: cover ? "2px solid var(--primary)" : "1px solid var(--border)", background: "var(--accent-surface)" }}>
-                    <img src={images[i % images.length]} alt={role} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <Image src={images[i % images.length]} alt={role} fill sizes="148px" unoptimized style={{ objectFit: "cover" }} />
                     <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.04), rgba(0,0,0,0.42))" }} />
                     {cover && (
                       <textarea
