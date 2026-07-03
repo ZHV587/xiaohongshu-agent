@@ -72,6 +72,20 @@ test("tool call with matching ToolMessage is done", () => {
   assert.equal(thinking.run.done, true);
 });
 
+test("completed thinking run appears below the final AI output", () => {
+  const tl = deriveTimeline([
+    human("出选题"),
+    aiCall("c1", "semantic_search_resources", { query: "露营" }),
+    toolMsg("c1"),
+    aiText("这是选题建议"),
+  ]);
+  assert.deepEqual(
+    tl.map((item) => item.kind),
+    ["user", "ai", "thinking"],
+    "completed agent trace should read like agent editors: output first, trace below it",
+  );
+});
+
 test("consecutive same-name tools fold into one step but keep per-call logs", () => {
   const tl = deriveTimeline([
     human("精读"),

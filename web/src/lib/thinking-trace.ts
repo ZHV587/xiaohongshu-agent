@@ -188,16 +188,24 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     return steps;
   };
 
-  const flushRun = () => {
-    if (runOpen && atoms.length > 0) {
-      // spec OR: runDone = prose was seen  OR  all atoms are done
-      const allAtomsDone = atoms.length > 0 && atoms.every((a) => a.done);
-      out.push({ kind: "thinking", run: { steps: foldSteps(), logs, done: runDone || allAtomsDone } });
-    }
+  const buildRunItem = (): TimelineItem | null => {
+    if (!runOpen || atoms.length === 0) return null;
+    // spec OR: runDone = prose was seen  OR  all atoms are done
+    const allAtomsDone = atoms.length > 0 && atoms.every((a) => a.done);
+    return { kind: "thinking", run: { steps: foldSteps(), logs, done: runDone || allAtomsDone } };
+  };
+
+  const resetRun = () => {
     atoms = [];
     logs = [];
     runOpen = false;
     runDone = false;
+  };
+
+  const flushRun = () => {
+    const item = buildRunItem();
+    if (item) out.push(item);
+    resetRun();
   };
 
   for (const m of messages) {
@@ -223,8 +231,10 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       const prose = proseOf(m.content);
       if (prose) {
         runDone = true;
-        flushRun();
         out.push({ kind: "ai", text: prose });
+        const item = buildRunItem();
+        if (item) out.push(item);
+        resetRun();
       }
       continue;
     }
