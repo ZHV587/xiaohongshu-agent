@@ -37,6 +37,7 @@ test("deriveTimeline is a stub returning empty array (Task 1)", () => {
 });
 
 import type { Message } from "@langchain/langgraph-sdk";
+import type { TracePresentation } from "./agent-trace";
 
 const human = (text: string): Message => ({ id: "h", type: "human", content: text } as Message);
 const aiText = (text: string): Message => ({ id: "a", type: "ai", content: text, tool_calls: [] } as unknown as Message);
@@ -44,6 +45,25 @@ const aiCall = (id: string, name: string, args: Record<string, unknown> = {}): M
   ({ id, type: "ai", content: "", tool_calls: [{ id, name, args }] } as unknown as Message);
 const toolMsg = (callId: string): Message =>
   ({ id: "t" + callId, type: "tool", tool_call_id: callId, content: "ok" } as unknown as Message);
+
+const officialPresentation: TracePresentation = {
+  traceId: "trace-1",
+  turnId: "a",
+  status: "done",
+  collapsedByDefault: true,
+  userSummary: "查完 1 步",
+  userStages: [
+    {
+      id: "retrieve",
+      title: "查找相关素材",
+      summary: "找到 12 条，采用 3 条",
+      statusText: "已完成",
+      metricsText: "找到 12 条，采用 3 条",
+      sourceEventIds: ["e1"],
+    },
+  ],
+  adminDetails: [],
+};
 
 test("plain text turn yields user + ai bubble, no thinking", () => {
   const tl = deriveTimeline([human("你好"), aiText("你好呀,需要什么帮助?")]);
@@ -86,6 +106,19 @@ test("completed thinking run appears below the final AI output", () => {
     ["user", "ai", "thinking"],
     "completed agent trace should read like agent editors: output first, trace below it",
   );
+});
+
+test("official trace presentation mounts below the matching assistant answer", () => {
+  const tl = deriveTimeline([human("按职场穿搭出 1 个选题"), aiText("这是最终回答")], {
+    tracePresentationsByTurnId: { a: officialPresentation },
+  });
+
+  assert.deepEqual(tl.map((item) => item.kind), ["user", "ai", "thinking"]);
+  const thinking = tl[2];
+  assert.ok(thinking.kind === "thinking");
+  assert.equal(thinking.run.presentation?.userSummary, "查完 1 步");
+  assert.equal(thinking.run.steps[0].label, "查找相关素材");
+  assert.equal(thinking.run.logs[0].text, "找到 12 条，采用 3 条");
 });
 
 test("tool call with progress prose still keeps completed trace below the final answer", () => {

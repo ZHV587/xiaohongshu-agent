@@ -20,6 +20,7 @@ import { useQueryState } from "nuqs";
 import { useThread } from "@/components/thread/ThreadContext";
 import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
+import { useTraceContext } from "@/providers/trace-context";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
 import { deriveTimeline, type TimelineItem } from "@/lib/thinking-trace";
 import { StudioContext } from "./useStudio";
@@ -149,6 +150,7 @@ function pad2(n: number): string {
 
 export function StudioProvider({ children }: { children: ReactNode }) {
   const t = useThread();
+  const { presentationsByTurnId } = useTraceContext();
   const [section, setSectionRaw] = useQueryState("section");
   const [activeRecent, setActiveRecent] = useState<number | null>(null);
 
@@ -298,8 +300,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   // ── chat transcript as timeline items derived from the real messages ──
   const timeline: TimelineItem[] = useMemo(
-    () => deriveTimeline(t.messages, { loading: t.isLoading, error: t.error }),
-    [t.messages, t.isLoading, t.error],
+    () =>
+      deriveTimeline(t.messages, {
+        loading: t.isLoading,
+        error: t.error,
+        tracePresentationsByTurnId: presentationsByTurnId,
+      }),
+    [t.messages, t.isLoading, t.error, presentationsByTurnId],
   );
 
   // 测试可观测钩子:暴露思考链总步数,供 e2e 断言思考 UI 已渲染。仅写 window,生产无副作用。

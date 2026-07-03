@@ -192,8 +192,8 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
                   <ThinkingAura
                     steps={item.run.steps}
                     logs={item.run.logs.length ? item.run.logs : null}
-                    title={item.run.done ? undefined : RESPONSE_LOADING_TEXT}
-                    defaultCollapsed={item.run.done}
+                    title={item.run.presentation?.userSummary ?? (item.run.done ? undefined : RESPONSE_LOADING_TEXT)}
+                    defaultCollapsed={item.run.presentation?.collapsedByDefault ?? item.run.done}
                   />
                 </div>
               </div>

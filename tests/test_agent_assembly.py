@@ -348,8 +348,16 @@ def test_knowledge_retriever_subagent_has_evidence_response_format(monkeypatch):
     importlib.reload(agent_module)
 
     by_name = {s["name"]: s for s in captured_subagents}
-    # 升级为 4 个子代理,且无 thin 持久化子代理残留
-    assert set(by_name) == {"knowledge-atom-retriever", "persona-distiller", "benchmark-analyst", "expert-panel-debater"}
+    # 升级为 7 个子代理,且无 thin 持久化子代理残留
+    assert set(by_name) == {
+        "knowledge-atom-retriever",
+        "persona-distiller",
+        "benchmark-analyst",
+        "expert-panel-debater",
+        "content-system-ingestor",
+        "curriculum-designer",
+        "copywriting-coprocessor",
+    }
     assert "topic-generator" not in by_name
     assert "copy-generator" not in by_name
     assert "state-manager" not in by_name

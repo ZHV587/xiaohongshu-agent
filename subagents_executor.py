@@ -22,6 +22,9 @@ EXECUTOR_SUBAGENT_NAMES = frozenset({
     "persona-distiller",
     "benchmark-analyst",
     "expert-panel-debater",
+    "content-system-ingestor",
+    "curriculum-designer",
+    "copywriting-coprocessor",
 })
 
 
@@ -44,6 +47,49 @@ class DebateVerdictReport(BaseModel):
     debate_process_markdown: str = Field(description="多角色辩论交锋过程的完整记录")
     panel_opinions: list[ExpertPanelOpinion] = Field(description="各专家的具体意见列表")
     consensus_recommendation: str = Field(description="经辩论汇总后的最佳可执行方案。若包含推荐选题，则推荐选题必须用标准的 JSON 结构以便主控后续生成卡片。")
+class ContentSystemUnit(BaseModel):
+    """内容地图的主题单元。"""
+    theme: str = Field(description="主题分类名称，如新手露营、极简装备")
+    resource_ids: list[str] = Field(description="该主题下聚合的爆款笔记 resource_id 列表")
+    core_angle: str = Field(description="该分类的核心切入痛点与吸引力逻辑")
+
+
+class ContentSystemReport(BaseModel):
+    """内容资产结构化系统报告。"""
+    system_map: list[ContentSystemUnit] = Field(description="划分的 3-5 个内容分类单元")
+    total_ingested_count: int = Field(description="成功导入并分类的历史笔记总数")
+    system_gaps: str = Field(description="博主目前已有的内容地图中，相比行业爆款缺少的关键内容板块")
+
+
+class CurriculumChapter(BaseModel):
+    """自适应教学的单个章节。"""
+    chapter_number: int = Field(description="章节序号")
+    title: str = Field(description="章节主题，如“第一讲：小红书冷启动的 3 个黄金封面”")
+    core_concept: str = Field(description="该章节传授的底层核心模型与认知")
+    learning_action: str = Field(description="课后博主需要完成的一个最小可执行行动待办")
+
+
+class CurriculumReport(BaseModel):
+    """博主个性化自学课程大纲。"""
+    course_title: str = Field(description="自学课程的定制标题")
+    blogger_level_assessment: str = Field(description="根据博主历史表现和困惑做出的博主当前认知水位诊断")
+    chapters: list[CurriculumChapter] = Field(description="定制的 5-10 章节渐进式教学大纲")
+
+
+class CopywritingVersion(BaseModel):
+    """文案的具体对比版本。"""
+    label: str = Field(description="版本标签，如 A、B")
+    title: str = Field(description="针对该版本单独起的小红书图文封面文案（首图字样建议）")
+    body: str = Field(description="笔记正文，必须有空行、带 Emoji 并严格遵循 anti-ai-copy-taste 规约")
+    tags: list[str] = Field(description="精选的 5 个话题标签")
+    cover_visual_layout: str = Field(description="该版本首图视觉排版设计具体建议，以迎合图文生命线")
+
+
+class CopywritingReport(BaseModel):
+    """小红书整篇文案对比产出报告。"""
+    outline: str = Field(description="文案写作大纲与逻辑结构说明")
+    ai_audit_self_correction_log: str = Field(description="子代理在生成初稿后，根据 22 条 AI 指纹自我审计并重写迭代的过程日志")
+    versions: list[CopywritingVersion] = Field(description="生成的 2-3 个供创作者挑选的对比版本，首个版本为主 canonical 稿")
 
 
 def build_knowledge_atom_retriever(
@@ -151,6 +197,72 @@ def build_expert_panel_debater(
     }
 
 
+def build_content_system_ingestor(
+    registry: ModelPoolProvider,
+    initial_model: BaseChatModel,
+    backend: Any = None,
+) -> SubAgent:
+    return {
+        "name": "content-system-ingestor",
+        "description": "内容资产结构化处理专家: 隔离分批读取飞书表格导入的历史爆款笔记, 自动完成主题分类, 提炼核心痛点, 生成结构化主题地图 ContentSystemReport。",
+        "system_prompt": """你是内容资产结构化处理专家。你负责在隔离上下文中分批整理并聚合主控导入的历史笔记素材。
+
+任务：
+1. 优先调用 `get_operations_data(view="recents")` 获取近期沉淀的笔记列表，提取出关键信息。
+2. 聚合这些历史素材，划分为 3-5 个垂直度极高的主题分类单元，指明每个分类对应的 resource_id 聚合。
+3. 诊断当前已沉淀内容地图相比行业爆款缺少的关键漏洞板块。
+4. 严格按照 ContentSystemReport 结构化返回。""",
+        "model": initial_model,
+        "tools": [get_operations_data, get_resource, search_resources],
+        "response_format": ContentSystemReport,
+        "middleware": [build_router_middleware(registry)],
+    }
+
+
+def build_curriculum_designer(
+    registry: ModelPoolProvider,
+    initial_model: BaseChatModel,
+    backend: Any = None,
+) -> SubAgent:
+    return {
+        "name": "curriculum-designer",
+        "description": "自适应教学大纲规划专家: 在隔离上下文中精读博主的历史痛点、定位背景与偏好, 为博主量身定制 5-10 章节进阶式自学大纲 CurriculumReport。",
+        "system_prompt": """你是自适应教学大纲规划专家。你需要在隔离上下文中精心设计博主的自适应学习章节。
+
+任务：
+1. 通过 `search_resources` 或 `get_resource` 深入理解博主的定位盲区、痛点表现及历史反馈。
+2. 做出客观的水位认知评估。
+3. 规划 5-10 章节自适应大纲，每个章节必须明确指出：核心概念、课后可否证的行动待办 (learning_action)。
+4. 严格按照 CurriculumReport 结构化返回。""",
+        "model": initial_model,
+        "tools": [get_resource, search_resources],
+        "response_format": CurriculumReport,
+        "middleware": [build_router_middleware(registry)],
+    }
+
+
+def build_copywriting_coprocessor(
+    registry: ModelPoolProvider,
+    initial_model: BaseChatModel,
+    backend: Any = None,
+) -> SubAgent:
+    return {
+        "name": "copywriting-coprocessor",
+        "description": "文案创作与纠偏协处理器: 隔离加载创作者人设及背景, 撰写初步文案, 自动启动 22 条 AI 指纹自审纠偏迭代, 输出 A/B 双版本及视觉排版建议 CopywritingReport。",
+        "system_prompt": """你是文案创作与去 AI 腔纠偏协处理器。你负责在隔离上下文中完成文案起草与高精度去 AI 味自审重写全流程。
+
+任务：
+1. 基于主控传入的选题大纲及背景素材（利用 `semantic_search_resources` 和 `get_resource` 精读），输出对比版本。
+2. 生成初稿后，根据 22 条 AI 腔指纹库（如过度使用“总之、首先、不仅如此、我们可以看到”，或结构过于匀速对称）进行强自审纠偏，并将重写过程记录到审计日志中。
+3. 产出 2-3 个对比版本，每个版本必须包含：标题（首图大字建议）、笔记正文（空行排版）、首图视觉排版具体排布建议以满足小红书图文铁律。
+4. 严格按照 CopywritingReport 结构化返回。""",
+        "model": initial_model,
+        "tools": [get_resource, search_resources, semantic_search_resources],
+        "response_format": CopywritingReport,
+        "middleware": [build_router_middleware(registry)],
+    }
+
+
 def build_executor_subagents(
     registry: ModelPoolProvider,
     initial_model: BaseChatModel,
@@ -162,4 +274,7 @@ def build_executor_subagents(
         build_persona_distiller(registry, initial_model, backend),
         build_benchmark_analyst(registry, initial_model, backend),
         build_expert_panel_debater(registry, initial_model, backend),
+        build_content_system_ingestor(registry, initial_model, backend),
+        build_curriculum_designer(registry, initial_model, backend),
+        build_copywriting_coprocessor(registry, initial_model, backend),
     ]

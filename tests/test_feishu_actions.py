@@ -48,7 +48,7 @@ def test_sync_copy_to_feishu_calls_lark_cli(mock_lark_cli, monkeypatch):
     assert result["ok"] is True
     assert result["record_id"] == "rec_1"
     called_command = mock_lark_cli.func.call_args.args[0]
-    assert "base +record-create" in called_command
+    assert "base +record-upsert" in called_command
     assert "--base-token base_token" in called_command
     assert "--table-id tbl_id" in called_command
     assert mock_lark_cli.func.call_args.kwargs["config"] == identity_config("ou_user")
@@ -190,13 +190,12 @@ def test_create_online_note_record_maps_columns_to_collect_table(mock_lark_cli, 
     sent = mock_lark_cli.func.call_args[0][0]
     assert "--table-id tbl24vSVeLvz45ig" in sent
     payload = json.loads(sent.split("--json ", 1)[1].strip().strip("'"))
-    fields = payload["fields"]
-    assert fields["标题"] == "秋冬护肤"
-    assert fields["封面链接"] == "http://cdn/a.jpg"
-    assert fields["原文链接"] == "http://xhslink.com/o/abc"
-    assert fields["点赞数"] == 3000 and fields["收藏数"] == 1500
-    assert fields["采集平台"] == "线上实时"
-    assert "#护肤" in fields["话题标签"]
+    assert payload["标题"] == "秋冬护肤"
+    assert payload["封面链接"] == "http://cdn/a.jpg"
+    assert payload["原文链接"] == "http://xhslink.com/o/abc"
+    assert payload["点赞数"] == 3000 and payload["收藏数"] == 1500
+    assert payload["采集平台"] == "线上实时"
+    assert "#护肤" in payload["话题标签"]
 
 
 def test_create_online_note_record_requires_app_token(monkeypatch):

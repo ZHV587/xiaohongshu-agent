@@ -1,5 +1,6 @@
 import type { Message } from "@langchain/langgraph-sdk";
 import { getContentString } from "@/components/thread/utils";
+import type { TracePresentation } from "@/lib/agent-trace";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 
 export interface ThinkingStep {
@@ -15,6 +16,7 @@ export interface ThinkingRun {
   steps: ThinkingStep[];
   logs: ThinkingLog[];
   done: boolean;
+  presentation?: TracePresentation;
 }
 
 export type TimelineItem =
@@ -26,6 +28,7 @@ export type TimelineItem =
 export interface TimelineContext {
   loading?: boolean;
   error?: unknown;
+  tracePresentationsByTurnId?: Record<string, TracePresentation>;
 }
 
 // 写类工具名单:这些工具会写库或写飞书,args 可能含敏感 payload/凭证。
@@ -155,6 +158,7 @@ function proseOf(content: Message["content"]): string {
 
 export function deriveTimeline(messages: Message[], context: TimelineContext = {}): TimelineItem[] {
   const out: TimelineItem[] = [];
+  const hasOfficialTrace = Object.keys(context.tracePresentationsByTurnId ?? {}).length > 0;
 
   // 全局:已答的 tool_call_id 集合(按 tool_call_id 配对,不靠顺序)。
   const answered = new Set<string>();
@@ -202,9 +206,33 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   };
 
   const flushRun = () => {
+    if (hasOfficialTrace) {
+      resetRun();
+      return;
+    }
     const item = buildRunItem();
     if (item) out.push(item);
     resetRun();
+  };
+
+  const appendOfficialTrace = (turnId: string | undefined) => {
+    if (!turnId) return;
+    const presentation = context.tracePresentationsByTurnId?.[turnId];
+    if (!presentation) return;
+    out.push({
+      kind: "thinking",
+      run: {
+        steps: presentation.userStages.map((stage) => ({
+          label: stage.title,
+          state: presentation.status === "done" ? "done" : "active",
+        })),
+        logs: presentation.userStages.map((stage) => ({
+          text: stage.metricsText ?? stage.summary,
+        })),
+        done: presentation.status === "done",
+        presentation,
+      },
+    });
   };
 
   for (const m of messages) {
@@ -219,17 +247,20 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       const calls = ((m as { tool_calls?: ToolCall[] }).tool_calls ?? []).filter(
         (c) => c && typeof c.name === "string",
       );
-      for (const c of calls) {
-        const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分
-        const done = !!(c.id && answered.has(c.id));
-        atoms.push({ name: label, done });
-        // 写类工具只存中文 label,不回显 payload;task 按读类处理(args 无凭证)。
-        const logText = WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args);
-        logs.push({ text: logText });
+      if (!hasOfficialTrace) {
+        for (const c of calls) {
+          const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分
+          const done = !!(c.id && answered.has(c.id));
+          atoms.push({ name: label, done });
+          // 写类工具只存中文 label,不回显 payload;task 按读类处理(args 无凭证)。
+          const logText = WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args);
+          logs.push({ text: logText });
+        }
       }
       const prose = proseOf(m.content);
       if (prose) {
         out.push({ kind: "ai", text: prose });
+        appendOfficialTrace(typeof m.id === "string" ? m.id : undefined);
       }
       continue;
     }

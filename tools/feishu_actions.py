@@ -57,13 +57,13 @@ def sync_copy_to_feishu(
     command = shlex.join(
         [
             "base",
-            "+record-create",
+            "+record-upsert",
             "--base-token",
             app_token,
             "--table-id",
             table_id,
             "--json",
-            json.dumps({"fields": fields_payload}, ensure_ascii=False),
+            json.dumps(fields_payload, ensure_ascii=False),
         ]
     )
     parsed = _parse_lark_json(lark_cli.func(command, config=config))
@@ -172,13 +172,13 @@ def sync_topic_to_feishu(
 
         command = shlex.join([
             "base",
-            "+record-create",
+            "+record-upsert",
             "--base-token",
             app_token,
             "--table-id",
             table_id,
             "--json",
-            json.dumps({"fields": fields_payload}, ensure_ascii=False),
+            json.dumps(fields_payload, ensure_ascii=False),
         ])
         parsed = _parse_lark_json(lark_cli.func(command, config=config))
         if parsed["ok"]:
@@ -236,13 +236,13 @@ def sync_diagnosis_to_feishu(
 
     command = shlex.join([
         "base",
-        "+record-create",
+        "+record-upsert",
         "--base-token",
         app_token,
         "--table-id",
         table_id,
         "--json",
-        json.dumps({"fields": fields_payload}, ensure_ascii=False),
+        json.dumps(fields_payload, ensure_ascii=False),
     ])
     parsed = _parse_lark_json(lark_cli.func(command, config=config))
     if not parsed["ok"]:
@@ -250,10 +250,46 @@ def sync_diagnosis_to_feishu(
 
     data = parsed["data"]
     record_id = data.get("data", {}).get("record", {}).get("record_id") or data.get("data", {}).get("record_id") or ""
+    
+    # 额外逻辑：向飞书 Wiki 权威空间同步沉淀一份精美的 Docx 知识文档
+    wiki_space_id = os.environ.get("FEISHU_WIKI_SPACE_ID", "7648177996175543260")
+    wiki_title = f"【诊断定位】{project_name} - {title}"
+    
+    wiki_url = None
+    try:
+        # 步骤 A: 创建空 Wiki 节点
+        create_command = shlex.join([
+            "wiki", "+node-create",
+            "--space-id", wiki_space_id,
+            "--title", wiki_title,
+            "--obj-type", "docx",
+            "--as", "user"
+        ])
+        wiki_parsed = _parse_lark_json(lark_cli.func(create_command, config=config))
+        if wiki_parsed["ok"]:
+            node_data = wiki_parsed["data"].get("data", {}).get("node", {}) or wiki_parsed["data"].get("data", {})
+            obj_token = node_data.get("obj_token") or node_data.get("node", {}).get("obj_token")
+            if obj_token:
+                # 步骤 B: 覆写 Markdown 正文
+                overwrite_command = shlex.join([
+                    "docs", "+update",
+                    "--doc", obj_token,
+                    "--command", "overwrite",
+                    "--doc-format", "markdown",
+                    "--content", content,
+                    "--as", "user"
+                ])
+                lark_cli.func(overwrite_command, config=config)
+                wiki_url = node_data.get("url")
+    except Exception:
+        # Wiki 同步是协作层，若发生偶发故障不应该阻断多维表格的主链路
+        pass
+
     return {
         "ok": True,
         "record_id": record_id,
         "redirect_url": f"https://feishu.cn/base/{app_token}?table={table_id}",
+        "wiki_url": wiki_url,
     }
 
 
@@ -297,13 +333,13 @@ def create_online_note_record(
 
     command = shlex.join([
         "base",
-        "+record-create",
+        "+record-upsert",
         "--base-token",
         app_token,
         "--table-id",
         table_id,
         "--json",
-        json.dumps({"fields": fields_payload}, ensure_ascii=False),
+        json.dumps(fields_payload, ensure_ascii=False),
     ])
     parsed = _parse_lark_json(lark_cli.func(command, config=config))
     if not parsed["ok"]:

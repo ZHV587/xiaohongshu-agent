@@ -31,6 +31,11 @@ test("thinking items use ThinkingAura with defaultCollapsed on done runs", () =>
   assert.match(src, /defaultCollapsed/);
 });
 
+test("official trace presentation summary is passed into ThinkingAura", () => {
+  assert.match(src, /item\.run\.presentation\?\.userSummary/);
+  assert.match(src, /item\.run\.presentation\?\.collapsedByDefault/);
+});
+
 test("no dead m.thinking branch remains", () => {
   assert.doesNotMatch(src, /m\.thinking/);
 });

@@ -23,10 +23,18 @@ def _registry():
     return r
 
 
-def test_executor_subagent_names_converged_to_four():
-    """子代理已升级为 4 个，只保留重检索、风格提炼、对标分析和多专家诊断。"""
+def test_executor_subagent_names_converged_to_seven():
+    """子代理已升级为 7 个，包含重检索、风格提炼、对标分析、多专家诊断、内容地图、自学课程和文案协处理。"""
     assert EXECUTOR_SUBAGENT_NAMES == frozenset(
-        {"knowledge-atom-retriever", "persona-distiller", "benchmark-analyst", "expert-panel-debater"}
+        {
+            "knowledge-atom-retriever",
+            "persona-distiller",
+            "benchmark-analyst",
+            "expert-panel-debater",
+            "content-system-ingestor",
+            "curriculum-designer",
+            "copywriting-coprocessor",
+        }
     )
     for removed in ("build_topic_generator", "build_copy_generator", "build_state_manager"):
         assert not hasattr(subagents_executor, removed), (

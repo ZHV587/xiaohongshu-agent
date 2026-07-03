@@ -11,18 +11,24 @@ def test_subagents_refactoring_configs():
 
     subagents = build_executor_subagents(r, Mock())
 
-    # 确认只有四个子代理被正确挂载，且名称正确
+    # 确认所有子代理被正确挂载，且名称正确
     names = {agent["name"] for agent in subagents}
     assert names == EXECUTOR_SUBAGENT_NAMES
-    assert names == {"knowledge-atom-retriever", "persona-distiller", "benchmark-analyst", "expert-panel-debater"}
+    assert names == {
+        "knowledge-atom-retriever",
+        "persona-distiller",
+        "benchmark-analyst",
+        "expert-panel-debater",
+        "content-system-ingestor",
+        "curriculum-designer",
+        "copywriting-coprocessor",
+    }
 
-    # 验证 benchmark-analyst 契约
-    benchmark_agent = next(a for a in subagents if a["name"] == "benchmark-analyst")
-    assert issubclass(benchmark_agent["response_format"], BaseModel)
-
-    # 验证 expert-panel-debater 契约
-    debater_agent = next(a for a in subagents if a["name"] == "expert-panel-debater")
-    assert issubclass(debater_agent["response_format"], BaseModel)
+    # 验证各子代理契约是否为 BaseModel
+    for name in EXECUTOR_SUBAGENT_NAMES:
+        agent = next(a for a in subagents if a["name"] == name)
+        if name not in ("knowledge-atom-retriever", "persona-distiller"):
+            assert issubclass(agent["response_format"], BaseModel)
 
 
 def test_subagent_specs_use_only_official_deepagents_fields():
