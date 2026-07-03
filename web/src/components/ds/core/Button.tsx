@@ -18,6 +18,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: ButtonSize;
   block?: boolean;
   loading?: boolean;
+  disabled?: boolean;
   leftIcon?: ReactNode;
   rightIcon?: ReactNode;
 }

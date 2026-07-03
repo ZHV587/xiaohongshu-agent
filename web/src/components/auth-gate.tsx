@@ -5,10 +5,9 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useQueryState } from "nuqs";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, Card, Icon } from "@/components/ds";
 import { BRAND } from "@/lib/brand";
 import { getCurrentUser, loginWithFeishu, type CurrentUser } from "@/lib/auth";
-import { KeyRound } from "lucide-react";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -48,36 +47,67 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   // 未登录:全屏中文登录页,锁住应用。
   return (
-    <div 
-      className="flex h-screen w-screen items-center justify-center p-4 select-none"
+    <main
       style={{
-        background: "radial-gradient(circle at center, #FFEDF0 0%, #FAF6F0 100%)"
+        minHeight: "100vh",
+        width: "100vw",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "var(--space-4)",
+        background: "var(--background)",
+        color: "var(--text-body)",
+        userSelect: "none",
       }}
     >
-      <div className="w-[380px] h-[340px]">
-        <div className="w-full h-full bg-white/75 backdrop-blur-md border border-white/50 rounded-2xl shadow-2xl p-8 flex flex-col justify-between">
-          <div className="flex flex-col items-center text-center gap-3">
-            <span className="bg-coral text-white text-3xl size-14 flex items-center justify-center rounded-2xl shadow-md">🍠</span>
-            <h2 className="text-xl font-bold tracking-tight text-charcoal font-display">{BRAND.name}</h2>
-            <p className="text-xs text-charcoal-light leading-relaxed">
+      <Card
+        padding="lg"
+        style={{
+          width: 380,
+          minHeight: 320,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          gap: "var(--space-8)",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "var(--space-3)" }}>
+          <span
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "var(--radius-xl)",
+              background: "var(--coral-brand)",
+              color: "var(--text-on-primary)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 30,
+              boxShadow: "var(--shadow-coral)",
+            }}
+          >
+            🍠
+          </span>
+          <div>
+            <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: "var(--text-xl)", fontWeight: 800, letterSpacing: "var(--tracking-tight)" }}>
+              {BRAND.name}
+            </h1>
+            <p style={{ margin: "var(--space-2) 0 0", fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>
               绑定您的飞书应用与用户身份，解锁多维表格爆款分析、即时协作和自动分发功能。
             </p>
           </div>
-          
-          <div className="flex flex-col gap-2">
-            {/* 真实飞书 OAuth 授权按钮 */}
-            <Button
-              id="feishu-oauth-login-btn"
-              size="lg"
-              className="w-full bg-coral hover:bg-coral-hover text-white py-3 px-4 rounded-xl flex items-center justify-center gap-2 font-medium shadow-md transition-all cursor-pointer border-none"
-              onClick={() => loginWithFeishu("/")}
-            >
-              <KeyRound className="size-4" />
-              <span>飞书授权登录</span>
-            </Button>
-          </div>
         </div>
-      </div>
-    </div>
+
+        <Button
+          id="feishu-oauth-login-btn"
+          size="lg"
+          block
+          leftIcon={<Icon name="key-round" size={16} />}
+          onClick={() => loginWithFeishu("/")}
+        >
+          飞书授权登录
+        </Button>
+      </Card>
+    </main>
   );
 }

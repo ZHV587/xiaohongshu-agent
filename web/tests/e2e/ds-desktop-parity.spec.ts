@@ -1,0 +1,87 @@
+import { expect, test } from "@playwright/test";
+import { captureDiagnostics, expectDesktopHealthy, installDsMocks, openTweaks } from "./ds-desktop-helpers";
+
+test.describe("design-system desktop parity UAT", () => {
+  test("studio route exercises Tweaks, response UI, thinking logs, and desktop health", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const diagnostics = captureDiagnostics(page);
+    await installDsMocks(page, "dense");
+
+    await page.goto("/?threadId=fixture-thread");
+    await expect(page.locator("header").getByText("小红书创作运营工作室")).toBeVisible();
+    await expect(page.getByText("已完成 1 步").first()).toBeVisible();
+    await expect(page.getByText("已基于数据底座生成选题与草稿", { exact: false })).toBeVisible();
+
+    await page.getByText("已完成 1 步").first().click();
+    await expect(page.getByText("search_data_foundation", { exact: false }).first()).toBeVisible();
+    const collapse = page.getByRole("button", { name: /收起分析详情/ });
+    if (await collapse.count()) await collapse.first().click();
+
+    await openTweaks(page);
+    await page.getByText("左右分栏").click();
+    await expect(page.getByText("创作栏", { exact: true })).toBeVisible();
+    await page.getByText("仅创作栏").click();
+    await expect(page.getByText("进入完整创作栏")).toBeVisible();
+    await page.getByText("分步流程").click();
+    await expect(page.getByText("第 3 步 · 正文")).toBeVisible();
+    await page.getByText("多栏工作台").click();
+    await expect(page.getByText("飞书资料 · 证据")).toBeVisible();
+    await page.getByText("会话内").click();
+    await expect(page.getByText("一个会话里完成全部运营动作")).toBeVisible();
+    await page.getByText("同屏融合").click();
+    await expect(page.getByText("运营助手")).toBeVisible();
+
+    await expectDesktopHealthy(page, diagnostics);
+  });
+
+  test("workbench route exercises command palette, right canvas, Feishu sync, copy, and desktop health", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const diagnostics = captureDiagnostics(page);
+    await installDsMocks(page, "dense");
+
+    await page.goto("/?mode=workbench&threadId=fixture-thread");
+    await expect(page.getByText("v1.2 工作台")).toBeVisible();
+    await expect(page.getByText("已完成 1 步").first()).toBeVisible();
+    await page.getByText("已完成 1 步").first().click();
+    await expect(page.getByText("search_data_foundation", { exact: false }).first()).toBeVisible();
+
+    await page.keyboard.press("Control+P");
+    await expect(page.getByPlaceholder("输入命令或搜索动作...")).toBeVisible();
+    await page.getByPlaceholder("输入命令或搜索动作...").fill("标签");
+    await expect(page.getByText("补充话题标签")).toBeVisible();
+    await expect(page.getByText("无匹配命令")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByPlaceholder("输入命令或搜索动作...")).toHaveCount(0);
+
+    await expect(page.getByText("飞书同步协作")).toBeVisible();
+    await expect(page.getByText("小红书手机预览")).toHaveCount(0);
+    await expect(page.getByText("瀑布流卡片")).toHaveCount(0);
+    await page.getByRole("button", { name: "立即同步至飞书多维表格" }).click();
+    await expect(page.getByText(/正在验证飞书 CLI 环境配置|正在解析多维表格行结构|正在写入文案至多维表格/).first()).toBeVisible();
+    await page.getByTitle("点此模拟扫码成功").click();
+    await expect(page.getByText("飞书个人身份重连成功")).toBeVisible();
+
+    await page.getByRole("button", { name: /一键复制纯文案/ }).click();
+    await expect(page.getByRole("button", { name: "已复制" })).toBeVisible();
+
+    await expectDesktopHealthy(page, diagnostics);
+  });
+
+  test("empty collections render honest StateNote content without desktop overflow", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const diagnostics = captureDiagnostics(page);
+    await installDsMocks(page, "empty");
+
+    await page.goto("/");
+    await expect(page.getByText("开始一场创作对话")).toBeVisible();
+    await openTweaks(page);
+    await page.getByRole("button", { name: "账号运营" }).click();
+    await expect(page.getByText("暂无账号", { exact: false }).first()).toBeVisible();
+    await page.getByText("会话内").click();
+    await expect(page.getByText("暂无表现数据", { exact: false }).first()).toBeVisible();
+
+    const unsafeText = await page.locator("body").innerText();
+    expect(unsafeText).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+    await expectDesktopHealthy(page, diagnostics);
+  });
+});

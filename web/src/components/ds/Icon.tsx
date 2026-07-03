@@ -156,7 +156,6 @@ export function Icon({ name, size = 16, color, strokeWidth = 2, style, className
   const Glyph = REGISTRY[name];
   if (!Glyph) {
     if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
       console.warn(`[ds/Icon] unmapped icon "${name}" — add it to REGISTRY in ds/Icon.tsx`);
     }
     return <span aria-hidden style={{ display: "inline-block", width: size, height: size, flexShrink: 0, ...style }} className={className} />;

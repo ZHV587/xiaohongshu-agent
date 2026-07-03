@@ -4,7 +4,7 @@ import { parseXhsBlocks } from "@/lib/xhs-blocks";
 
 export interface ThinkingStep {
   label: string;
-  state: "done" | "active";
+  state: "done" | "active" | "pending";
 }
 
 export interface ThinkingLog {
@@ -20,7 +20,13 @@ export interface ThinkingRun {
 export type TimelineItem =
   | { kind: "user"; text: string }
   | { kind: "thinking"; run: ThinkingRun }
-  | { kind: "ai"; text: string };
+  | { kind: "ai"; text: string }
+  | { kind: "error"; text: string };
+
+export interface TimelineContext {
+  loading?: boolean;
+  error?: unknown;
+}
 
 // 写类工具名单:这些工具会写库或写飞书,args 可能含敏感 payload/凭证。
 // 写类工具的 log 只存中文 label,不回显 args。
@@ -112,6 +118,27 @@ function safeArgsLog(label: string, args: unknown): string {
   return detail ? `${label}: ${detail}` : label;
 }
 
+function safeVisibleText(value: unknown): string {
+  let raw = "";
+  if (value instanceof Error) {
+    raw = value.message;
+  } else if (typeof value === "string") {
+    raw = value;
+  } else if (value && typeof value === "object") {
+    try {
+      raw = JSON.stringify(value);
+    } catch {
+      raw = "";
+    }
+  } else {
+    raw = String(value ?? "");
+  }
+  if (!raw || raw === "[object Object]") return "响应失败，请稍后重试";
+  return raw
+    .replace(/(token|credential|authorization|secret|password|dsn|uat)\s*[:=]\s*[^,\s;]+/gi, "$1=[redacted]")
+    .slice(0, 240);
+}
+
 // 剥离 xhs 结构块,只留自然语言(防 JSON 糊屏,spec §8)。
 function proseOf(content: Message["content"]): string {
   const raw = getContentString(content);
@@ -124,7 +151,7 @@ function proseOf(content: Message["content"]): string {
     .trim();
 }
 
-export function deriveTimeline(messages: Message[]): TimelineItem[] {
+export function deriveTimeline(messages: Message[], context: TimelineContext = {}): TimelineItem[] {
   const out: TimelineItem[] = [];
 
   // 全局:已答的 tool_call_id 集合(按 tool_call_id 配对,不靠顺序)。
@@ -204,5 +231,18 @@ export function deriveTimeline(messages: Message[]): TimelineItem[] {
     // tool 消息不直接产 item —— 其效果已经过 answered 反映到步骤状态。
   }
   flushRun();
+  if (context.loading && !out.some((item) => item.kind === "thinking" && !item.run.done)) {
+    out.push({
+      kind: "thinking",
+      run: {
+        steps: [{ label: "正在思考并检索数据底座", state: "active" }],
+        logs: [],
+        done: false,
+      },
+    });
+  }
+  if (context.error) {
+    out.push({ kind: "error", text: safeVisibleText(context.error) || "响应失败，请稍后重试" });
+  }
   return out;
 }

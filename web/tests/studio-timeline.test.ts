@@ -22,3 +22,10 @@ test("StudioContext exposes __XHS_THINKING_STEPS__ e2e hook", () => {
   const ctx = src("components", "studio", "StudioContext.tsx");
   assert.match(ctx, /__XHS_THINKING_STEPS__/);
 });
+
+test("StudioContext passes loading and error context into deriveTimeline", () => {
+  const ctx = src("components", "studio", "StudioContext.tsx");
+  assert.match(ctx, /deriveTimeline\(t\.messages,\s*\{/);
+  assert.match(ctx, /loading:\s*t\.isLoading/);
+  assert.match(ctx, /error:\s*t\.error/);
+});

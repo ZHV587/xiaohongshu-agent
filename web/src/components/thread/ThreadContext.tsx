@@ -14,6 +14,7 @@ export interface ThreadContextProps {
   setContentBlocks: (v: any[] | ((prev: any[]) => any[])) => void;
   isLoading: boolean;
   isStreaming: boolean;
+  error: unknown;
   setFirstTokenReceived: (v: boolean) => void;
   submitText: (text: string) => void;
   handleSubmit: (e: any) => void;

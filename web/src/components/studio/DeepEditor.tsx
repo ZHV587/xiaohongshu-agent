@@ -8,12 +8,14 @@ import { Button, HashtagTag, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "./StudioContext";
 import { computeChecks, scoreOf } from "./rubric";
-import { IMAGE_ROLES, QUICK_EMOJI, type VersionId } from "./types";
-import { CopyDoctor, RiskPanel, ScheduleBar } from "./Composer";
+import { QUICK_EMOJI, type VersionId } from "./types";
+import { CopyDoctor, EmptyComposer, RiskPanel, ScheduleBar, VisualStudio } from "./Composer";
 import { EvidenceChips } from "./CreationScreen";
 
+const quickEmoji = QUICK_EMOJI;
+
 export function DeepEditor() {
-  const { note, images, actions } = useStudio();
+  const { note, actions } = useStudio();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const checks = computeChecks(note);
   const score = scoreOf(checks);
@@ -86,27 +88,8 @@ export function DeepEditor() {
       <div className="cs" style={{ flex: 1, minWidth: 0, overflowY: "auto", display: "flex", justifyContent: "center", padding: "20px 28px" }}>
         <div style={{ width: 600, maxWidth: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
           {/* 封面 + 图集 · 小红书 3:4 */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <Eyebrow>封面 + 图集 · 3:4（1080×1440）</Eyebrow>
-              <span style={{ fontSize: 9, color: "var(--text-subtle)" }}>封面决定点击率</span>
-            </div>
-            <div className="cs" style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
-              {IMAGE_ROLES.map((role, i) => {
-                const cover = i === 0;
-                return (
-                  <div key={role} style={{ width: 148, flexShrink: 0, display: "flex", flexDirection: "column", gap: 5 }}>
-                    <div style={{ position: "relative", width: 148, aspectRatio: "3 / 4", borderRadius: "var(--radius-md)", overflow: "hidden", border: cover ? "2px solid var(--primary)" : "1px solid var(--border)" }}>
-                      {images.length > 0 && <img src={images[i % images.length]} alt={role} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
-                      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.04), rgba(0,0,0,0.4))" }} />
-                      {cover && <textarea value={note.cover} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => actions.updateField("cover", e.target.value)} rows={3} placeholder="封面大字报…" style={{ position: "absolute", top: 10, left: 10, right: 10, border: "none", background: "transparent", resize: "none", color: "#fff", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 17, lineHeight: 1.15, textShadow: "0 2px 6px rgba(0,0,0,0.55)", outline: "none" }} />}
-                      <span style={{ position: "absolute", bottom: 7, left: 7, fontSize: 8, fontWeight: 700, color: cover ? "var(--primary)" : "#fff", background: cover ? "#fff" : "rgba(0,0,0,0.34)", padding: "1px 6px", borderRadius: 999 }}>{cover ? "封面" : role}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {!note.title && !body ? <EmptyComposer /> : null}
+          <VisualStudio />
           {/* 标题 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -121,7 +104,7 @@ export function DeepEditor() {
             <Button variant="soft" size="sm" leftIcon={<Icon name="scissors" size={12} />} onClick={actions.shorten} disabled={writing}>瘦身</Button>
             <Button variant="soft" size="sm" leftIcon={<Icon name="hash" size={12} />} onClick={actions.addTags} disabled={writing}>配标签</Button>
             <span style={{ width: 1, height: 18, background: "var(--border)", margin: "0 3px" }} />
-            {QUICK_EMOJI.slice(0, 8).map((e) => <button key={e} onClick={() => insertEmoji(e)} disabled={writing} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 1, opacity: writing ? 0.4 : 1 }}>{e}</button>)}
+            {quickEmoji.slice(0, 8).map((e) => <button key={e} onClick={() => insertEmoji(e)} disabled={writing} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 1, opacity: writing ? 0.4 : 1 }}>{e}</button>)}
             <span style={{ marginLeft: "auto", fontSize: 10, color: body.length > 1000 ? "var(--warning)" : "var(--text-subtle)" }} className="font-tabular">{writing ? "🍠 生成中…" : `${body.length} / 1000`}</span>
           </div>
           {/* 正文 */}
@@ -146,7 +129,7 @@ export function DeepEditor() {
 
       {/* ── 右区：质检定稿 ── */}
       <aside className="cs" style={{ width: 332, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 14, flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
-        <PanelHead icon="gauge" title="质检 · 定稿" sub="体检 / 原创度 / 排期发布" />
+        <PanelHead icon="gauge" title="文案体检 · 定稿" sub="体检 / 原创度 / 排期发布" />
         <CopyDoctor checks={checks} score={score} />
         <RiskPanel note={note} />
         <ScheduleBar score={score} status={note.status} />

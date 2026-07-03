@@ -1,17 +1,20 @@
 "use client";
 
 // 账号运营 screen — 数据看板 · 选题库/爆款拆解 · 内容日历/排期 · 数据回填.
-// hosting 变体已废弃:固定走默认「独立页面」page(OpsPage)。
 
-import { useRef, useState, type CSSProperties } from "react";
-import { Badge, Button, Card, Icon, StatCard, type BadgeProps } from "@/components/ds";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Avatar, Badge, Button, Card, Icon, StatCard, Textarea, type BadgeProps } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/StudioContext";
 import { WEEKDAYS } from "@/components/studio/types";
 import type { Account, LibraryItem } from "@/components/studio/types";
 import type { LoadStatus } from "@/components/studio/useBackendResource";
 
-export function Operations() {
+export type OpsHosting = "page" | "inline" | "hybrid";
+
+export function Operations({ hosting = "page" }: { hosting?: OpsHosting }) {
+  if (hosting === "inline") return <OpsInline />;
+  if (hosting === "hybrid") return <OpsHybrid />;
   return <OpsPage />;
 }
 
@@ -177,7 +180,7 @@ function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
       <LibrarySection />
       <CalendarSection accountFilter={account ? account.initial : null} />
 
-      {!dense && <PublishPipeline account={account} />}
+      {!dense && <PipelineSection account={account} />}
       {!dense && <BackfillSection sectionRef={backfillRef} />}
     </div>
   );
@@ -309,7 +312,7 @@ interface PublishPipelineProps {
   account?: Account | null;
 }
 
-function PublishPipeline({ account }: PublishPipelineProps) {
+function PipelineSection({ account }: PublishPipelineProps) {
   const { publishQueue, actions, loadState } = useStudio();
   // 队列已由后端按 selectedAccount 维度过滤，此处直接按 stage 分列渲染。
   void account;
@@ -352,5 +355,75 @@ function PublishPipeline({ account }: PublishPipelineProps) {
         })}
       </div>
     </section>
+  );
+}
+
+function OpsInline() {
+  return (
+    <div className="cs" style={{ flex: 1, overflowY: "auto", background: "var(--background)" }}>
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ textAlign: "center", fontSize: "var(--text-xs)", color: "var(--text-subtle)", background: "var(--oats-dark)", borderRadius: 999, padding: "5px 12px", alignSelf: "center" }}>一个会话里完成全部运营动作 · agent 驱动</div>
+        <OpsBubble who="user">看下我账号本周的数据，再把下周选题排上。</OpsBubble>
+        <OpsBubble who="ai">已从飞书拉取近 7 天数据。</OpsBubble>
+        <StatsMini />
+        <OpsBubble who="ai">帮你拆解了本周最高赞笔记的套路，并排好了下周内容日历。</OpsBubble>
+        <Card padding="md"><CalInline /></Card>
+        <OpsBubble who="user">发布后帮我回填真实数据。</OpsBubble>
+        <OpsBubble who="ai">录入后会沉淀回飞书，用于优化下一轮选题。</OpsBubble>
+        <BackfillSection />
+      </div>
+    </div>
+  );
+}
+
+function OpsBubble({ who, children }: { who: "user" | "ai"; children: ReactNode }) {
+  const user = who === "user";
+  return (
+    <div style={{ display: "flex", gap: 11, alignSelf: user ? "flex-end" : "flex-start", flexDirection: user ? "row-reverse" : "row", maxWidth: user ? "85%" : "94%" }}>
+      {user ? <Avatar name="我" variant="solid" size={30} /> : <Avatar glyph="🍠" variant="agent" size={32} />}
+      <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", boxShadow: "var(--shadow-sm)", lineHeight: "var(--leading-relaxed)" }}>{children}</div>
+    </div>
+  );
+}
+
+function StatsMini() {
+  const { dashboard, loadState } = useStudio();
+  if (loadState.analytics !== "ready") return <Card padding="none"><StateNote status={loadState.analytics} empty="暂无表现数据 · 发布并回填后展示" /></Card>;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+      {dashboard.map((d) => <StatCard key={d.label} label={d.label} value={d.value} unit={d.unit} delta={d.delta} tone={d.tone} icon={<Icon name={d.icon} size={15} />} />)}
+    </div>
+  );
+}
+
+function CalInline() {
+  return <CalendarSection />;
+}
+
+function OpsHybrid() {
+  const { actions } = useStudio();
+  const [draft, setDraft] = useState("");
+  return (
+    <div style={{ flex: 1, display: "flex", minHeight: 0, background: "var(--background)" }}>
+      <section style={{ width: 380, borderRight: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+          <PanelHead icon="bot" title="运营助手" sub="发起动作 · 右侧看汇总" />
+          <OpsBubble who="user">拉本周数据 + 排下周选题</OpsBubble>
+          <OpsBubble who="ai">已更新右侧看板与日历，最高表现内容已进入拆解库。</OpsBubble>
+          <OpsBubble who="user">把发布后的真实数据回填一下</OpsBubble>
+          <OpsBubble who="ai">右侧「数据回填」已就绪，录入后同步飞书。</OpsBubble>
+        </div>
+        <div style={{ padding: 14, borderTop: "1px solid var(--border)" }}>
+          <Textarea
+            rows={1}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="发起运营动作…"
+            footer={<><span style={{ fontSize: 10, color: "var(--text-subtle)" }}>agent 会更新右侧看板</span><Button variant="primary" size="sm" onClick={() => { if (draft.trim()) { actions.say(draft); setDraft(""); } }}>发送</Button></>}
+          />
+        </div>
+      </section>
+      <div className="cs" style={{ flex: 1, overflowY: "auto" }}><DashboardBody dense /></div>
+    </div>
   );
 }

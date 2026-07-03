@@ -19,6 +19,13 @@ test("renders three kinds: user / thinking / ai", () => {
   assert.match(src, /"ai"/);
 });
 
+test("renders response loading and error states explicitly", () => {
+  assert.match(src, /item\.kind === "error"/);
+  assert.match(src, /StateNote/);
+  assert.match(src, /正在思考并检索数据底座/);
+  assert.match(src, /响应失败，请稍后重试/);
+});
+
 test("thinking items use ThinkingAura with defaultCollapsed on done runs", () => {
   assert.match(src, /ThinkingAura/);
   assert.match(src, /defaultCollapsed/);

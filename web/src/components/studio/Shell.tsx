@@ -38,7 +38,7 @@ export function StudioTopBar({ section, setSection }: StudioTopBarProps) {
           <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", letterSpacing: "var(--tracking-tight)" }}>小红书创作运营工作室</span>
         </div>
         {/* section switcher */}
-        <nav style={{ display: "flex", gap: 2, background: "var(--oats-dark)", borderRadius: "var(--radius-md)", padding: 3 }}>
+        <nav aria-label="工作区切换" style={{ display: "flex", gap: 2, background: "var(--oats-dark)", borderRadius: "var(--radius-md)", padding: 3 }}>
           {sections.map((s) => {
             const on = section === s.id || (s.id === "create" && section === "deep");
             return (

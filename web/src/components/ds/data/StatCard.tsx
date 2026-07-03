@@ -13,8 +13,8 @@ import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 type StatTone = "neutral" | "coral" | "topic" | "success";
 
 export interface StatCardProps extends HTMLAttributes<HTMLDivElement> {
-  label?: ReactNode;
-  value?: string | number;
+  label: ReactNode;
+  value: string | number;
   unit?: string;
   delta?: number | string | null;
   icon?: ReactNode;

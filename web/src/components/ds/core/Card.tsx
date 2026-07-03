@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
+import { useState, type HTMLAttributes, type ReactNode } from "react";
 
 /**
  * Card — white surface container on the oats canvas. Soft border

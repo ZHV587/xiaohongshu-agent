@@ -7,6 +7,34 @@ const src = readFileSync(
   join(process.cwd(), "src", "components", "ds", "content", "ThinkingAura.tsx"),
   "utf8",
 );
+const globals = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+
+test("ThinkingAura mirrors the DS source contract", () => {
+  for (const marker of [
+    "思考轨迹 (Thinking Aura)",
+    "steps",
+    "logs",
+    "defaultOpen",
+    "defaultCollapsed",
+    "xhs-ping",
+    "收起分析详情",
+    "展开分析详情",
+    "done",
+    "active",
+    "pending",
+    "✓",
+    "◐",
+    "○",
+    "font-mono",
+  ]) {
+    assert.ok(src.includes(marker), `missing ThinkingAura marker: ${marker}`);
+  }
+});
+
+test("ThinkingAura motion tokens exist in globals", () => {
+  assert.ok(globals.includes("@keyframes xhs-ping"), "missing xhs-ping keyframes");
+  assert.ok(src.includes("spin 1.4s linear infinite"), "missing active step spin motion");
+});
 
 test("ThinkingAura accepts defaultCollapsed prop", () => {
   assert.match(src, /defaultCollapsed\??:\s*boolean/);

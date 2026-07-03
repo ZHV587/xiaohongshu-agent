@@ -1,9 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { SlidersHorizontal, Loader2, Check, ArrowLeft, BookOpen, KeyRound, Info } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { PasswordInput } from "@/components/ui/password-input";
-import { Label } from "@/components/ui/label";
+import { Button, Input } from "@/components/ds";
+
+function FieldLabel({ htmlFor, children, className = "" }: { htmlFor?: string; children: ReactNode; className?: string }) {
+  return (
+    <label htmlFor={htmlFor} className={`text-xs font-medium text-charcoal-light ${className}`}>
+      {children}
+    </label>
+  );
+}
 
 export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(false);
@@ -83,8 +88,8 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
           </h2>
           <p className="text-xs text-charcoal-light mt-1">配置飞书开放平台应用凭证与同步存放小红书文案的多维表格参数</p>
         </div>
-        <Button variant="outline" size="sm" onClick={onClose} className="text-xs flex items-center gap-1 bg-white hover:bg-oats-dark border-border/60 text-charcoal">
-          <ArrowLeft className="size-3" /> 返回会话
+        <Button variant="secondary" size="sm" onClick={onClose} leftIcon={<ArrowLeft className="size-3" />}>
+          返回会话
         </Button>
       </div>
 
@@ -103,7 +108,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                 <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">飞书自建应用资质</h3>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="app-id" className="text-xs font-medium text-charcoal-light">App ID</Label>
+                    <FieldLabel htmlFor="app-id">App ID</FieldLabel>
                     <Input
                       id="app-id"
                       type="text"
@@ -115,9 +120,10 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="app-secret" className="text-xs font-medium text-charcoal-light">App Secret</Label>
-                    <PasswordInput
+                    <FieldLabel htmlFor="app-secret">App Secret</FieldLabel>
+                    <Input
                       id="app-secret"
+                      type="password"
                       value={configs.FEISHU_APP_SECRET || ""}
                       onChange={(e) => setConfigs({ ...configs, FEISHU_APP_SECRET: e.target.value })}
                       placeholder="••••••••••••••••"
@@ -133,7 +139,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                 <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">爆款库多维表格坐标</h3>
                 <div className="space-y-3">
                   <div className="space-y-1.5">
-                    <Label htmlFor="bitable-app-token" className="text-xs font-medium text-charcoal-light">Bitable App Token</Label>
+                    <FieldLabel htmlFor="bitable-app-token">Bitable App Token</FieldLabel>
                     <Input
                       id="bitable-app-token"
                       type="text"
@@ -144,7 +150,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="bitable-table-id" className="text-xs font-medium text-charcoal-light">Bitable Table ID (草稿/选题主表)</Label>
+                    <FieldLabel htmlFor="bitable-table-id">Bitable Table ID (草稿/选题主表)</FieldLabel>
                     <Input
                       id="bitable-table-id"
                       type="text"
@@ -155,7 +161,7 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="bitable-collect-table-id" className="text-xs font-medium text-charcoal-light">爆款采集库 Table ID (线上笔记采纳写入)</Label>
+                    <FieldLabel htmlFor="bitable-collect-table-id">爆款采集库 Table ID (线上笔记采纳写入)</FieldLabel>
                     <Input
                       id="bitable-collect-table-id"
                       type="text"
@@ -173,10 +179,10 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
                 <h3 className="text-xs font-bold text-coral tracking-wider uppercase border-b pb-1">飞书知识库 (Wiki) 绑定</h3>
                 <div className="space-y-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-charcoal-light flex items-center gap-1.5">
+                    <FieldLabel className="flex items-center gap-1.5">
                       <span>知识空间 ({wikiSpaceName})</span>
                       <span className="bg-oats text-coral text-[9px] px-1.5 py-0.5 rounded font-normal">后端写死绑定</span>
-                    </Label>
+                    </FieldLabel>
                     <div className="bg-oats-light/20 border border-border/30 px-3 py-2 rounded-lg text-xs text-charcoal font-mono select-all flex justify-between items-center">
                       <span>7648177996175543260</span>
                       <a

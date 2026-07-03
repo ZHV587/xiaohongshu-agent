@@ -9,10 +9,13 @@ import { useState, type CSSProperties, type ReactNode, type SelectHTMLAttributes
  *
  * Faithfully ported 1:1 from 小红书文案助手 Design System/components/forms/Select.jsx.
  */
-type SelectOption = string | { value: string; label: string };
+export interface SelectOption {
+  value: string;
+  label: string;
+}
 
 export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
-  options?: SelectOption[] | null;
+  options?: Array<SelectOption | string> | null;
   invalid?: boolean;
   containerStyle?: CSSProperties;
   children?: ReactNode;

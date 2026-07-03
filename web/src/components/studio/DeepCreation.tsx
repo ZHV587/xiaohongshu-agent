@@ -1,29 +1,29 @@
 "use client";
 
 // 深度创作 screen — a focused long-form environment bound to the shared note.
-// 生产实际只有两态:编辑(沉浸双栏 DeepEditor)与 A·B 对比(ABCompare)。
-// 旧原型的 form="flow"/"workspace" 分支不可达,已随其专用组件(DeepFlow /
-// DeepWorkspace / StepCards / BigEditor / AssistantPanel / EvidenceRail /
-// NotePreview)一并删除。
 
 import { useState } from "react";
-import { Badge, Button, TopicCard, Icon } from "@/components/ds";
+import { Badge, Button, Card, HashtagTag, TopicCard, Icon } from "@/components/ds";
 import { useStudio } from "@/components/studio/StudioContext";
 import { computeChecks, scoreOf } from "@/components/studio/rubric";
 import { type VersionId } from "@/components/studio/types";
 import { EvidenceChips } from "./CreationScreen";
 import { DeepEditor } from "./DeepEditor";
+import { CopyDoctor } from "./Composer";
+import { Eyebrow, PanelHead } from "./ui";
 
+export type DeepForm = "immersive" | "flow" | "workspace";
 type DeepMode = "edit" | "compare";
 
-export function DeepCreation() {
+export function DeepCreation({ form = "immersive" }: { form?: DeepForm }) {
   const { note, setSection } = useStudio();
   const [mode, setMode] = useState<DeepMode>("edit");
   if (note.status === "idle") return <DeepEmpty onGo={() => setSection("create")} />;
+  const body = mode === "compare" ? <ABCompare /> : (form === "flow" ? <DeepFlow /> : form === "workspace" ? <DeepWorkspace /> : <DeepImmersive />);
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <DeepTopicBar mode={mode} setMode={setMode} />
-      {mode === "compare" ? <ABCompare /> : <DeepEditor />}
+      {body}
     </div>
   );
 }
@@ -71,6 +71,158 @@ function DeepTopicBar({ mode, setMode }: { mode: DeepMode; setMode: (m: DeepMode
           <Icon name="repeat" size={12} /> 换题
         </button>
       </div>
+    </div>
+  );
+}
+
+function DeepImmersive() {
+  return <DeepEditor />;
+}
+
+function BigEditor({ maxWidth = 720 }: { maxWidth?: number }) {
+  const { note, actions } = useStudio();
+  return (
+    <div style={{ maxWidth, margin: "0 auto", width: "100%", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-md)", padding: 28, display: "flex", flexDirection: "column", gap: 16 }}>
+      <input
+        value={note.title}
+        placeholder="写个钩子标题…（≤20 字）"
+        onChange={(e) => actions.updateField("title", e.target.value)}
+        style={{ border: "none", outline: "none", background: "transparent", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-xl)", color: "var(--text-body)", letterSpacing: "var(--tracking-tight)" }}
+      />
+      <div style={{ height: 1, background: "var(--border)" }} />
+      <textarea
+        value={note.body}
+        placeholder="正文从一句共情钩子开始，再用 1️⃣2️⃣3️⃣ 分点干货，最后引导互动…"
+        onChange={(e) => actions.updateField("body", e.target.value)}
+        style={{ border: "none", outline: "none", resize: "none", background: "transparent", fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", minHeight: 320, flex: 1 }}
+      />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-subtle)" }}>
+        <span>自动保存 · 当前草稿</span>
+        <span className="font-tabular">{note.body.length} / 1000 字</span>
+      </div>
+    </div>
+  );
+}
+
+function AssistantPanel() {
+  const { note, actions } = useStudio();
+  const checks = computeChecks(note);
+  const kwSuggestions = (note.kw || "")
+    .split(/[\s,，、]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((s, i, arr) => arr.indexOf(s) === i)
+    .slice(0, 8);
+  return (
+    <div className="cs" style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%", overflowY: "auto" }}>
+      <PanelHead icon="sparkles" title="AI 创作助手" sub="随写随帮 · 质检同步" />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <Button variant="soft" size="sm" leftIcon={<Icon name="sparkles" size={12} />} onClick={actions.polish}>润色语气</Button>
+        <Button variant="soft" size="sm" leftIcon={<Icon name="scissors" size={12} />} onClick={actions.shorten}>一键瘦身</Button>
+        <Button variant="soft" size="sm" leftIcon={<Icon name="hash" size={12} />} onClick={actions.addTags}>配标签</Button>
+      </div>
+      {kwSuggestions.length > 0 && (
+        <div>
+          <Eyebrow style={{ marginBottom: 7 }}>推荐话题标签</Eyebrow>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {kwSuggestions.filter((tag) => !note.tags.includes(tag)).map((tag) => <HashtagTag key={tag} addable onAdd={() => actions.addTag(tag)}>{tag}</HashtagTag>)}
+          </div>
+        </div>
+      )}
+      <CopyDoctor checks={checks} score={scoreOf(checks)} />
+    </div>
+  );
+}
+
+function EvidenceRail() {
+  const { note, evidence, actions } = useStudio();
+  const items = note.topicId ? evidence[note.topicId]?.items ?? [] : [];
+  return (
+    <div className="cs" style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%", overflowY: "auto" }}>
+      <PanelHead icon="database" title="飞书资料 · 证据" sub="选题依据来源" />
+      {items.length === 0 && <Card padding="md" tone="sunken"><span style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)" }}>暂无证据条目，生成选题后会在这里显示。</span></Card>}
+      {items.map((item) => (
+        <Card key={item.resource_id} padding="sm" tone="sunken" interactive onClick={() => actions.openEvidence({ ...item, mode: evidence[note.topicId!].mode })}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+            <Badge tone="topic" shape="chip">{item.type}</Badge>
+            <span style={{ fontSize: 9, color: "var(--text-subtle)" }}>{item.source_updated_at || "源端时间"}</span>
+          </div>
+          <div style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text-body)" }}>{item.title}</div>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3, lineHeight: 1.5 }}>{item.summary}</div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function DeepFlow() {
+  const [active, setActive] = useState(2);
+  const outline = [
+    { step: "选题", detail: "从爆款数据挑方向" },
+    { step: "大纲", detail: "钩子 → 清单 → TIPS → 互动" },
+    { step: "正文", detail: "逐段撰写 + 实时体检" },
+    { step: "润色", detail: "/polish 语气 · /shorten 瘦身" },
+    { step: "配图", detail: "封面大字 + 内容图" },
+  ];
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: "var(--background)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 28px", borderBottom: "1px solid var(--border)", background: "var(--surface-card)", flexShrink: 0, justifyContent: "center" }}>
+        {outline.map((item, i) => {
+          const done = i < active;
+          const on = i === active;
+          return (
+            <button key={item.step} onClick={() => setActive(i)} style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", background: "none", border: "none" }}>
+              <span style={{ width: 26, height: 26, borderRadius: "999px", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, fontFamily: "var(--font-display)", background: on ? "var(--primary)" : done ? "var(--success-surface)" : "var(--oats-dark)", color: on ? "#fff" : done ? "var(--success)" : "var(--text-subtle)", border: done ? "1px solid var(--success)" : "none" }}>{done ? "✓" : i + 1}</span>
+              <span style={{ fontSize: "var(--text-xs)", fontWeight: on ? 700 : 500, color: on ? "var(--primary)" : done ? "var(--text-body)" : "var(--text-subtle)" }}>{item.step}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 28 }}>
+        <div style={{ maxWidth: 880, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 18 }}>
+            <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)" }}>第 {active + 1} 步 · {outline[active].step}</div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 4 }}>{outline[active].detail}</div>
+          </div>
+          {active === 2 ? <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}><div style={{ flex: 1 }}><BigEditor maxWidth={9999} /></div><div style={{ width: 300, flexShrink: 0 }}><AssistantPanel /></div></div> : <StepCards step={active} />}
+        </div>
+      </div>
+      <div style={{ padding: 14, borderTop: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", justifyContent: "center", gap: 10, flexShrink: 0 }}>
+        <Button variant="secondary" onClick={() => setActive((value) => Math.max(0, value - 1))}>上一步</Button>
+        <Button variant="primary" rightIcon={<Icon name="arrow-right" size={14} />} onClick={() => setActive((value) => Math.min(outline.length - 1, value + 1))}>下一步</Button>
+      </div>
+    </div>
+  );
+}
+
+function StepCards({ step }: { step: number }) {
+  const { note, topics } = useStudio();
+  if (step === 0) {
+    const topic = topics.find((item) => item.id === note.topicId) || topics[0];
+    return topic ? (
+      <div style={{ maxWidth: 460, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
+        <TopicCard index={topic.id} title={topic.title} rationale={topic.rationale} hotRate={topic.hotRate} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11, color: "var(--success)", fontWeight: 600 }}><Icon name="check-circle-2" size={13} color="var(--success)" /> 已选定该选题，进入下一步撰写大纲</div>
+      </div>
+    ) : null;
+  }
+  if (step === 1) {
+    const lines = ["① 共情钩子：身份标签 + 场景痛点", "② 编号清单：核心信息分点", "③ 选购 TIPS：建议与避坑", "④ 互动收口：评论 + 话题标签矩阵"];
+    return <Card padding="lg"><div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{lines.map((line) => <div key={line} style={{ display: "flex", gap: 10, fontSize: "var(--text-sm)" }}><Icon name="check-circle-2" size={16} color="var(--success)" /><span>{line}</span></div>)}</div></Card>;
+  }
+  return <Card padding="lg"><div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>{step === 3 ? "AI 正在按小红书语气润色，并裁剪到 1000 字内。可对比多版本草稿后定稿。" : "封面：暖色实拍大全景 + 大字报；建议再出内容图（产品特写 · 场景氛围 · 清单合影 · 选购对比）。"}</div></Card>;
+}
+
+function DeepWorkspace() {
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "260px minmax(0, 1fr) 340px", gap: 0, background: "var(--background)" }}>
+      <aside style={{ borderRight: "1px solid var(--border)", background: "var(--surface-card)", padding: 16, minHeight: 0 }}><EvidenceRail /></aside>
+      <main className="cs" style={{ overflowY: "auto", padding: 22 }}><BigEditor maxWidth={760} /></main>
+      <aside style={{ borderLeft: "1px solid var(--border)", background: "var(--surface-card)", padding: 16, minHeight: 0, boxShadow: "var(--shadow-lg)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
+          <AssistantPanel />
+        </div>
+      </aside>
     </div>
   );
 }

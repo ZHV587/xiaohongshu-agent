@@ -197,6 +197,8 @@
   --shadow-lg: 0 12px 28px rgba(26, 26, 28, 0.1), 0 4px 8px rgba(26, 26, 28, 0.05);
   --shadow-2xl: 0 24px 60px rgba(26, 26, 28, 0.18);
   --shadow-coral: 0 6px 18px rgba(229, 46, 64, 0.22);
+  --shadow-inner-right: inset -9px 0 6px -1px rgba(0, 0, 0, 0.02);
+  --shadow-inner-left: inset 9px 0 6px -1px rgba(0, 0, 0, 0.02);
   --ring-focus: 0 0 0 3px color-mix(in srgb, var(--coral-500) 18%, transparent);
 
   /* Motion */
@@ -362,6 +364,12 @@
     @apply bg-background text-foreground;
   }
 
+  :where(button, [role="button"], a[href], input, select, textarea):focus-visible {
+    outline: 2px solid var(--primary) !important;
+    outline-offset: 2px;
+    box-shadow: var(--ring-focus);
+  }
+
   :root {
     --chart-1: 12 76% 61%;
     --chart-2: 173 58% 39%;
@@ -381,15 +389,27 @@
 
 @layer utilities {
   .shadow-inner-right {
-    box-shadow: inset -9px 0 6px -1px rgb(0 0 0 / 0.02);
+    box-shadow: var(--shadow-inner-right);
   }
 
   .shadow-inner-left {
-    box-shadow: inset 9px 0 6px -1px rgb(0 0 0 / 0.02);
+    box-shadow: var(--shadow-inner-left);
   }
 
   .font-tabular {
     font-variant-numeric: tabular-nums;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .skeleton-shimmer {
@@ -476,6 +496,23 @@
   40%,
   80% {
     transform: translateX(4px);
+  }
+}
+
+@keyframes xhs-fly-to-sync {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.72) rotate(-10deg);
+  }
+  12% {
+    opacity: 1;
+  }
+  52% {
+    transform: translate3d(46vw, -28vh, 0) scale(1.08) rotate(12deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(100vw - 230px), -72vh, 0) scale(0.48) rotate(24deg);
   }
 }
 
@@ -568,6 +605,9 @@
 }
 .pop-in {
   animation: popIn 0.22s var(--ease-spring) both;
+}
+.xhs-fly-to-sync {
+  animation: xhs-fly-to-sync var(--dur-fly) var(--ease-spring) both;
 }
 .lift {
   transition:

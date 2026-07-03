@@ -17,6 +17,9 @@ export function buildDraftAutosaveKey(threadId: string | null): string {
 
 export function parseAiDraft(content: string): DraftSnapshot {
   const text = content.trim();
+  const structuredDraft = parseStructuredCopyDraft(text);
+  if (structuredDraft) return structuredDraft;
+
   const firstLine = text
     .split("\n")[0]
     .replace(/^[#\s*✨🍠⛺☕🌿👇📝🌟🔥🚗]*/gu, "")
@@ -26,6 +29,32 @@ export function parseAiDraft(content: string): DraftSnapshot {
     title: firstLine && firstLine.length < 40 ? firstLine : "小红书爆款文案",
     content: text,
   };
+}
+
+function parseStructuredCopyDraft(text: string): DraftSnapshot | null {
+  const fence = /```xhs_copy[ \t]*\r?\n?([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  let latest: RegExpExecArray | null = null;
+  while ((match = fence.exec(text)) !== null) latest = match;
+  if (!latest) return null;
+
+  try {
+    const parsed = JSON.parse(latest[1].trim()) as {
+      versions?: Array<{ title?: unknown; body?: unknown }>;
+      title?: unknown;
+      body?: unknown;
+    };
+    const firstVersion = Array.isArray(parsed.versions) ? parsed.versions[0] : null;
+    const title = firstVersion?.title ?? parsed.title;
+    const body = firstVersion?.body ?? parsed.body;
+    if (typeof body !== "string" || !body.trim()) return null;
+    return {
+      title: typeof title === "string" && title.trim() ? title.trim() : "小红书爆款文案",
+      content: body.trim(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function readDraftSnapshot(raw: string | null): DraftSnapshot {

@@ -295,7 +295,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [topics.length]);
 
   // ── chat transcript as timeline items derived from the real messages ──
-  const timeline: TimelineItem[] = useMemo(() => deriveTimeline(t.messages), [t.messages]);
+  const timeline: TimelineItem[] = useMemo(
+    () => deriveTimeline(t.messages, { loading: t.isLoading, error: t.error }),
+    [t.messages, t.isLoading, t.error],
+  );
 
   // 测试可观测钩子:暴露思考链总步数,供 e2e 断言思考 UI 已渲染。仅写 window,生产无副作用。
   useEffect(() => {

@@ -1,16 +1,79 @@
 "use client";
 
-// 创作栏可复用子组件。保留活跃、被外部 import 的三个组件:
-//   CopyDoctor(文案体检)、ScheduleBar(定稿排期)、RiskPanel(限流风控)
-// —— 被 DeepEditor / DeepCreation 消费。
-// 主编辑器 Composer / EmptyComposer / VisualStudio 已随未挂载路径删除(死代码)。
+// 创作栏可复用子组件。CopyDoctor / ScheduleBar / RiskPanel / EmptyComposer /
+// VisualStudio 均绑定真实 Studio 状态与 actions,供深度创作工作台复用。
 
 import { useState } from "react";
-import { Badge, Button, Icon } from "@/components/ds";
+import { Badge, Button, Card, Icon } from "@/components/ds";
 import { Eyebrow } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/StudioContext";
 import { type CheckResult } from "@/components/studio/rubric";
-import { type StudioNote } from "@/components/studio/types";
+import { IMAGE_ROLES, type StudioNote } from "@/components/studio/types";
+
+export function EmptyComposer() {
+  const { actions, topics } = useStudio();
+  return (
+    <Card padding="lg" tone="sunken" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-base)", fontWeight: 800, color: "var(--text-body)" }}>还没有可编辑草稿</div>
+        <p style={{ margin: "5px 0 0", fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>
+          先选择一个选题，或让对话基于真实数据底座起稿；生成后这里会进入完整创作栏。
+        </p>
+      </div>
+      <Button
+        variant="primary"
+        size="sm"
+        leftIcon={<Icon name="sparkles" size={13} />}
+        onClick={() => actions.say(topics.length ? "基于当前选题生成一版完整小红书文案" : "先基于数据底座生成 3 个小红书选题")}
+      >
+        {topics.length ? "生成草稿" : "生成选题"}
+      </Button>
+    </Card>
+  );
+}
+
+export function VisualStudio() {
+  const { note, images, actions } = useStudio();
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <Eyebrow>视觉工作台 · 封面 + 图集 · 3:4（1080×1440）</Eyebrow>
+          <span style={{ fontSize: 9, color: "var(--text-subtle)", whiteSpace: "nowrap" }}>不生成假图，仅使用真实素材</span>
+        </div>
+        {images.length === 0 ? (
+          <Card padding="md" tone="sunken" style={{ fontSize: "var(--text-xs)", color: "var(--text-subtle)", lineHeight: "var(--leading-relaxed)" }}>
+            暂无图片素材。上传图片或等待数据源返回素材后，封面/图集会在这里预览。
+          </Card>
+        ) : (
+          <div className="cs" style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
+            {IMAGE_ROLES.map((role, i) => {
+              const cover = i === 0;
+              return (
+                <div key={role} style={{ width: 148, flexShrink: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+                  <div style={{ position: "relative", width: 148, aspectRatio: "3 / 4", borderRadius: "var(--radius-md)", overflow: "hidden", border: cover ? "2px solid var(--primary)" : "1px solid var(--border)", background: "var(--accent-surface)" }}>
+                    <img src={images[i % images.length]} alt={role} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.04), rgba(0,0,0,0.42))" }} />
+                    {cover && (
+                      <textarea
+                        value={note.cover}
+                        onChange={(e) => actions.updateField("cover", e.target.value)}
+                        rows={3}
+                        placeholder="封面大字报..."
+                        style={{ position: "absolute", top: 10, left: 10, right: 10, border: "none", background: "transparent", resize: "none", color: "#fff", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 17, lineHeight: 1.15, textShadow: "0 2px 6px rgba(0,0,0,0.55)", outline: "none" }}
+                      />
+                    )}
+                    <span style={{ position: "absolute", bottom: 7, left: 7, fontSize: 8, fontWeight: 700, color: cover ? "var(--primary)" : "#fff", background: cover ? "#fff" : "rgba(0,0,0,0.34)", padding: "1px 6px", borderRadius: 999 }}>{cover ? "封面" : role}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 
 // 文案体检 scorecard — grouped, driven by the extensible rule library
 export function CopyDoctor({ checks, score }: { checks: CheckResult[]; score: number }) {

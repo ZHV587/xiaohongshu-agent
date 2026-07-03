@@ -115,3 +115,20 @@ test("parses xhs_topics when JSON is on the same line as the fence tag (Claude /
   assert.equal(typeof first === "string" ? first : first.title, "工位5分钟代谢重启");
 });
 
+test("parses xhs_topics when JSON string values contain triple backticks", () => {
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_topics
+{"topics":["围栏字符"],"evidence":[{"resource_id":"note-5","title":"标题含 \`\`\` 字符","summary":"摘要也保留","source_updated_at":"2026-05-01T08:00:00Z","indexed_at":"2026-06-18T08:00:00Z"}]}
+\`\`\``);
+
+  assert.equal(segment.kind, "topics");
+  if (segment.kind !== "topics") return;
+  assert.deepEqual(segment.data.evidence, [
+    {
+      resource_id: "note-5",
+      title: "标题含 ``` 字符",
+      summary: "摘要也保留",
+      source_updated_at: "2026-05-01T08:00:00Z",
+      indexed_at: "2026-06-18T08:00:00Z",
+    },
+  ]);
+});

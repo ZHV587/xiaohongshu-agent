@@ -5,15 +5,18 @@
 // wiring) and StudioProvider (the useStudio bridge). Replaces the old
 // three-pane Thread() as page.tsx's leaf.
 
+import { useQueryState } from "nuqs";
 import { ThreadStateProvider } from "./thread/ThreadStateProvider";
 import { StudioProvider } from "./studio/StudioContext";
 import { StudioShell } from "./studio/StudioShell";
+import { WorkbenchShell } from "./workbench/WorkbenchShell";
 
 export function AppShell() {
+  const [mode] = useQueryState("mode");
   return (
     <ThreadStateProvider>
       <StudioProvider>
-        <StudioShell />
+        {mode === "workbench" ? <WorkbenchShell /> : <StudioShell />}
       </StudioProvider>
     </ThreadStateProvider>
   );

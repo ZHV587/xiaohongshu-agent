@@ -267,6 +267,7 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         setContentBlocks,
         isLoading,
         isStreaming: firstTokenReceived,
+        error: stream.error,
         setFirstTokenReceived,
         submitText,
         handleSubmit,

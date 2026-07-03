@@ -22,3 +22,15 @@ test("ThreadContext does not carry decorative social follow/like/collect state",
     /likeCount|isLiked|showPlusOne|collectCount|isCollected/,
   );
 });
+
+test("desktop conversation panes wrap long responses and render explicit state notes", () => {
+  const creation = src("components", "studio", "CreationScreen.tsx");
+  const workbench = src("components", "workbench", "WorkbenchShell.tsx");
+
+  for (const [name, source] of [["CreationScreen", creation], ["WorkbenchShell", workbench]] as const) {
+    assert.match(source, /StateNote/, `${name} should render explicit empty/loading/error notes`);
+    assert.match(source, /overflowWrap:\s*"anywhere"/, `${name} should wrap long response text`);
+    assert.match(source, /item\.kind === "error"/, `${name} should handle response errors explicitly`);
+    assert.match(source, /响应失败，请稍后重试/, `${name} should have a visible response error fallback`);
+  }
+});

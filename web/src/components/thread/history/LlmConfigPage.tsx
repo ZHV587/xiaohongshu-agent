@@ -1,9 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Sparkles, Loader2, Check, ArrowLeft, ChevronDown, Play, Server, Cpu, Key, Activity, ListRestart, HelpCircle, ShieldCheck, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { PasswordInput } from "@/components/ui/password-input";
-import { Label } from "@/components/ui/label";
+import { Button, Input, Select } from "@/components/ds";
+
+function FieldLabel({ htmlFor, children, className = "" }: { htmlFor?: string; children: ReactNode; className?: string }) {
+  return (
+    <label htmlFor={htmlFor} className={`text-xs font-semibold text-charcoal-light ${className}`}>
+      {children}
+    </label>
+  );
+}
 
 interface ProviderInfo {
   id: string;
@@ -327,8 +332,8 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
             配置您的各个大模型服务商 API 密钥与网关。当主引擎发生限流/报错时，系统将自动顺延重试备用密钥。
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={onClose} className="text-xs flex items-center gap-1 bg-white hover:bg-oats-dark border-border/60 text-charcoal">
-          <ArrowLeft className="size-3" /> 返回会话
+        <Button variant="secondary" size="sm" onClick={onClose} leftIcon={<ArrowLeft className="size-3" />}>
+          返回会话
         </Button>
       </div>
 
@@ -415,17 +420,17 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                     <div className="p-5 border-t border-oats-dark/60 bg-white space-y-4 animate-in slide-in-from-top-2 duration-150">
                       {/* API Key */}
                       <div className="space-y-1.5">
-                        <Label htmlFor={`api-key-${provider.id}`} className="text-xs font-semibold text-charcoal-light flex items-center gap-1">
+                        <FieldLabel htmlFor={`api-key-${provider.id}`} className="flex items-center gap-1">
                           <Key className="size-3.5 text-coral/80" />
                           API 密钥 (API Key) {isPrimary && <span className="text-coral font-bold">*</span>}
-                        </Label>
-                        <PasswordInput
+                        </FieldLabel>
+                        <Input
                           id={`api-key-${provider.id}`}
+                          type="password"
                           value={config.apiKey}
                           onChange={(e) => updateProviderConfig(provider.id, { apiKey: e.target.value })}
                           placeholder={provider.placeholderKey}
                           required={isPrimary}
-                          className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs"
                         />
                       </div>
 
@@ -433,10 +438,10 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Base URL */}
                         <div className="space-y-1.5">
-                          <Label htmlFor={`base-url-${provider.id}`} className="text-xs font-semibold text-charcoal-light flex items-center gap-1">
+                          <FieldLabel htmlFor={`base-url-${provider.id}`} className="flex items-center gap-1">
                             <Server className="size-3.5 text-coral/80" />
                             接口代理地址 (Base URL)
-                          </Label>
+                          </FieldLabel>
                           <Input
                             id={`base-url-${provider.id}`}
                             type="text"
@@ -458,7 +463,7 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
 
                         {/* Model */}
                         <div className="space-y-1.5">
-                          <Label htmlFor={`model-${provider.id}`} className="text-xs font-semibold text-charcoal-light flex items-center justify-between">
+                          <FieldLabel htmlFor={`model-${provider.id}`} className="flex items-center justify-between">
                             <span className="flex items-center gap-1">
                               <Cpu className="size-3.5 text-coral/80" />
                               高质量模型池 (LLM_QUALITY_MODELS)
@@ -472,10 +477,10 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                                 手动输入
                               </button>
                             )}
-                          </Label>
+                          </FieldLabel>
                           <div className="relative">
                             {isDropdownMode ? (
-                              <select
+                              <Select
                                 id={`model-${provider.id}`}
                                 value={config.model}
                                 onChange={(e) => {
@@ -485,7 +490,7 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                                     updateProviderConfig(provider.id, { model: e.target.value });
                                   }
                                 }}
-                                className="w-full bg-oats-light/40 border border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 px-3 py-2 text-xs rounded-lg outline-none transition-all cursor-pointer"
+                                containerStyle={{ width: "100%" }}
                               >
                                 {modelsList.map((m) => (
                                   <option key={m} value={m}>
@@ -493,7 +498,7 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                                   </option>
                                 ))}
                                 <option value="__custom__">➕ 自定义输入...</option>
-                              </select>
+                              </Select>
                             ) : (
                               <div className="flex gap-2">
                                 <Input
@@ -502,15 +507,15 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                                   value={config.model}
                                   onChange={(e) => updateProviderConfig(provider.id, { model: e.target.value })}
                                   placeholder="请输入模型 ID，多个模型用英文逗号分隔，如 gpt-4o,claude-sonnet-4-6"
-                                  className="bg-oats-light/40 border-border/60 focus:border-coral focus:ring-1 focus:ring-coral/20 rounded-lg text-xs flex-1"
+                                  containerStyle={{ flex: 1 }}
                                 />
                                 {modelsList.length > 0 && (
                                   <Button
                                     type="button"
-                                    variant="outline"
+                                    variant="secondary"
                                     onClick={() => setModelDropdownModes((prev) => ({ ...prev, [provider.id]: true }))}
                                     title="恢复下拉列表"
-                                    className="p-2 border border-border/60 hover:bg-oats-dark/60 rounded-lg"
+                                    style={{ padding: "0.55rem", minHeight: 36 }}
                                   >
                                     <ListRestart className="size-3.5 text-charcoal-light" />
                                   </Button>
@@ -535,11 +540,11 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
 
                         <Button
                           type="button"
-                          variant="outline"
+                          variant="secondary"
                           size="sm"
                           disabled={testingId !== null || !config.apiKey}
                           onClick={() => handleTest(provider.id)}
-                          className="text-xs font-semibold text-charcoal-light hover:text-coral border border-border bg-white hover:bg-oats-light flex items-center gap-1.5 shrink-0 self-end sm:self-auto cursor-pointer disabled:opacity-50"
+                          style={{ alignSelf: "end", flexShrink: 0 }}
                         >
                           {testingId === provider.id ? (
                             <Loader2 className="size-3.5 animate-spin text-coral" />

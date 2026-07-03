@@ -195,3 +195,40 @@ test("thinking run with all tools done but no prose text has done=true", () => {
   // No ai bubble
   assert.equal(tl.filter((i) => i.kind === "ai").length, 0);
 });
+
+test("loading context appends an active thinking item when no tool call has started", () => {
+  const tl = deriveTimeline([human("帮我出选题")], { loading: true });
+  assert.deepEqual(tl, [
+    { kind: "user", text: "帮我出选题" },
+    {
+      kind: "thinking",
+      run: {
+        steps: [{ label: "正在思考并检索数据底座", state: "active" }],
+        logs: [],
+        done: false,
+      },
+    },
+  ]);
+});
+
+test("error context appends a sanitized response error item", () => {
+  const tl = deriveTimeline([human("帮我出选题")], {
+    error: new Error("backend exploded with token=SECRET_TOKEN_VALUE"),
+  });
+  assert.equal(tl.length, 2);
+  assert.deepEqual(tl[0], { kind: "user", text: "帮我出选题" });
+  assert.equal(tl[1].kind, "error");
+  assert.ok("text" in tl[1]);
+  assert.ok(tl[1].text.includes("backend exploded"));
+  assert.ok(!tl[1].text.includes("SECRET_TOKEN_VALUE"));
+});
+
+test("error context never renders raw object placeholders", () => {
+  const tl = deriveTimeline([human("帮我出选题")], {
+    error: { code: "UPSTREAM_ERROR", detail: { retry: false } },
+  });
+  assert.equal(tl[1].kind, "error");
+  assert.ok("text" in tl[1]);
+  assert.notEqual(tl[1].text, "[object Object]");
+  assert.ok(!tl[1].text.includes("[object Object]"));
+});

@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Database, RefreshCw, Server } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { TooltipIconButton } from "../tooltip-icon-button";
+import { Button, IconButton } from "@/components/ds";
 import { runtimeFactRows, type RuntimeFactsPayload, type RuntimeModule } from "./runtime-facts-format";
 
 const MODULES = [
@@ -115,16 +114,15 @@ export function RuntimeFactsPage({ onClose }: { onClose: () => void }) {
           <p className="text-charcoal-light mt-1 truncate text-xs">{payload?.observed_at || "等待采样"}</p>
         </div>
         <div className="flex items-center gap-2">
-          <TooltipIconButton
-            tooltip="刷新"
-            className="border-border/60 bg-white text-charcoal hover:text-coral size-9 border"
+          <IconButton
+            label="刷新"
+            variant="surface"
             onClick={() => void load(true)}
             disabled={refreshing}
           >
             <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
-          </TooltipIconButton>
-          <Button variant="outline" size="sm" onClick={onClose} className="border-border/60 bg-white text-xs">
-            <ArrowLeft className="size-3" />
+          </IconButton>
+          <Button variant="secondary" size="sm" onClick={onClose} leftIcon={<ArrowLeft className="size-3" />}>
             返回会话
           </Button>
         </div>

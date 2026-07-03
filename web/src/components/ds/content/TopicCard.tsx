@@ -9,11 +9,12 @@ import { useState, type CSSProperties, type HTMLAttributes, type ReactNode } fro
  *
  * Faithfully ported 1:1 from 小红书文案助手 Design System/components/content/TopicCard.jsx.
  */
-export interface TopicCardProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"> {
+export interface TopicCardProps extends Omit<HTMLAttributes<HTMLDivElement>, "title" | "onClick"> {
   index?: number;
-  title?: ReactNode;
+  title: ReactNode;
   rationale?: ReactNode;
   hotRate?: number | null;
+  onClick?: () => void;
 }
 
 export function TopicCard({

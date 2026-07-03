@@ -12,6 +12,7 @@ import { useState, type CSSProperties, type ReactNode, type Ref, type TextareaHT
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   footer?: ReactNode;
   invalid?: boolean;
+  rows?: number;
   innerRef?: Ref<HTMLTextAreaElement> | null;
   containerStyle?: CSSProperties;
 }

@@ -68,11 +68,10 @@ export interface PanelSegment {
 export interface PendingSegment { kind: "pending"; lang: "xhs_topics" | "xhs_copy" }
 export type Segment = TextSegment | TopicsSegment | CopySegment | PanelSegment | PendingSegment;
 
-// 匹配 ```xhs_topics ... ```, ```xhs_copy ... ``` 或 ```xhs_panel ... ```。
 // 语言标签后允许「换行」或「同行空格紧跟 JSON」两种写法 —— 不同模型(OpenAI 兼容网关 vs
 // Anthropic 原生 /v1/messages)对围栏后换行习惯不同,Claude 常把 JSON 写在标签同一行,
 // 故标签后用 [ \t]*\r?\n? 兼容两者(不强制换行),否则同行写法会整块漏解析。
-const FENCE_RE = /```(xhs_topics|xhs_copy|xhs_panel)[ \t]*\r?\n?([\s\S]*?)```/g;
+const OPEN_FENCE_RE = /```(xhs_topics|xhs_copy|xhs_panel)[ \t]*\r?\n?/g;
 
 /**
  * 把内容字符串切成有序片段。
@@ -80,80 +79,63 @@ const FENCE_RE = /```(xhs_topics|xhs_copy|xhs_panel)[ \t]*\r?\n?([\s\S]*?)```/g;
  */
 export function parseXhsBlocks(content: string): Segment[] {
   const segments: Segment[] = [];
-  let lastIndex = 0;
-  let m: RegExpExecArray | null;
-  FENCE_RE.lastIndex = 0;
+  let cursor = 0;
 
   const pushText = (text: string) => {
     if (text.length > 0) segments.push({ kind: "text", text });
   };
 
-  while ((m = FENCE_RE.exec(content)) !== null) {
-    const [full, lang, inner] = m;
-    const parsed = tryParse(lang, inner);
-    if (parsed) {
-      pushText(content.slice(lastIndex, m.index));
-      segments.push(parsed);
-      lastIndex = m.index + full.length;
-    } else {
-      // 即使闭合，如果 JSON 解析失败（可能带有未闭合转义符），我们也采用增量解析挽救，避免降级为裸露 JSON
-      pushText(content.slice(lastIndex, m.index));
-      if (lang === "xhs_topics") {
-        const partialData = parsePartialXhsTopics(inner);
-        segments.push({ kind: "topics", data: partialData, isPending: true });
-      } else if (lang === "xhs_copy") {
-        const partialData = parsePartialXhsCopy(inner);
-        segments.push({ kind: "copy", data: partialData, isPending: true });
-      } else if (lang === "xhs_panel") {
-        const partialData = parsePartialXhsPanel(inner);
-        segments.push({ kind: "panel", data: partialData });
-      }
-      lastIndex = m.index + full.length;
+  const pushPartial = (lang: string, inner: string) => {
+    if (lang === "xhs_topics") {
+      const partialData = parsePartialXhsTopics(inner);
+      segments.push({ kind: "topics", data: partialData, isPending: true });
+    } else if (lang === "xhs_copy") {
+      const partialData = parsePartialXhsCopy(inner);
+      segments.push({ kind: "copy", data: partialData, isPending: true });
+    } else if (lang === "xhs_panel") {
+      const partialData = parsePartialXhsPanel(inner);
+      segments.push({ kind: "panel", data: partialData });
     }
-  }
+  };
 
-  // 处理未闭合流式文本检测
-  const rest = content.slice(lastIndex);
-  const openRe = /```(xhs_topics|xhs_copy|xhs_panel)\b/g;
-  let lastOpen: RegExpExecArray | null = null;
-  let mm: RegExpExecArray | null;
-  while ((mm = openRe.exec(rest)) !== null) lastOpen = mm;
-
-  if (lastOpen) {
-    const afterOpen = rest.slice(lastOpen.index + lastOpen[0].length);
-    const hasClosing = afterOpen.includes("```");
-    if (!hasClosing) {
-      // 未闭合状态（大模型正在吐字）：将前段文本 push，后段正在流动的 JSON 部分增量提取渲染
-      pushText(rest.slice(0, lastOpen.index));
-      const lang = lastOpen[1];
-      if (lang === "xhs_topics") {
-        const partialData = parsePartialXhsTopics(afterOpen);
-        segments.push({ kind: "topics", data: partialData, isPending: true });
-      } else if (lang === "xhs_copy") {
-        const partialData = parsePartialXhsCopy(afterOpen);
-        segments.push({ kind: "copy", data: partialData, isPending: true });
-      } else if (lang === "xhs_panel") {
-        const partialData = parsePartialXhsPanel(afterOpen);
-        segments.push({ kind: "panel", data: partialData });
-      }
-    } else {
-      // 虽包含闭合标记但主正则未匹配上（JSON 暂时非法），依然用增量解析降噪
-      const inner = afterOpen.split("```")[0];
-      pushText(rest.slice(0, lastOpen.index));
-      const lang = lastOpen[1];
-      if (lang === "xhs_topics") {
-        const partialData = parsePartialXhsTopics(inner);
-        segments.push({ kind: "topics", data: partialData, isPending: true });
-      } else if (lang === "xhs_copy") {
-        const partialData = parsePartialXhsCopy(inner);
-        segments.push({ kind: "copy", data: partialData, isPending: true });
-      } else if (lang === "xhs_panel") {
-        const partialData = parsePartialXhsPanel(inner);
-        segments.push({ kind: "panel", data: partialData });
-      }
+  while (cursor < content.length) {
+    OPEN_FENCE_RE.lastIndex = cursor;
+    const open = OPEN_FENCE_RE.exec(content);
+    if (!open) {
+      pushText(content.slice(cursor));
+      break;
     }
-  } else {
-    pushText(rest);
+
+    const lang = open[1];
+    const innerStart = open.index + open[0].length;
+    let searchFrom = innerStart;
+    let firstClose = -1;
+    let matched = false;
+
+    while (searchFrom < content.length) {
+      const close = content.indexOf("```", searchFrom);
+      if (close === -1) break;
+      if (firstClose === -1) firstClose = close;
+
+      const inner = content.slice(innerStart, close);
+      const parsed = tryParse(lang, inner);
+      if (parsed) {
+        pushText(content.slice(cursor, open.index));
+        segments.push(parsed);
+        cursor = close + 3;
+        matched = true;
+        break;
+      }
+      searchFrom = close + 3;
+    }
+
+    if (!matched) {
+      // JSON 仍未闭合/非法时，降级到局部解析以保持流式输出可见。
+      pushText(content.slice(cursor, open.index));
+      const partialEnd = firstClose === -1 ? content.length : firstClose;
+      pushPartial(lang, content.slice(innerStart, partialEnd));
+      cursor = firstClose === -1 ? content.length : firstClose + 3;
+    }
   }
 
   if (segments.length === 0) segments.push({ kind: "text", text: content });
@@ -474,4 +456,3 @@ function parsePartialXhsPanel(inner: string) {
   }
   return { actions };
 }
-

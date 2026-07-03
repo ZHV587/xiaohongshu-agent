@@ -1,30 +1,55 @@
 "use client";
 
 // 创作 screen — recents · chat · right panel (选题卡 + 创作栏).
-// CreationScreen 固定走默认「上下堆叠」结构（无 rightLayout 变体）。
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Avatar, Badge, Button, Card, TopicCard, ThinkingAura, Textarea, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/StudioContext";
 import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
 
-export function CreationScreen() {
+export type RightLayout = "stack" | "split" | "composer";
+const RESPONSE_LOADING_TEXT = "正在思考并检索数据底座";
+const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
+
+export function CreationScreen({ rightLayout = "stack" }: { rightLayout?: RightLayout }) {
   const { note, actions } = useStudio();
   const [detailId, setDetailId] = useState<number | null>(null);
+  const rightWidth = rightLayout === "split" ? 620 : 400;
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
       <Recents onNew={() => { setDetailId(null); actions.newChat(); }} compact />
       <ChatColumn showTopics={false} />
-      <section style={{ width: 400, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
+      <section style={{ width: rightWidth, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
         <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           {detailId
             ? <TopicDetail topicId={detailId} onBack={() => setDetailId(null)} />
-            : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <TopicRail orientation="vertical" chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
-                <div style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", lineHeight: 1.6, padding: "6px 8px", background: "var(--oats-light)", borderRadius: "var(--radius-sm)" }}>点选题卡看详情 → 再进入<b style={{ color: "var(--primary)" }}>深度创作</b></div>
-              </div>}
+            : (
+              <>
+                {rightLayout === "split" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.05fr) minmax(220px, 0.95fr)", gap: 14, alignItems: "start" }}>
+                    <TopicRail orientation="horizontal" chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, position: "sticky", top: 0 }}>
+                      <SelectedTopicBar onBrowse={() => setDetailId(null)} />
+                      <DraftSnapshot />
+                    </div>
+                  </div>
+                )}
+                {rightLayout === "composer" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <SelectedTopicBar onBrowse={() => setDetailId(null)} />
+                    <DraftSnapshot expanded />
+                  </div>
+                )}
+                {rightLayout !== "split" && rightLayout !== "composer" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <TopicRail orientation="vertical" chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
+                    <div style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", lineHeight: 1.6, padding: "6px 8px", background: "var(--oats-light)", borderRadius: "var(--radius-sm)" }}>点选题卡看详情 → 再进入<b style={{ color: "var(--primary)" }}>深度创作</b></div>
+                  </div>
+                )}
+              </>
+            )}
         </div>
       </section>
     </div>
@@ -34,10 +59,11 @@ export function CreationScreen() {
 // 选题卡 rail
 function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal" | "vertical"; chosen: number | null; onChoose: (t: Topic) => void }) {
   const { topics, evidence, images, actions } = useStudio();
+  const horizontal = orientation === "horizontal";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
       <PanelHead icon="lightbulb" title="选题卡" sub="数据底座检索 · 加权排序 · 点击进入创作" right={<Button variant="ghost" size="sm" leftIcon={<Icon name="refresh-cw" size={12} />} onClick={() => actions.say("再换一批不同角度的选题")}>换一批</Button>} />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: horizontal ? "repeat(3, minmax(128px, 1fr))" : "1fr 1fr", gap: 10 }}>
         {topics.map((t) => {
           const on = t.id === chosen;
           const evCount = (evidence[t.id] || { items: [] }).items.length;
@@ -46,7 +72,7 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
               borderRadius: "var(--radius-md)", overflow: "hidden", cursor: "pointer",
               border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: "var(--surface-card)",
               boxShadow: on ? "var(--shadow-md)" : "var(--shadow-xs)", display: "flex", flexDirection: "column" }}>
-              <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)" }}>
+                <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)" }}>
                 {images.length > 0 && <img src={images[(t.id - 1) % images.length]} alt={t.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
                 <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 58%, rgba(0,0,0,0.42))" }} />
                 <span style={{ position: "absolute", top: 7, left: 7, fontSize: 8, fontWeight: 700, color: "#fff", background: "rgba(0,0,0,0.36)", padding: "2px 7px", borderRadius: 999 }}>{t.angle}</span>
@@ -64,6 +90,65 @@ function TopicRail({ orientation, chosen, onChoose }: { orientation: "horizontal
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function SelectedTopicBar({ onBrowse }: { onBrowse: () => void }) {
+  const { note, topics, actions } = useStudio();
+  const topic = topics.find((t) => t.id === note.topicId);
+  if (!topic) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: "var(--radius-md)", border: "1px dashed var(--border-coral)", background: "var(--accent-surface)", color: "var(--primary)", fontSize: "var(--text-xs)", fontWeight: 700 }}>
+        <Icon name="lightbulb" size={13} /> 先选择一个选题进入创作栏
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-coral)", background: "color-mix(in srgb, var(--accent-surface) 55%, white)" }}>
+      <Badge tone="topic" shape="chip">{topic.angle}</Badge>
+      <span style={{ flex: 1, minWidth: 0, fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topic.title}</span>
+      {topic.hotRate != null && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--hot)", whiteSpace: "nowrap" }}>🔥 {topic.hotRate}%</span>}
+      <button onClick={onBrowse} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", background: "var(--surface-card)", borderRadius: "var(--radius-sm)", padding: "4px 9px", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}><Icon name="list" size={12} /> 换题</button>
+      <Button variant="soft" size="sm" leftIcon={<Icon name="feather" size={12} />} onClick={() => actions.setSection("deep")}>深度创作</Button>
+    </div>
+  );
+}
+
+function DraftSnapshot({ expanded = false }: { expanded?: boolean }) {
+  const { note, actions } = useStudio();
+  const body = note.body || "草稿会在这里流式生成。你也可以继续在中间对话框补充方向。";
+  return (
+    <Card padding="md" tone={note.status === "idle" ? "sunken" : "default"} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <PanelHead icon="feather" title="创作栏" sub="标题 · 正文 · 标签 · 定稿入口" />
+      <div>
+        <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3, color: note.title ? "var(--text-body)" : "var(--text-subtle)" }}>
+          {note.title || "等待生成标题"}
+        </div>
+        <p style={{ margin: "8px 0 0", fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)", whiteSpace: "pre-wrap", maxHeight: expanded ? 260 : 120, overflow: "hidden" }}>
+          {body}
+        </p>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {note.tags.length ? note.tags.map((tag) => <Badge key={tag} tone="topic" shape="chip">#{tag}</Badge>) : <span style={{ fontSize: 10, color: "var(--text-subtle)" }}>暂无标签</span>}
+      </div>
+      <Button variant="primary" size="sm" block leftIcon={<Icon name="feather" size={13} />} onClick={() => actions.setSection("deep")}>进入完整创作栏</Button>
+    </Card>
+  );
+}
+
+function StateNote({ tone = "muted", children }: { tone?: "muted" | "warning"; children: ReactNode }) {
+  return (
+    <div style={{
+      border: `1px solid ${tone === "warning" ? "var(--border-coral)" : "var(--border)"}`,
+      background: tone === "warning" ? "var(--accent-surface)" : "var(--oats-light)",
+      color: tone === "warning" ? "var(--primary)" : "var(--text-muted)",
+      borderRadius: "var(--radius-md)",
+      padding: "9px 12px",
+      fontSize: "var(--text-xs)",
+      lineHeight: "var(--leading-relaxed)",
+    }}>
+      {children}
     </div>
   );
 }
@@ -118,19 +203,32 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
                   <ThinkingAura
                     steps={item.run.steps}
                     logs={item.run.logs.length ? item.run.logs : null}
+                    title={item.run.done ? undefined : RESPONSE_LOADING_TEXT}
                     defaultCollapsed={item.run.done}
                   />
                 </div>
               </div>
             );
           }
-          // item.kind === "ai"
-          return (
-            <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
-              <Avatar glyph="🍠" variant="agent" size={32} />
-              <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", boxShadow: "var(--shadow-sm)", alignSelf: "flex-start" }}>{item.text}</div>
-            </div>
-          );
+          if (item.kind === "error") {
+            return (
+              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+                <Avatar glyph="🍠" variant="agent" size={32} />
+                <div style={{ flex: 1, maxWidth: 440 }}>
+                  <StateNote tone="warning">{item.text || RESPONSE_ERROR_TEXT}</StateNote>
+                </div>
+              </div>
+            );
+          }
+          if (item.kind === "ai") {
+            return (
+              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+                <Avatar glyph="🍠" variant="agent" size={32} />
+                <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", boxShadow: "var(--shadow-sm)", alignSelf: "flex-start", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.text}</div>
+              </div>
+            );
+          }
+          return null;
         })}
 
         {/* 选题卡:仅当真实产出选题时,在助手气泡内渲染(showTopics 布局下);无选题不显示 */}
@@ -150,7 +248,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
         {trends.length > 0 && (
           <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
             <Avatar glyph="🍠" variant="agent" size={32} />
-            <div style={{ flex: 1, minWidth: 0 }}><TrendRadar /></div>
+            <div style={{ flex: 1, minWidth: 0 }}><TrendingTopics /></div>
           </div>
         )}
       </div>
@@ -242,7 +340,7 @@ export function EvidencePanel() {
 }
 
 // 热点趋势雷达 — 外部实时信号（区别于内部历史沉淀），驱动探索型选题
-function TrendRadar() {
+function TrendingTopics() {
   const { trends, actions } = useStudio();
   const toneBg: Record<string, string> = { hot: "var(--hot-surface)", coral: "var(--accent-surface)", topic: "var(--topicblue-light)" };
   const toneFg: Record<string, string> = { hot: "var(--hot)", coral: "var(--primary)", topic: "var(--topicblue-default)" };

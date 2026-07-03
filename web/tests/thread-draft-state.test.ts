@@ -37,6 +37,33 @@ test("parseAiDraft falls back when first line is too long", () => {
   });
 });
 
+test("parseAiDraft prefers xhs_copy body over machine-readable planning blocks", () => {
+  const draft = parseAiDraft(
+    [
+      "```xhs_topics",
+      JSON.stringify({ topics: [{ title: "机器选题块" }] }),
+      "```",
+      "```xhs_copy",
+      JSON.stringify({
+        versions: [
+          {
+            title: "第一次露营别乱买",
+            body: "第一次露营真的别一上来就买一堆。\n\n先把睡眠、照明、收纳、防潮这几件事解决。",
+          },
+        ],
+      }),
+      "```",
+      "已基于数据底座生成选题与草稿。",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(draft, {
+    title: "第一次露营别乱买",
+    content:
+      "第一次露营真的别一上来就买一堆。\n\n先把睡眠、照明、收纳、防潮这几件事解决。",
+  });
+});
+
 test("readDraftSnapshot tolerates missing and malformed autosave payloads", () => {
   assert.deepEqual(readDraftSnapshot(null), { title: "", content: "" });
   assert.deepEqual(readDraftSnapshot("{bad json"), { title: "", content: "" });
