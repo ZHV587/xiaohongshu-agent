@@ -45,6 +45,9 @@ class TraceSequencer:
             return value
 
 
+_GLOBAL_SEQUENCER = TraceSequencer()
+
+
 def sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
         clean: dict[str, Any] = {}
@@ -202,3 +205,101 @@ def emit_trace(
     except RuntimeError:
         return
     writer(event)
+
+
+def _config_identity(config: Any) -> dict[str, str | None]:
+    configurable: dict[str, Any] = {}
+    if isinstance(config, dict):
+        raw = config.get("configurable")
+        if isinstance(raw, dict):
+            configurable = raw
+    else:
+        raw = getattr(config, "configurable", None)
+        if isinstance(raw, dict):
+            configurable = raw
+
+    thread_id = configurable.get("thread_id")
+    run_id = str(configurable.get("run_id") or thread_id or f"run-{uuid.uuid4().hex}")
+    trace_id = str(configurable.get("trace_id") or run_id)
+    turn_id = str(configurable.get("turn_id") or thread_id or run_id)
+    return {
+        "trace_id": trace_id,
+        "run_id": run_id,
+        "turn_id": turn_id,
+        "thread_id": str(thread_id) if thread_id else None,
+    }
+
+
+def _metrics_from_result(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    metrics: dict[str, Any] = {}
+    results = result.get("results")
+    if isinstance(results, list):
+        metrics["found_count"] = len(results)
+    for key in ("used_count", "excluded_count"):
+        value = result.get(key)
+        if isinstance(value, int):
+            metrics[key] = value
+    return metrics
+
+
+def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
+    if getattr(tool_obj, "_xhs_trace_wrapped", False):
+        return tool_obj
+
+    original = tool_obj.func
+
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        identity = _config_identity(kwargs.get("config"))
+        tool_call_id = f"xhs-tool-{uuid.uuid4().hex}"
+        started = build_trace_event(
+            type="xhs.trace.tool.started",
+            stage_id=stage_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_obj.name,
+            label=label,
+            visibility="user",
+            sequencer=_GLOBAL_SEQUENCER,
+            safe_args=sanitize_payload({"args": args, "kwargs": kwargs}),
+            **identity,
+        )
+        emit_trace(started)
+        try:
+            result = original(*args, **kwargs)
+        except Exception as exc:
+            failed = build_trace_event(
+                type="xhs.trace.tool.failed",
+                stage_id=stage_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_obj.name,
+                label=label,
+                visibility="user",
+                sequencer=_GLOBAL_SEQUENCER,
+                parent_id=started["event_id"],
+                error={"code": exc.__class__.__name__, "message": str(exc)},
+                **identity,
+            )
+            emit_trace(failed)
+            raise
+
+        completed = build_trace_event(
+            type="xhs.trace.tool.completed",
+            stage_id=stage_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_obj.name,
+            label=label,
+            visibility="user",
+            sequencer=_GLOBAL_SEQUENCER,
+            parent_id=started["event_id"],
+            metrics=_metrics_from_result(result),
+            safe_result=sanitize_payload(result if isinstance(result, dict) else {}),
+            **identity,
+        )
+        emit_trace(completed)
+        return result
+
+    tool_obj.func = wrapped
+    setattr(tool_obj, "_xhs_trace_wrapped", True)
+    setattr(tool_obj, "_xhs_trace_stage_id", stage_id)
+    return tool_obj

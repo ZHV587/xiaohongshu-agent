@@ -127,3 +127,51 @@ def test_emit_trace_noops_outside_langgraph_context(monkeypatch) -> None:
     )
 
     emit_trace(event, persist=False)
+
+
+def test_trace_tool_wrapper_emits_started_and_completed(monkeypatch) -> None:
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+
+    emitted = []
+    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
+
+    @tool
+    def sample_tool(query: str, config: dict | None = None) -> dict:
+        """Search sample resources."""
+        return {"ok": True, "results": [1, 2, 3]}
+
+    wrapped = trace_tool(sample_tool, stage_id="retrieve", label="查找相关素材")
+    result = wrapped.func(
+        "职场穿搭",
+        config={"configurable": {"thread_id": "thread-1", "run_id": "run-1", "turn_id": "turn-1"}},
+    )
+
+    assert result == {"ok": True, "results": [1, 2, 3]}
+    assert [event["type"] for event in emitted] == ["xhs.trace.tool.started", "xhs.trace.tool.completed"]
+    assert emitted[0]["label"] == "查找相关素材"
+    assert emitted[1]["metrics"]["found_count"] == 3
+    assert emitted[0]["seq"] < emitted[1]["seq"]
+
+
+def test_trace_tool_wrapper_keeps_seq_monotonic_for_same_trace(monkeypatch) -> None:
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+
+    emitted = []
+    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
+
+    @tool
+    def sample_tool(query: str, config: dict | None = None) -> dict:
+        """Search sample resources."""
+        return {"ok": True, "results": [query]}
+
+    wrapped = trace_tool(sample_tool, stage_id="retrieve", label="查找相关素材")
+    config = {"configurable": {"thread_id": "thread-2", "run_id": "run-monotonic", "turn_id": "turn-2"}}
+
+    wrapped.func("职场穿搭", config=config)
+    wrapped.func("通勤包", config=config)
+
+    assert [event["seq"] for event in emitted] == [1, 2, 3, 4]

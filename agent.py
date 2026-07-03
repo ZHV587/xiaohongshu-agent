@@ -25,6 +25,7 @@ from model_registry import ModelRegistry
 from models import build_initial_placeholder_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents_executor import build_executor_subagents
+from data_foundation.agent_trace import trace_tool
 from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
 from tools.redfox_search import search_xhs_online
@@ -47,7 +48,34 @@ initial_model = build_initial_placeholder_model()
 model_registry = ModelRegistry()
 backend = build_backend()
 
-assembled_tools = data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes, lark_cli]
+TRACE_TOOL_STAGES = {
+    "semantic_search_resources": ("retrieve", "查找相关素材"),
+    "search_resources": ("retrieve", "按关键词补查素材"),
+    "search_local_note_cards": ("retrieve", "检索本地笔记卡"),
+    "get_resource": ("retrieve", "打开原文细看"),
+    "graph_expand": ("retrieve", "顺着图谱找关联"),
+    "save_generated_topic": ("persist", "保存选题"),
+    "save_generated_copy": ("persist", "保存文案"),
+    "save_user_feedback": ("persist", "沉淀反馈"),
+    "save_performance_metric": ("persist", "沉淀效果指标"),
+    "sync_copy_to_feishu": ("persist", "同步文案到飞书"),
+    "sync_topic_to_feishu": ("persist", "同步选题到飞书"),
+    "sync_diagnosis_to_feishu": ("persist", "同步诊断到飞书"),
+    "send_review_notification": ("persist", "发送审阅通知"),
+    "adopt_online_notes": ("persist", "采纳线上笔记"),
+    "search_xhs_online": ("retrieve", "搜索小红书线上"),
+}
+
+
+def _with_trace(tools):
+    wrapped = []
+    for tool_obj in tools:
+        stage = TRACE_TOOL_STAGES.get(getattr(tool_obj, "name", ""))
+        wrapped.append(trace_tool(tool_obj, stage_id=stage[0], label=stage[1]) if stage else tool_obj)
+    return wrapped
+
+
+assembled_tools = _with_trace(data_foundation_tools + feishu_action_tools + [search_xhs_online, adopt_online_notes, lark_cli])
 
 agent = create_deep_agent(
     model=initial_model,
