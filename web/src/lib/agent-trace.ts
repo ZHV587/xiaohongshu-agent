@@ -76,6 +76,43 @@ export function reduceTraceEvents(
   };
 }
 
+const STAGE_TITLES: Record<string, string> = {
+  understand: "理解你的需求",
+  retrieve: "查找相关素材",
+  rank: "筛选可用依据",
+  compose: "整理选题/正文",
+  validate: "检查依据是否充分",
+  persist: "保存/同步结果",
+};
+
+const TOOL_TITLES: Record<string, string> = {
+  semantic_search_resources: "查找相关素材",
+  search_resources: "按关键词补查素材",
+  search_local_note_cards: "检索本地笔记卡",
+  get_resource: "打开原文细看",
+  graph_expand: "顺着图谱找关联",
+  save_generated_topic: "保存选题",
+  save_generated_copy: "保存文案",
+  sync_copy_to_feishu: "同步文案到飞书",
+  sync_topic_to_feishu: "同步选题到飞书",
+  sync_diagnosis_to_feishu: "同步诊断到飞书",
+  adopt_online_notes: "采纳线上笔记",
+  search_xhs_online: "搜索小红书线上",
+};
+
+const ENGINEERING_WORD_RE = /\b(agent|trace|run|tool|custom|debug|schema|payload|warning|error|retry)\b/i;
+
+function userTitle(event: XhsTraceEvent): string {
+  if (event.stage_id && STAGE_TITLES[event.stage_id]) return STAGE_TITLES[event.stage_id];
+  if (event.tool_name && TOOL_TITLES[event.tool_name]) return TOOL_TITLES[event.tool_name];
+  return "处理当前步骤";
+}
+
+function userSummary(event: XhsTraceEvent, title: string): string {
+  if (event.summary && !ENGINEERING_WORD_RE.test(event.summary)) return event.summary;
+  return title;
+}
+
 function metricsText(metrics: XhsTraceEvent["metrics"]): string | undefined {
   if (!metrics) return undefined;
   const parts: string[] = [];
@@ -101,14 +138,17 @@ export function toTracePresentation(state: TraceRunState): TracePresentation {
   const stageEvents = userEvents.filter(
     (item) => item.stage_id || item.type.startsWith("xhs.trace.tool."),
   );
-  const userStages = stageEvents.map((item) => ({
-    id: item.stage_id ?? item.tool_call_id ?? item.event_id,
-    title: item.label,
-    summary: item.summary ?? item.label,
-    statusText: statusText(item),
-    metricsText: metricsText(item.metrics),
-    sourceEventIds: [item.event_id],
-  }));
+  const userStages = stageEvents.map((item) => {
+    const title = userTitle(item);
+    return {
+      id: item.stage_id ?? item.tool_call_id ?? item.event_id,
+      title,
+      summary: userSummary(item, title),
+      statusText: statusText(item),
+      metricsText: metricsText(item.metrics),
+      sourceEventIds: [item.event_id],
+    };
+  });
   return {
     traceId: state.traceId,
     turnId: state.turnId,

@@ -64,3 +64,38 @@ test("presentation uses friendly Chinese and preserves source ids", () => {
   assert.equal(presentation.userStages[0].metricsText, "找到 12 条，采用 3 条");
   assert.deepEqual(presentation.userStages[0].sourceEventIds, ["e2"]);
 });
+
+test("ordinary presentation hides engineering words", () => {
+  const state = reduceTraceEvents(undefined, [
+    event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
+    event({
+      event_id: "e2",
+      seq: 2,
+      tool_name: "semantic_search_resources",
+      label: "tool completed",
+      metrics: { found_count: 12, used_count: 3 },
+    }),
+    event({ event_id: "e3", seq: 3, type: "xhs.trace.run.completed", label: "run completed" }),
+  ]);
+
+  const presentation = toTracePresentation(state);
+  const visible = JSON.stringify({ summary: presentation.userSummary, stages: presentation.userStages });
+
+  for (const word of [
+    "Agent",
+    "trace",
+    "run",
+    "tool",
+    "custom",
+    "debug",
+    "schema",
+    "payload",
+    "warning",
+    "error",
+    "retry",
+  ]) {
+    assert.equal(visible.includes(word), false, `ordinary UI leaked ${word}`);
+  }
+  assert.match(visible, /查找相关素材/);
+  assert.match(visible, /找到 12 条/);
+});
