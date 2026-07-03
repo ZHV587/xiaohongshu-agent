@@ -52,7 +52,7 @@ def test_map_atom_skills_uses_local_xhs_skill_names():
         "xhs-diagnosis",
         "xhs-deconstruct",
         "xhs-action",
-        "xhs-benchmark",
+        "benchmark-analyst",
     ]
 
 

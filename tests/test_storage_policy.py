@@ -4,7 +4,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUSINESS_SKILLS = (
     "topic-content",
-    "xhs-chatroom",
     "xhs-content-system",
     "xhs-decision",
     "xhs-learning",
@@ -76,7 +75,6 @@ def test_business_skills_do_not_persist_to_local_files() -> None:
 
 def test_shareable_business_assets_use_database_and_feishu() -> None:
     generic_snapshot_skills = (
-        "xhs-chatroom",
         "xhs-content-system",
         "xhs-decision",
         "xhs-learning",

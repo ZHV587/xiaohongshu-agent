@@ -25,17 +25,12 @@ ROUTED_SKILLS = [
     "xhs-good-question",
     "xhs-action",
     "xhs-slowisfast",
-    "xhs-benchmark",
-    "xhs-content-system",
     "xhs-title",
     "xhs-hook",
     "xhs-copywriting",
     "xhs-audit",
     "xhs-decision",
     "xhs-learning",
-    "xhs-chatroom",
-    "xhs-system",
-    "xhs-dbskill-upgrade",
 ]
 
 # 飞书工具 skill 的 description 含 /base/ 链接路径、应用内/短信 等顿号词组,

@@ -293,7 +293,7 @@ def test_lark_adapter_auto_update_functions_are_gone(monkeypatch):
 
 
 def test_agent_registers_executor_subagents(monkeypatch):
-    """xhs-router 必须注册全部执行型子智能体(已收敛为 2 个:重检索 + 风格提炼),不多不少。
+    """xhs-router 必须注册全部执行型子智能体(已收敛为 4 个),不多不少。
 
     thin 持久化子代理 topic-generator/copy-generator/state-manager 已移除,
     落库/同步由主控用工具直调。
@@ -348,8 +348,8 @@ def test_knowledge_retriever_subagent_has_evidence_response_format(monkeypatch):
     importlib.reload(agent_module)
 
     by_name = {s["name"]: s for s in captured_subagents}
-    # 恰 2 个子代理,且无 thin 持久化子代理残留
-    assert set(by_name) == {"knowledge-atom-retriever", "persona-distiller"}
+    # 升级为 4 个子代理,且无 thin 持久化子代理残留
+    assert set(by_name) == {"knowledge-atom-retriever", "persona-distiller", "benchmark-analyst", "expert-panel-debater"}
     assert "topic-generator" not in by_name
     assert "copy-generator" not in by_name
     assert "state-manager" not in by_name

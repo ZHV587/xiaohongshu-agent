@@ -52,7 +52,7 @@ description: |
 {一段可以直接交给 Agent 执行的问题}
 
 **建议调用的能力**：
-{xhs-positioning / xhs-benchmark / xhs-content / xhs-title / xhs-hook / xhs-action}
+{xhs-positioning / benchmark-analyst / xhs-content / xhs-title / xhs-hook / xhs-action}
 
 **还需要用户补充的 1-3 个问题**：
 1. {问题}
@@ -79,7 +79,7 @@ description: |
 | 触发条件 | 推荐 |
 |---|---|
 | 问题重构后属于定位 | 「转入账号定位（`xhs-positioning`）。」 |
-| 问题重构后属于对标 | 「转入对标分析（`xhs-benchmark`）。」 |
+| 问题重构后属于对标 | 「转入对标分析。」；内部路由:调用 `task` 委派 `benchmark-analyst` |
 | 问题重构后属于内容质量 | 「转入内容诊断（`xhs-content`）。」 |
 | 问题重构后属于执行卡点 | 「转入执行力自检（`xhs-action`）。」 |
 

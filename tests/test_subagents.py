@@ -1,7 +1,8 @@
 """executor subagents 回归测试。
 
-子代理已收敛为 2 个重任务路径:knowledge-atom-retriever(重检索)与
-persona-distiller(风格提炼)。原 thin 持久化子代理 topic-generator/
+子代理已收敛为 4 个执行型重任务路径:knowledge-atom-retriever(重检索)、
+persona-distiller(风格提炼)、benchmark-analyst(对标分析)与
+expert-panel-debater(多专家诊断)。原 thin 持久化子代理 topic-generator/
 copy-generator/state-manager 已移除,落库/同步由主控用工具直调。
 """
 from unittest.mock import Mock
@@ -22,10 +23,10 @@ def _registry():
     return r
 
 
-def test_executor_subagent_names_converged_to_two():
-    """子代理恰为 2 个,且不含已移除的 thin 持久化工厂。"""
+def test_executor_subagent_names_converged_to_four():
+    """子代理已升级为 4 个，只保留重检索、风格提炼、对标分析和多专家诊断。"""
     assert EXECUTOR_SUBAGENT_NAMES == frozenset(
-        {"knowledge-atom-retriever", "persona-distiller"}
+        {"knowledge-atom-retriever", "persona-distiller", "benchmark-analyst", "expert-panel-debater"}
     )
     for removed in ("build_topic_generator", "build_copy_generator", "build_state_manager"):
         assert not hasattr(subagents_executor, removed), (

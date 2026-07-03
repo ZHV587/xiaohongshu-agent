@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 
 
 RUNTIME_MODULES = [
@@ -17,7 +18,15 @@ RUNTIME_MODULES = [
 ]
 
 
+def _ensure_repo_root_on_path() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    root = str(repo_root)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
 def main() -> int:
+    _ensure_repo_root_on_path()
     failed: list[str] = []
     for module_name in RUNTIME_MODULES:
         try:

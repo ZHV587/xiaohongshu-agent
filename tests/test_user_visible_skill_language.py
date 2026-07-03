@@ -40,7 +40,6 @@ TARGET_SKILLS = (
     "topic-content",
     "xhs-copywriting",
     "xhs-content-system",
-    "xhs-benchmark",
     "xhs-content",
     "xhs-action",
 )
@@ -88,14 +87,13 @@ def test_internal_routing_hints_remain_available_to_skills():
     required = {
         "topic-content": ("`xhs-copywriting`",),
         "xhs-copywriting": ("转入 `xhs-audit`",),
-        "xhs-content-system": ("转入 `xhs-copywriting`", "转入 `xhs-benchmark`"),
-        "xhs-benchmark": ("转入 `topic-content`", "转入 `xhs-copywriting`"),
+        "xhs-content-system": ("转入 `xhs-copywriting`", "委派 `benchmark-analyst`"),
         "xhs-content": (
             "转入 `xhs-hook`",
             "转入 `xhs-title`",
             "转入 `xhs-audit`",
             "转入 `xhs-action`",
-            "转入 `xhs-benchmark`",
+            "委派 `benchmark-analyst`",
         ),
         "xhs-action": ("转入 `xhs-good-question`", "转入 `xhs-slowisfast`", "转入 `xhs-positioning`"),
     }

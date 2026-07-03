@@ -186,7 +186,7 @@ DBSKILL_TO_LOCAL_SKILL = {
     "dbs-diagnosis": "xhs-diagnosis",
     "dbs-deconstruct": "xhs-deconstruct",
     "dbs-unblock": "xhs-action",
-    "dbs-benchmark": "xhs-benchmark",
+    "dbs-benchmark": "benchmark-analyst",
 }
 
 

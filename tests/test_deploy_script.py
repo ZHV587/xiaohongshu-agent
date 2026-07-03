@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from scripts import deploy, deploy_health_check
+from pathlib import Path
+
+from scripts import deploy, deploy_health_check, runtime_import_smoke
 
 
 class _FakeStdout:
@@ -36,6 +38,16 @@ def test_deployment_commands_use_runtime_smoke_not_pytest() -> None:
     assert "uv pip install" not in joined
     assert "scripts/runtime_import_smoke.py" in joined
     assert "scripts/deploy_health_check.py" in joined
+
+
+def test_runtime_import_smoke_adds_repo_root_to_pythonpath(monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[1]
+    without_root = [item for item in runtime_import_smoke.sys.path if item != str(root)]
+    monkeypatch.setattr(runtime_import_smoke.sys, "path", without_root)
+
+    runtime_import_smoke._ensure_repo_root_on_path()
+
+    assert runtime_import_smoke.sys.path[0] == str(root)
 
 
 def test_execute_commands_aborts_on_first_failure() -> None:
