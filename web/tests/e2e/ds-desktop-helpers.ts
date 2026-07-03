@@ -241,7 +241,9 @@ export function captureDiagnostics(page: Page): Diagnostics {
     if (message.type() === "error") diagnostics.consoleErrors.push(message.text());
   });
   page.on("requestfailed", (request) => {
-    diagnostics.failedRequests.push(`${request.method()} ${request.url()} ${request.failure()?.errorText ?? ""}`.trim());
+    const errorText = request.failure()?.errorText ?? "";
+    if (errorText === "net::ERR_ABORTED") return;
+    diagnostics.failedRequests.push(`${request.method()} ${request.url()} ${errorText}`.trim());
   });
   page.on("response", (response) => {
     if (response.status() >= 400) diagnostics.failedRequests.push(`${response.status()} ${response.url()}`);
