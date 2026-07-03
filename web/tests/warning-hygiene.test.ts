@@ -28,6 +28,20 @@ test("StudioProvider file exports only the component runtime, keeping Fast Refre
   assert.match(hookSource, /export function useStudio\(\): StudioStore/);
 });
 
+test("TraceProvider file exports only the component runtime, keeping Fast Refresh quiet", () => {
+  const providerSource = readFromWeb("src", "providers", "trace-context.tsx");
+  const storePath = join(webRoot, "src", "providers", "trace-store.ts");
+
+  assert.equal(providerSource.includes("createContext("), false);
+  assert.equal(providerSource.includes("useContext("), false);
+  assert.equal(providerSource.includes("export function useTraceContext"), false);
+  assert.equal(existsSync(storePath), true);
+
+  const storeSource = readFileSync(storePath, "utf8");
+  assert.match(storeSource, /export const TraceContext = createContext<TraceContextValue \| null>/);
+  assert.match(storeSource, /export function useTraceContext\(\): TraceContextValue/);
+});
+
 test("Next lint/build config uses supported flat-config plumbing without deprecated next lint", () => {
   const eslintConfig = readFromWeb("eslint.config.js");
   const pkg = JSON.parse(readFromWeb("package.json")) as { scripts: Record<string, string> };

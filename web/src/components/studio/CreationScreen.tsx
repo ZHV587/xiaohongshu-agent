@@ -193,6 +193,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
                     steps={item.run.steps}
                     logs={item.run.logs.length ? item.run.logs : null}
                     title={item.run.presentation?.userSummary ?? (item.run.done ? undefined : RESPONSE_LOADING_TEXT)}
+                    defaultOpen={Boolean(item.run.presentation)}
                     defaultCollapsed={item.run.presentation?.collapsedByDefault ?? item.run.done}
                   />
                 </div>

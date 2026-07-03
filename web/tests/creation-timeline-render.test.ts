@@ -36,6 +36,10 @@ test("official trace presentation summary is passed into ThinkingAura", () => {
   assert.match(src, /item\.run\.presentation\?\.collapsedByDefault/);
 });
 
+test("official trace presentation opens detailed logs after expanding the summary", () => {
+  assert.match(src, /defaultOpen=\{Boolean\(item\.run\.presentation\)\}/);
+});
+
 test("no dead m.thinking branch remains", () => {
   assert.doesNotMatch(src, /m\.thinking/);
 });

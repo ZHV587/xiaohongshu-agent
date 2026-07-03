@@ -1,9 +1,7 @@
 "use client";
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useMemo,
   useState,
   type ReactNode,
@@ -17,14 +15,7 @@ import {
   type TraceRunState,
   type XhsTraceEvent,
 } from "@/lib/agent-trace";
-
-interface TraceContextValue {
-  presentationsByTurnId: Record<string, TracePresentation>;
-  appendTraceEvent: (event: XhsTraceEvent) => void;
-  clearTraceEvents: () => void;
-}
-
-const TraceContext = createContext<TraceContextValue | null>(null);
+import { TraceContext } from "./trace-store";
 
 export function TraceProvider({ children }: { children: ReactNode }) {
   const [states, setStates] = useState<Record<string, TraceRunState>>({});
@@ -55,11 +46,4 @@ export function TraceProvider({ children }: { children: ReactNode }) {
       {children}
     </TraceContext.Provider>
   );
-}
-
-export function useTraceContext(): TraceContextValue {
-  const value = useContext(TraceContext);
-  if (!value)
-    throw new Error("useTraceContext must be used within TraceProvider");
-  return value;
 }

@@ -6,7 +6,8 @@ import { isXhsTraceEvent } from "@/lib/agent-trace";
 import { useThreads } from "./thread-context";
 import { toBrowserApiUrl } from "./client";
 import { toast } from "sonner";
-import { TraceProvider, useTraceContext } from "./trace-context";
+import { TraceProvider } from "./trace-context";
+import { useTraceContext } from "./trace-store";
 import {
   StreamContext,
   isStreamUiEvent,

@@ -20,7 +20,7 @@ import { useQueryState } from "nuqs";
 import { useThread } from "@/components/thread/ThreadContext";
 import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
-import { useTraceContext } from "@/providers/trace-context";
+import { useTraceContext } from "@/providers/trace-store";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
 import { deriveTimeline, type TimelineItem } from "@/lib/thinking-trace";
 import { StudioContext } from "./useStudio";
