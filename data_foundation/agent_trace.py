@@ -180,3 +180,25 @@ class TraceRepository:
                 event.get("duration_ms"),
             ),
         )
+
+
+def get_stream_writer() -> Any:
+    from langgraph.config import get_stream_writer as langgraph_get_stream_writer
+
+    return langgraph_get_stream_writer()
+
+
+def emit_trace(
+    event: dict[str, Any],
+    *,
+    persist: bool = True,
+    repository: TraceRepository | None = None,
+    tenant_id: str = "default",
+) -> None:
+    if persist and repository is not None:
+        repository.append(tenant_id, event)
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        return
+    writer(event)

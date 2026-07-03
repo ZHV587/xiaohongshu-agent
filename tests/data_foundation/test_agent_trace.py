@@ -7,6 +7,7 @@ from data_foundation.agent_trace import (
     TraceRepository,
     TraceSequencer,
     build_trace_event,
+    emit_trace,
     fold_lifecycle,
     sanitize_payload,
 )
@@ -86,3 +87,43 @@ def test_repository_enforces_unique_seq(migrated_conn) -> None:
 
     with pytest.raises(Exception):
         repo.append("default", duplicate)
+
+
+def test_emit_trace_writes_custom_event(monkeypatch) -> None:
+    written = []
+
+    def fake_writer(event: dict) -> None:
+        written.append(event)
+
+    monkeypatch.setattr("data_foundation.agent_trace.get_stream_writer", lambda: fake_writer)
+    event = build_trace_event(
+        type="xhs.trace.run.started",
+        trace_id="trace-2",
+        run_id="run-2",
+        turn_id="turn-2",
+        label="开始处理",
+        visibility="user",
+        seq=1,
+    )
+
+    emit_trace(event, persist=False)
+
+    assert written == [event]
+
+
+def test_emit_trace_noops_outside_langgraph_context(monkeypatch) -> None:
+    def missing_writer():
+        raise RuntimeError("not in graph context")
+
+    monkeypatch.setattr("data_foundation.agent_trace.get_stream_writer", missing_writer)
+    event = build_trace_event(
+        type="xhs.trace.run.started",
+        trace_id="trace-3",
+        run_id="run-3",
+        turn_id="turn-3",
+        label="开始处理",
+        visibility="user",
+        seq=1,
+    )
+
+    emit_trace(event, persist=False)
