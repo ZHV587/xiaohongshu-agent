@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { type Message } from "@langchain/langgraph-sdk";
 import { useStream } from "@langchain/langgraph-sdk/react";
+import type { XhsTraceEvent } from "@/lib/agent-trace";
 import {
   uiMessageReducer,
   isUIMessage,
@@ -22,7 +23,7 @@ export const useTypedStream = useStream<
       ui?: (UIMessage | RemoveUIMessage)[] | UIMessage | RemoveUIMessage;
       context?: Record<string, unknown>;
     };
-    CustomEventType: UIMessage | RemoveUIMessage;
+    CustomEventType: UIMessage | RemoveUIMessage | XhsTraceEvent;
   }
 >;
 
@@ -41,7 +42,9 @@ export function reduceUiMessages(
   return previous ?? [];
 }
 
-export function isStreamUiEvent(event: unknown): event is UIMessage | RemoveUIMessage {
+export function isStreamUiEvent(
+  event: unknown,
+): event is UIMessage | RemoveUIMessage {
   return isUIMessage(event) || isRemoveUIMessage(event);
 }
 
