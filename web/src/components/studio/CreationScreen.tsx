@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Avatar, Badge, Button, Card, TopicCard, ThinkingAura, Textarea, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
-import { useStudio } from "@/components/studio/StudioContext";
+import { useStudio } from "@/components/studio/useStudio";
 import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
 

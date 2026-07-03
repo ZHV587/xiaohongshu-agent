@@ -1,33 +1,36 @@
 import js from "@eslint/js";
-import globals from "globals";
-import reactHooks from "eslint-plugin-react-hooks";
+import nextVitals from "eslint-config-next/core-web-vitals";
 import reactRefresh from "eslint-plugin-react-refresh";
-import tseslint from "typescript-eslint";
 
-export default tseslint.config(
+export default [
   { ignores: ["dist", ".next", "next-env.d.ts", "tsconfig.test.tsbuildinfo"] },
+  js.configs.recommended,
+  ...nextVitals,
   {
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    files: ["**/*.{ts,tsx}"],
-    languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
+    files: ["**/*.{js,mjs,cjs,ts,tsx}"],
+    rules: {
+      "import/no-anonymous-default-export": "off",
     },
+  },
+  {
+    files: ["**/*.{ts,tsx}"],
     plugins: {
-      "react-hooks": reactHooks,
       "react-refresh": reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      "no-undef": "off",
+      "no-unused-vars": "off",
+      "import/no-anonymous-default-export": "off",
+      "@next/next/no-img-element": "off",
+      "react-hooks/refs": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/static-components": "off",
       "@typescript-eslint/no-explicit-any": 0,
-      "@typescript-eslint/no-unused-vars": [
-        "warn",
-        { args: "none", argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
-      ],
+      "@typescript-eslint/no-unused-vars": "off",
       "react-refresh/only-export-components": [
         "warn",
         { allowConstantExport: true },
       ],
     },
   },
-);
+];

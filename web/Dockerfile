@@ -4,12 +4,15 @@
 # ---- deps:装依赖(含 dev,build 需要)----
 FROM node:20-alpine AS deps
 WORKDIR /app
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 COPY package.json package-lock.json ./
 RUN npm ci
 
 # ---- builder:构建 ----
 FROM node:20-alpine AS builder
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # NEXT_PUBLIC_* 在 build 时内联进客户端 bundle,必须在此提供(运行时注入对客户端无效)。

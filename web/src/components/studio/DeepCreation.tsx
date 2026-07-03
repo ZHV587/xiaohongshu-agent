@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { Badge, Button, Card, HashtagTag, TopicCard, Icon } from "@/components/ds";
-import { useStudio } from "@/components/studio/StudioContext";
+import { useStudio } from "@/components/studio/useStudio";
 import { computeChecks, scoreOf } from "@/components/studio/rubric";
 import { type VersionId } from "@/components/studio/types";
 import { EvidenceChips } from "./CreationScreen";

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Avatar, Badge, Button, Card, Icon, IconButton, Input, Select, Textarea, ThinkingAura, TopicCard } from "@/components/ds";
-import { useStudio } from "@/components/studio/StudioContext";
+import { useStudio } from "@/components/studio/useStudio";
 import { AdminConfigPanel } from "@/components/studio/AdminConfigPanel";
 import { useThreadOptional } from "@/components/thread/ThreadContext";
 import { getContentString } from "@/components/thread/utils";

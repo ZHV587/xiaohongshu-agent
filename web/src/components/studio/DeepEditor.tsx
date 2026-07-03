@@ -6,7 +6,7 @@
 import { useRef, type ChangeEvent } from "react";
 import { Button, HashtagTag, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
-import { useStudio } from "./StudioContext";
+import { useStudio } from "./useStudio";
 import { computeChecks, scoreOf } from "./rubric";
 import { QUICK_EMOJI, type VersionId } from "./types";
 import { CopyDoctor, EmptyComposer, RiskPanel, ScheduleBar, VisualStudio } from "./Composer";

@@ -6,7 +6,7 @@
 // ReactDOM.render (Next mounts via AppShell → page.tsx).
 
 import { useState } from "react";
-import { useStudio } from "./StudioContext";
+import { useStudio } from "./useStudio";
 import { StudioTopBar } from "./Shell";
 import { CreationScreen, EvidencePanel, type RightLayout } from "./CreationScreen";
 import { DeepCreation, type DeepForm } from "./DeepCreation";

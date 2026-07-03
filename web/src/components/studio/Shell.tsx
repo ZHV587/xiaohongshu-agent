@@ -6,7 +6,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Avatar, Badge, Button, Icon } from "@/components/ds";
 import { Eyebrow } from "@/components/studio/ui";
-import { useStudio } from "@/components/studio/StudioContext";
+import { useStudio } from "@/components/studio/useStudio";
 import { useThreadOptional } from "@/components/thread/ThreadContext";
 import { useThreadsOptional } from "@/providers/thread-context";
 import { getContentString } from "@/components/thread/utils";

@@ -9,9 +9,7 @@
 // user comes from /api/me. Screens consume useStudio().
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -24,6 +22,7 @@ import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
 import { deriveTimeline, type TimelineItem } from "@/lib/thinking-trace";
+import { StudioContext } from "./useStudio";
 import {
   applyOptimisticSchedule,
   canAdvanceStage,
@@ -113,14 +112,6 @@ export interface StudioStore {
     openEvidence: (ev: SelectedEvidence) => void;
     closeEvidence: () => void;
   };
-}
-
-export const StudioContext = createContext<StudioStore | null>(null);
-
-export function useStudio(): StudioStore {
-  const ctx = useContext(StudioContext);
-  if (!ctx) throw new Error("useStudio must be used within a StudioProvider");
-  return ctx;
 }
 
 // ── 各 /api/backend/* GET 的响应体形状（顶层带 ok/account，业务字段如下）。 ──

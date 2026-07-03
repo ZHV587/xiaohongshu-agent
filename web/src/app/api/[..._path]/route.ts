@@ -12,6 +12,7 @@ export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, runtime } =
   initApiPassthrough({
     apiUrl: process.env.LANGGRAPH_API_URL ?? "http://localhost:2024",
     apiKey: process.env.LANGSMITH_API_KEY ?? undefined,
+    disableWarningLog: true,
     runtime: "edge", // default
     headers: (req: NextRequest): Record<string, string> => {
       const token = req.cookies.get(AUTH_COOKIE)?.value;

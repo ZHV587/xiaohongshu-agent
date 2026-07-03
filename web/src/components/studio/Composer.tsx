@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Badge, Button, Card, Icon } from "@/components/ds";
 import { Eyebrow } from "@/components/studio/ui";
-import { useStudio } from "@/components/studio/StudioContext";
+import { useStudio } from "@/components/studio/useStudio";
 import { type CheckResult } from "@/components/studio/rubric";
 import { IMAGE_ROLES, type StudioNote } from "@/components/studio/types";
 

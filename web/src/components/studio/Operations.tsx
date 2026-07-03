@@ -5,7 +5,7 @@
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Avatar, Badge, Button, Card, Icon, StatCard, Textarea, type BadgeProps } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
-import { useStudio } from "@/components/studio/StudioContext";
+import { useStudio } from "@/components/studio/useStudio";
 import { WEEKDAYS } from "@/components/studio/types";
 import type { Account, LibraryItem } from "@/components/studio/types";
 import type { LoadStatus } from "@/components/studio/useBackendResource";
