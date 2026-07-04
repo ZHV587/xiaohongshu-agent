@@ -5,6 +5,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import { getContentString } from "@/components/thread/utils";
 
 export interface DraftSnapshot {
   title: string;
@@ -15,10 +16,21 @@ export function buildDraftAutosaveKey(threadId: string | null): string {
   return `xhs_autosave_draft_${threadId ?? "new"}`;
 }
 
-export function parseAiDraft(content: string): DraftSnapshot {
+// 只有 topics/panel 结构块、没有正文/xhs_copy 的 AI 消息不是草稿源(如"我整理了几个选题方向"
+// + ```xhs_topics``` 块)。用它当草稿会把选题摘要误写进正文。这类消息返回 null,不覆盖既有草稿。
+const NON_DRAFT_BLOCK_RE = /```xhs_(topics|panel)\b/;
+
+/** 从单条 AI 文本解析草稿快照;若这条消息不含可用草稿(纯选题/面板/空)返回 null。 */
+export function parseAiDraft(content: string): DraftSnapshot | null {
   const text = content.trim();
+  if (!text) return null;
+
+  // 优先:结构化 xhs_copy 块(权威草稿)。
   const structuredDraft = parseStructuredCopyDraft(text);
   if (structuredDraft) return structuredDraft;
+
+  // 无 xhs_copy 但含 topics/panel 块 → 这是选题/面板消息,不是草稿,跳过(不覆盖既有草稿)。
+  if (NON_DRAFT_BLOCK_RE.test(text)) return null;
 
   const firstLine = text
     .split("\n")[0]
@@ -29,6 +41,23 @@ export function parseAiDraft(content: string): DraftSnapshot {
     title: firstLine && firstLine.length < 40 ? firstLine : "小红书爆款文案",
     content: text,
   };
+}
+
+/** 从消息流里取「最后一条含可用草稿的 AI 消息」的草稿快照。
+ *
+ * 旧实现只看 messages[len-1] 且要求 content 为 string:真实流里草稿那条 AI 消息后常跟着
+ * tool/思考/human 消息,或 content 是 Anthropic 内容块数组 → 草稿永远解析不出、进深创是空态、
+ * 返回后"内容消失"。这里从后往前扫,用 getContentString 兼容数组态,取第一条能解析出草稿的 AI 消息。 */
+export function latestDraftFromMessages(messages: Message[]): DraftSnapshot | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type !== "ai") continue;
+    const content = getContentString(m.content);
+    if (!content) continue;
+    const draft = parseAiDraft(content);
+    if (draft) return draft;
+  }
+  return null;
 }
 
 function parseStructuredCopyDraft(text: string): DraftSnapshot | null {
@@ -103,12 +132,10 @@ export function useThreadDraftState(
   const [lastSavedTitle, setLastSavedTitle] = useState("");
 
   useEffect(() => {
-    const lastMsg = messages[messages.length - 1];
-    if (!lastMsg || lastMsg.type !== "ai" || typeof lastMsg.content !== "string") {
-      return;
-    }
-
-    const next = parseAiDraft(lastMsg.content);
+    // 扫全量消息取最后一条含草稿的 AI 消息(而非只看数组末尾)。无草稿源(纯选题/工具/human
+    // 结尾)时不动既有草稿——避免流中后续非草稿消息把已生成的正文清空("内容消失")。
+    const next = latestDraftFromMessages(messages);
+    if (!next) return;
     queueMicrotask(() => {
       setDraftTitle(next.title);
       setDraftContent(next.content);

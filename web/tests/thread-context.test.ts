@@ -70,7 +70,9 @@ test("useThreadDraftState keeps applying streaming content updates for the same 
   const hook = src("components", "thread", "useThreadDraftState.ts");
 
   assert.doesNotMatch(hook, /lastAiMessageId/);
-  assert.match(hook, /lastMsg\.content/);
+  // 草稿从「最后一条含草稿的 AI 消息」派生(扫全量,而非只看数组末尾的 messages[len-1]),
+  // 流式更新期间仍每次 messages 变化重解析、持续应用到草稿。
+  assert.match(hook, /latestDraftFromMessages/);
   assert.match(hook, /setDraftContent\(next\.content\)/);
 });
 
