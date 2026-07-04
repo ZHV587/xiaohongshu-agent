@@ -55,10 +55,20 @@ export function FeishuConfigPage({ onClose }: { onClose: () => void }) {
 
     setSaving(true);
     try {
+      // 只提交本页真正可编辑的字段。FEISHU_WIKI_SPACE_ID 是只读静态展示(后端写死绑定),
+      // 页面不渲染其输入框,configs 里对应值可能为空串——若随表单整体提交,后端 merge 会用空串
+      // 覆盖已存在的 FEISHU_WIKI_SPACE_ID,打断知识库同步。故显式挑出受控字段,绝不下发 wiki id。
+      const editableConfigs = {
+        FEISHU_APP_ID: configs.FEISHU_APP_ID ?? "",
+        FEISHU_APP_SECRET: configs.FEISHU_APP_SECRET ?? "",
+        FEISHU_BITABLE_APP_TOKEN: configs.FEISHU_BITABLE_APP_TOKEN ?? "",
+        FEISHU_BITABLE_TABLE_ID: configs.FEISHU_BITABLE_TABLE_ID ?? "",
+        FEISHU_BITABLE_COLLECT_TABLE_ID: configs.FEISHU_BITABLE_COLLECT_TABLE_ID ?? "",
+      };
       const res = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ configs }),
+        body: JSON.stringify({ configs: editableConfigs }),
       });
       if (res.ok) {
         setShowToast(true);
