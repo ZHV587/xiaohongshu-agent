@@ -184,6 +184,6 @@ description: |
 
 | 触发条件 | 推荐 |
 |---|---|
-| 检测出开头三件套 | 「开头有套路感。重新设计开头。」转入 `xhs-copywriting` |
+| 检测出开头三件套 | 「开头有套路感。重新设计开头。」委派 `copywriting-coprocessor` 子代理重写 |
 | 文案选题本身有问题 | 「AI味不是你最大的问题，重新选题。」转入 `topic-content` |
 | 用户想提炼自己的博主风格 | 「用 `task` 调用 `persona-distiller` 子 agent 提炼你的人设 DNA。」 |

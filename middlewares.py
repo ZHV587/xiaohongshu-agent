@@ -35,7 +35,13 @@ def is_retryable_error(exc: Exception) -> bool:
     # SDK 自己包装的连接/超时异常(如 APIConnectionError/APITimeoutError),
     # 不一定继承 httpx,按类名兜底。
     name = type(exc).__name__.lower()
-    return "connection" in name or "timeout" in name
+    if "connection" in name or "timeout" in name:
+        return True
+    # 结构化输出解析失败(StructuredOutputValidationError):模型确实回了(非 HTTP 错),
+    # 但原生结构化 payload 偶发为空/非 JSON(opus+扩展思考+中转网关组合下观察到)。
+    # 一次解析失败就挂掉整轮(如 copywriting-coprocessor 跑 11 分钟后白费)太脆,重试一次大概率成功。
+    # 渠道无关(类名判定);只匹配结构化输出校验失败,不波及普通 Pydantic/业务校验。
+    return "structuredoutputvalidation" in name
 
 
 # 鉴权类状态码:401 未授权 / 403 禁止。对**单个端点**重试无意义(同 key 再试还是 401),
