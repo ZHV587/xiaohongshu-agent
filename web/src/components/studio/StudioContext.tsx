@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -30,7 +31,6 @@ import {
   deriveInitial,
   mapVersions,
   rollbackSchedule,
-  selectVersionDraft,
   validateBackfillMetrics,
   type DraftVersionInput,
 } from "./backend-mappers";
@@ -253,6 +253,52 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // ── studio overlay 持久化(按 threadId 隔离) ──
+  // 草稿 title/body 已由 useThreadDraftState 持久化;这里持久化不被草稿拥有的 overlay 态
+  // (选题绑定 topicId / 关键词 kw / 标签 tags / 封面 cover / 当前版本 activeVersion)。
+  // 此前这套态是裸 useState:刷新或切到别的会话再回来,正文虽能从消息流恢复,但选题绑定与
+  // 版本选择全丢 → 用户看到的「生成的内容消失」。现在按 threadId 落本地、挂载/切会话时恢复。
+  const prevOverlayThreadRef = useRef<string | null | undefined>(undefined);
+  const overlayBootedRef = useRef(false);
+  useEffect(() => {
+    const prev = prevOverlayThreadRef.current;
+    prevOverlayThreadRef.current = t.threadId;
+    // 新建对话首次拿到 id(null→id),属于同一会话内容刚落定,不是切换 → 不动 overlay。
+    if (prev === null && t.threadId != null) return;
+    const snap = readStudioOverlay(t.threadId);
+    if (snap) {
+      setTopicId(snap.topicId);
+      setKw(snap.kw);
+      setTags(snap.tags);
+      setCover(snap.cover);
+      setActiveVersion(snap.activeVersion);
+    } else if (prev !== undefined) {
+      // 切到一个无 overlay 记录的会话 → 重置默认,避免与上一会话串台。
+      setTopicId(null);
+      setKw("");
+      setTags([]);
+      setCover("");
+      setActiveVersion("A");
+    }
+    // 刚切会话/挂载:跳过紧随其后的那次 persist,避免用旧值 transient 覆盖新会话已存快照。
+    overlayBootedRef.current = false;
+  }, [t.threadId]);
+
+  useEffect(() => {
+    if (!overlayBootedRef.current) {
+      overlayBootedRef.current = true;
+      return;
+    }
+    writeStudioOverlay(t.threadId, {
+      v: OVERLAY_LATEST_VERSION,
+      topicId,
+      kw,
+      tags,
+      cover,
+      activeVersion,
+    });
+  }, [t.threadId, topicId, kw, tags, cover, activeVersion]);
+
   const setSection = useCallback((s: StudioSection) => void setSectionRaw(s), [setSectionRaw]);
   // 白名单校验:URL ?section=任意值 不应被透传(消费组件 switch 不中会渲染空白)。
   const sectionVal: StudioSection =
@@ -369,15 +415,19 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const removeTag = useCallback((tag: string) => setTags((prev) => prev.filter((x) => x !== tag)), []);
 
   // setVersion：从 note.versions 选 A/B/C，把对应版本 title/body 写回 canonical draft。
+  // 切版本时连 tags/cover 一起回写——否则编辑区 + 右侧体检面板会拿到「A 版正文 + 全局 tags」
+  // 的混搭(打分/字数错位、排版看似混乱)。每个版本作为完整一体回写,体检始终对齐当前版。
   const setVersion = useCallback(
     (v: VersionId) => {
-      const draft = selectVersionDraft(versions, v);
-      if (!draft) {
+      const ver = versions?.[v];
+      if (!ver) {
         showToast("该版本暂不可用");
         return;
       }
-      t.setDraftTitle(draft.title);
-      t.setDraftContent(draft.body);
+      t.setDraftTitle(ver.title);
+      t.setDraftContent(ver.body);
+      setTags(ver.tags);
+      setCover(ver.cover);
       setActiveVersion(v);
     },
     [versions, t, showToast],
@@ -695,4 +745,55 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
     }
   }
   return { versions: null, copyResourceId: null };
+}
+
+// ── studio overlay 本地持久化(按 threadId 隔离) ──────────────────────────────
+// 与 useThreadDraftState 的草稿 autosave 同思路:每个会话一份 overlay 快照,
+// 刷新/切会话后据此恢复选题绑定、版本选择、标签等,避免「内容消失」。
+const OVERLAY_LATEST_VERSION = 1;
+
+interface StudioOverlaySnapshot {
+  v: number;
+  topicId: number | null;
+  kw: string;
+  tags: string[];
+  cover: string;
+  activeVersion: VersionId;
+}
+
+function buildStudioOverlayKey(threadId: string | null): string {
+  return `xhs_studio_overlay_${threadId ?? "new"}`;
+}
+
+function readStudioOverlay(threadId: string | null): StudioOverlaySnapshot | null {
+  if (typeof window === "undefined") return null;
+  // null threadId = 会话 id 尚未落定的临时态,不读不写,避免新会话误继承上次的 overlay。
+  if (threadId == null) return null;
+  try {
+    const raw = window.localStorage.getItem(buildStudioOverlayKey(threadId));
+    if (!raw) return null;
+    const o = JSON.parse(raw) as Partial<StudioOverlaySnapshot>;
+    const av = o.activeVersion;
+    return {
+      v: OVERLAY_LATEST_VERSION,
+      topicId: typeof o.topicId === "number" ? o.topicId : null,
+      kw: typeof o.kw === "string" ? o.kw : "",
+      tags: Array.isArray(o.tags) ? o.tags.filter((x): x is string => typeof x === "string") : [],
+      cover: typeof o.cover === "string" ? o.cover : "",
+      activeVersion: av === "A" || av === "B" || av === "C" ? av : "A",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStudioOverlay(threadId: string | null, snap: StudioOverlaySnapshot): void {
+  if (typeof window === "undefined") return;
+  // 同 readStudioOverlay:null threadId 不落本地。
+  if (threadId == null) return;
+  try {
+    window.localStorage.setItem(buildStudioOverlayKey(threadId), JSON.stringify(snap));
+  } catch {
+    // localStorage 不可用/超限 → 静默降级,不影响创作主流程。
+  }
 }

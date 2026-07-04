@@ -2,7 +2,7 @@
 
 // 深度创作 screen — a focused long-form environment bound to the shared note.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge, Button, TopicCard, Icon } from "@/components/ds";
 import { useStudio } from "@/components/studio/useStudio";
 import { computeChecks, scoreOf } from "@/components/studio/rubric";
@@ -72,52 +72,123 @@ function DeepTopicBar({ mode, setMode }: { mode: DeepMode; setMode: (m: DeepMode
   );
 }
 
-// A·B 版本并排对比
+// A·B 版本并排对比 —— 永不白屏:① ≥2 版 → 并排模块卡;② 仅 1 版 → 单卡 + 再生成一版入口;
+// ③ 无 versions 但有草稿 → 草稿卡 + 提示;④ 全空 → 友好空态(回创作区)。
+// 每版独立计算体检分/字数/标签数,互不混搭(不再出现「A 版正文 + 全局 tags」的错位打分)。
 function ABCompare() {
-  const { note } = useStudio();
-  const [pair, setPair] = useState<[VersionId, VersionId]>(["A", "B"]);
-  if (!note.versions) return null;
-  const setSide = (i: number, v: VersionId) => setPair((p) => { const n = [...p] as [VersionId, VersionId]; n[i] = v; return n; });
+  const { note, actions } = useStudio();
+  const versions = note.versions;
+  const ids = useMemo(
+    () =>
+      versions
+        ? (["A", "B", "C"] as VersionId[]).filter((k) => {
+            const v = versions[k];
+            return !!v && (!!v.title || !!v.body);
+          })
+        : [],
+    [versions],
+  );
+  const hasDraft = Boolean(note.title || note.body);
+
+  // ④ 完全没有可对比内容 → 友好空态(不再白屏)。
+  if (ids.length === 0 && !hasDraft) {
+    return (
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--background)", padding: 28 }}>
+        <div style={{ maxWidth: 420, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 48, height: 48, borderRadius: "var(--radius-lg)", background: "var(--accent-surface)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🗒️</div>
+          <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)" }}>还没有可对比的文案</div>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>先在「编辑」里基于选题生成一版文案,再来这里做 A·B 对比。</div>
+          <Button variant="soft" size="sm" leftIcon={<Icon name="arrow-left" size={13} />} onClick={() => actions.setSection("create")}>去创作区起稿</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ②/③ 仅一版 → 单卡 + 「再生成一版」入口,凑齐两版即可并排对比。
+  if (ids.length < 2) {
+    const singleId = ids[0] ?? note.activeVersion;
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: "var(--background)" }}>
+        <div style={{ textAlign: "center", padding: "12px 0 4px", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>目前只有一版文案,再生成一版不同角度的即可并排对比</div>
+        <div className="cs" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: 560, maxWidth: "100%" }}>
+            <ABVersionCard id={singleId} />
+          </div>
+        </div>
+        <div style={{ padding: "0 16px 16px", display: "flex", justifyContent: "center" }}>
+          <Button variant="primary" size="sm" leftIcon={<Icon name="sparkles" size={13} />} onClick={() => actions.say("请基于当前选题再写一版不同角度的文案作为 B 版,和现有这版做对比;用 xhs_copy 的 versions 数组同时输出这两版。")}>让🍠再生成一版做对比</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ① ≥2 版 → 并排模块卡,每版独立体检分/字数/标签数。
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: "var(--background)" }}>
-      <div style={{ textAlign: "center", padding: "12px 0 4px", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>A·B 并排对比 · 体检分数实时计算，选更优的一版定稿</div>
-      <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 14, padding: 16 }}>
-        <ABCompareColumn id={pair[0]} side={0} onSelect={setSide} />
-        <ABCompareColumn id={pair[1]} side={1} onSelect={setSide} />
+      <div style={{ textAlign: "center", padding: "12px 0 4px", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>A·B 并排对比 · 每版体检分/字数独立计算,选更优的一版定稿</div>
+      <div className="cs" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", gap: 14, padding: 16, alignItems: "stretch" }}>
+        {ids.slice(0, 2).map((id) => (
+          <div key={id} style={{ flex: 1, minWidth: 0, display: "flex" }}>
+            <ABVersionCard id={id} />
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function ABCompareColumn({ id, side, onSelect }: { id: VersionId; side: number; onSelect: (side: number, version: VersionId) => void }) {
+// 单版模块卡:头部(版本标识 + 差异说明 + 体检分) · 正文(标题/正文/标签) · 模块化指标底栏(本版字数/标签数/体检分) · 采用此版。
+// 内容来源:优先 note.versions[id];无 versions(单版草稿态)回退 canonical draft,故单版也能正常渲染。
+function ABVersionCard({ id }: { id: VersionId }) {
   const { note, actions } = useStudio();
-  if (!note.versions) return null;
-  const v = note.versions[id];
-  if (!v) return null;
-  const n = { ...note, title: v.title, body: v.body, tags: v.tags, cover: v.cover, kw: note.kw };
-  const checks = computeChecks(n);
+  const v = note.versions?.[id];
+  const title = v?.title ?? note.title;
+  const body = v?.body ?? note.body;
+  const tags = v?.tags ?? note.tags;
+  const cover = v?.cover ?? note.cover;
+  const label = v?.label ?? id;
+  const noteText = v?.note ?? null;
+  const checks = computeChecks({ title, body, tags, cover, kw: note.kw });
   const score = scoreOf(checks);
+  const wordCount = body.length;
   const active = note.activeVersion === id;
+  const scoreColor = score >= 80 ? "var(--success)" : score >= 60 ? "var(--warning)" : "var(--text-muted)";
+
   return (
-    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--surface-card)", border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`, borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid var(--border)", background: active ? "var(--accent-surface)" : "var(--oats-light)" }}>
-        <select value={id} onChange={(e) => onSelect(side, e.target.value as VersionId)} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "3px 6px", fontSize: 11, fontWeight: 700, background: "var(--surface-card)", color: "var(--text-body)", cursor: "pointer" }}>
-          {(["A", "B", "C"] as VersionId[]).filter((k) => note.versions?.[k]).map((k) => <option key={k} value={k}>{note.versions![k]!.label}</option>)}
-        </select>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", color: score >= 80 ? "var(--success)" : "var(--warning)" }}>{score}<span style={{ fontSize: 10, color: "var(--text-subtle)", fontWeight: 400 }}>分</span></span>
-          {active && <span style={{ fontSize: 9, color: "var(--primary)", fontWeight: 700 }}>当前</span>}
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--surface-card)", border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`, borderRadius: "var(--radius-lg)", overflow: "hidden", boxShadow: active ? "var(--shadow-md)" : "var(--shadow-xs)" }}>
+      {/* 头部:版本标识 + 差异说明 + 体检分 */}
+      <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)", background: active ? "var(--accent-surface)" : "var(--oats-light)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ width: 22, height: 22, borderRadius: 6, background: active ? "var(--primary)" : "var(--oats-dark)", color: active ? "#fff" : "var(--text-muted)", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "var(--font-display)" }}>{id}</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label.replace(/^版本\s*/, "")}{noteText ? <span style={{ color: "var(--text-muted)", fontWeight: 500 }}> · {noteText}</span> : null}</span>
+        </div>
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4, flexShrink: 0 }}>
+          <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", color: scoreColor }}>{score}</span>
+          <span style={{ fontSize: 10, color: "var(--text-subtle)" }}>分</span>
+          {active && <span style={{ marginLeft: 4, fontSize: 9, color: "var(--primary)", fontWeight: 700, background: "var(--surface-card)", padding: "1px 6px", borderRadius: 999 }}>当前</span>}
         </span>
       </div>
-      <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-        <h3 style={{ margin: "0 0 10px", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3 }}>{v.title}</h3>
-        <p style={{ margin: 0, fontSize: "var(--text-xs)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", whiteSpace: "pre-wrap" }}>{v.body}</p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
-          {v.tags.map((tg) => <span key={tg} style={{ fontSize: 9, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 7px" }}>#{tg}</span>)}
-        </div>
+
+      {/* 正文区:标题 / 正文 / 标签,各自成块 */}
+      <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+        <h3 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3, color: title ? "var(--text-body)" : "var(--text-subtle)" }}>{title || "(无标题)"}</h3>
+        <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{body || "(无正文)"}</p>
+        {tags.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {tags.map((tg) => <span key={tg} style={{ fontSize: 10, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>#{tg}</span>)}
+          </div>
+        )}
       </div>
+
+      {/* 模块化指标底栏:本版字数 / 标签数 / 体检分 —— 每版独立,不再混搭 */}
+      <div style={{ padding: "8px 14px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 14, fontSize: 10, color: "var(--text-subtle)", background: "var(--oats-light)" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="file-text" size={11} /> 字数 <b className="font-tabular" style={{ color: wordCount > 1000 ? "var(--warning)" : "var(--text-body)" }}>{wordCount}</b>/1000</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="hash" size={11} /> 标签 <b className="font-tabular" style={{ color: tags.length >= 5 ? "var(--success)" : "var(--text-body)" }}>{tags.length}</b></span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: "auto" }}><Icon name="stethoscope" size={11} /> 体检 <b className="font-tabular" style={{ color: scoreColor }}>{score}</b> 分</span>
+      </div>
+
       <div style={{ padding: 10, borderTop: "1px solid var(--border)" }}>
-        <Button variant={active ? "secondary" : "primary"} size="sm" block disabled={active} onClick={() => { actions.setVersion(id); actions.toast(`✅ 已采用「${v.label}」为当前稿`); }}>{active ? "当前采用中" : "采用此版"}</Button>
+        <Button variant={active ? "secondary" : "primary"} size="sm" block disabled={active} onClick={() => { actions.setVersion(id); actions.toast(`✅ 已采用「${label}」为当前稿`); }}>{active ? "当前采用中" : "采用此版"}</Button>
       </div>
     </div>
   );
