@@ -111,7 +111,7 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
 
   // Track latency test results and list of discovered models
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency?: number; error?: string } | undefined>>({});
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency?: number; error?: string; warning?: string } | undefined>>({});
   const [discoveredModels, setDiscoveredModels] = useState<Record<string, string[]>>({});
   // If true, shows the select dropdown, otherwise shows raw text input
   const [modelDropdownModes, setModelDropdownModes] = useState<Record<string, boolean>>({});
@@ -235,12 +235,19 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
       });
       const data = await res.json();
       if (data.ok) {
+        const hasModels = data.models && Array.isArray(data.models) && data.models.length > 0;
         setTestResults((prev) => ({
           ...prev,
-          [providerId]: { ok: true, latency: data.latency },
+          // 连通成功但拉不到模型:带上 warning,让用户知道"连通没问题、但模型列表没拉到(原因)"
+          // 需手动填模型名,而不是看到绿色成功却空下拉、无从判断。
+          [providerId]: {
+            ok: true,
+            latency: data.latency,
+            warning: hasModels ? undefined : (data.modelsError || "未获取到可用模型列表，请手动填写模型名称"),
+          },
         }));
 
-        if (data.models && Array.isArray(data.models) && data.models.length > 0) {
+        if (hasModels) {
           setDiscoveredModels((prev) => ({ ...prev, [providerId]: data.models }));
           setModelDropdownModes((prev) => ({ ...prev, [providerId]: true }));
         }
@@ -267,13 +274,10 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
     const activeConfig = providerConfigs[primaryProvider];
     const targetInfo = PROVIDERS.find((p) => p.id === primaryProvider)!;
 
+    // 只提交本页控制的 LLM 字段。后端对 config-center 做 merge(未提交的 key 原样保留),
+    // 故不必"回传"飞书配置;若像旧代码那样回传 configs.FEISHU_*,当这些 key 尚未进 config-center
+    // (仅在 .env)时会以空串提交、覆盖已有飞书配置(与 FeishuConfigPage #5 同类隐患)。
     const finalConfigs = {
-      // Keep existing Feishu configs
-      FEISHU_APP_ID: configs.FEISHU_APP_ID || "",
-      FEISHU_APP_SECRET: configs.FEISHU_APP_SECRET || "",
-      FEISHU_BITABLE_APP_TOKEN: configs.FEISHU_BITABLE_APP_TOKEN || "",
-      FEISHU_BITABLE_TABLE_ID: configs.FEISHU_BITABLE_TABLE_ID || "",
-
       // Set primary model settings
       LLM_PROVIDER: targetInfo.providerVal,
       LLM_API_KEY: activeConfig.apiKey?.trim() || "",
@@ -570,6 +574,9 @@ export function LlmConfigPage({ onClose }: { onClose: () => void }) {
                               <span className="font-semibold">
                                 连接成功！网络延迟: <span className="underline decoration-wavy font-bold">{test.latency}ms</span>
                                 {modelsList.length > 0 && `，已为您解锁 ${modelsList.length} 个可用模型进行下拉切换。`}
+                                {test.warning && (
+                                  <span className="block mt-1 font-normal text-amber-700">⚠️ {test.warning}</span>
+                                )}
                               </span>
                             ) : (
                               <span className="font-semibold break-words">
