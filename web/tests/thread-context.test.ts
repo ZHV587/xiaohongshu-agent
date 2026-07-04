@@ -40,6 +40,32 @@ test("ThreadStateProvider injects draft states + delegates autosave to useThread
   assert.match(hook, /parseAiDraft/);
 });
 
+test("HITL 工具审批中断:契约/恢复/审批卡三层已接通(#16 死锁修复)", () => {
+  const context = src("components", "thread", "ThreadContext.tsx");
+  const provider = src("components", "thread", "ThreadStateProvider.tsx");
+  const studio = src("components", "studio", "StudioContext.tsx");
+  const screen = src("components", "studio", "CreationScreen.tsx");
+
+  // 契约:ThreadContext 暴露 interrupt + respondToInterrupt,并声明 HITL 类型
+  assert.match(context, /interrupt:\s*HITLRequest\s*\|\s*null/);
+  assert.match(context, /respondToInterrupt:\s*\(decisions:\s*HITLDecision\[\]\)\s*=>\s*void/);
+  assert.match(context, /action_requests/);
+  assert.match(context, /allowed_decisions/);
+
+  // 恢复:provider 从 stream.interrupt 取值,并用 command.resume 提交 {decisions} 恢复图执行
+  assert.match(provider, /stream\.interrupt/);
+  assert.match(provider, /command:\s*\{\s*resume:\s*\{\s*decisions\s*\}\s*\}/);
+
+  // 透出:StudioContext 把 interrupt / respondToInterrupt 接入 store.actions
+  assert.match(studio, /respondToInterrupt:\s*t\.respondToInterrupt/);
+  assert.match(studio, /interrupt:\s*t\.interrupt/);
+
+  // 渲染:聊天区在有中断时渲染审批卡,提供批准/驳回入口
+  assert.match(screen, /InterruptApprovalCard/);
+  assert.match(screen, /全部批准/);
+  assert.match(screen, /全部驳回/);
+});
+
 test("useThreadDraftState keeps applying streaming content updates for the same AI message", () => {
   const hook = src("components", "thread", "useThreadDraftState.ts");
 

@@ -16,7 +16,7 @@ import { useQueryState, parseAsBoolean } from "nuqs";
 import { toast } from "sonner";
 import { ThreadActionsProvider } from "@/lib/thread-actions";
 import { useFileUpload } from "@/hooks/use-file-upload";
-import { ThreadContext } from "./ThreadContext";
+import { ThreadContext, type HITLRequest, type HITLDecision } from "./ThreadContext";
 import { useThreadDraftState } from "./useThreadDraftState";
 
 export function ThreadStateProvider({ children }: { children: ReactNode }) {
@@ -264,6 +264,27 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  // HITL 工具审批:后端对写类工具(lark_cli/sync_*/adopt_online_notes 等)设了 interrupt_on,
+  // 调用即中断等待人工批准/驳回。这里用 langgraph SDK 的 command.resume 提交 {decisions},
+  // 恢复图执行——否则中断后前端无端口应答,会话永久挂起(死锁)。
+  const rawInterrupt = stream.interrupt;
+  const interrupt =
+    rawInterrupt && rawInterrupt.value && typeof rawInterrupt.value === "object"
+      ? (rawInterrupt.value as HITLRequest)
+      : null;
+  const respondToInterrupt = useCallback(
+    (decisions: HITLDecision[]) => {
+      setFirstTokenReceived(false);
+      stream.submit(undefined, {
+        command: { resume: { decisions } },
+        streamMode: ["values"],
+        streamSubgraphs: true,
+        streamResumable: true,
+      });
+    },
+    [stream],
+  );
+
   return (
     <ThreadContext.Provider
       value={{
@@ -300,6 +321,9 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         setIsSyncing,
         lastSavedTitle,
         lastSavedContent,
+
+        interrupt,
+        respondToInterrupt,
 
         handleExecuteCommand,
         handleSyncToFeishu,

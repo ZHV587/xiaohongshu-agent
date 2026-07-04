@@ -17,7 +17,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useQueryState } from "nuqs";
-import { useThread } from "@/components/thread/ThreadContext";
+import { useThread, type HITLRequest, type HITLDecision } from "@/components/thread/ThreadContext";
 import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { useTraceContext } from "@/providers/trace-store";
@@ -112,7 +112,10 @@ export interface StudioStore {
     toast: (msg: string) => void;
     openEvidence: (ev: SelectedEvidence) => void;
     closeEvidence: () => void;
+    respondToInterrupt: (decisions: HITLDecision[]) => void;
   };
+  // HITL 工具审批中断:非 null 时聊天区渲染审批卡,用户批准/驳回后经 respondToInterrupt 恢复。
+  interrupt: HITLRequest | null;
 }
 
 // ── 各 /api/backend/* GET 的响应体形状（顶层带 ok/account，业务字段如下）。 ──
@@ -548,7 +551,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       toast: showToast,
       openEvidence: setSelectedEvidence,
       closeEvidence: () => setSelectedEvidence(null),
+      respondToInterrupt: t.respondToInterrupt,
     },
+    interrupt: t.interrupt,
   };
 
   return <StudioContext.Provider value={store}>{children}</StudioContext.Provider>;

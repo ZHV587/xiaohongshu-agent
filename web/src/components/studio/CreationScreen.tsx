@@ -9,6 +9,7 @@ import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
 import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
+import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
 
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
@@ -162,8 +163,67 @@ function StateNote({ tone = "muted", children }: { tone?: "muted" | "warning"; c
 }
 
 // Center chat column — base proposal + dynamic store messages
+// 工具审批中断卡。后端 HumanInTheLoopMiddleware 对写类工具中断,发来 HITLRequest
+// (action_requests + review_configs);用户对每个动作批准/驳回,按序汇成 decisions 提交恢复。
+// 无此卡时,中断后前端无端口应答 → 会话永久挂起(死锁)。这是修复 #16 的关键交互。
+function InterruptApprovalCard({
+  interrupt,
+  onRespond,
+}: {
+  interrupt: HITLRequest;
+  onRespond: (decisions: HITLDecision[]) => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const reqs = interrupt.action_requests ?? [];
+  const configs = interrupt.review_configs ?? [];
+  const allowedFor = (i: number): string[] =>
+    configs[i]?.allowed_decisions ?? configs.find((c) => c.action_name === reqs[i]?.action)?.allowed_decisions ?? ["approve", "reject"];
+
+  const decide = (type: "approve" | "reject") => {
+    if (submitting) return;
+    setSubmitting(true);
+    // 一次中断可批量多个动作;此处对全部动作统一批准或统一驳回(按序一一对应)。
+    const decisions: HITLDecision[] = reqs.map((_, i) => {
+      const allowed = allowedFor(i);
+      if (type === "approve" && allowed.includes("approve")) return { type: "approve" };
+      if (type === "reject" && allowed.includes("reject")) return { type: "reject" };
+      // 兜底:该动作不允许所选决定时,退回其首个允许项(避免决定数与动作数不匹配报错)。
+      return allowed.includes("approve") ? { type: "approve" } : { type: "reject" };
+    });
+    onRespond(decisions);
+  };
+
+  return (
+    <Card padding="md" style={{ border: "1px solid var(--border-coral)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+        <Icon name="shield-check" size={15} color="var(--primary)" />
+        <span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>需要你确认这些写操作</span>
+      </div>
+      <p style={{ margin: "0 0 10px", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
+        智能体准备执行以下会写入外部系统(飞书/线上)的动作,已暂停等待你的批准。
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 12 }}>
+        {reqs.map((r, i) => (
+          <div key={i} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "7px 9px", background: "var(--oats-light)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)" }}>{r.action}</div>
+            {r.args && Object.keys(r.args).length > 0 && (
+              <div style={{ fontSize: 9, color: "var(--text-subtle)", marginTop: 3, fontFamily: "var(--font-mono)", wordBreak: "break-all", maxHeight: 72, overflowY: "auto" }}>
+                {JSON.stringify(r.args).slice(0, 300)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <Button variant="primary" size="sm" style={{ flex: 1 }} disabled={submitting} leftIcon={<Icon name="check" size={13} />} onClick={() => decide("approve")}>全部批准</Button>
+        <Button variant="secondary" size="sm" style={{ flex: 1 }} disabled={submitting} leftIcon={<Icon name="x" size={13} />} onClick={() => decide("reject")}>全部驳回</Button>
+      </div>
+    </Card>
+  );
+}
+
 function ChatColumn({ showTopics }: { showTopics: boolean }) {
-  const { topics, timeline, trends, actions } = useStudio();
+  const { topics, timeline, trends, actions, interrupt } = useStudio();
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendDraft = () => {
@@ -268,6 +328,16 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
           <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
             <Avatar glyph="🍠" variant="agent" size={32} />
             <div style={{ flex: 1, minWidth: 0 }}><TrendingTopics /></div>
+          </div>
+        )}
+
+        {/* 工具审批中断卡:后端对写类工具中断等待人工批准;无此卡则中断后会话死锁。 */}
+        {interrupt && (
+          <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+            <Avatar glyph="🍠" variant="agent" size={32} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <InterruptApprovalCard interrupt={interrupt} onRespond={actions.respondToInterrupt} />
+            </div>
           </div>
         )}
       </div>

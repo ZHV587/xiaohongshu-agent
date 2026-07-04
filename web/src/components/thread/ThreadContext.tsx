@@ -1,6 +1,28 @@
 import { createContext, useContext, RefObject } from "react";
 import { Message } from "@langchain/langgraph-sdk";
 
+// HITL 中断契约,对齐后端 langchain HumanInTheLoopMiddleware(agent.py interrupt_on):
+// 中断值为 HITLRequest(action_requests + review_configs);恢复提交 {decisions:[...]},
+// 每个 action_request 一条 decision,按序对应。
+export interface HITLActionRequest {
+  action: string;
+  args: Record<string, unknown>;
+}
+export interface HITLReviewConfig {
+  action_name: string;
+  allowed_decisions: ("approve" | "edit" | "reject" | "respond")[];
+  args_schema?: Record<string, unknown>;
+}
+export interface HITLRequest {
+  action_requests: HITLActionRequest[];
+  review_configs: HITLReviewConfig[];
+}
+export type HITLDecision =
+  | { type: "approve" }
+  | { type: "reject"; message?: string }
+  | { type: "respond"; message: string }
+  | { type: "edit"; edited_action: { action: string; args: Record<string, unknown> } };
+
 export interface ThreadContextProps {
   threadId: string | null;
   setThreadId: (id: string | null) => void;
@@ -36,6 +58,10 @@ export interface ThreadContextProps {
   setIsSyncing: (syncing: boolean) => void;
   lastSavedTitle: string;
   lastSavedContent: string;
+
+  // HITL 工具审批中断:有待审批时 interrupt 非 null,respondToInterrupt 提交决定并恢复执行。
+  interrupt: HITLRequest | null;
+  respondToInterrupt: (decisions: HITLDecision[]) => void;
 
   // Actions
   handleExecuteCommand: (cmd: string) => void;
