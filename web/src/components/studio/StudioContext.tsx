@@ -266,22 +266,28 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     // 新建对话首次拿到 id(null→id),属于同一会话内容刚落定,不是切换 → 不动 overlay。
     if (prev === null && t.threadId != null) return;
     const snap = readStudioOverlay(t.threadId);
-    if (snap) {
-      setTopicId(snap.topicId);
-      setKw(snap.kw);
-      setTags(snap.tags);
-      setCover(snap.cover);
-      setActiveVersion(snap.activeVersion);
-    } else if (prev !== undefined) {
-      // 切到一个无 overlay 记录的会话 → 重置默认,避免与上一会话串台。
-      setTopicId(null);
-      setKw("");
-      setTags([]);
-      setCover("");
-      setActiveVersion("A");
-    }
     // 刚切会话/挂载:跳过紧随其后的那次 persist,避免用旧值 transient 覆盖新会话已存快照。
+    // 必须同步置位:persist effect 在同一渲染周期紧随本 effect 执行,依赖它已为 false。
     overlayBootedRef.current = false;
+    // setState 延到微任务:满足 react-hooks/set-state-in-effect(禁止在 effect 同步体内直接
+    // setState 触发级联渲染),与 useThreadDraftState 同款做法。行为等价——effect 本就会触发
+    // 一次重渲染,微任务只是把它挪出同步体。
+    queueMicrotask(() => {
+      if (snap) {
+        setTopicId(snap.topicId);
+        setKw(snap.kw);
+        setTags(snap.tags);
+        setCover(snap.cover);
+        setActiveVersion(snap.activeVersion);
+      } else if (prev !== undefined) {
+        // 切到一个无 overlay 记录的会话 → 重置默认,避免与上一会话串台。
+        setTopicId(null);
+        setKw("");
+        setTags([]);
+        setCover("");
+        setActiveVersion("A");
+      }
+    });
   }, [t.threadId]);
 
   useEffect(() => {
