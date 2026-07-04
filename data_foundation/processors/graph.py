@@ -38,9 +38,7 @@ class GraphProcessor:
                 "select id::text as id, tenant_id, type, title from resources where tenant_id=%s and id=%s",
                 (item.tenant_id, resource_id),
             ).fetchone()
-            if node is None:
-                return ProcessResult(status="superseded")
-            edges = cur.execute(
+            edges = None if node is None else cur.execute(
                 """
                 select source_resource_id::text as source_resource_id,
                        target_resource_id::text as target_resource_id,
@@ -51,6 +49,11 @@ class GraphProcessor:
                 (item.tenant_id, resource_id),
             ).fetchall()
         await lease.assert_owned()
+        if node is None:
+            # 资源已从核心库消失:物理删除图节点及其关联边,使图谱与核心库一致,
+            # 否则已删资源会永久驻留图谱形成脏数据。DETACH DELETE 幂等,可安全重试。
+            await asyncio.to_thread(self.graph.delete_node, resource_id)
+            return ProcessResult(status="superseded")
         # falkordb/redis 客户端是同步阻塞 socket I/O。与 meili 同理(见 meili.py 注释):
         # 在 async + asyncio.wait_for(outbox_timeout) 下直接阻塞会让超时失效、Falkor 卡顿冻死
         # 整个调度 cycle。故所有图写入 asyncio.to_thread 卸到工作线程。

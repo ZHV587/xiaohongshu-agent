@@ -60,6 +60,17 @@ class FalkorResourceGraph:
             {"sid": source_id, "tid": target_id, "etype": edge_type, "weight": weight},
         )
 
+    def delete_node(self, resource_id: str) -> None:
+        """物理删除资源节点及其所有关联边(资源已从核心库消失时调用),使图谱与核心库一致。
+
+        DETACH DELETE 会连同该节点的入/出边一并删除,避免遗留悬挂边。节点不存在时为无操作(幂等),
+        故重复删除安全。
+        """
+        self.graph.query(
+            "MATCH (r:Resource {id: $id}) DETACH DELETE r",
+            {"id": resource_id},
+        )
+
     def count(self, *, tenant_id: str) -> int:
         """按 tenant 统计图中 Resource 节点数(对账用)。"""
         rows = self.graph.query(

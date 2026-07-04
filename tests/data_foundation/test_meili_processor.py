@@ -64,6 +64,18 @@ def test_process_missing_resource_id_is_permanent():
         pass
 
 
+def test_process_deletes_document_when_resource_gone():
+    """资源已从核心库消失(查得 None):物理删除 Meili 文档,使检索引擎与核心库一致,
+    而非仅标记 superseded 却把文档永久留在索引里。"""
+    conn = _conn_returning(None)
+    index = MagicMock()
+    p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
+    result = asyncio.run(p.process(_item({"resource_id": "gone-1", "version": 3}), _Lease()))
+    assert result.status == "superseded"
+    index.delete.assert_called_once_with("gone-1")
+    index.upsert.assert_not_called()
+
+
 def test_process_ensures_index_settings_once_before_upsert():
     conn = _conn_returning({
         "id": "r1", "tenant_id": "default", "type": "feishu_base_record",

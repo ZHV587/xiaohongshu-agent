@@ -47,6 +47,20 @@ def test_process_merges_node_and_its_edges():
     assert graph.merge_edge.call_args.kwargs["edge_type"] == "derived_from"
 
 
+def test_process_deletes_node_when_resource_gone():
+    """资源已从核心库消失(查得 None):物理删除图节点及其边(DETACH DELETE),
+    使图谱与核心库一致,而非仅标记 superseded 却把节点永久留在图里。"""
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.execute.return_value.fetchone.return_value = None
+    graph = MagicMock()
+    p = GraphProcessor(conn=conn, graph=graph, config=FalkorConfig(state="enabled", url="u", graph_name="xhs"))
+    result = asyncio.run(p.process(_item({"resource_id": "gone-1", "version": 2}), _Lease()))
+    assert result.status == "superseded"
+    graph.delete_node.assert_called_once_with("gone-1")
+    graph.merge_node.assert_not_called()
+
+
 def test_process_missing_resource_id_is_permanent():
     p = GraphProcessor(conn=MagicMock(), graph=MagicMock(),
                        config=FalkorConfig(state="enabled", url="u", graph_name="xhs"))

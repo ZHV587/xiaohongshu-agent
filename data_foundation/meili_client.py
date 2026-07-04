@@ -62,6 +62,23 @@ class MeiliResourceIndex:
                 f"error={getattr(task, 'error', None)}"
             )
 
+    def delete(self, resource_id: str) -> None:
+        """物理删除单个资源文档,使 Meili 与核心库一致(资源已从 PG 消失时调用)。
+
+        与 upsert 同理:delete_document 是异步入队,须等任务终态并校验,否则 outbox 会在文档
+        实际删除前就被标记完成 —— 删除失败时核心库已无、Meili 仍残留,且无重推路径 → 永久脏数据。
+        对不存在的文档,Meili 删除任务同样返回 succeeded(幂等),故重复删除安全。
+        """
+        index = self.client.index(self.index_uid)
+        info = index.delete_document(resource_id)
+        task = index.wait_for_task(info.task_uid, timeout_in_ms=30000)
+        status = getattr(task, "status", None)
+        if status != "succeeded":
+            raise RuntimeError(
+                f"Meili delete_document task not succeeded: status={status} "
+                f"error={getattr(task, 'error', None)}"
+            )
+
     def count(self, *, tenant_id: str) -> int:
         """按 tenant 统计索引内文档数(对账用)。limit=0 只取总数不取命中。"""
         result = self.client.index(self.index_uid).search(

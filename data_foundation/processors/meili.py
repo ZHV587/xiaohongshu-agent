@@ -43,6 +43,10 @@ class MeiliProcessor:
                 (item.tenant_id, resource_id),
             ).fetchone()
         if row is None:
+            # 资源已从核心库消失:物理删除 Meili 文档,使检索引擎与核心库一致,
+            # 否则已删资源会永久驻留索引形成脏数据(见 delete 注释)。删除幂等,可安全重试。
+            await lease.assert_owned()
+            await asyncio.to_thread(self.index.delete, resource_id)
             return ProcessResult(status="superseded")
         # 确保索引 settings(filterable/searchable)就位,且只在本实例首次写入前调一次。
         # Meili update settings 幂等;这保证容器/数据卷重建后 settings 自动恢复,
