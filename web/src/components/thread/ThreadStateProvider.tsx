@@ -76,7 +76,13 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
   );
 
   const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
-    if (!text.trim() || isLoading) return;
+    if (!text.trim()) return;
+    // 流进行中不能并发提交(SDK 限制)。此前是静默 return —— 用户点「生成草稿/生成选题/润色」等
+    // 毫无反馈,误以为按钮坏了。改为明确提示"正在生成中",让"没反应"变成可理解的忙碌态。
+    if (isLoading) {
+      toast.info("正在生成中，请等当前这轮结束后再操作～");
+      return;
+    }
     setFirstTokenReceived(false);
     const newHumanMessage: Message = {
       id: uuidv4(),

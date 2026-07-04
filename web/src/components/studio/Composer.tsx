@@ -12,7 +12,23 @@ import { type CheckResult } from "@/components/studio/rubric";
 import { IMAGE_ROLES, type StudioNote } from "@/components/studio/types";
 
 export function EmptyComposer() {
-  const { actions, topics } = useStudio();
+  const { actions, topics, note } = useStudio();
+  // 流进行中(status==="writing")但草稿尚未解析出来时,不再显示"还没有草稿 + 生成草稿"
+  // (点了也只会提示忙碌),而是明确显示"正在生成草稿…",让空态与忙碌态可区分。
+  const writing = note.status === "writing";
+  if (writing) {
+    return (
+      <Card padding="lg" tone="sunken" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Icon name="loader" size={16} color="var(--primary)" />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-base)", fontWeight: 800, color: "var(--text-body)" }}>🍠 正在生成草稿…</div>
+          <p style={{ margin: "5px 0 0", fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>
+            智能体正基于数据底座起稿，正文会实时出现在下方创作栏。
+          </p>
+        </div>
+      </Card>
+    );
+  }
   return (
     <Card padding="lg" tone="sunken" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
       <div style={{ minWidth: 0 }}>
