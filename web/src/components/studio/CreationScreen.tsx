@@ -13,6 +13,30 @@ import type { Topic } from "@/components/studio/types";
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
 
+// 选题卡「生成式占位封面」:后端/agent 不产出真实封面图 URL(evidence 仅文本),
+// 故不显示加载失败般的灰白空块,而是按选题内容做**确定性**的品牌色渐变占位——
+// 同一选题每次渲染同一配色,不同选题错开,配合角度文字/emoji 让卡片看起来是刻意设计。
+const COVER_PALETTES: [string, string][] = [
+  ["#FF6F91", "#FF9671"],
+  ["#845EC2", "#D65DB1"],
+  ["#00C9A7", "#4D8076"],
+  ["#FFC75F", "#FF9671"],
+  ["#4B7BEC", "#5EA0FF"],
+  ["#F27121", "#E94057"],
+];
+const COVER_EMOJIS = ["🍠", "✨", "🌿", "🔥", "☕", "📖", "🎀", "🧭"];
+
+function coverVisual(seed: string): { gradient: string; emoji: string } {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  const [from, to] = COVER_PALETTES[hash % COVER_PALETTES.length];
+  const angle = 115 + (hash % 60);
+  return {
+    gradient: `linear-gradient(${angle}deg, ${from}, ${to})`,
+    emoji: COVER_EMOJIS[hash % COVER_EMOJIS.length],
+  };
+}
+
 export function CreationScreen() {
   const { note, actions } = useStudio();
   const [detailId, setDetailId] = useState<number | null>(null);
@@ -46,13 +70,18 @@ function TopicRail({ chosen, onChoose }: { chosen: number | null; onChoose: (t: 
         {topics.map((t) => {
           const on = t.id === chosen;
           const evCount = (evidence[t.id] || { items: [] }).items.length;
+          const hasRealCover = images.length > 0;
+          const cover = coverVisual(`${t.id}-${t.title}`);
           return (
             <div key={t.id} data-testid="topic-card" onClick={() => onChoose(t)} className="lift pop-in" style={{
               borderRadius: "var(--radius-md)", overflow: "hidden", cursor: "pointer",
               border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: "var(--surface-card)",
               boxShadow: on ? "var(--shadow-md)" : "var(--shadow-xs)", display: "flex", flexDirection: "column" }}>
-                <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)" }}>
-                {images.length > 0 && <Image src={images[(t.id - 1) % images.length]} alt={t.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
+                <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: hasRealCover ? "var(--accent-surface)" : cover.gradient }}>
+                {hasRealCover && <Image src={images[(t.id - 1) % images.length]} alt={t.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
+                {!hasRealCover && (
+                  <span aria-hidden style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40, opacity: 0.9, filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))" }}>{cover.emoji}</span>
+                )}
                 <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 58%, rgba(0,0,0,0.42))" }} />
                 <span style={{ position: "absolute", top: 7, left: 7, fontSize: 8, fontWeight: 700, color: "#fff", background: "rgba(0,0,0,0.36)", padding: "2px 7px", borderRadius: 999 }}>{t.angle}</span>
                 {t.hotRate != null && <span data-testid="topic-hot" style={{ position: "absolute", top: 7, right: 7, fontSize: 9, fontWeight: 800, color: "#fff", background: "var(--coral-500)", padding: "2px 6px", borderRadius: 999 }}>🔥{t.hotRate}</span>}
