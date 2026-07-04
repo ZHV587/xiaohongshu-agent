@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import math
 from typing import Any
 
+from data_foundation.metric_parse import weighted_engagement
 from data_foundation.outbox_requests import default_write_requests
 
 MEASURED_BY_EDGE = "measured_by"
@@ -138,13 +139,9 @@ def _clean_metrics(metrics: dict[str, Any]) -> dict[str, float | int]:
 
 
 def _score(metrics: dict[str, float | int]) -> float:
-    raw = (
-        float(metrics.get("likes", 0))
-        + 2 * float(metrics.get("collects", 0))
-        + 3 * float(metrics.get("comments", 0))
-        + 4 * float(metrics.get("shares", 0))
-        + 5 * float(metrics.get("conversions", 0))
-    )
+    # 加权互动系数走单一事实源 weighted_engagement;此处的「归一化」是÷播放量(转化率口径),
+    # 与 search_ranker 的对数归一化(绝对声量)各自保留,仅系数统一。
+    raw = weighted_engagement(metrics)
     views = metrics.get("views")
     if views is not None:
         raw = raw / max(float(views), 1.0)

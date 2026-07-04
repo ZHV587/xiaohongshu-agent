@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any
 
-from data_foundation.metric_parse import parse_count
+from data_foundation.metric_parse import weighted_engagement
 
 # 绝对相关度下限闸门默认值(仅作用于语义/余弦路径)。
 # 经验依据(生产实测,租户 default,Qwen3-Embedding-4B):
@@ -30,17 +30,6 @@ P_SCORE_LOG_CAP: float = 1_000_000.0
 _P_SCORE_LOG_DENOM: float = math.log10(1.0 + P_SCORE_LOG_CAP)
 
 _VALID_SCORE_KINDS = {"cosine", "bm25"}
-
-
-def _safe_float(value: Any) -> float:
-    """把 metrics 值安全转 float;非数值/负值一律按 0 计,支持 "1.2万"/"10w+" 等单位。
-
-    历史迁移/手工写入的 performance_metric 可能含非数值或带单位文本,直接 float() 会抛 ValueError
-    把整个 rank_evidence 排序拖崩,或把 "1.2万" 当 0 反转爆款效果分。经 metric_parse.parse_count
-    统一解析(与 ingestion 同一口径),解析失败按 0 计,保证脏数据不中断检索。
-    """
-    number = parse_count(value)
-    return number if number is not None else 0.0
 
 
 def _parse_aware(value: str) -> datetime:
@@ -122,13 +111,9 @@ def rank_evidence(
         if p_rows:
             best_p = p_rows[0]
             metrics = best_p.get("metrics") or {}
-            # 历史迁移/手工写入的 metrics 可能是字符串(如 "1.2万"),float() 会抛 ValueError
-            # 把整个排序拖崩。用安全转换:非数值一律按 0 计,绝不让脏数据中断检索排序。
-            likes = _safe_float(metrics.get("likes"))
-            collects = _safe_float(metrics.get("collects"))
-            comments = _safe_float(metrics.get("comments"))
-            # 对数归一化(去饱和):engagement 复用既有权重口径,跨数量级单调可分。
-            engagement = likes + 2 * collects + 5 * comments
+            # 加权互动系数走单一事实源 weighted_engagement(与效果回填 _score 同口径,含单位文本
+            # 安全解析)。此处的归一化是对数归一化(去饱和、绝对声量),与回填的÷播放量各自保留。
+            engagement = weighted_engagement(metrics)
             if engagement > 0:
                 p_score = min(math.log10(1.0 + engagement) / _P_SCORE_LOG_DENOM, 1.0)
 

@@ -65,3 +65,33 @@ def parse_count_int(value: Any) -> int:
     if number is None:
         return 0
     return int(number)
+
+
+# 互动加权系数(单一事实源)。曾经效果回填(performance_feedback._score,存为 measured_by 边权重
+# 且作为 analytics「score」)与检索重排序(search_ranker p_score)各写一套系数——回填用
+# likes+2collects+3comments+4shares+5conversions,重排序只用 likes+2collects+5comments——
+# 同一个「效果强度」概念口径分歧。这里统一系数;两处的「归一化」各自保留(回填÷播放量得转化率、
+# 重排序对数归一化得绝对声量),只消除系数不一致。
+ENGAGEMENT_WEIGHTS: dict[str, float] = {
+    "likes": 1.0,
+    "collects": 2.0,
+    "comments": 3.0,
+    "shares": 4.0,
+    "conversions": 5.0,
+}
+
+
+def weighted_engagement(metrics: Any) -> float:
+    """按统一系数计算加权互动总量(绝对值,未做任何归一化)。
+
+    非数值/带单位文本经 parse_count 统一解析,解析失败按 0 计,绝不让脏数据中断计算。
+    调用方在此基础上各自归一化:效果回填÷播放量(转化率)、检索重排序对数归一化(绝对声量)。
+    """
+    if not isinstance(metrics, dict):
+        return 0.0
+    total = 0.0
+    for key, weight in ENGAGEMENT_WEIGHTS.items():
+        value = parse_count(metrics.get(key))
+        if value is not None:
+            total += weight * value
+    return total

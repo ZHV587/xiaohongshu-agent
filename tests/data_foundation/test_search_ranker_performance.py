@@ -72,7 +72,8 @@ def test_bounded_unit_interval():
 def test_property_bounded_and_zero_iff_no_engagement(likes, collects, comments):
     p = _p_score_of("x", _perf(likes=likes, collects=collects, comments=comments))
     assert 0.0 <= p <= 1.0
-    engagement = likes + 2 * collects + 5 * comments
+    # 统一系数(单一事实源 weighted_engagement):likes + 2*collects + 3*comments
+    engagement = likes + 2 * collects + 3 * comments
     assert (p == 0.0) == (engagement == 0)
 
 

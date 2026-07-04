@@ -104,18 +104,18 @@ def test_bm25_relevance_is_candidate_set_normalized():
 
 
 def test_rank_evidence_incorporates_performance_log_score():
-    """效果分对数归一化(去饱和):engagement=500 → log10(501)/log10(1+1e6)。"""
+    """效果分对数归一化(去饱和):engagement=460 → log10(461)/log10(1+1e6)。"""
     import math
     from data_foundation.search_ranker import P_SCORE_LOG_CAP
 
     raw_results = [_doc("res-1", "爆款文案1", 0.5, rtype="generated_copy")]
     performance_data = {
         "res-1": [{"metrics": {"likes": 200, "collects": 100, "comments": 20}}]
-        # engagement = 200 + 2*100 + 5*20 = 500
+        # 统一系数:engagement = 200 + 2*100 + 3*20 = 460
     }
     res = rank_evidence("default", raw_results, performance_data=performance_data, limit=10, score_kind="cosine")
     assert len(res) == 1
-    expected = math.log10(1.0 + 500) / math.log10(1.0 + P_SCORE_LOG_CAP)
+    expected = math.log10(1.0 + 460) / math.log10(1.0 + P_SCORE_LOG_CAP)
     assert abs(res[0]["rank_signals"]["performance"] - expected) < 0.0001
 
 
