@@ -18,6 +18,29 @@ def shutdown_grace_seconds() -> float:
     return float(os.environ.get("XHS_SCHEDULER_SHUTDOWN_GRACE_SECONDS", "10"))
 
 
+def _assert_single_worker() -> None:
+    """强制单进程不变量:模型池/健康探测/config 热重载与冷启动 os.environ 对齐,全部依赖
+    graph 与 http_app 共享**同一进程内**的单例与进程环境(见 docker-compose N_WORKERS 注释、
+    config_center.project_config_to_env)。N_WORKERS>1 时每个 worker 各持一份独立 registry、
+    且 lifespan 的 os.environ 冷启动对齐只作用于 http_app 所在 worker —— 其余 worker 的飞书/检索
+    配置静默停留在启动时 .env 旧值,admin 改配置也只热切中招的那个 worker,形成难排查的分裂脑。
+
+    这里把隐式前提显式化:启动即校验,>1 直接拒绝启动,暴露误配,而不是带病运行到线上才发现
+    配置在 worker 间不一致。需横向扩容须先改造为跨进程 registry/config 广播再放开此限制。
+    """
+    raw = os.environ.get("N_WORKERS", "1").strip() or "1"
+    try:
+        workers = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"N_WORKERS must be an integer, got {raw!r}") from exc
+    if workers > 1:
+        raise RuntimeError(
+            f"N_WORKERS={workers} is unsupported: the model registry, health probe, "
+            "config hot-reload and cold-start os.environ alignment all assume a single "
+            "process. Set N_WORKERS=1 (or implement cross-process config broadcast first)."
+        )
+
+
 def _resolve_model_registry():
     """取 agent 进程内的 ModelRegistry 单例,供启动对齐与定时健康探测刷新模型池。
 
@@ -44,6 +67,9 @@ async def lifespan(app: Starlette):
     supervisor = None
     health_probe = None
     try:
+        # 启动即校验单进程不变量:>1 worker 会让 os.environ 冷启动对齐/模型池热重载在 worker
+        # 间分裂。放在最前,误配立即失败而非带病运行。
+        _assert_single_worker()
         supervisor = build_supervisor()
         await supervisor.start()
         runtime_snapshot = create_runtime_snapshot(supervisor)

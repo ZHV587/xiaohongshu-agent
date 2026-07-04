@@ -16,6 +16,24 @@ def test_langgraph_registers_http_app():
     assert config["http"]["enable_custom_route_auth"] is False
 
 
+def test_assert_single_worker_accepts_one_or_unset(monkeypatch):
+    import data_foundation.http_app as http_app
+
+    monkeypatch.delenv("N_WORKERS", raising=False)
+    http_app._assert_single_worker()  # 未设 → 默认 1,通过
+    monkeypatch.setenv("N_WORKERS", "1")
+    http_app._assert_single_worker()  # 显式 1,通过
+
+
+def test_assert_single_worker_rejects_multi_worker(monkeypatch):
+    """N_WORKERS>1 会让冷启动 os.environ 对齐/模型池热重载在 worker 间分裂,须启动即拒绝。"""
+    import data_foundation.http_app as http_app
+
+    monkeypatch.setenv("N_WORKERS", "2")
+    with pytest.raises(RuntimeError, match="N_WORKERS=2 is unsupported"):
+        http_app._assert_single_worker()
+
+
 @pytest.mark.asyncio
 async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
     import data_foundation.http_app as http_app
