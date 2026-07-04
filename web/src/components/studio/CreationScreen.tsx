@@ -379,7 +379,7 @@ function TopicDetail({ topicId, onBack }: { topicId: number; onBack: () => void 
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
         <span style={{ color: "var(--text-subtle)" }}>核心搜索词</span>
         <span style={{ fontWeight: 600, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>{topic.kw}</span>
-        {ev && <span style={{ marginLeft: "auto", fontSize: 10, color: ev.mode === "keyword_fallback" ? "var(--warning)" : "var(--success)" }}>{ev.mode === "semantic" ? "语义命中" : "关键词兑底"}</span>}
+        {ev && <span style={{ marginLeft: "auto", fontSize: 10, color: ev.mode === "keyword_fallback" ? "var(--warning)" : "var(--success)" }}>{ev.mode === "semantic" ? "语义命中" : "关键词兜底"}</span>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <Eyebrow><span data-testid="detail-evidence-count" data-count={ev ? ev.items.length : 0}>创作依据 · {ev ? ev.items.length : 0} 条（数据底座检索）</span></Eyebrow>
