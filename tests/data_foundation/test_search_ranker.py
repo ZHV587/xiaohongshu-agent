@@ -70,6 +70,22 @@ def test_cosine_relevance_is_absolute_not_normalized():
     assert abs(res[1]["rank_signals"]["freshness"] - 0.6065) < 0.001
 
 
+def test_freshness_handles_naive_source_timestamp():
+    """source_updated_at 无时区(naive,外部同步常见)时,时效分应正常按 UTC 计算,
+    而不是因 naive/aware 相减抛 TypeError 被吞掉、静默退化成固定 0.7。"""
+    naive_10d = (datetime.now(timezone.utc) - timedelta(days=10)).replace(tzinfo=None).isoformat()
+    doc = {
+        "resource_id": "res-naive",
+        "title": "无时区时间戳的资源",
+        "summary": "s",
+        "score": 0.5,
+        "metadata": {"type": "doc", "visibility": "private", "source_updated_at": naive_10d},
+    }
+    res = rank_evidence("default", [doc], performance_data={}, limit=10, score_kind="cosine")
+    # 10 天前 → e^(-0.5) ≈ 0.6065,绝不能是退化默认值 0.7
+    assert abs(res[0]["rank_signals"]["freshness"] - 0.6065) < 0.001
+
+
 def test_cosine_relevance_clamped_to_unit_interval():
     raw_results = [_doc("a", "标题A", 1.2), _doc("b", "标题B", -0.1)]
     res = rank_evidence("default", raw_results, performance_data={}, limit=10, score_kind="cosine")

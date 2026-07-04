@@ -43,6 +43,19 @@ def _safe_float(value: Any) -> float:
     return number if number is not None else 0.0
 
 
+def _parse_aware(value: str) -> datetime:
+    """把 source_updated_at 解析为 offset-aware(UTC)datetime。
+
+    外部同步来的时间戳可能不带时区(naive,如本地/裸时间戳)。直接与 offset-aware 的 now 相减会抛
+    `TypeError: can't subtract offset-naive and offset-aware datetimes`,被上层 try/except 吞掉后
+    时效分静默退化成固定 0.7,使时效加权形同虚设。此处把 naive 一律按 UTC 补齐时区,保证可运算。
+    """
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _relevance_score(raw: float, score_kind: str, max_raw_score: float) -> float:
     """relevance 口径分支。
 
@@ -86,7 +99,7 @@ def rank_evidence(
         delta_days = 0.0
         if source_updated_str:
             try:
-                dt = datetime.fromisoformat(source_updated_str)
+                dt = _parse_aware(source_updated_str)
                 delta_days = max(0.0, (now - dt).total_seconds() / 86400.0)
                 freshness = math.exp(-0.05 * delta_days)
             except Exception:
