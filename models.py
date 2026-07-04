@@ -299,11 +299,16 @@ def build_pool_from_config(values: dict[str, str], *, force_discover: bool = Fal
     key = values.get("LLM_API_KEY", "").strip()
     if base and key:
         gateways.append(("gateway_1", base, key))
-    for n in (2, 3):
+    # 开放式枚举 gateway_2/3/4...,与 _read_gateways() 同口径:遇到缺 base_url 或 api_key 即止。
+    # 此前硬编码 (2,3) 会静默漏探 gateway_4+(LLM_GATEWAY_4_* 永不入运行时池、failover 候选变少)。
+    n = 2
+    while True:
         b = values.get(f"LLM_GATEWAY_{n}_BASE_URL", "").strip()
         k = values.get(f"LLM_GATEWAY_{n}_API_KEY", "").strip()
-        if b and k:
-            gateways.append((f"gateway_{n}", b, k))
+        if not (b and k):
+            break
+        gateways.append((f"gateway_{n}", b, k))
+        n += 1
 
     whitelist = [m.strip() for m in values.get("LLM_QUALITY_MODELS", "").split(",") if m.strip()]
     pool: list[ModelCandidate] = []

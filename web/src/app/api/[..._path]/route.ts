@@ -41,9 +41,13 @@ function upstreamUrl(req: NextRequest): string {
 async function proxy(req: NextRequest, method: string): Promise<NextResponse> {
   try {
     const headers = new Headers();
+    // BFF 身份铁律:身份令牌只由本代理从 httpOnly cookie 取出后注入,绝不透传客户端可控的身份头。
+    // 此前无差别转发所有 x-* 与 authorization:虽 cookie JWT 会覆盖 authorization、后端也验签,
+    // 仍是纵深卫生隐患(无 cookie 时客户端 authorization 直通;任意 x-* 可向后端注入信任头)。
+    // 改为显式 allowlist:只转发无害的内容协商头,身份相关一律只走下面的注入。
+    const ALLOWED_REQ_HEADERS = new Set(["content-type", "accept", "accept-language"]);
     req.headers.forEach((value, key) => {
-      const lower = key.toLowerCase();
-      if (lower.startsWith("x-") || lower === "authorization") headers.set(key, value);
+      if (ALLOWED_REQ_HEADERS.has(key.toLowerCase())) headers.set(key, value);
     });
 
     const apiKey = process.env.LANGSMITH_API_KEY ?? "";

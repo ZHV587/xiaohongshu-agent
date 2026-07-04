@@ -1,8 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse, requireAdmin } from "@/lib/server/authz";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// SSRF 防护:管理员可填任意 baseUrl 测网关连通性,但绝不能让 web 服务器据此对内网/环回/
+// 链路本地(如 169.254.169.254 元数据、127.0.0.1、10/172.16-31/192.168、fc00::/7)发认证请求
+// 并回显响应。先校验协议,再按字面量 IP 或 DNS 解析结果判定是否落在禁止段。
+function isPrivateIp(ip: string): boolean {
+  const v4 = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    if (a === 0 || a === 10 || a === 127) return true;            // 0.0.0.0 / 内网 / 环回
+    if (a === 169 && b === 254) return true;                       // 链路本地(含云元数据)
+    if (a === 172 && b >= 16 && b <= 31) return true;             // 内网
+    if (a === 192 && b === 168) return true;                       // 内网
+    if (a >= 224) return true;                                     // 多播/保留
+  }
+  const low = ip.toLowerCase();
+  if (low === "::1" || low === "::") return true;                  // 环回 / 未指定
+  if (low.startsWith("fc") || low.startsWith("fd")) return true;   // IPv6 唯一本地
+  if (low.startsWith("fe80")) return true;                         // IPv6 链路本地
+  return false;
+}
+
+async function safeOrigin(raw: string): Promise<string> {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error("baseUrl 不是合法 URL");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error("仅支持 http/https");
+  }
+  const host = u.hostname;
+  const direct = isIP(host);
+  if (direct !== 0) {
+    if (isPrivateIp(host)) throw new Error("目标地址位于内网/环回/保留段,禁止探测");
+  } else {
+    let address: string;
+    try {
+      ({ address } = await lookup(host));
+    } catch {
+      throw new Error("目标域名无法解析");
+    }
+    if (isPrivateIp(address)) throw new Error("目标域名解析到内网/环回/保留段,禁止探测");
+  }
+  return u.origin.replace(/\/$/, "");
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,8 +68,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
     }
 
+    let origin: string;
+    try {
+      origin = await safeOrigin(baseUrl);
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: e?.message || "baseUrl 不安全" }, { status: 400 });
+    }
+
     let testModel = model?.trim() || "gpt-4o";
-    const testUrl = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+    const testUrl = `${origin}/chat/completions`;
     const startTime = Date.now();
 
     // Helper function to test chat connectivity for a specific model
@@ -52,7 +108,7 @@ export async function POST(req: NextRequest) {
     // 拉取 /models 列表。返回 {models, error}:models 为空时用 error 说明原因(HTTP 码/超时/
     // 格式异常),供前端在「连通成功但拉不到模型」时给出可诊断的提示,而非静默空下拉。
     const fetchModelsList = async (): Promise<{ models: string[]; error?: string }> => {
-      const modelsUrl = `${baseUrl.replace(/\/$/, "")}/models`;
+      const modelsUrl = `${origin}/models`;
       const modelsController = new AbortController();
       const modelsTimeoutId = setTimeout(() => modelsController.abort(), 5000); // 5s timeout
       try {

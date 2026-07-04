@@ -118,7 +118,9 @@ def _validate_updates(updates: dict[str, Any]) -> dict[str, str]:
     for key, value in updates.items():
         if key in DEPLOY_ONLY_KEYS or key not in EDITABLE_KEYS:
             raise ConfigValidationError(f"Config key is not editable: {key}")
-        sanitized_value = str(value or "")
+        # 只把 None 归一成空串;保留 0/0.0/False 的字面值,让下面的数值/边界校验正常命中
+        # (此前 str(value or "") 会把 XHS_EMBEDDING_RELEVANCE_FLOOR=0 等合法 falsy 吞成空串、跳过校验)。
+        sanitized_value = "" if value is None else str(value)
         if key == "XHS_EMBEDDING_DIMENSIONS" and sanitized_value.strip():
             try:
                 dimensions = int(sanitized_value)
