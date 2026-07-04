@@ -38,7 +38,8 @@ export interface ThreadContextProps {
   isStreaming: boolean;
   error: unknown;
   setFirstTokenReceived: (v: boolean) => void;
-  submitText: (text: string) => void;
+  // stateUpdate:可选,把结构化数据(如采纳的 selected_notes)经官方 state 通道直传 graph,不经 LLM。
+  submitText: (text: string, stateUpdate?: Record<string, unknown>) => void;
   handleSubmit: (e: any) => void;
   handleRegenerate: (parentCheckpoint: any) => void;
   handleFileUpload: (e: any) => void;

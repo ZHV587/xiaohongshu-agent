@@ -21,11 +21,30 @@ export interface ThinkingRun {
   presentation?: TracePresentation;
 }
 
+export interface DiscoveryNote {
+  note_id: string;
+  title: string;
+  summary?: string;
+  author?: string;
+  cover_url?: string;
+  note_url?: string;
+  likes?: number;
+  collects?: number;
+  comments?: number;
+  tags?: string[];
+  source?: "local" | "online";
+  already_local?: boolean;
+}
+
 export type TimelineItem =
   | { kind: "user"; text: string }
   | { kind: "thinking"; run: ThinkingRun }
   | { kind: "ai"; text: string }
+  | { kind: "discovery"; notes: DiscoveryNote[] }
   | { kind: "error"; text: string };
+
+// 发现式搜索工具:结果是可勾选采纳的笔记卡(走卡片通道,不复述进正文,见 prompts.py §6.5)。
+const DISCOVERY_TOOLS = new Set(["search_local_note_cards", "search_xhs_online"]);
 
 export interface TimelineContext {
   loading?: boolean;
@@ -158,16 +177,64 @@ function proseOf(content: Message["content"]): string {
     .trim();
 }
 
+// 把发现工具的一条结果行规整成 DiscoveryNote;缺 note_id/title 的丢弃。健壮:非对象跳过。
+function toDiscoveryNote(raw: unknown): DiscoveryNote | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const noteId = typeof r.note_id === "string" && r.note_id.trim()
+    ? r.note_id.trim()
+    : typeof r.resource_id === "string" && r.resource_id.trim()
+      ? r.resource_id.trim()
+      : "";
+  const title = typeof r.title === "string" ? r.title : "";
+  if (!noteId || !title) return null;
+  const num = (v: unknown): number | undefined => (typeof v === "number" && isFinite(v) ? v : undefined);
+  return {
+    note_id: noteId,
+    title,
+    summary: typeof r.summary === "string" ? r.summary : undefined,
+    author: typeof r.author === "string" ? r.author : undefined,
+    cover_url: typeof r.cover_url === "string" ? r.cover_url : undefined,
+    note_url: typeof r.note_url === "string" ? r.note_url : undefined,
+    likes: num(r.likes),
+    collects: num(r.collects),
+    comments: num(r.comments),
+    tags: Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === "string") : undefined,
+    source: r.source === "local" || r.source === "online" ? r.source : undefined,
+    already_local: typeof r.already_local === "boolean" ? r.already_local : undefined,
+  };
+}
+
+// 解析一条发现工具 tool 消息的 content(JSON {ok, results:[...]}),取出笔记卡。失败→空数组。
+function parseDiscoveryResults(content: Message["content"]): DiscoveryNote[] {
+  const text = getContentString(content);
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text) as { results?: unknown };
+    if (!Array.isArray(parsed.results)) return [];
+    return parsed.results.map(toDiscoveryNote).filter((n): n is DiscoveryNote => n !== null);
+  } catch {
+    return [];
+  }
+}
+
 export function deriveTimeline(messages: Message[], context: TimelineContext = {}): TimelineItem[] {
   const out: TimelineItem[] = [];
   const hasOfficialTrace = Object.keys(context.tracePresentationsByTurnId ?? {}).length > 0;
 
   // 全局:已答的 tool_call_id 集合(按 tool_call_id 配对,不靠顺序)。
+  // 同时记录每个 tool_call_id 对应的工具名,供 tool 消息判断是否是发现工具(要渲染卡片网格)。
   const answered = new Set<string>();
+  const toolNameById = new Map<string, string>();
   for (const m of messages) {
     if (m.type === "tool") {
       const cid = (m as { tool_call_id?: string }).tool_call_id;
       if (cid) answered.add(cid);
+    }
+    if (m.type === "ai") {
+      for (const c of ((m as { tool_calls?: ToolCall[] }).tool_calls ?? [])) {
+        if (c && typeof c.name === "string" && c.id) toolNameById.set(c.id, c.name);
+      }
     }
   }
 
@@ -268,7 +335,25 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       }
       continue;
     }
-    // tool 消息不直接产 item —— 其效果已经过 answered 反映到步骤状态。
+    if (m.type === "tool") {
+      // 发现工具(本地/线上笔记检索)的结果渲染成可勾选采纳的卡片网格。合并相邻的发现结果
+      // (本地+线上两路)到同一 discovery 项,按 note_id 去重,保留最先出现的(通常本地在前)。
+      const cid = (m as { tool_call_id?: string }).tool_call_id;
+      const toolName = cid ? toolNameById.get(cid) : undefined;
+      if (toolName && DISCOVERY_TOOLS.has(toolName)) {
+        const notes = parseDiscoveryResults(m.content);
+        if (notes.length) {
+          const last = out[out.length - 1];
+          if (last && last.kind === "discovery") {
+            const seen = new Set(last.notes.map((n) => n.note_id));
+            for (const n of notes) if (!seen.has(n.note_id)) { last.notes.push(n); seen.add(n.note_id); }
+          } else {
+            out.push({ kind: "discovery", notes });
+          }
+        }
+      }
+      // 其它 tool 消息不直接产 item —— 其效果已经过 answered 反映到步骤状态。
+    }
   }
   flushRun();
   if (context.loading && !out.some((item) => item.kind === "thinking" && !item.run.done)) {

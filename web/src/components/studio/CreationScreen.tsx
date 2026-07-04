@@ -10,6 +10,7 @@ import { useStudio } from "@/components/studio/useStudio";
 import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
 import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
+import type { DiscoveryNote } from "@/lib/thinking-trace";
 
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
@@ -231,6 +232,77 @@ function InterruptApprovalCard({
   );
 }
 
+// 发现式笔记卡网格:本地/线上检索结果走卡片通道(prompts.py §6.5),用户勾选要收录的线上笔记,
+// 点"收录选中并出选题"经 adoptNotes 把 selected_notes 直传 graph state → 后端采纳落库 → 出选题。
+// 已收录(already_local)的卡显示"已收录"、禁选(重复采纳无意义)。
+function DiscoveryNotesCard({
+  notes,
+  onAdopt,
+}: {
+  notes: DiscoveryNote[];
+  onAdopt: (notes: DiscoveryNote[]) => void;
+}) {
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const adoptable = notes.filter((n) => !n.already_local);
+  const pickedNotes = adoptable.filter((n) => picked[n.note_id]);
+
+  const toggle = (id: string) => setPicked((p) => ({ ...p, [id]: !p[id] }));
+  const adopt = () => {
+    if (submitting || pickedNotes.length === 0) return;
+    setSubmitting(true);
+    onAdopt(pickedNotes);
+    // 提交后进入忙碌态;真正的采纳进度/出选题由后续流呈现。兜底解锁防卡死。
+    setTimeout(() => setSubmitting(false), 8000);
+  };
+
+  return (
+    <Card padding="md">
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+        <Icon name="search" size={14} color="var(--primary)" />
+        <span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>找到 {notes.length} 篇相关笔记</span>
+        <span style={{ fontSize: 10, color: "var(--text-subtle)" }}>· 勾选线上笔记收录,作为出选题依据</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(128px, 1fr))", gap: 10, marginTop: 10 }}>
+        {notes.map((n) => {
+          const on = !!picked[n.note_id];
+          const locked = !!n.already_local;
+          return (
+            <div key={n.note_id} onClick={() => !locked && toggle(n.note_id)} style={{ position: "relative", cursor: locked ? "default" : "pointer", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", boxShadow: "var(--shadow-xs)", display: "flex", flexDirection: "column", outline: on ? "2px solid var(--primary)" : "2px solid transparent", transition: "outline-color var(--dur-fast)" }}>
+              <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)" }}>
+                {n.cover_url && <Image src={n.cover_url} alt={n.title} fill sizes="150px" unoptimized style={{ objectFit: "cover" }} />}
+              </div>
+              <div style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{n.title}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, color: "var(--text-subtle)" }}>
+                  <span style={{ maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.author || ""}</span>
+                  {n.likes != null && <span>♥ {n.likes}</span>}
+                </div>
+              </div>
+              <span style={{ position: "absolute", top: 6, left: 6, fontSize: 8, fontWeight: 700, color: "#fff", background: n.source === "local" ? "rgba(52,120,90,0.85)" : "rgba(0,0,0,0.4)", padding: "2px 6px", borderRadius: 999 }}>{n.source === "local" ? "本地库" : "线上"}</span>
+              {locked ? (
+                <span style={{ position: "absolute", top: 6, right: 6, fontSize: 8, fontWeight: 700, color: "var(--success)", background: "#fff", padding: "2px 6px", borderRadius: 999, boxShadow: "var(--shadow-xs)" }}>已收录</span>
+              ) : (
+                <span style={{ position: "absolute", top: 6, right: 6, width: 18, height: 18, borderRadius: 999, background: on ? "var(--primary)" : "rgba(255,255,255,0.9)", border: on ? "none" : "1px solid var(--border)", display: "inline-flex", alignItems: "center", justifyContent: "center", boxShadow: "var(--shadow-xs)" }}>
+                  {on && <Icon name="check" size={11} color="#fff" />}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+        <span style={{ fontSize: 11, color: "var(--text-subtle)", flex: 1 }}>
+          {adoptable.length === 0 ? "这些笔记都已在库中,可直接让我基于它们出选题。" : `已选 ${pickedNotes.length} / ${adoptable.length} 篇可收录`}
+        </span>
+        <Button variant="primary" size="sm" disabled={submitting || pickedNotes.length === 0} leftIcon={<Icon name={submitting ? "loader" : "cloud-upload"} size={13} />} onClick={adopt}>
+          {submitting ? "收录中…" : "收录选中并出选题"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function ChatColumn({ showTopics }: { showTopics: boolean }) {
   const { topics, timeline, trends, actions, interrupt } = useStudio();
   const [draft, setDraft] = useState("");
@@ -313,6 +385,16 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
               <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
                 <Avatar glyph="🍠" variant="agent" size={32} />
                 <div style={{ background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "11px 15px", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", boxShadow: "var(--shadow-sm)", alignSelf: "flex-start", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.text}</div>
+              </div>
+            );
+          }
+          if (item.kind === "discovery") {
+            return (
+              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "96%" }}>
+                <Avatar glyph="🍠" variant="agent" size={32} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <DiscoveryNotesCard notes={item.notes} onAdopt={actions.adoptNotes} />
+                </div>
               </div>
             );
           }

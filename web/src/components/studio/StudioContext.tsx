@@ -22,7 +22,7 @@ import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { useTraceContext } from "@/providers/trace-store";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
-import { deriveTimeline, type TimelineItem } from "@/lib/thinking-trace";
+import { deriveTimeline, type TimelineItem, type DiscoveryNote } from "@/lib/thinking-trace";
 import { StudioContext } from "./useStudio";
 import {
   applyOptimisticSchedule,
@@ -113,6 +113,7 @@ export interface StudioStore {
     openEvidence: (ev: SelectedEvidence) => void;
     closeEvidence: () => void;
     respondToInterrupt: (decisions: HITLDecision[]) => void;
+    adoptNotes: (notes: DiscoveryNote[]) => void;
   };
   // HITL 工具审批中断:非 null 时聊天区渲染审批卡,用户批准/驳回后经 respondToInterrupt 恢复。
   interrupt: HITLRequest | null;
@@ -338,6 +339,20 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [setSection, t],
   );
 
+  // 采纳用户在发现卡勾选的笔记:经官方 state-update 通道把 selected_notes 直传 graph
+  // (不经 LLM 转写),后端 adopt_online_notes 用 InjectedState 读它落库,成功后按 prompt
+  // 走出选题流程。文本只给指令,笔记数据走 stateUpdate。
+  const adoptNotes = useCallback(
+    (notes: DiscoveryNote[]) => {
+      if (!notes.length) return;
+      t.submitText(
+        "请采纳我在面板勾选的这些线上笔记(收录入库),然后基于这批 + 本地相关内容出选题。",
+        { selected_notes: notes },
+      );
+    },
+    [t],
+  );
+
   const updateField = useCallback(
     (field: keyof StudioNote, value: unknown) => {
       if (field === "title") t.setDraftTitle(String(value));
@@ -552,6 +567,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       openEvidence: setSelectedEvidence,
       closeEvidence: () => setSelectedEvidence(null),
       respondToInterrupt: t.respondToInterrupt,
+      adoptNotes,
     },
     interrupt: t.interrupt,
   };
