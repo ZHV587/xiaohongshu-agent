@@ -84,9 +84,33 @@ export function Recents({ onNew, compact = false }: RecentsProps) {
   const getThreads = threadsCtx?.getThreads;
   const setThreads = threadsCtx?.setThreads;
   const setThreadsLoading = threadsCtx?.setThreadsLoading;
+  const deleteThread = threadsCtx?.deleteThread;
   const threadsLoading = threadsCtx?.threadsLoading ?? false;
   const [collapsed, setCollapsed] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [hoveredThread, setHoveredThread] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deletingThread, setDeletingThread] = useState<string | null>(null);
+
+  const handleDeleteThread = async (e: React.MouseEvent, targetId: string) => {
+    e.stopPropagation(); // 不要触发行的 setThreadId(切换会话)
+    if (!deleteThread || deletingThread) return;
+    if (confirmDelete !== targetId) {
+      setConfirmDelete(targetId); // 两击确认:首次点亮确认态,再点执行删除
+      return;
+    }
+    setDeletingThread(targetId);
+    try {
+      await deleteThread(targetId);
+      // 删的是当前会话:切回新对话空态(deleteThread 已从列表移除该项)
+      if (targetId === threadId) onNew();
+    } catch {
+      /* 失败保持列表不变;deleteThread 内成功才移除,无需回滚 */
+    } finally {
+      setDeletingThread(null);
+      setConfirmDelete(null);
+    }
+  };
 
   // 挂载时拉取真实会话列表并写入 context state(getThreads 只返回不写 state,须自行 setThreads,
   // 与旧 history 面板同款)。切换会话后 threadId 变化时刷新列表。空态由 threads.length===0 呈现,不 mock。
@@ -140,16 +164,42 @@ export function Recents({ onNew, compact = false }: RecentsProps) {
           )}
           {threads.map((t) => {
             const on = t.thread_id === threadId;
+            const hovered = hoveredThread === t.thread_id;
+            const confirming = confirmDelete === t.thread_id;
+            const deleting = deletingThread === t.thread_id;
             return (
-              <button key={t.thread_id} onClick={() => setThreadId?.(t.thread_id)} title={threadTitle(t)} style={{
-                display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
-                padding: "9px 11px", fontSize: "var(--text-sm)", borderRadius: "var(--radius-sm)", cursor: "pointer", border: "none",
-                borderLeft: on ? "2px solid var(--primary)" : "2px solid transparent",
-                background: on ? "var(--oats-dark)" : "transparent", color: on ? "var(--primary)" : "var(--text-muted)", fontWeight: on ? 600 : 400,
-              } as CSSProperties}>
+              <div
+                key={t.thread_id}
+                onMouseEnter={() => setHoveredThread(t.thread_id)}
+                onMouseLeave={() => { setHoveredThread(null); if (confirmDelete === t.thread_id) setConfirmDelete(null); }}
+                onClick={() => setThreadId?.(t.thread_id)}
+                title={threadTitle(t)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
+                  padding: "9px 11px", fontSize: "var(--text-sm)", borderRadius: "var(--radius-sm)", cursor: "pointer",
+                  borderLeft: on ? "2px solid var(--primary)" : "2px solid transparent",
+                  background: on ? "var(--oats-dark)" : hovered ? "var(--oats-light)" : "transparent",
+                  color: on ? "var(--primary)" : "var(--text-muted)", fontWeight: on ? 600 : 400,
+                } as CSSProperties}
+              >
                 <Icon name="message-square" size={13} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{threadTitle(t)}</span>
-              </button>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{threadTitle(t)}</span>
+                {deleteThread && (hovered || confirming || deleting) && (
+                  <button
+                    onClick={(e) => handleDeleteThread(e, t.thread_id)}
+                    title={confirming ? "再次点击确认删除" : "删除会话"}
+                    aria-label={confirming ? "确认删除会话" : "删除会话"}
+                    disabled={deleting}
+                    style={{
+                      border: "none", background: "transparent", cursor: deleting ? "default" : "pointer",
+                      color: confirming ? "var(--danger, #e5484d)" : "var(--text-subtle)",
+                      display: "inline-flex", alignItems: "center", padding: 2, flexShrink: 0,
+                    }}
+                  >
+                    <Icon name={deleting ? "loader" : confirming ? "check" : "trash-2"} size={13} />
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
