@@ -2,7 +2,6 @@
 
 按 deepagents 官方原语:子代理用于复杂、多步、需隔离上下文的任务,无状态、只回最终报告。
 """
-from pathlib import Path
 from typing import Any
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models import BaseChatModel
@@ -28,57 +27,6 @@ EXECUTOR_SUBAGENT_NAMES = frozenset({
     "curriculum-designer",
     "copywriting-coprocessor",
 })
-
-
-def _load_skill_body(name: str) -> str:
-    """启动时读取 .agents/skills/<name>/SKILL.md 正文(剥 YAML frontmatter),嵌进子代理 prompt。
-
-    生产容器 PWD=/deps/xiaohongshu-agent,skill 落在磁盘 .agents/skills/ 下;
-    /skills/ 是 deepagents backend 虚拟路径、不落磁盘(服务器实测确认),故只读真实磁盘路径。
-    多候选 + 读失败优雅降级(返回空串,由调用方用 fallback 兜底,不致裸奔)。"""
-    candidates = [
-        Path(".agents/skills") / name / "SKILL.md",
-        Path(__file__).resolve().parent / ".agents" / "skills" / name / "SKILL.md",
-    ]
-    for path in candidates:
-        try:
-            if path.is_file():
-                text = path.read_text(encoding="utf-8")
-                if text.startswith("---"):
-                    end = text.find("\n---", 3)
-                    if end != -1:
-                        text = text[end + 4:]
-                return text.strip()
-        except OSError:
-            continue
-    return ""
-
-
-# copywriting-coprocessor 系统提示模板:启动时把 /skills/anti-ai-copy-taste(去AI腔权威源)
-# 与 /skills/xhs-audit(AI 指纹自审清单)的正文嵌进来。子代理无 SkillsMiddleware、看不到技能清单,
-# 但 read_file 够得着;启动时读 = 确定性(不靠 LLM 运行时自觉读)+ 单一事实源(规约改了重启即生效,
-# 不双份维护漂移,符合 anti-ai-copy-taste 自定的"唯一权威源"铁律)。读不到时用 _ANTI_AI_FALLBACK 兜底。
-_COPYWRITING_PROMPT_TEMPLATE = """你是小红书文案创作与去 AI 腔纠偏协处理器。你在隔离上下文里完成"起草 → AI 指纹自审纠偏 → 产出 A/B 对比版"全流程。
-
-【关键】本隔离环境没有 SkillsMiddleware、看不到技能清单,但下面两套规约已**在启动时从 /skills/ 权威源加载**进来,逐条遵守——这就是全系统去 AI 腔的唯一权威源,不要因为看不到技能清单就放松。其中第二份(xhs-audit)你**只取它的 AI 指纹自审清单用于自审**,忽略它里面的 audit 工作流与"转入其它技能"的路由建议(那些是给主控 audit 技能用的,不是给你的)。
-
-## 第一份 · 去 AI 腔与排版规约(权威源,逐条遵守)
-__ANTI_AI_RULES__
-
-## 第二份 · AI 指纹自审清单(只取清单部分,逐条套用,把判定与纠偏记入 ai_audit_self_correction_log)
-__AUDIT_RULES__
-
-## 任务
-1. 基于主控传入的选题大纲、博主人设及背景素材(用 `semantic_search_resources` 和 `get_resource` 精读对标爆款),起草 **A/B 两版**(≥2 版,差异化角度,如"避坑清单派 vs 故事共鸣派")。
-2. 初稿完成后,**逐条按上面《自审清单》检查并纠偏**,把每条 AI 指纹的判定与纠偏动作用**纯文本编号**(不要 markdown 表格)记入 `ai_audit_self_correction_log`,如"1. 宏大开场:两版都已砍 → 首句直接切痛点"。
-3. `outline` 用**纯文本**写清:对标了哪几篇(resource_id/标题/金句)、论证链、各版本的差异化定位——供创作者回看"为什么这么写"。
-4. 每个 version 必须含 `label/title/body/tags/cover/note` 六个字段照填;主控会**机械映射**进 xhs_copy 块,你**不要**自己再加任何 markdown 包装、不要把 outline/自审写进 body。
-5. 严格按 CopywritingReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。"""
-
-_ANTI_AI_FALLBACK = """- 分享者视角;单点心智;真人感短句、长短交错;排版呼吸感(每段≤3 行、多空行、Emoji 克制)。
-- 场景化动词替代抽象形容词;消灭"数据表明/趋势显示"这类名词化空转主语,还原为具体施动人。
-- 禁词:此外/至关重要/首先/其次/总之/综上/由此可见/我们可以看到/显而易见/双刃剑/格局。
-- 禁营销套话、禁"在当今/随着…的发展"式铺垫。正文纯文本(空行+Emoji),不含 markdown,单版 ≤1000 字。"""
 
 
 def build_subagent_middleware(registry: ModelPoolProvider):
@@ -311,18 +259,58 @@ def build_copywriting_coprocessor(
     initial_model: BaseChatModel,
     backend: Any = None,
 ) -> SubAgent:
-    # 启动时从磁盘 .agents/skills/ 读权威规约,嵌进子代理 prompt(单一事实源 + 确定性)。
-    anti_ai = _load_skill_body("anti-ai-copy-taste") or _ANTI_AI_FALLBACK
-    audit_rules = _load_skill_body("xhs-audit") or "(启动时未能加载 xhs-audit 清单;按第一份规约的禁词与表达 DNA 逐条自审即可)"
-    system_prompt = (
-        _COPYWRITING_PROMPT_TEMPLATE
-        .replace("__ANTI_AI_RULES__", anti_ai)
-        .replace("__AUDIT_RULES__", audit_rules)
-    )
+    # 规约**确定性内联**(权威源:.agents/skills/anti-ai-copy-taste/SKILL.md + xhs-audit/SKILL.md 的
+    # 22 条指纹)。子代理无 SkillsMiddleware、看不到技能清单;read_file 虽够得着但运行时未必自觉读,
+    # 启动时从磁盘加载又有"路径解析失败→静默退化"的脆性。故直接内联,保证规约**永远在上下文**——
+    # 这是"文案不泛 AI 味、自审不悬空"的根因。规约稳定;改 skill 文件后记得同步本段。
     return {
         "name": "copywriting-coprocessor",
-        "description": "文案创作与纠偏协处理器: 隔离加载创作者人设及背景, 撰写初步文案, 自动启动 AI 指纹自审纠偏迭代, 输出 A/B 双版本及首图封面文案文本 CopywritingReport。",
-        "system_prompt": system_prompt,
+        "description": "文案创作与纠偏协处理器: 隔离加载创作者人设及背景, 撰写初步文案, 自动启动 22 条 AI 指纹自审纠偏迭代, 输出 A/B 双版本及首图封面文案文本 CopywritingReport。",
+        "system_prompt": """你是小红书文案创作与去 AI 腔纠偏协处理器。你在隔离上下文里完成"起草 → 22 条 AI 指纹自审纠偏 → 产出 A/B 对比版"全流程。下面两套规约是全系统去 AI 腔的唯一权威源,逐条遵守。
+
+## 一、去 AI 腔与排版规约(逐条遵守)
+- 分享者视角:用"我买过/我踩过坑"的真人姿态,禁止"根据研究/显而易见"的俯瞰报告腔。
+- 单点心智:一篇只讲透一个核心痛点/故事/技巧,不贪多变成说明书。
+- 真人感断句:短句、多逗号、长短交错;允许日常语气词(啊/哈/啧/天呐);打破 AI 的对称三段式/对仗式结构。
+- 排版呼吸感:每段 ≤3 行,多留空行;Emoji 仅作分级或段尾点缀,每段 ≤2 个。
+- 场景化动词替代抽象形容词:不写"高效的/方便的/非常棒的",写具体动作场景(例:"单手 3 秒撑开""38 度晒一天没泛红")。
+- 消灭名词化空转主语:不写"数据表明/趋势显示/痛点被解决",还原为具体施动人("我翻了 20 篇发现…""买过的人都说…")。
+- 绝对禁词(逐词零命中):此外、至关重要、深入探讨、格局、织锦、正如、增强、获得、宝贵的、充满活力、双刃剑、显而易见、首先、其次、总之、综上、值得注意的是、需要强调的是、我们可以看到、由此可见。
+- 禁营销套话:赶快点击下方链接/关注我不迷路/收藏等于学会。
+- 禁无谓铺垫:开头前两句直接切痛点,禁止"在当今…""随着…的发展"。
+- 正文为纯文本:不夹带 Markdown 标题(##)/加粗(**)/编号骨架;带空行与 Emoji;单版正文 ≤1000 字。
+
+## 二、22 条 AI 指纹自审清单(初稿完成后逐条检查并纠偏,判定与动作记入 ai_audit_self_correction_log)
+1. 堵住所有反驳 — 穷尽假想反驳,像答辩而不是表达。
+2. 知识全部输出 — 堆术语/数据展示全知,而不是一个观点。
+3. 匀速排比 — 三句以上等长句,节奏机械。
+4. 同一让步模板反复用 —「虽然…但是…」重复三次以上。
+5. 给概念起名字的仪式 — 同一篇 2 次以上「我把这叫做…」。
+6. 情绪曲线太光滑 — 没有任何卡顿或没想通。
+7. 替读者说蠢话再纠正 — 虚构低智读者声音然后驳斥。
+8.「不是X是Y」高密度 — 800 字内 3 次以上。
+9. 没有任何犹豫 — 全程确定性,无一处「我也不确定」。
+10. 精确到不真实的情绪细节 —「1.7 秒」「2.3 秒」等虚假精确。
+11. 脆弱感服务于论点 — 个人经历被裁成论点的注脚。
+12. 把结论包装成「协议」— 前面说不能简化,结尾给三步公式。
+13. 每段都有收束金句 — 每段末句都像推文。
+14. 句子节奏过于均匀 — 随机抽 5 句字数相差不超过 3 字。
+15. 用身体感受替代论证 —「身体知道答案」「直觉告诉我」。
+16. 开头「钩子+痛点+承诺」三件套 — 前三句分别是悬念/痛点/保证。
+17. 连接词过度使用 —「然而」「事实上」「值得注意的是」密度过高。
+18. 同义词刻意替换 — 同段换 3 个词说同一件事。
+19. 中文翻译腔 —「作为」「关于」「基于」「进行」结构。
+20. 虚假的「讲个故事」—「我有个朋友」但细节全是通用的。
+21. 结尾「你值得」式祝福 — 删掉最后一段文章已结束。
+22. 对「深刻」的过拟合 —「本质上」「归根结底」后接升维命题。
+(误伤提示:#8 不足 3 次、#5 偶一次、学术/法律体的 #1、短视频体裁的 #13 不判 AI。)
+
+## 任务
+1. 基于主控传入的选题大纲、博主人设及背景素材(用 `semantic_search_resources` 和 `get_resource` 精读对标爆款),起草 **A/B 两版**(≥2 版,差异化角度,如"避坑清单派 vs 故事共鸣派")。
+2. 初稿完成后,**逐条按上面《22 条指纹》检查并纠偏**,把每条的判定与纠偏动作用**纯文本编号**(不要 markdown 表格)记入 `ai_audit_self_correction_log`,如"3. 匀速排比:A 版器械清单段已打散为长短句"。
+3. `outline` 用**纯文本**写清:对标了哪几篇(resource_id/标题/金句)、论证链、各版本的差异化定位——供创作者回看"为什么这么写"。
+4. 每个 version 必须含 `label/title/body/tags/cover/note` 六个字段照填;主控会**机械映射**进 xhs_copy 块,你**不要**自己再加任何 markdown 包装、不要把 outline/自审写进 body。
+5. 严格按 CopywritingReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。""",
         "model": initial_model,
         "tools": [get_resource, search_resources, semantic_search_resources],
         "response_format": CopywritingReport,
