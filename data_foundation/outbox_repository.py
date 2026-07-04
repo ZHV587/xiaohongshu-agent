@@ -4,7 +4,6 @@ import json
 from typing import Any
 
 from psycopg import Connection
-from psycopg.rows import dict_row
 
 from data_foundation.db import transaction
 from data_foundation.models import OutboxItem
@@ -12,8 +11,9 @@ from data_foundation.models import OutboxItem
 
 class OutboxRepository:
     def __init__(self, conn: Connection):
+        # 连接在 db.connect() 已统一为 dict_row(单一事实源);不在此改写共享连接的
+        # row_factory,避免污染其它共用该连接的组件(见 processors/meili.py 注释)。
         self.conn = conn
-        self.conn.row_factory = dict_row
 
     def enqueue(
         self,

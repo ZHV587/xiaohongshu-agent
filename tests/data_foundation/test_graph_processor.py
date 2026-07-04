@@ -30,10 +30,12 @@ def test_state_disabled_without_config():
 
 
 def test_process_merges_node_and_its_edges():
+    # 处理器按查询开 dict_row cursor(不再改写共享连接的 row_factory),故 mock 走 cursor 路径。
     conn = MagicMock()
-    conn.execute.return_value.fetchone.return_value = {
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.execute.return_value.fetchone.return_value = {
         "id": "r1", "tenant_id": "default", "type": "feishu_base_record", "title": "T"}
-    conn.execute.return_value.fetchall.return_value = [
+    cur.execute.return_value.fetchall.return_value = [
         {"source_resource_id": "r1", "target_resource_id": "r2", "edge_type": "derived_from",
          "weight": 1.0, "properties": {}}]
     graph = MagicMock()

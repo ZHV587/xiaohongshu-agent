@@ -29,11 +29,21 @@ def test_state_disabled_when_no_config():
     assert p.state().reason_code == "MEILI_CONFIG_MISSING"
 
 
-def test_process_upserts_resource_document():
+def _conn_returning(row):
+    """构造一个 mock 连接:cursor(row_factory=dict_row) 上下文里 execute().fetchone() 返回 row。
+
+    处理器不再改写共享连接的 row_factory,而是按查询开 dict_row cursor,故 mock 走 cursor 路径。
+    """
     conn = MagicMock()
-    conn.execute.return_value.fetchone.return_value = {
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.execute.return_value.fetchone.return_value = row
+    return conn
+
+
+def test_process_upserts_resource_document():
+    conn = _conn_returning({
         "id": "r1", "tenant_id": "default", "type": "feishu_base_record",
-        "title": "减脂笔记", "summary": None, "content_text": "正文"}
+        "title": "减脂笔记", "summary": None, "content_text": "正文"})
     index = MagicMock()
     p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
     result = asyncio.run(p.process(_item({"resource_id": "r1", "version": 1}), _Lease()))
@@ -55,10 +65,9 @@ def test_process_missing_resource_id_is_permanent():
 
 
 def test_process_ensures_index_settings_once_before_upsert():
-    conn = MagicMock()
-    conn.execute.return_value.fetchone.return_value = {
+    conn = _conn_returning({
         "id": "r1", "tenant_id": "default", "type": "feishu_base_record",
-        "title": "t", "summary": None, "content_text": "body"}
+        "title": "t", "summary": None, "content_text": "body"})
     index = MagicMock()
     p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
     # 两次 process:ensure_index 只应调用一次(实例级幂等),每次都 upsert

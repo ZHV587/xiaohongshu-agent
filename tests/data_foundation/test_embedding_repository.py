@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 import psycopg
+from psycopg.rows import dict_row
 import pytest
 
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
@@ -223,7 +224,8 @@ def test_store_batch_waits_for_resource_revision_lock(database_url, migrated_con
     schema = migrated_conn.execute("select current_schema() as schema").fetchone()["schema"]
 
     def store() -> str:
-        with psycopg.connect(database_url) as conn:
+        # 与生产 db.connect() 一致:连接级 dict_row 是仓储的单一事实源(仓储不再自行改写连接)。
+        with psycopg.connect(database_url, row_factory=dict_row) as conn:
             conn.execute(f'set search_path to "{schema}", public')
             return EmbeddingRepository(conn).store_batch(
                 tenant_id="tenant-a",

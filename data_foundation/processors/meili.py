@@ -15,8 +15,9 @@ class MeiliProcessor:
     topic = "meili_index"
 
     def __init__(self, conn: Connection, *, index: MeiliResourceIndex | None, config: MeiliConfig):
+        # 不改写共享连接的 row_factory(会污染其它共用该连接、依赖默认/hybrid 行格式的组件);
+        # 本处理器所需的 dict 行按查询用 cursor(row_factory=dict_row) 局部声明。
         self.conn = conn
-        self.conn.row_factory = dict_row
         self.index = index
         self.config = config
         self._index_ensured = False
@@ -33,13 +34,14 @@ class MeiliProcessor:
         resource_id = str(item.payload.get("resource_id") or item.resource_id or "")
         if not resource_id:
             raise PermanentProcessingError("Meili outbox payload missing resource_id")
-        row = self.conn.execute(
-            """
-            select id::text as id, tenant_id, type, title, summary, content_text
-            from resources where tenant_id = %s and id = %s
-            """,
-            (item.tenant_id, resource_id),
-        ).fetchone()
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            row = cur.execute(
+                """
+                select id::text as id, tenant_id, type, title, summary, content_text
+                from resources where tenant_id = %s and id = %s
+                """,
+                (item.tenant_id, resource_id),
+            ).fetchone()
         if row is None:
             return ProcessResult(status="superseded")
         # 确保索引 settings(filterable/searchable)就位,且只在本实例首次写入前调一次。

@@ -97,8 +97,9 @@ class EmbeddingProcessor:
         max_chunk_chars: int = 2000,
         chunk_overlap: int = 200,
     ):
+        # 不改写共享连接的 row_factory:连接在 db.connect() 已统一为 dict_row,
+        # 改写共享连接会污染其它共用该连接的组件(见 processors/meili.py 注释)。
         self.conn = conn
-        self.conn.row_factory = dict_row
         self.config = config
         self.transport = transport
         self.max_chunk_chars = max_chunk_chars
@@ -182,29 +183,30 @@ class EmbeddingProcessor:
         resource_version: int,
         embedding_index_id: str,
     ) -> dict[str, Any] | None:
-        row = self.conn.execute(
-            """
-            select rv.content_text,
-                   idx.embedding_model,
-                   idx.dimensions,
-                   idx.chunker_version,
-                   idx.config_version
-            from resource_versions rv
-            join embedding_indexes idx
-              on idx.tenant_id = rv.tenant_id
-             and idx.id = %s
-            where rv.tenant_id = %s
-              and rv.resource_id = %s
-              and rv.version = %s
-              and rv.version = (
-                select max(latest.version)
-                from resource_versions latest
-                where latest.tenant_id = rv.tenant_id
-                  and latest.resource_id = rv.resource_id
-              )
-            """,
-            (embedding_index_id, tenant_id, resource_id, resource_version),
-        ).fetchone()
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            row = cur.execute(
+                """
+                select rv.content_text,
+                       idx.embedding_model,
+                       idx.dimensions,
+                       idx.chunker_version,
+                       idx.config_version
+                from resource_versions rv
+                join embedding_indexes idx
+                  on idx.tenant_id = rv.tenant_id
+                 and idx.id = %s
+                where rv.tenant_id = %s
+                  and rv.resource_id = %s
+                  and rv.version = %s
+                  and rv.version = (
+                    select max(latest.version)
+                    from resource_versions latest
+                    where latest.tenant_id = rv.tenant_id
+                      and latest.resource_id = rv.resource_id
+                  )
+                """,
+                (embedding_index_id, tenant_id, resource_id, resource_version),
+            ).fetchone()
         return None if row is None else dict(row)
 
     async def _embed(self, chunks: list[str]) -> list[list[float]]:

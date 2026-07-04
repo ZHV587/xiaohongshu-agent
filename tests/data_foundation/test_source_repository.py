@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import psycopg
+from psycopg.rows import dict_row
 
 from data_foundation.source_repository import SourceRepository
 from data_foundation.repositories.resource import ResourceRepository
@@ -115,8 +116,9 @@ def test_lease_due_source_uses_skip_locked(database_url, migrated_conn):
     repo = SourceRepository(migrated_conn)
     source = _register(repo, tenant_id="tenant-a")
     schema = migrated_conn.execute("select current_schema() as schema").fetchone()["schema"]
-    first_conn = psycopg.connect(database_url)
-    second_conn = psycopg.connect(database_url)
+    # 与生产 db.connect() 一致:连接级 dict_row 是仓储的单一事实源(仓储不再自行改写连接)。
+    first_conn = psycopg.connect(database_url, row_factory=dict_row)
+    second_conn = psycopg.connect(database_url, row_factory=dict_row)
     try:
         first_conn.execute(f'set search_path to "{schema}", public')
         second_conn.execute(f'set search_path to "{schema}", public')

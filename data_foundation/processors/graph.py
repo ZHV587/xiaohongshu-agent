@@ -15,8 +15,9 @@ class GraphProcessor:
     topic = "graph_ingest"
 
     def __init__(self, conn: Connection, *, graph: FalkorResourceGraph | None, config: FalkorConfig):
+        # 不改写共享连接的 row_factory(会污染其它共用该连接的组件);dict 行按查询用
+        # cursor(row_factory=dict_row) 局部声明。
         self.conn = conn
-        self.conn.row_factory = dict_row
         self.graph = graph
         self.config = config
 
@@ -32,22 +33,23 @@ class GraphProcessor:
         resource_id = str(item.payload.get("resource_id") or item.resource_id or "")
         if not resource_id:
             raise PermanentProcessingError("Graph outbox payload missing resource_id")
-        node = self.conn.execute(
-            "select id::text as id, tenant_id, type, title from resources where tenant_id=%s and id=%s",
-            (item.tenant_id, resource_id),
-        ).fetchone()
-        if node is None:
-            return ProcessResult(status="superseded")
-        edges = self.conn.execute(
-            """
-            select source_resource_id::text as source_resource_id,
-                   target_resource_id::text as target_resource_id,
-                   edge_type, weight, properties
-            from resource_edges
-            where tenant_id = %s and source_resource_id = %s
-            """,
-            (item.tenant_id, resource_id),
-        ).fetchall()
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            node = cur.execute(
+                "select id::text as id, tenant_id, type, title from resources where tenant_id=%s and id=%s",
+                (item.tenant_id, resource_id),
+            ).fetchone()
+            if node is None:
+                return ProcessResult(status="superseded")
+            edges = cur.execute(
+                """
+                select source_resource_id::text as source_resource_id,
+                       target_resource_id::text as target_resource_id,
+                       edge_type, weight, properties
+                from resource_edges
+                where tenant_id = %s and source_resource_id = %s
+                """,
+                (item.tenant_id, resource_id),
+            ).fetchall()
         await lease.assert_owned()
         # falkordb/redis 客户端是同步阻塞 socket I/O。与 meili 同理(见 meili.py 注释):
         # 在 async + asyncio.wait_for(outbox_timeout) 下直接阻塞会让超时失效、Falkor 卡顿冻死
