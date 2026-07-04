@@ -320,13 +320,17 @@ function PipelineItemCard({
 }) {
   const [linking, setLinking] = useState(false);
   const [linkDraft, setLinkDraft] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
+  // 提交后不立即收起输入框:推进成功时该项会离开 scheduled 列、整卡随 publishQueue 刷新卸载;
+  // 推进失败时(advanceStage 内部弹 toast)本项仍在,输入框保留供用户改链重试,不丢上下文(评审 HIGH)。
   const submitLink = () => {
     const trimmed = linkDraft.trim();
-    if (!trimmed) return;
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
     onAdvance(item, "published", trimmed);
-    setLinking(false);
-    setLinkDraft("");
+    // 兜底:一定时间内若卡未卸载(推进失败),恢复可编辑,让用户重试。
+    setTimeout(() => setSubmitting(false), 6000);
   };
 
   return (
@@ -354,8 +358,8 @@ function PipelineItemCard({
             style={{ fontSize: 10 }}
           />
           <div style={{ display: "flex", gap: 5 }}>
-            <Button variant="primary" size="sm" style={{ flex: 1 }} disabled={!linkDraft.trim()} onClick={submitLink}>确认</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setLinking(false); setLinkDraft(""); }}>取消</Button>
+            <Button variant="primary" size="sm" style={{ flex: 1 }} disabled={!linkDraft.trim() || submitting} onClick={submitLink}>{submitting ? "推进中…" : "确认"}</Button>
+            <Button variant="ghost" size="sm" disabled={submitting} onClick={() => { setLinking(false); setLinkDraft(""); }}>取消</Button>
           </div>
         </div>
       )}

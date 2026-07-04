@@ -176,6 +176,15 @@ function InterruptApprovalCard({
   const [submitting, setSubmitting] = useState(false);
   const reqs = interrupt.action_requests ?? [];
   const configs = interrupt.review_configs ?? [];
+  // 成功恢复后本卡会因 interrupt→null 卸载。若恢复失败(如决定数不匹配/网络错),interrupt 仍在、
+  // 本卡仍挂载:此时必须解除按钮禁用,否则用户被永久锁死无法重试(评审 HIGH)。超时兜底:提交后
+  // 若一定时间内卡未卸载(未恢复),重新放开按钮供重试。新中断到达时,调用点用 key 重挂本卡,
+  // submitting 随新实例天然归零(无需在 effect 里同步 setState)。
+  useEffect(() => {
+    if (!submitting) return;
+    const timer = setTimeout(() => setSubmitting(false), 8000);
+    return () => clearTimeout(timer);
+  }, [submitting]);
   const allowedFor = (i: number): string[] =>
     configs[i]?.allowed_decisions ?? configs.find((c) => c.action_name === reqs[i]?.action)?.allowed_decisions ?? ["approve", "reject"];
 
@@ -336,7 +345,11 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
           <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
             <Avatar glyph="🍠" variant="agent" size={32} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <InterruptApprovalCard interrupt={interrupt} onRespond={actions.respondToInterrupt} />
+              <InterruptApprovalCard
+                key={(interrupt.action_requests ?? []).map((r) => r.action).join("|")}
+                interrupt={interrupt}
+                onRespond={actions.respondToInterrupt}
+              />
             </div>
           </div>
         )}
