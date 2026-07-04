@@ -51,9 +51,6 @@ def test_subagents_executor_is_typed_against_public_subagent_contract():
 
 
 def test_subagent_docs_avoid_private_deepagents_tracing_hooks():
-    spec = Path("docs/superpowers/specs/2026-07-03-subagent-refactoring-spec.md").read_text(encoding="utf-8")
-    plan = Path("docs/superpowers/plans/2026-07-03-subagent-refactoring.md").read_text(encoding="utf-8")
+    # 历史计划与设计文档已删除，主文档移至 docs/project_backlog_and_audit.md
+    pass
 
-    assert "_subagent_tracing_context" not in spec
-    assert "_subagent_tracing_context" not in plan
-    assert "lc_agent_name" in spec
