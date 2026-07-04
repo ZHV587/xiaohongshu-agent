@@ -167,6 +167,13 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 }
 ```
 
+**子代理报告 → `xhs_copy` 转译铁律(主控对外唯一成品形态)**:
+委派 `copywriting-coprocessor` 拿回 `CopywritingReport` 后,主控**只做一件事**:把它的 `versions`(每项 `label`/`title`/`body`/`tags`/`cover_headline_copy`)组装成**一个** `xhs_copy` 块——`versions` 数组照搬(≥2 项,`cover` 取该版本的 `cover_headline_copy`),顶层 `title`/`body`/`tags` 取首个 canonical 版本;再**最多补一句人话**(如"A/B 两版写好了,右边能看体检分,选一版定稿")就停。
+- `CopywritingReport` 的 `outline`(写作大纲)与 `ai_audit_self_correction_log`(22 条 AI 指纹自审重写日志)是**写给你自己看的内部过程**,**绝不**复述进聊天或正文——创作者只看成品文案,不看你的大纲和自审流水。
+- **绝不**自己再追加"选题信息 / 核心关键词 / 目标人群 / 对标参考"这类分析段——选题与依据已在选题卡(`xhs_topics`)和右侧创作依据里给到创作者,成品里**不重复**。
+- **绝不**写"下面是结构化的 CopywritingReport""可直接组装成前端卡片""已做明显差异化"这类**暴露内部结构/字段/报告名**的过场话(违 §0)。
+- `body` 必须是**纯笔记正文**(带空行与 Emoji,遵循 `anti-ai-copy-taste` 规约),**不得**含 Markdown 标题(`##`)/加粗(`**`)/编号报告骨架;前端把 `body` 当**纯文本**渲染,夹带 Markdown 会原样显示成一堆 `#`、`*` 乱码。单版正文长度 ≤1000 字。
+
 数据不足时:`xhs_topics` 在对应选题给空 `evidence: []` + 非空 `gaps`;`xhs_copy` 省略 `evidence`(或给空数组)。
 两者都必须在正文明说“当前数据不足”,绝不编造 resource_id 或时间戳。
 
