@@ -12,14 +12,21 @@ export const runtime = "nodejs";
 
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 
-function corsHeaders(): Record<string, string> {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "*",
-    "Access-Control-Expose-Headers": "content-location",
-  };
-}
+// 上游透传时需剥除的响应头:hop-by-hop 头(由 fetch/Node 自行管理,透传会破坏连接语义),
+// 以及绝不能回传给浏览器的 set-cookie(上游会话 cookie 不应泄漏到前端)。
+const STRIPPED_RESPONSE_HEADERS = new Set([
+  "set-cookie",
+  "connection",
+  "keep-alive",
+  "transfer-encoding",
+  "content-encoding",
+  "content-length",
+]);
+
+// 本代理是**同源** BFF(浏览器只访问同源 /api/*,见 providers/client.ts):同源请求不需要任何
+// CORS 头。此前用 Access-Control-Allow-Origin:* + Allow-Headers:* 是纯多余的攻击面——它让任意
+// 站点得以对本代理发起跨源请求并读取响应(注入用户 cookie 的鉴权代理绝不应对外开放)。
+// 故不再发任何 ACAO 头;OPTIONS 预检直接 204(无 ACAO,浏览器自然拒绝跨源)。
 
 function upstreamUrl(req: NextRequest): string {
   const apiUrl = process.env.LANGGRAPH_API_URL ?? "http://localhost:2024";
@@ -51,9 +58,10 @@ async function proxy(req: NextRequest, method: string): Promise<NextResponse> {
       body: BODY_METHODS.has(method) ? await req.text() : undefined,
     });
 
-    const responseHeaders = new Headers(corsHeaders());
-    upstream.headers.forEach((value, key) => responseHeaders.set(key, value));
-    Object.entries(corsHeaders()).forEach(([key, value]) => responseHeaders.set(key, value));
+    const responseHeaders = new Headers();
+    upstream.headers.forEach((value, key) => {
+      if (!STRIPPED_RESPONSE_HEADERS.has(key.toLowerCase())) responseHeaders.set(key, value);
+    });
 
     return new NextResponse(upstream.body, {
       status: upstream.status,
@@ -63,7 +71,7 @@ async function proxy(req: NextRequest, method: string): Promise<NextResponse> {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "LangGraph proxy failed" },
-      { status: 500, headers: corsHeaders() },
+      { status: 500 },
     );
   }
 }
@@ -75,5 +83,6 @@ export const PATCH = (req: NextRequest) => proxy(req, "PATCH");
 export const DELETE = (req: NextRequest) => proxy(req, "DELETE");
 
 export function OPTIONS(): NextResponse {
-  return new NextResponse(null, { status: 204, headers: corsHeaders() });
+  // 同源无需 CORS;不发 ACAO,预检对跨源请求自然失败。
+  return new NextResponse(null, { status: 204 });
 }
