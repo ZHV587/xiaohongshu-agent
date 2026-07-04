@@ -109,6 +109,7 @@ export interface StudioStore {
     reuse: (topicId: number) => void;
     newChat: () => void;
     say: (text: string) => void;
+    stop: () => void;
     toast: (msg: string) => void;
     openEvidence: (ev: SelectedEvidence) => void;
     closeEvidence: () => void;
@@ -563,6 +564,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setSection("create");
       },
       say: (text: string) => t.submitText(text),
+      stop: () => t.stopGeneration(),
       toast: showToast,
       openEvidence: setSelectedEvidence,
       closeEvidence: () => setSelectedEvidence(null),

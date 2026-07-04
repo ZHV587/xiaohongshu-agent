@@ -259,6 +259,14 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     setContentBlocks([]);
   };
 
+  // 停止当前生成:调 SDK stream.stop() 中断在跑的这轮。此前 UI 完全没有停止入口,用户想换方向
+  // 只能干等一轮跑完。停止后已流出的部分内容保留(草稿由 messages 派生,不回滚),用户可直接改或重发。
+  const stopGeneration = useCallback(() => {
+    if (!isLoading) return;
+    setFirstTokenReceived(false);
+    void stream.stop();
+  }, [isLoading, stream]);
+
   const handleRegenerate = (parentCheckpoint: Checkpoint | null | undefined) => {
     prevMessageLength.current = prevMessageLength.current - 1;
     setFirstTokenReceived(false);
@@ -311,6 +319,7 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         submitText,
         handleSubmit,
         handleRegenerate,
+        stopGeneration,
         handleFileUpload,
         dropRef,
         removeBlock,

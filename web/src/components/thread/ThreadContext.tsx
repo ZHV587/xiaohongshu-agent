@@ -42,6 +42,8 @@ export interface ThreadContextProps {
   submitText: (text: string, stateUpdate?: Record<string, unknown>) => void;
   handleSubmit: (e: any) => void;
   handleRegenerate: (parentCheckpoint: any) => void;
+  /** 停止当前正在进行的生成(SDK stream.stop)。仅在 isLoading 时有效。 */
+  stopGeneration: () => void;
   handleFileUpload: (e: any) => void;
   dropRef: RefObject<HTMLDivElement | null>;
   removeBlock: (idx: number) => void;

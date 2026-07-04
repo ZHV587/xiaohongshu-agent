@@ -105,7 +105,11 @@ export function DeepEditor() {
             <Button variant="soft" size="sm" leftIcon={<Icon name="hash" size={12} />} onClick={actions.addTags} disabled={writing}>配标签</Button>
             <span style={{ width: 1, height: 18, background: "var(--border)", margin: "0 3px" }} />
             {quickEmoji.slice(0, 8).map((e) => <button key={e} onClick={() => insertEmoji(e)} disabled={writing} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 1, opacity: writing ? 0.4 : 1 }}>{e}</button>)}
-            <span style={{ marginLeft: "auto", fontSize: 10, color: body.length > 1000 ? "var(--warning)" : "var(--text-subtle)" }} className="font-tabular">{writing ? "🍠 生成中…" : `${body.length} / 1000`}</span>
+            {writing ? (
+              <Button variant="secondary" size="sm" style={{ marginLeft: "auto" }} leftIcon={<Icon name="circle" size={12} />} onClick={() => actions.stop()}>停止生成</Button>
+            ) : (
+              <span style={{ marginLeft: "auto", fontSize: 10, color: body.length > 1000 ? "var(--warning)" : "var(--text-subtle)" }} className="font-tabular">{`${body.length} / 1000`}</span>
+            )}
           </div>
           {/* 正文 */}
           <textarea data-testid="draft-body" ref={bodyRef} value={writing ? body + " ▍" : body} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => actions.updateField("body", e.target.value)} readOnly={writing} placeholder="正文从一句共情钩子开始，再用 1️⃣2️⃣3️⃣ 分点干货，最后引导互动…" style={{ border: "none", background: "transparent", resize: "none", minHeight: 300, fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", outline: "none" }} />

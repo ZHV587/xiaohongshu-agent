@@ -304,7 +304,8 @@ function DiscoveryNotesCard({
 }
 
 function ChatColumn({ showTopics }: { showTopics: boolean }) {
-  const { topics, timeline, trends, actions, interrupt } = useStudio();
+  const { topics, timeline, trends, actions, interrupt, note } = useStudio();
+  const generating = note.status === "writing";
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendDraft = () => {
@@ -444,7 +445,11 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
               <kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>润色工具箱</span>
             </button>
-            <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={sendDraft}>发送</Button>
+            {generating ? (
+              <Button variant="secondary" size="sm" leftIcon={<Icon name="circle" size={13} />} onClick={() => actions.stop()}>停止生成</Button>
+            ) : (
+              <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={sendDraft}>发送</Button>
+            )}
           </>} />
         </div>
       </div>

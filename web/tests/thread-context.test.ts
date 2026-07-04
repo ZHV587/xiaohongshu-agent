@@ -40,6 +40,24 @@ test("ThreadStateProvider injects draft states + delegates autosave to useThread
   assert.match(hook, /parseAiDraft/);
 });
 
+test("停止生成:stream.stop 经 provider → studio → 组合区按钮三层接通", () => {
+  const context = src("components", "thread", "ThreadContext.tsx");
+  const provider = src("components", "thread", "ThreadStateProvider.tsx");
+  const studio = src("components", "studio", "StudioContext.tsx");
+  const screen = src("components", "studio", "CreationScreen.tsx");
+  const editor = src("components", "studio", "DeepEditor.tsx");
+
+  assert.match(context, /stopGeneration:\s*\(\)\s*=>\s*void/);
+  assert.match(provider, /stream\.stop\(\)/);
+  assert.match(provider, /stopGeneration,/);
+  assert.match(studio, /stop:\s*\(\)\s*=>\s*t\.stopGeneration\(\)/);
+  // 生成中显示"停止生成"入口(创作区组合区 + 深创工具条)
+  assert.match(screen, /actions\.stop\(\)/);
+  assert.match(screen, /停止生成/);
+  assert.match(editor, /actions\.stop\(\)/);
+  assert.match(editor, /停止生成/);
+});
+
 test("HITL 工具审批中断:契约/恢复/审批卡三层已接通(#16 死锁修复)", () => {
   const context = src("components", "thread", "ThreadContext.tsx");
   const provider = src("components", "thread", "ThreadStateProvider.tsx");
