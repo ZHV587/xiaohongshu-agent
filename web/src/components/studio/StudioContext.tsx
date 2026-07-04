@@ -105,7 +105,7 @@ export interface StudioStore {
     schedule: (date: number) => void;
     syncFeishu: () => void;
     backfillSave: (metrics?: Record<string, unknown>) => void;
-    advanceStage: (item: PublishItem, toStage: PublishStage) => void;
+    advanceStage: (item: PublishItem, toStage: PublishStage, linkInput?: string) => void;
     reuse: (topicId: number) => void;
     newChat: () => void;
     say: (text: string) => void;
@@ -433,7 +433,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   // advanceStage：POST /api/backend/pipeline 推进发布管线 stage，成功后由 GET 重读真实 stage。
   const advanceStage = useCallback(
-    async (item: PublishItem, toStage: PublishStage) => {
+    async (item: PublishItem, toStage: PublishStage, linkInput?: string) => {
       const resourceId = item.resourceId;
       if (!resourceId) {
         showToast("无法定位该笔记的资源，暂不能推进");
@@ -445,14 +445,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         showToast(`不能从「${item.stage}」推进到「${toStage}」`);
         return;
       }
+      // 回链由调用方(发布管线的内联输入框)传入,不再用 window.prompt 阻塞式弹窗打断页面。
+      // 已有 link 直接沿用;标记已发但既无既有 link 又无传入 link 时,提示需要回链后返回,
+      // 由 UI 展开内联输入框收集(非阻塞)。
       let link: string | undefined = item.link;
       if (toStage === "published" && (!link || !link.trim())) {
-        const entered = typeof window !== "undefined" ? window.prompt("贴入小红书回链 URL") : null;
-        if (!entered || !entered.trim()) {
+        const entered = (linkInput ?? "").trim();
+        if (!entered) {
           showToast("已取消：标记已发需要回链");
           return;
         }
-        link = entered.trim();
+        link = entered;
       }
       try {
         const res = await fetch("/api/backend/pipeline", {

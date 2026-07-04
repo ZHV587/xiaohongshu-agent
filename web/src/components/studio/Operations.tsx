@@ -3,11 +3,11 @@
 // 账号运营 screen — 数据看板 · 选题库/爆款拆解 · 内容日历/排期 · 数据回填.
 
 import { useRef, useState, type CSSProperties } from "react";
-import { Badge, Button, Card, Icon, StatCard, type BadgeProps } from "@/components/ds";
+import { Badge, Button, Card, Icon, Input, StatCard, type BadgeProps } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
 import { WEEKDAYS } from "@/components/studio/types";
-import type { Account, LibraryItem } from "@/components/studio/types";
+import type { Account, LibraryItem, PublishItem, PublishStage } from "@/components/studio/types";
 import type { LoadStatus } from "@/components/studio/useBackendResource";
 
 export function Operations() {
@@ -307,6 +307,65 @@ function BackfillSection({ sectionRef }: { sectionRef?: React.Ref<HTMLElement> }
   );
 }
 
+// 单条发布管线卡片。「标记已发·贴回链」不再用 window.prompt 阻塞式弹窗:点击后就地展开
+// 内联输入框收集回链 URL(非阻塞、可取消),确认后再调 advanceStage 推进到 published。
+function PipelineItemCard({
+  item,
+  stage,
+  onAdvance,
+}: {
+  item: PublishItem;
+  stage: PublishStage;
+  onAdvance: (item: PublishItem, toStage: PublishStage, linkInput?: string) => void;
+}) {
+  const [linking, setLinking] = useState(false);
+  const [linkDraft, setLinkDraft] = useState("");
+
+  const submitLink = () => {
+    const trimmed = linkDraft.trim();
+    if (!trimmed) return;
+    onAdvance(item, "published", trimmed);
+    setLinking(false);
+    setLinkDraft("");
+  };
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "7px 8px", background: "var(--oats-light)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ width: 14, height: 14, borderRadius: 999, background: "var(--accent-surface)", color: "var(--primary)", fontSize: 8, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{item.acct}</span>
+        <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
+      </div>
+      <div style={{ fontSize: 9, color: "var(--text-subtle)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.link ? `🔗 ${item.link}` : item.time}</div>
+      {stage === "scheduled" && !linking && (
+        <Button variant="soft" size="sm" block style={{ marginTop: 6 }} leftIcon={<Icon name="send" size={11} />} onClick={() => (item.link && item.link.trim() ? onAdvance(item, "published") : setLinking(true))}>标记已发 · 贴回链</Button>
+      )}
+      {stage === "scheduled" && linking && (
+        <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 5 }}>
+          <Input
+            autoFocus
+            value={linkDraft}
+            onChange={(e) => setLinkDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitLink();
+              if (e.key === "Escape") { setLinking(false); setLinkDraft(""); }
+            }}
+            placeholder="贴入小红书回链 URL"
+            aria-label="小红书回链 URL"
+            style={{ fontSize: 10 }}
+          />
+          <div style={{ display: "flex", gap: 5 }}>
+            <Button variant="primary" size="sm" style={{ flex: 1 }} disabled={!linkDraft.trim()} onClick={submitLink}>确认</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setLinking(false); setLinkDraft(""); }}>取消</Button>
+          </div>
+        </div>
+      )}
+      {stage === "published" && (
+        <Button variant="soft" size="sm" block style={{ marginTop: 6 }} leftIcon={<Icon name="clipboard-pen" size={11} />} onClick={() => onAdvance(item, "measured")}>回填数据</Button>
+      )}
+    </div>
+  );
+}
+
 // 发布管线 · 回链闭环（待发布 → 已发布·回链 → 已回填）
 interface PublishPipelineProps {
   account?: Account | null;
@@ -339,15 +398,7 @@ function PipelineSection({ account }: PublishPipelineProps) {
               <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                 {items.length === 0 && <span style={{ fontSize: 10, color: "var(--text-subtle)" }}>—</span>}
                 {items.map((it) => (
-                  <div key={it.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "7px 8px", background: "var(--oats-light)" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                      <span style={{ width: 14, height: 14, borderRadius: 999, background: "var(--accent-surface)", color: "var(--primary)", fontSize: 8, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{it.acct}</span>
-                      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.title}</span>
-                    </div>
-                    <div style={{ fontSize: 9, color: "var(--text-subtle)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.link ? `🔗 ${it.link}` : it.time}</div>
-                    {st.key === "scheduled" && <Button variant="soft" size="sm" block style={{ marginTop: 6 }} leftIcon={<Icon name="send" size={11} />} onClick={() => actions.advanceStage(it, "published")}>标记已发 · 贴回链</Button>}
-                    {st.key === "published" && <Button variant="soft" size="sm" block style={{ marginTop: 6 }} leftIcon={<Icon name="clipboard-pen" size={11} />} onClick={() => actions.advanceStage(it, "measured")}>回填数据</Button>}
-                  </div>
+                  <PipelineItemCard key={it.id} item={it} stage={st.key} onAdvance={actions.advanceStage} />
                 ))}
               </div>
             </Card>
