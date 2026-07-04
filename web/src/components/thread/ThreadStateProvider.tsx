@@ -111,12 +111,24 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     if (cmd === "polish") {
       toast.success("执行 [/polish 智能润色] 指令中，流式修改已发送...");
       submitText(
-        `请帮我把右侧这段文案进行智能润色，使标题更吸引眼球，正文增加一些活泼的 Emoji：\n\n${draftContent}`,
+        [
+          "请帮我把右侧这段文案进行智能润色：使标题更吸引眼球，正文增加一些活泼的 Emoji，保持原意不变。",
+          "",
+          `标题：${draftTitle}`,
+          "",
+          `正文：${draftContent}`,
+        ].join("\n"),
       );
     } else if (cmd === "shorten") {
       toast.success("执行 [/shorten 文案瘦身] 指令中...");
       submitText(
-        `请帮我针对以下文案，生成 5 个在小红书极具热度的话题标签：\n\n${draftContent}`,
+        [
+          "请帮我针对以下文案做「瘦身」：在保留核心信息、钩子和情绪的前提下精简篇幅，删掉冗余表达，让正文更紧凑易读，不要新增话题标签。",
+          "",
+          `标题：${draftTitle}`,
+          "",
+          `正文：${draftContent}`,
+        ].join("\n"),
       );
     } else if (cmd === "tags") {
       toast.success("执行 [/tags 话题推荐] 指令中...");
