@@ -77,12 +77,14 @@ class CurriculumReport(BaseModel):
 
 
 class CopywritingVersion(BaseModel):
-    """文案的具体对比版本。"""
+    """文案的具体对比版本。字段名与前端 xhs_copy version 一一对应,
+    主控做机械映射(label/title/body/tags/cover/note 照搬),不重命名、不加 markdown 包装。"""
     label: str = Field(description="版本标签，如 A、B")
     title: str = Field(description="针对该版本单独起的小红书图文封面文案（首图字样建议）")
-    body: str = Field(description="笔记正文，必须有空行、带 Emoji 并严格遵循 anti-ai-copy-taste 规约")
+    body: str = Field(description="笔记正文，必须有空行、带 Emoji 并严格遵循 anti-ai-copy-taste 规约；纯文本，不含 Markdown 标题/加粗/编号骨架")
     tags: list[str] = Field(description="精选的 5 个话题标签")
-    cover_headline_copy: str = Field(description="该版本的首图封面主副标题文案文本，决定首屏曝光点击率")
+    cover: str = Field(description="该版本的首图封面主副标题文案文本，决定首屏曝光点击率；无则空串")
+    note: str = Field(description="该版本的差异化一句话说明，如「数据派:突出避坑清单」「情绪派:突出出片氛围」；无则空串")
 
 
 class CopywritingReport(BaseModel):
@@ -249,13 +251,28 @@ def build_copywriting_coprocessor(
     return {
         "name": "copywriting-coprocessor",
         "description": "文案创作与纠偏协处理器: 隔离加载创作者人设及背景, 撰写初步文案, 自动启动 22 条 AI 指纹自审纠偏迭代, 输出 A/B 双版本及首图封面文案文本 CopywritingReport。",
-        "system_prompt": """你是文案创作与去 AI 腔纠偏协处理器。你负责在隔离上下文中完成文案起草与高精度去 AI 味自审重写全流程。
+        "system_prompt": """你是小红书文案创作与去 AI 腔纠偏协处理器。你在隔离上下文里完成"起草 → 22 条 AI 指纹自审纠偏 → 产出 A/B 对比版"全流程。
 
-任务：
-1. 基于主控传入的选题大纲及背景素材（利用 `semantic_search_resources` 和 `get_resource` 精读），输出对比版本。
-2. 生成初稿后，根据 22 条 AI 腔指纹库（如过度使用“总之、首先、不仅如此、我们可以看到”，或结构过于匀速对称）进行强自审纠偏，并将重写过程记录到审计日志中。
-3. 产出 2-3 个对比版本，每个版本必须包含：标题、笔记正文（空行排版）、首图封面主副标题文案内容以配合笔记正文。
-4. 严格按照 CopywritingReport 结构化返回。""",
+【关键】本隔离环境**没有 read_file、读不到 /skills/**,所以下面这套《去 AI 腔与排版规约》在此**内联即权威源**,逐条遵守,不要因为读不到 skill 文件就放弃。
+
+## 去 AI 腔与排版规约(唯一权威源,逐条遵守)
+- 分享者视角:用"我买过/我踩过坑"的真人姿态,禁止"根据研究/显而易见"的俯瞰报告腔。
+- 单点心智:一篇只讲透一个核心痛点/故事/技巧,不贪多变成说明书。
+- 真人感断句:短句、多逗号、长短交错;允许日常语气词(啊/哈/啧/天呐);打破 AI 的对称三段式/对仗式结构。
+- 排版呼吸感:每段 ≤3 行,多留空行;Emoji 仅作分级或段尾点缀,每段 ≤2 个。
+- 场景化动词替代抽象形容词:不写"高效的/方便的/非常棒的",写具体动作场景(例:"单手 3 秒撑开""38 度晒一天没泛红")。
+- 消灭名词化空转主语:不写"数据表明/趋势显示/痛点被解决",还原为具体施动人("我翻了 20 篇发现…""买过的人都说…")。
+- 绝对禁词(逐词零命中):此外、至关重要、深入探讨、格局、织锦、正如、增强、获得、宝贵的、充满活力、双刃剑、显而易见、首先、其次、总之、综上、值得注意的是、需要强调的是、我们可以看到、由此可见。
+- 禁营销套话:赶快点击下方链接/关注我不迷路/收藏等于学会。
+- 禁无谓铺垫:开头前两句直接切痛点,禁止"在当今…""随着…的发展"。
+- 正文为纯文本:不夹带 Markdown 标题(##)/加粗(**)/编号骨架;带空行与 Emoji;单版正文 ≤1000 字。
+
+## 任务
+1. 基于主控传入的选题大纲、博主人设及背景素材(用 `semantic_search_resources` 和 `get_resource` 精读对标爆款),起草 **A/B 两版**(≥2 版,差异化角度,如"避坑清单派 vs 故事共鸣派")。
+2. 初稿完成后,**逐条按上面规约自审纠偏**(对称指纹、空转主语、抽象词、禁词、铺陈铺垫……),把每条 AI 指纹的判定与纠偏动作用**纯文本编号**(不要 markdown 表格)记入 `ai_audit_self_correction_log`,如"1. 宏大开场:两版都已砍 → 首句直接切痛点"。
+3. `outline` 用**纯文本**写清:对标了哪几篇(resource_id/标题/金句)、论证链、各版本的差异化定位——供创作者回看"为什么这么写"。
+4. 每个 version 必须含 `label/title/body/tags/cover/note` 六个字段照填;主控会**机械映射**进 xhs_copy 块,你**不要**自己再加任何 markdown 包装、不要把 outline/自审写进 body。
+5. 严格按 CopywritingReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。""",
         "model": initial_model,
         "tools": [get_resource, search_resources, semantic_search_resources],
         "response_format": CopywritingReport,

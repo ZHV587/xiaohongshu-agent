@@ -15,12 +15,14 @@ type DeepMode = "edit" | "compare";
 export function DeepCreation() {
   const { note, setSection } = useStudio();
   const [mode, setMode] = useState<DeepMode>("edit");
+  const [processOpen, setProcessOpen] = useState(false);
   if (note.status === "idle") return <DeepEmpty onGo={() => setSection("create")} />;
   const body = mode === "compare" ? <ABCompare /> : <DeepEditor />;
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <DeepTopicBar mode={mode} setMode={setMode} />
+      <DeepTopicBar mode={mode} setMode={setMode} onOpenProcess={() => setProcessOpen(true)} />
       {body}
+      {processOpen && <CreationProcessDrawer onClose={() => setProcessOpen(false)} />}
     </div>
   );
 }
@@ -44,7 +46,7 @@ function DeepEmpty({ onGo }: { onGo: () => void }) {
 }
 
 // 顶部「基于选题」上下文条
-function DeepTopicBar({ mode, setMode }: { mode: DeepMode; setMode: (m: DeepMode) => void }) {
+function DeepTopicBar({ mode, setMode, onOpenProcess }: { mode: DeepMode; setMode: (m: DeepMode) => void; onOpenProcess: () => void }) {
   const { note, setSection, topics } = useStudio();
   const topic = (topics || []).find((t) => t.id === note.topicId);
   return (
@@ -64,6 +66,11 @@ function DeepTopicBar({ mode, setMode }: { mode: DeepMode; setMode: (m: DeepMode
             <button key={k} onClick={() => setMode(k)} style={{ padding: "4px 10px", borderRadius: "var(--radius-xs)", border: "none", cursor: "pointer", fontSize: 11, fontWeight: mode === k ? 700 : 500, background: mode === k ? "var(--surface-card)" : "transparent", color: mode === k ? "var(--primary)" : "var(--text-muted)", boxShadow: mode === k ? "var(--shadow-xs)" : "none" }}>{l}</button>
           ))}
         </div>
+        {note.process && (
+          <button onClick={onOpenProcess} title="查看本版的创作过程:对标依据 + AI 腔自审纠偏" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-sm)", padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)", color: "var(--primary)", whiteSpace: "nowrap" }}>
+            <Icon name="history" size={12} /> 创作过程
+          </button>
+        )}
         <button onClick={() => setSection("create")} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
           <Icon name="repeat" size={12} /> 换题
         </button>
@@ -189,6 +196,59 @@ function ABVersionCard({ id }: { id: VersionId }) {
 
       <div style={{ padding: 10, borderTop: "1px solid var(--border)" }}>
         <Button variant={active ? "secondary" : "primary"} size="sm" block disabled={active} onClick={() => { actions.setVersion(id); actions.toast(`✅ 已采用「${label}」为当前稿`); }}>{active ? "当前采用中" : "采用此版"}</Button>
+      </div>
+    </div>
+  );
+}
+
+// 创作过程抽屉(P2-b):回看本次文案生成的"大纲与对标依据 + AI 腔自审纠偏",与成品正文分两条道。
+// 数据来自 note.process(从 xhs_copy 块的 outline/ai_audit_log 字段解析),缺失时优雅降级,永不崩。
+function CreationProcessDrawer({ onClose }: { onClose: () => void }) {
+  const { note } = useStudio();
+  const p = note.process;
+  const empty = !p || (!p.outline && !p.audit);
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,15,16,0.35)", zIndex: 55, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} className="cs slide-in-right" style={{ width: 420, maxWidth: "92vw", height: "100%", background: "var(--background)", boxShadow: "var(--shadow-2xl)", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "sticky", top: 0, background: "var(--surface-card)", borderBottom: "1px solid var(--border)", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <Icon name="history" size={16} color="var(--primary)" />
+            <span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>创作过程</span>
+            <span style={{ fontSize: 9, color: "var(--text-subtle)" }}>· 对标依据 + 去AI腔自审</span>
+          </div>
+          <button onClick={onClose} aria-label="关闭" style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-subtle)", display: "inline-flex" }}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="cs" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+          {empty ? (
+            <div style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "var(--text-sm)", padding: "40px 20px", lineHeight: "var(--leading-relaxed)" }}>
+              <div style={{ fontSize: 30, marginBottom: 8 }}>🗂️</div>
+              本版没有可回看的创作过程记录。
+              <div style={{ fontSize: 11, color: "var(--text-subtle)", marginTop: 6 }}>委派 🍠 写文案时会带对标依据与自审纠偏记录;直接手写或旧会话的文案可能没有。</div>
+            </div>
+          ) : (
+            <>
+              {p?.outline && (
+                <section style={{ background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <Icon name="clipboard-pen" size={13} color="var(--primary)" />
+                    <span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>大纲与对标依据</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-body)", lineHeight: "var(--leading-relaxed)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{p?.outline}</p>
+                </section>
+              )}
+              {p?.audit && (
+                <section style={{ background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <Icon name="shield-check" size={13} color="var(--primary)" />
+                    <span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>AI 腔自审纠偏</span>
+                    <span style={{ fontSize: 9, color: "var(--text-subtle)" }}>· 22 条指纹逐条</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: 11, color: "var(--text-body)", lineHeight: "var(--leading-relaxed)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{p?.audit}</p>
+                </section>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

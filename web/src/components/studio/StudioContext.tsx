@@ -46,6 +46,7 @@ import type {
   PublishStage,
   SelectedEvidence,
   StudioNote,
+  StudioProcess,
   StudioSection,
   StudioUser,
   Teardown,
@@ -327,7 +328,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [t.isLoading]);
 
   // ── multi-version draft + its backend resource id parsed from the live stream ──
-  const { versions, copyResourceId } = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
+  const { versions, copyResourceId, process } = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
 
   const note: StudioNote = useMemo(
     () => ({
@@ -340,8 +341,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       status,
       activeVersion,
       versions,
+      process,
     }),
-    [topicId, kw, t.draftTitle, t.draftContent, tags, cover, status, activeVersion, versions],
+    [topicId, kw, t.draftTitle, t.draftContent, tags, cover, status, activeVersion, versions, process],
   );
 
   // ── topics & evidence parsed from the LIVE stream (rich fields, no mock) ──
@@ -720,6 +722,7 @@ function parseTopicsFromMessages(messages: ReturnType<typeof useThread>["message
 function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"]): {
   versions: Partial<Versions> | null;
   copyResourceId: string | null;
+  process: StudioProcess | null;
 } {
   // 与 xhs-blocks.ts 的 FENCE_RE 同口径:标签后允许换行或同行空格紧跟 JSON。
   // Claude 原生 /v1/messages 常把 JSON 写在 ```xhs_copy 同一行,旧的 \s*\n 会整块漏解析
@@ -744,13 +747,18 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
       const versions = Array.isArray(obj.versions)
         ? mapVersions(obj.versions as DraftVersionInput[])
         : null;
-      return { versions, copyResourceId };
+      // 创作过程(outline + ai_audit_log)与成品同块携带,供"创作过程"抽屉回看;不进正文。
+      const outline = typeof obj.outline === "string" ? obj.outline : "";
+      const auditRaw = obj.ai_audit_log ?? obj.ai_audit_self_correction_log;
+      const audit = typeof auditRaw === "string" ? auditRaw : "";
+      const process = outline || audit ? { outline, audit } : null;
+      return { versions, copyResourceId, process };
     } catch {
       // 非法 JSON（流式未闭合等）→ 单版本，继续扫描更早的消息。
       continue;
     }
   }
-  return { versions: null, copyResourceId: null };
+  return { versions: null, copyResourceId: null, process: null };
 }
 
 // ── studio overlay 本地持久化(按 threadId 隔离) ──────────────────────────────

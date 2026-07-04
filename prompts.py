@@ -167,12 +167,35 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 }
 ```
 
-**子代理报告 → `xhs_copy` 转译铁律(主控对外唯一成品形态)**:
-委派 `copywriting-coprocessor` 拿回 `CopywritingReport` 后,主控**只做一件事**:把它的 `versions`(每项 `label`/`title`/`body`/`tags`/`cover_headline_copy`)组装成**一个** `xhs_copy` 块——`versions` 数组照搬(≥2 项,`cover` 取该版本的 `cover_headline_copy`),顶层 `title`/`body`/`tags` 取首个 canonical 版本;再**最多补一句人话**(如"A/B 两版写好了,右边能看体检分,选一版定稿")就停。
-- `CopywritingReport` 的 `outline`(写作大纲)与 `ai_audit_self_correction_log`(22 条 AI 指纹自审重写日志)是**写给你自己看的内部过程**,**绝不**复述进聊天或正文——创作者只看成品文案,不看你的大纲和自审流水。
-- **绝不**自己再追加"选题信息 / 核心关键词 / 目标人群 / 对标参考"这类分析段——选题与依据已在选题卡(`xhs_topics`)和右侧创作依据里给到创作者,成品里**不重复**。
-- **绝不**写"下面是结构化的 CopywritingReport""可直接组装成前端卡片""已做明显差异化"这类**暴露内部结构/字段/报告名**的过场话(违 §0)。
-- `body` 必须是**纯笔记正文**(带空行与 Emoji,遵循 `anti-ai-copy-taste` 规约),**不得**含 Markdown 标题(`##`)/加粗(`**`)/编号报告骨架;前端把 `body` 当**纯文本**渲染,夹带 Markdown 会原样显示成一堆 `#`、`*` 乱码。单版正文长度 ≤1000 字。
+**子代理报告 → `xhs_copy` 转译铁律(机械字段映射,主控唯一对外成品形态)**:
+委派 `copywriting-coprocessor` 拿回 `CopywritingReport` 后,主控**只做机械字段映射**,输出**唯一一个** `xhs_copy` 代码块——按下面对应把报告字段搬进块,字段名照抄、不重命名、不加 markdown 包装:
+- 块顶层 `title` / `body` / `tags` ← `report.versions[0].title` / `.body` / `.tags`
+- 块 `versions` 数组 ← 遍历 `report.versions`,每项输出 `{"label":v.label,"title":v.title,"body":v.body,"tags":v.tags,"cover":v.cover,"note":v.note}`(报告里字段就叫 `cover`/`note`,照搬,别改名)
+- 块 `outline` ← `report.outline`;块 `ai_audit_log` ← `report.ai_audit_self_correction_log`(这两个作为**结构化字段**放进块,前端只渲染进"创作过程"抽屉,不进正文)
+- 块 `evidence` ← 真实证据数组,无则 `[]`
+
+最终形态(以两版为例):
+```xhs_copy
+{
+  "title": "版本A标题",
+  "body": "版本A正文(纯文本,空行+Emoji)",
+  "tags": ["#标签一"],
+  "versions": [
+    { "label": "A", "title": "版本A标题", "body": "版本A正文", "tags": ["#标签一"], "cover": "封面主副标题", "note": "数据派:突出避坑清单" },
+    { "label": "B", "title": "版本B标题", "body": "版本B正文", "tags": ["#标签二"], "cover": "封面主副标题", "note": "情绪派:突出出片氛围" }
+  ],
+  "outline": "对标了哪几篇(resource_id/标题/金句)+ 论证链 + 各版本差异化定位(纯文本)",
+  "ai_audit_log": "逐条 AI 指纹自审纠偏记录(纯文本编号,如 1. 宏大开场:已砍 → 首句直接切痛点)",
+  "evidence": []
+}
+```
+
+输出这个块 + **最多一句人话**(如"A/B 两版写好了,选一版定稿")就停。
+
+铁律(违一条都会让前端渲染崩):
+- **绝不**把 `outline`/`ai_audit_log`/versions 复述成 markdown 正文、表格或列表;**绝不**写"# CopywritingReport""## outline""### 版本A""下面是结构化的报告""可直接组装成前端卡片"这类暴露内部结构/字段/报告名的字面字符——前端把 `xhs_copy` 块**之外**的任何文字都当聊天正文**原样显示**,夹带这些就是一堆 `#`/`*` 乱码。
+- **绝不**自己追加"选题信息/核心关键词/目标人群/对标参考"(选题与依据已在选题卡和右侧创作依据)。
+- `body` 必须是纯笔记正文(空行+Emoji,遵循 `anti-ai-copy-taste`),不含 Markdown 标题/加粗/编号骨架,单版 ≤1000 字。
 
 数据不足时:`xhs_topics` 在对应选题给空 `evidence: []` + 非空 `gaps`;`xhs_copy` 省略 `evidence`(或给空数组)。
 两者都必须在正文明说“当前数据不足”,绝不编造 resource_id 或时间戳。

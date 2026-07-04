@@ -67,6 +67,14 @@ export type Versions = Record<VersionId, DraftVersion>;
 
 export type NoteStatus = "idle" | "writing" | "draft" | "scheduled";
 
+/** 一次文案生成的「创作过程」:供深度创作页"查看创作过程"抽屉回看,
+ *  让创作者知道这份文案对标了什么、按哪些去AI腔指纹自审纠偏过。
+ *  与成品文案分两条道:正文只渲染 title/body/tags/versions,process 永远不进正文。 */
+export interface StudioProcess {
+  outline: string;
+  audit: string;
+}
+
 /** The shared note that flows across 创作 / 深度创作 / 运营. Title & body are
  *  the canonical draft (bound to useThreadDraftState); the rest is studio
  *  overlay (versions, tags, cover, status). */
@@ -82,6 +90,9 @@ export interface StudioNote {
   /** 多版本草稿（来自 xhs_copy 多版本）。可能仅含真实存在的版本（A/B/C 子集），
    *  无多版本时为 null（保持单版本编辑态）。消费组件按实际存在的键渲染，不补造缺失版本。 */
   versions: Partial<Versions> | null;
+  /** 本次生成的创作过程(outline 对标依据/论证链 + audit 22 条自审纠偏),从 xhs_copy 块
+   *  的 outline/ai_audit_log 字段解析;仅供"创作过程"抽屉回看,不渲染进正文。无则 null。 */
+  process: StudioProcess | null;
 }
 
 export interface StudioUser {
