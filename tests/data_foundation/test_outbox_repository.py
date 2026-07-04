@@ -80,6 +80,50 @@ def test_requeue_succeeded_resets_only_given_topics(migrated_conn):
     assert status(pending_meili.id) == "pending"  # 本就 pending,不受影响
 
 
+def test_enqueue_revives_dead_and_superseded_but_preserves_succeeded(migrated_conn):
+    """re-enqueue 同 dedupe_key:dead/superseded(无其它复活路径的终态)复位回 pending 并清态,
+    succeeded(幂等,走专用 requeue 入口)保持不变。防止终态任务被新 enqueue 静默吞掉。"""
+    repo = OutboxRepository(migrated_conn)
+
+    def _row(item_id):
+        return migrated_conn.execute(
+            "select status, attempts, lease_owner, error_code, dead_at "
+            "from resource_outbox where id=%s",
+            (item_id,),
+        ).fetchone()
+
+    # dead:模拟耗尽重试后死信,再 enqueue 应复活
+    dead = repo.enqueue(tenant_id="t1", topic="embedding_generate", dedupe_key="k-dead", payload={})
+    migrated_conn.execute(
+        "update resource_outbox set status='dead', attempts=8, lease_owner='w', "
+        "error_code='X', error_summary='boom', dead_at=now() where id=%s",
+        (dead.id,),
+    )
+    migrated_conn.commit()
+    revived = repo.enqueue(tenant_id="t1", topic="embedding_generate", dedupe_key="k-dead", payload={})
+    assert revived.id == dead.id  # 仍是同一行
+    r = _row(dead.id)
+    assert r["status"] == "pending"
+    assert r["attempts"] == 0
+    assert r["lease_owner"] is None
+    assert r["error_code"] is None
+    assert r["dead_at"] is None
+
+    # superseded:同理复活
+    sup = repo.enqueue(tenant_id="t1", topic="meili_index", dedupe_key="k-sup", payload={})
+    migrated_conn.execute("update resource_outbox set status='superseded' where id=%s", (sup.id,))
+    migrated_conn.commit()
+    repo.enqueue(tenant_id="t1", topic="meili_index", dedupe_key="k-sup", payload={})
+    assert _row(sup.id)["status"] == "pending"
+
+    # succeeded:必须保持幂等,不被 enqueue 重置(否则 reconcile 每周期重跑全量)
+    ok = repo.enqueue(tenant_id="t1", topic="graph_ingest", dedupe_key="k-ok", payload={})
+    migrated_conn.execute("update resource_outbox set status='succeeded' where id=%s", (ok.id,))
+    migrated_conn.commit()
+    repo.enqueue(tenant_id="t1", topic="graph_ingest", dedupe_key="k-ok", payload={})
+    assert _row(ok.id)["status"] == "succeeded"
+
+
 def test_same_dedupe_key_can_exist_in_different_tenants(migrated_conn):
     repo = OutboxRepository(migrated_conn)
 

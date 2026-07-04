@@ -26,13 +26,41 @@ class OutboxRepository:
         resource_version: int | None = None,
         event_id: str | None = None,
     ) -> OutboxItem:
+        # on conflict:enqueue 是「幂等 ensure-exists」。同 dedupe_key = 同一份工作
+        # (embedding 的 dedupe_key 含 version/index,内容变 → key 变 → 走 insert 分支)。
+        #   - succeeded / pending / retry / processing:保持原状。succeeded 必须幂等——
+        #     reconcile 每周期对全部资源循环 enqueue,若在此把 succeeded 重置回 pending 会导致
+        #     每周期重跑全量索引;succeeded 的重推走专用运维入口 requeue_succeeded()。
+        #   - blocked:有专用 unblock_available() 复活路径,这里不动。
+        #   - dead / superseded:是「无其它复活路径」的终态。调用方再次 enqueue 同一份工作,
+        #     即明确的「重来」信号 → 复位回 pending 并清空 lease/attempts/错误态,否则新 enqueue
+        #     被静默吞掉、任务永远推不动。
+        # 用 CASE 而非 `do update ... where`:后者条件不满足时 RETURNING 不返回行,enqueue 会拿到
+        # None;CASE 保证任何冲突都仍返回该行,同时只对 dead/superseded 生效。
         row = self.conn.execute(
             """
             insert into resource_outbox (
               tenant_id, resource_id, resource_version, event_id, topic, dedupe_key, payload
             )
             values (%s, %s, %s, %s, %s, %s, %s::jsonb)
-            on conflict(tenant_id, dedupe_key) do update set dedupe_key = excluded.dedupe_key
+            on conflict(tenant_id, dedupe_key) do update set
+              status = case when resource_outbox.status in ('dead', 'superseded')
+                            then 'pending' else resource_outbox.status end,
+              attempts = case when resource_outbox.status in ('dead', 'superseded')
+                              then 0 else resource_outbox.attempts end,
+              next_attempt_at = case when resource_outbox.status in ('dead', 'superseded')
+                                     then now() else resource_outbox.next_attempt_at end,
+              lease_owner = case when resource_outbox.status in ('dead', 'superseded')
+                                 then null else resource_outbox.lease_owner end,
+              lease_expires_at = case when resource_outbox.status in ('dead', 'superseded')
+                                      then null else resource_outbox.lease_expires_at end,
+              error_code = case when resource_outbox.status in ('dead', 'superseded')
+                                then null else resource_outbox.error_code end,
+              error_summary = case when resource_outbox.status in ('dead', 'superseded')
+                                   then null else resource_outbox.error_summary end,
+              dead_at = case when resource_outbox.status in ('dead', 'superseded')
+                             then null else resource_outbox.dead_at end,
+              updated_at = now()
             returning *
             """,
             (
