@@ -11,10 +11,17 @@
 - **所有服务统一在 Docker Compose 环境下运行与测试。** 生产环境与远端回归均在容器化拓扑（六容器编排、有界网络互联）上完成。
   - 标准流程: 本地改代码 ➔ 本地/CI 跑完整测试 ➔ `git commit` ➔ `git push origin master` ➔ 服务器 `git pull --ff-only` ➔ 重新编译并拉起服务 ➔ 运行生产 smoke 与人工验证。
   - 本地推送走 HTTPS，绕过代理：`git -c http.proxy= -c https.proxy= push origin master`。
+  - **⚠️ 若开发/部署直接在服务器上进行(本 session 常态):`git push` 会被拒(`key marked as read only`)——服务器 SSH 默认用只读 deploy key(`~/.ssh/xhs_github_deploy`,`ssh config` 里 `IdentitiesOnly yes` 强制它)。推送必须显式改用写权限 key `~/.ssh/xhs_push`(认证身份 `yuhao03`,有 write 权限):**
+    ```bash
+    GIT_SSH_COMMAND="ssh -i ~/.ssh/xhs_push -o IdentitiesOnly=yes" \
+      git -c http.proxy= -c https.proxy= push origin master
+    ```
+  - **多个 commit 逐条推(不要一次全推)**:按从旧到新的顺序,用 `push origin <sha>:master` 一条条推,每条确认成功(`exit=0` + `旧..新 -> master`)再推下一条。查待推列表:`git log --oneline --reverse origin/master..master`。逐条推便于出错时定位到具体 commit,也避免半路失败留下不确定状态。
 
 ## 服务器拓扑(详见 docs/deployment/server-deployment-rules.md)
 
-- 服务器：`124.221.173.80`，ubuntu，SSH 密钥登录（本地 `~/.ssh/xhs_deploy` 免密，`scripts/deploy.py` 走密钥；密码登录仍可作应急）。项目路径 `/home/ubuntu/xiaohongshu-agent`。代码托管在 GitHub 私有仓库 `git@github.com:ZHV587/xiaohongshu-agent.git`，服务器经只读 deploy key 拉取。
+- 服务器：`124.221.173.80`，ubuntu，SSH 密钥登录（本地 `~/.ssh/xhs_deploy` 免密，`scripts/deploy.py` 走密钥；密码登录仍可作应急）。项目路径 `/home/ubuntu/xiaohongshu-agent`。代码托管在 GitHub 私有仓库 `git@github.com:ZHV587/xiaohongshu-agent.git`。
+  - **GitHub 两把 key(在服务器 `~/.ssh/`)**:`xhs_github_deploy` = **只读** deploy key,`ssh config` 默认用它拉取(`git pull` 可、`git push` 被拒);`xhs_push` = **写权限** key(身份 `yuhao03`),仅推送时按上节 `GIT_SSH_COMMAND` 显式指定。
 - 容器编排架构（六容器）：
   - 核心微服务：`xhs-langgraph`（后端，宿主机 127.0.0.1:2030）、`xhs-web`（Next.js，宿主机 0.0.0.0:9091）。
   - 底座数据库与引擎：`xhs-pg` (Postgres 16)、`xhs-redis` (Redis 7)、`xhs-meili` (Meilisearch)、`xhs-falkor` (FalkorDB)，全部隐藏在 `xhs-net` 网络内部，不对公网暴露，通过服务名直连。
