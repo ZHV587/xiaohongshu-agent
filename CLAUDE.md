@@ -24,6 +24,20 @@
   langgraph build -t xhs-langgraph:latest
   docker compose up -d --build
   ```
+- **⚠️ langgraph 后端必查:`compose up --build` 不会重建 langgraph,易静默沿用旧镜像跑旧代码(历史踩坑两次:893ab3d、本次 0e14f29)。** 根因:compose 里**只有 `web` 有 `build:` 段,langgraph 只有 `image: xhs-langgraph:latest`**——`--build` 只重建 web;langgraph 完全依赖先跑 `langgraph build` 把 `:latest` tag 指到新镜像,compose 再按 tag 拉起。一旦 `langgraph build` 结束后 `:latest` 仍指向旧 image ID(tag 没动),compose 认为无变化→输出里 langgraph 显示 **`Running`(而非 `Recreated`)**→容器继续跑旧代码。**部署 langgraph 后必须做两道只读校验,`Running` 不是 `Recreated` 就是没生效的信号:**
+  ```bash
+  # 1) latest tag 是否指到本轮新建的 image ID
+  docker image inspect xhs-langgraph:latest --format '{{.Id}} {{.Created}}'
+  # 2) 运行中的容器实际用的 image ID 是否 == 上面的新 ID
+  docker inspect xhs-langgraph --format '{{.Image}} started={{.State.StartedAt}}'
+  # 3) 兜底:核验容器内代码含本轮特征(如新提交才有的关键字/行数),而非只信 tag
+  docker compose exec -T langgraph sh -c 'wc -l < subagents_executor.py'
+  ```
+  两者不一致(或容器 imageID 仍是旧的)时,**显式强制重建 langgraph,不依赖 compose 自动发现**:
+  ```bash
+  docker compose up -d --force-recreate --no-deps langgraph
+  ```
+  重建后重跑上面校验确认 imageID 已切到新镜像、容器 healthy,再跑 smoke。
 - 环境变量：宿主机根目录下 `.env` 和 `web/.env` 挂载至对应容器，宿主机修改后需执行 `docker compose up -d` 重新装载。
 - 服务器生产 smoke 验收：
   ```bash
