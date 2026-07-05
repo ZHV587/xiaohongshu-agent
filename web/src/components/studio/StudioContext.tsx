@@ -752,7 +752,12 @@ function parseTopicsFromMessages(messages: ReturnType<typeof useThread>["message
     if (!content) continue;
     const segs = parseXhsBlocks(content);
     const topicSeg = segs.find((s) => s.kind === "topics");
-    if (topicSeg && topicSeg.kind === "topics") {
+    // 流式未闭合(isPending)时,局部解析器对**富选题对象数组**只能按引号乱抓,会把
+    // title/hotRate/angle/evidence/resource_id 等 key+value 打散成一堆碎字符串 —— 直接当选题
+    // 渲染就是"一张卡里全是字段名"的糊屏(用户实测)。故只认**完整闭合并成功 JSON 解析**的
+    // 选题块(isPending 为假)才产出卡片;流式期不出卡(顶部思考链/生成条已表明在进行),
+    // 块闭合后一次性出正确的富选题卡。与 xhs_copy 只认闭合块取 versions 同策略。
+    if (topicSeg && topicSeg.kind === "topics" && !topicSeg.isPending) {
       topicSeg.data.topics.forEach((topic, idx) => {
         const id = idx + 1;
         const isRich = typeof topic !== "string";

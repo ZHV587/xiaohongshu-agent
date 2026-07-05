@@ -376,3 +376,16 @@ test("discovery tool results become a discovery timeline item (materials, not ch
   assert.equal(disc.notes.length, 1);
   assert.equal(disc.notes[0].note_id, "n1");
 });
+
+test("streaming (unclosed) rich xhs_topics does NOT leak flattened field garbage into prose", () => {
+  // 富选题对象流式未闭合时,局部解析器会把 title/hotRate/angle/evidence/resource_id 等
+  // key+value 打散;此处确认这些字段名不会作为正文糊屏(仍被当 topics 段从 prose 剥离)。
+  const midstream = '整理了几个方向\n```xhs_topics\n{"topics":[{"title":"5个杠铃动作","hotRate":88,"angle":"动作纠错","evidence":[{"resource_id":"b799225a"';
+  const tl = deriveTimeline([human("出选题"), { id: "a", type: "ai", content: midstream, tool_calls: [] } as unknown as Message]);
+  const ai = tl.find((i) => i.kind === "ai");
+  if (ai && ai.kind === "ai") {
+    assert.ok(!ai.text.includes("hotRate"), "字段名不应出现在正文");
+    assert.ok(!ai.text.includes("resource_id"), "resource_id 不应出现在正文");
+    assert.ok(!ai.text.includes("b799225a"), "evidence id 不应出现在正文");
+  }
+});
