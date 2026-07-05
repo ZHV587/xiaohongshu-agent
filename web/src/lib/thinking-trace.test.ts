@@ -343,3 +343,36 @@ test("error context never renders raw object placeholders", () => {
   assert.notEqual(tl[1].text, "[object Object]");
   assert.ok(!tl[1].text.includes("[object Object]"));
 });
+
+test("xhs_panel block surfaces as a panel timeline item (intent disambiguation)", () => {
+  const content = [
+    "你是想让我出选题,还是找爆款来仿写?",
+    "```xhs_panel",
+    '{ "actions": [ { "label": "让 AI 出选题", "text": "让 AI 出选题" }, { "label": "找爆款来仿写", "text": "找爆款仿写" } ] }',
+    "```",
+  ].join("\n");
+  const tl = deriveTimeline([human("给我出选题"), { id: "a", type: "ai", content, tool_calls: [] } as unknown as Message]);
+  const panel = tl.find((i) => i.kind === "panel");
+  assert.ok(panel && panel.kind === "panel");
+  assert.equal(panel.actions.length, 2);
+  assert.deepEqual(panel.actions.map((a) => a.label), ["让 AI 出选题", "找爆款来仿写"]);
+  // prose(问句)仍作为 ai 气泡保留,panel 紧随其后。
+  assert.ok(tl.some((i) => i.kind === "ai" && i.text.includes("出选题")));
+});
+
+test("discovery tool results become a discovery timeline item (materials, not chat)", () => {
+  const tl = deriveTimeline([
+    human("找露营爆款"),
+    aiCall("c1", "search_xhs_online", { keyword: "露营" }),
+    {
+      id: "t1", type: "tool", tool_call_id: "c1",
+      content: JSON.stringify({ ok: true, results: [
+        { note_id: "n1", title: "露营装备清单", source: "online", likes: 3000 },
+      ] }),
+    } as unknown as Message,
+  ]);
+  const disc = tl.find((i) => i.kind === "discovery");
+  assert.ok(disc && disc.kind === "discovery");
+  assert.equal(disc.notes.length, 1);
+  assert.equal(disc.notes[0].note_id, "n1");
+});

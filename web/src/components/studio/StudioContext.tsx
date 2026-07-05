@@ -38,6 +38,7 @@ import type {
   Account,
   CalendarDay,
   DashboardStat,
+  DetailTarget,
   EvidenceBundle,
   EvidenceItem,
   LibraryItem,
@@ -45,6 +46,7 @@ import type {
   PublishItem,
   PublishStage,
   SelectedEvidence,
+  StudioImitation,
   StudioNote,
   StudioProcess,
   StudioSection,
@@ -79,6 +81,15 @@ export interface StudioStore {
   selectedEvidence: SelectedEvidence | null;
   topics: Topic[];
   evidence: Record<number, EvidenceBundle>;
+  // 右边栏素材工作台:检索出的参考素材笔记(线上+本地混排),从 timeline 的 discovery 项
+  // 按 note_id 去重累积。区别于 topics(选题只进对话气泡)。
+  materials: DiscoveryNote[];
+  // 素材/选题详情弹层(统一 DetailModal):null=不显示。
+  detail: DetailTarget | null;
+  // 两段式仿写元信息(范本 + 第一段拆解);非仿写会话为 null。第二段成品走 note.versions。
+  imitation: StudioImitation | null;
+  // 标题优化候选(§4.5 TitleScreen):最新一次按公式生成的候选标题(LLM 产出);无则 null。
+  titleSuggestions: { formula: string; candidates: string[] } | null;
   // shell + 账号运营 collections (real-sourced; see StudioProvider)
   user: StudioUser;
   images: string[];
@@ -116,6 +127,12 @@ export interface StudioStore {
     closeEvidence: () => void;
     respondToInterrupt: (decisions: HITLDecision[]) => void;
     adoptNotes: (notes: DiscoveryNote[]) => void;
+    // 仿写:对单篇范本触发两段式仿写。本地已入库素材直接带 resource_id;线上未入库笔记
+    // 同时直传 selected_notes(供后端先收录拿 id 再仿),满足「范本可追溯」§5。
+    imitate: (note: DiscoveryNote) => void;
+    // 统一详情/仿写弹层(素材或选题)。
+    openDetail: (target: DetailTarget) => void;
+    closeDetail: () => void;
   };
   // HITL 工具审批中断:非 null 时聊天区渲染审批卡,用户批准/驳回后经 respondToInterrupt 恢复。
   interrupt: HITLRequest | null;
@@ -168,6 +185,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [scheduled, setScheduled] = useState(false);
   const [activeVersion, setActiveVersion] = useState<VersionId>("A");
   const [selectedEvidence, setSelectedEvidence] = useState<SelectedEvidence | null>(null);
+  // 统一详情/仿写弹层目标(素材或选题);null=不显示。
+  const [detail, setDetail] = useState<DetailTarget | null>(null);
 
   // account 维度：null = 矩阵总览（跨账号聚合，requireAdmin）；指定 id = 单账号视图。
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null);
@@ -328,7 +347,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [t.isLoading]);
 
   // ── multi-version draft + its backend resource id parsed from the live stream ──
-  const { versions, copyResourceId, process } = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
+  const { versions, copyResourceId, process, imitation } = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
 
   const note: StudioNote = useMemo(
     () => ({
@@ -349,6 +368,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   // ── topics & evidence parsed from the LIVE stream (rich fields, no mock) ──
   const { topics, evidence } = useMemo(() => parseTopicsFromMessages(t.messages), [t.messages]);
 
+  // ── 标题优化候选:最新一个 xhs_titles 块(LLM 按公式产出的候选标题) ──
+  const titleSuggestions = useMemo(() => parseTitlesFromMessages(t.messages), [t.messages]);
+
   // 测试可观测钩子:暴露后端解析出的真实 topics 长度,供 e2e 断言「选题卡数 == topics 长度」
   // (需求 3.4)。仅写 window,生产无副作用。
   useEffect(() => {
@@ -367,6 +389,25 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       }),
     [t.messages, t.isLoading, t.error, presentationsByTurnId],
   );
+
+  // ── 参考素材笔记:从 timeline 的 discovery 项按 note_id 去重累积 ──
+  // 右边栏素材工作台专职展示这批(线上+本地混排);选题只进对话气泡,不进右栏(需求 §3)。
+  // 累积而非只取最后一批:多轮检索的素材都留在工作台,不随对话滚走(需求 §1 痛点)。
+  // 已入库(already_local)优先保留其记录(带 resource_id,可直接仿写)。
+  const materials: DiscoveryNote[] = useMemo(() => {
+    const byId = new Map<string, DiscoveryNote>();
+    for (const item of timeline) {
+      if (item.kind !== "discovery") continue;
+      for (const n of item.notes) {
+        const existing = byId.get(n.note_id);
+        // 后到的同 id 覆盖(通常更新);但已带 resource_id/already_local 的记录不被无 id 的覆盖掉。
+        if (!existing || (!existing.resource_id && n.resource_id) || (!existing.already_local && n.already_local)) {
+          byId.set(n.note_id, { ...existing, ...n });
+        }
+      }
+    }
+    return Array.from(byId.values());
+  }, [timeline]);
 
   // 测试可观测钩子:暴露思考链总步数,供 e2e 断言思考 UI 已渲染。仅写 window,生产无副作用。
   useEffect(() => {
@@ -430,6 +471,31 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       );
     },
     [t],
+  );
+
+  // 仿写:对单篇范本触发两段式仿写(§5)。经 state 直传 selected_reference(权威标识,不经
+  // LLM 转写);切到深度创作看两段(先拆解范本套路、再看成品)。
+  // · 本地已入库素材(有 resource_id):直接带 resource_id,后端可即刻 get_resource 精读范本。
+  // · 线上未入库笔记(无 resource_id):同时直传 selected_notes,后端先 adopt 收录拿 id 再仿
+  //   (满足「范本可追溯」——线上笔记仿写要求范本能追溯到库内一条真实素材)。
+  const imitate = useCallback(
+    (note: DiscoveryNote) => {
+      if (!note || !note.note_id) return;
+      setSection("deep");
+      const label = note.title ? `《${note.title}》` : "这篇";
+      if (note.resource_id) {
+        t.submitText(`照着${label}的套路,仿写成我自己的一篇。先拆解它的选题方向与套路,再据此写成品。`, {
+          selected_reference: { resource_id: note.resource_id, note },
+        });
+      } else {
+        // 线上未入库:范本本身作为 selected_notes 直传,后端先收录拿 id 再仿。
+        t.submitText(`照着${label}的套路,仿写成我自己的一篇(这是线上笔记,请先收录入库以便可追溯,再拆解套路写成品)。`, {
+          selected_reference: { note },
+          selected_notes: [note],
+        });
+      }
+    },
+    [setSection, t],
   );
 
   const updateField = useCallback(
@@ -605,6 +671,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     selectedEvidence,
     topics,
     evidence,
+    materials,
+    detail,
+    imitation,
+    titleSuggestions,
     user,
     images,
     trends,
@@ -652,6 +722,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       closeEvidence: () => setSelectedEvidence(null),
       respondToInterrupt: t.respondToInterrupt,
       adoptNotes,
+      imitate,
+      openDetail: setDetail,
+      closeDetail: () => setDetail(null),
     },
     interrupt: t.interrupt,
   };
@@ -740,23 +813,40 @@ function parseTopicsFromMessages(messages: ReturnType<typeof useThread>["message
   return { topics, evidence };
 }
 
-// Parse the latest xhs_copy block from the stream for multi-version drafts +
-// the draft's backend resource id (used by the schedule / backfill writers).
-// Robust: never throws; missing/invalid versions → null (single-version mode).
+// Parse the latest xhs_titles block (title-optimization candidates by formula).
+// Returns null when none present. Robust: never throws.
+function parseTitlesFromMessages(
+  messages: ReturnType<typeof useThread>["messages"],
+): { formula: string; candidates: string[] } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type !== "ai") continue;
+    const content = getContentString(m.content);
+    if (!content) continue;
+    for (const seg of parseXhsBlocks(content)) {
+      if (seg.kind === "titles" && seg.data.candidates.length) return seg.data;
+    }
+  }
+  return null;
+}
+
+// Parse the latest xhs_copy / xhs_imitation block from the stream for multi-version
+// drafts + the draft's backend resource id (schedule / backfill writers) + 两段式仿写
+// 的第一段拆解(teardown)。xhs_imitation 与 xhs_copy 成品结构同构,额外携带 teardown/
+// reference_* —— 取两类块里**最后出现**的那个(最新产出)。Robust: never throws.
 function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"]): {
   versions: Partial<Versions> | null;
   copyResourceId: string | null;
   process: StudioProcess | null;
+  imitation: StudioImitation | null;
 } {
-  // 与 xhs-blocks.ts 的 FENCE_RE 同口径:标签后允许换行或同行空格紧跟 JSON。
-  // Claude 原生 /v1/messages 常把 JSON 写在 ```xhs_copy 同一行,旧的 \s*\n 会整块漏解析
-  // → versions/copyResourceId 失效,排期/回填无法关联资源。
-  const fence = /```xhs_copy[ \t]*\r?\n?([\s\S]*?)```/g;
+  // 与 xhs-blocks.ts 的 FENCE_RE 同口径:标签后允许换行或同行空格紧跟 JSON(兼容 Claude 同行写法)。
+  // 同时匹配 xhs_copy 与 xhs_imitation,捕获组 1=lang、组 2=JSON。
+  const fence = /```(xhs_copy|xhs_imitation)[ \t]*\r?\n?([\s\S]*?)```/g;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.type !== "ai") continue;
-    // 经 getContentString 取文本:兼容 string 与 Anthropic /v1/messages 的内容块数组,
-    // 否则数组态消息会被当空串丢弃 → xhs 代码块整块漏解析。
+    // 经 getContentString 取文本:兼容 string 与 Anthropic /v1/messages 的内容块数组。
     const content = getContentString(m.content);
     if (!content) continue;
     fence.lastIndex = 0;
@@ -764,8 +854,9 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
     let last: RegExpExecArray | null = null;
     while ((match = fence.exec(content)) !== null) last = match;
     if (!last) continue;
+    const lang = last[1];
     try {
-      const obj = JSON.parse(last[1].trim()) as Record<string, unknown>;
+      const obj = JSON.parse(last[2].trim()) as Record<string, unknown>;
       const rawId = obj.resource_id ?? obj.resourceId;
       const copyResourceId = typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
       const versions = Array.isArray(obj.versions)
@@ -776,13 +867,33 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
       const auditRaw = obj.ai_audit_log ?? obj.ai_audit_self_correction_log;
       const audit = typeof auditRaw === "string" ? auditRaw : "";
       const process = outline || audit ? { outline, audit } : null;
-      return { versions, copyResourceId, process };
+      // 仿写块:解析第一段拆解(teardown)+ 范本标识,供深创页显性呈现"它凭什么这么仿"。
+      let imitation: StudioImitation | null = null;
+      if (lang === "xhs_imitation") {
+        const td = obj.teardown;
+        const refId = obj.reference_resource_id;
+        if (td && typeof td === "object") {
+          const t = td as Record<string, unknown>;
+          const str = (v: unknown) => (typeof v === "string" ? v : "");
+          imitation = {
+            referenceResourceId: typeof refId === "string" ? refId : "",
+            referenceTitle: typeof obj.reference_title === "string" ? obj.reference_title : "",
+            teardown: {
+              angle: str(t.angle),
+              painpoint: str(t.painpoint),
+              hook_mechanism: str(t.hook_mechanism),
+              structure: str(t.structure),
+            },
+          };
+        }
+      }
+      return { versions, copyResourceId, process, imitation };
     } catch {
-      // 非法 JSON（流式未闭合等）→ 单版本，继续扫描更早的消息。
+      // 非法 JSON（流式未闭合等）→ 继续扫描更早的消息。
       continue;
     }
   }
-  return { versions: null, copyResourceId: null, process: null };
+  return { versions: null, copyResourceId: null, process: null, imitation: null };
 }
 
 // ── studio overlay 本地持久化(按 threadId 隔离) ──────────────────────────────

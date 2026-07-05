@@ -597,8 +597,65 @@
     opacity: 0;
   }
 }
+/* 退出动画(与入场对称):弹层/抽屉关闭时用,配合 useDismiss 让消失有收束感而非硬切。 */
+@keyframes popOut {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes slideOutRight {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+}
+@keyframes scrimIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes scrimOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
 .fade-up {
   animation: fadeUp 0.3s var(--ease-out) both;
+}
+.slide-out-right {
+  animation: slideOutRight 0.24s var(--ease-out) both;
+}
+.pop-out {
+  animation: popOut 0.18s var(--ease-out) both;
+}
+.scrim-in {
+  animation: scrimIn 0.2s var(--ease-out) both;
+}
+.scrim-out {
+  animation: scrimOut 0.18s var(--ease-out) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .slide-out-right,
+  .pop-out,
+  .scrim-in,
+  .scrim-out {
+    animation: none;
+  }
 }
 .slide-in-right {
   animation: slideInRight 0.28s var(--ease-out) both;

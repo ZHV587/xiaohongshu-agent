@@ -156,3 +156,34 @@ test("parses xhs_topics when JSON string values contain triple backticks", () =>
     },
   ]);
 });
+
+test("xhs_imitation block is stripped from prose (no JSON leak)", () => {
+  const content = [
+    "两版仿写好了,选一版定稿。",
+    "```xhs_imitation",
+    '{ "reference_resource_id": "res-1", "reference_title": "范本", "teardown": { "angle": "避坑", "painpoint": "踩雷", "hook_mechanism": "数字", "structure": "清单" }, "title": "我的标题", "body": "我的正文", "tags": ["#a"], "versions": [{ "label": "A", "title": "我的标题", "body": "我的正文", "tags": ["#a"], "cover": "", "note": "" }] }',
+    "```",
+  ].join("\n");
+  const segs = parseXhsBlocks(content);
+  const text = segs.filter((s) => s.kind === "text").map((s) => (s as { text: string }).text).join("");
+  assert.ok(text.includes("两版仿写好了"));
+  assert.ok(!text.includes("reference_resource_id"));
+  assert.ok(!text.includes("teardown"));
+  assert.ok(segs.some((s) => s.kind === "copy"));
+});
+
+test("parses xhs_titles candidates and strips from prose", () => {
+  const content = [
+    "按「数字清单」出的候选:",
+    "```xhs_titles",
+    '{ "formula": "数字清单", "candidates": ["露营必买 6 件", "5 个露营坑"] }',
+    "```",
+  ].join("\n");
+  const segs = parseXhsBlocks(content);
+  const titles = segs.find((s) => s.kind === "titles");
+  assert.ok(titles && titles.kind === "titles");
+  assert.equal(titles.data.formula, "数字清单");
+  assert.deepEqual(titles.data.candidates, ["露营必买 6 件", "5 个露营坑"]);
+  const text = segs.filter((s) => s.kind === "text").map((s) => (s as { text: string }).text).join("");
+  assert.ok(!text.includes("candidates"));
+});

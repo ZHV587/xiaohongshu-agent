@@ -14,11 +14,15 @@ import { EvidenceChips } from "./CreationScreen";
 
 const quickEmoji = QUICK_EMOJI;
 
-export function DeepEditor() {
+export function DeepEditor({ onOptimizeTitle }: { onOptimizeTitle?: () => void }) {
   const { note, actions } = useStudio();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const checks = computeChecks(note);
   const score = scoreOf(checks);
+  const remaining = checks.filter((c) => !c.pass).length;
+  // 正文内联体检:只取「标题/正文」两组里未通过的项,就近提示("边写边看"),
+  // 与右栏 CopyDoctor(全量总览+定稿)同源不同位。
+  const inlineTodo = checks.filter((c) => !c.pass && (c.group === "正文" || c.group === "标题"));
   const writing = note.status === "writing";
   const body = note.body || "";
   // 推荐标签来自选中选题的真实关键词(note.kw,agent 产出的空格分隔词),去重、去掉已选,取前 6;
@@ -72,10 +76,15 @@ export function DeepEditor() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <Eyebrow>创作大纲</Eyebrow>
           {outline.map((o) => (
-            <div key={o.k} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: o.ok ? "var(--text-body)" : "var(--text-subtle)" }}>
+            <button
+              key={o.k}
+              onClick={() => { const el = bodyRef.current; if (el) { el.focus(); el.scrollIntoView({ block: "center", behavior: "smooth" }); } }}
+              title="点此聚焦正文编辑区"
+              style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: o.ok ? "var(--text-body)" : "var(--text-subtle)", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+            >
               <Icon name={o.ok ? "check-circle-2" : "circle"} size={13} color={o.ok ? "var(--success)" : "var(--border-strong)"} />
               {o.k}
-            </div>
+            </button>
           ))}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
@@ -94,7 +103,14 @@ export function DeepEditor() {
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <Eyebrow>标题 · 钩子优先</Eyebrow>
-              <span className="font-tabular" style={{ fontSize: 10, color: note.title.length > 20 ? "var(--warning)" : "var(--text-subtle)" }}>{note.title.length} / 20</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {onOptimizeTitle && (
+                  <button data-testid="optimize-title" onClick={onOptimizeTitle} disabled={writing} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: writing ? "default" : "pointer", color: "var(--primary)", fontSize: 11, fontWeight: 600, opacity: writing ? 0.5 : 1 }}>
+                    <Icon name="wand-2" size={12} /> 优化标题
+                  </button>
+                )}
+                <span className="font-tabular" style={{ fontSize: 10, color: note.title.length > 20 ? "var(--warning)" : "var(--text-subtle)" }}>{note.title.length} / 20</span>
+              </div>
             </div>
             <input value={note.title} onChange={(e: ChangeEvent<HTMLInputElement>) => actions.updateField("title", e.target.value)} placeholder="写个钩子标题…" style={{ border: "none", borderBottom: "2px solid var(--border)", background: "transparent", fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-xl)", color: "var(--text-body)", padding: "4px 0", outline: "none", letterSpacing: "var(--tracking-tight)" }} />
           </div>
@@ -113,6 +129,24 @@ export function DeepEditor() {
           </div>
           {/* 正文 */}
           <textarea data-testid="draft-body" ref={bodyRef} value={writing ? body + " ▍" : body} onChange={(e: ChangeEvent<HTMLTextAreaElement>) => actions.updateField("body", e.target.value)} readOnly={writing} placeholder="正文从一句共情钩子开始，再用 1️⃣2️⃣3️⃣ 分点干货，最后引导互动…" style={{ border: "none", background: "transparent", resize: "none", minHeight: 300, fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)", color: "var(--text-body)", outline: "none" }} />
+          {/* 正文内联体检:就近显示未通过的标题/正文项("边写边看");全通过显示达标态。
+              右栏 CopyDoctor 仍是全量总览+定稿,二者同源不同位,非重复逻辑。 */}
+          {!writing && (
+            inlineTodo.length === 0 ? (
+              <div data-testid="inline-check-ok" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--success)", background: "var(--success-surface)", borderRadius: "var(--radius-sm)", padding: "6px 10px", alignSelf: "flex-start" }}>
+                <Icon name="check-circle-2" size={13} /> 正文各项已达标
+              </div>
+            ) : (
+              <div data-testid="inline-check-todo" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "8px 10px", background: "var(--warning-surface)", borderRadius: "var(--radius-sm)" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)" }}>还差 {inlineTodo.length} 项:</span>
+                {inlineTodo.map((c) => (
+                  <span key={c.key} title={c.hint} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-body)", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: 999, padding: "2px 8px" }}>
+                    <Icon name="alert-circle" size={11} color="var(--warning)" /> {c.label}
+                  </span>
+                ))}
+              </div>
+            )
+          )}
           {/* 话题标签 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
             <Eyebrow>话题标签 · {note.tags.length} 个（建议 5–10，大词+长尾）</Eyebrow>
@@ -136,7 +170,7 @@ export function DeepEditor() {
         <PanelHead icon="gauge" title="文案体检 · 定稿" sub="体检 / 原创度 / 排期发布" />
         <CopyDoctor checks={checks} score={score} />
         <RiskPanel note={note} />
-        <ScheduleBar score={score} status={note.status} />
+        <ScheduleBar score={score} status={note.status} remaining={remaining} />
       </aside>
     </div>
   );

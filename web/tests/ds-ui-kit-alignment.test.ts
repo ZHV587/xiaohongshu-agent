@@ -27,20 +27,29 @@ test("studio production shell uses the fixed final screen composition", () => {
   assert.doesNotMatch(shell, /Tweaks|方案探索|rightLayout|deepForm|opsHosting|useState/);
 });
 
-test("creation screen uses the fixed final right panel", () => {
+test("creation screen right panel is the reference-material workbench", () => {
+  // 需求 §3:右边栏专职参考素材笔记工作台(线上+本地混排),选题卡移进对话气泡。
+  // 撤掉原来的选题卡右栏(TopicRail),改 RefMaterialRail + MaterialCard;
+  // 三个平行动作:批量收录(勾选+底部按钮)、单张仿写(卡上按钮);统一详情弹层 DetailModal。
   const creation = read("src", "components", "studio", "CreationScreen.tsx");
   assertIncludes(
     creation,
     [
-      "SelectedTopicBar",
-      "DraftSnapshot",
-      "TopicRail",
+      "RefMaterialRail",
+      "MaterialCard",
+      "参考素材笔记",
+      "仿写",
+      "收录选中",
+      "DetailModal",
       "EvidencePanel",
       "TrendingTopics",
       "ThinkingAura",
+      "intent-choice",
     ],
     "CreationScreen",
   );
+  // 旧的固定右栏组件应已删除(不留旧逻辑)。
+  assert.doesNotMatch(creation, /TopicRail|SelectedTopicBar|function DiscoveryNotesCard/);
   assert.doesNotMatch(creation, /RightLayout|rightLayout|orientation="horizontal"|仅创作栏|左右分栏/);
 });
 

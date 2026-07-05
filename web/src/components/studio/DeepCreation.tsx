@@ -4,25 +4,67 @@
 
 import { useMemo, useState } from "react";
 import { Badge, Button, TopicCard, Icon } from "@/components/ds";
+import { Eyebrow } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
 import { computeChecks, scoreOf } from "@/components/studio/rubric";
-import { type VersionId } from "@/components/studio/types";
+import { TITLE_FORMULAS, type VersionId } from "@/components/studio/types";
 import { EvidenceChips } from "./CreationScreen";
 import { DeepEditor } from "./DeepEditor";
 
-type DeepMode = "edit" | "compare";
+type DeepMode = "edit" | "compare" | "title";
 
 export function DeepCreation() {
   const { note, setSection } = useStudio();
   const [mode, setMode] = useState<DeepMode>("edit");
   const [processOpen, setProcessOpen] = useState(false);
   if (note.status === "idle") return <DeepEmpty onGo={() => setSection("create")} />;
-  const body = mode === "compare" ? <ABCompare /> : <DeepEditor />;
+  // 标题优化是整屏子界面(mode=title),替换整个编辑区(非弹层),从编辑器"优化标题"进入。
+  if (mode === "title") return <TitleScreen onBack={() => setMode("edit")} />;
+  const body = mode === "compare" ? <ABCompare /> : <DeepEditor onOptimizeTitle={() => setMode("title")} />;
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <DeepTopicBar mode={mode} setMode={setMode} onOpenProcess={() => setProcessOpen(true)} />
+      {/* 两段式仿写第一段:范本套路拆解显性呈现在成品之上(需求 §5——让用户看到"它凭什么这么仿")。 */}
+      <ImitationTeardownBanner />
       {body}
       {processOpen && <CreationProcessDrawer onClose={() => setProcessOpen(false)} />}
+    </div>
+  );
+}
+
+// 仿写第一段:范本拆解横幅。仅在本会话是仿写(imitation 非空)时显示,可折叠。
+// 显性呈现切入角度/痛点/钩子机制/结构节奏 —— 需求 §5 铁律:分析必须让用户看得见,
+// 不能后台默默做掉直接吐成品。第二段成品仍走下方编辑器/对比区(note.versions)。
+function ImitationTeardownBanner() {
+  const { imitation } = useStudio();
+  const [open, setOpen] = useState(true);
+  if (!imitation) return null;
+  const t = imitation.teardown;
+  const rows: [string, string, string][] = [
+    ["compass", "切入角度", t.angle],
+    ["target", "戳中痛点", t.painpoint],
+    ["anchor", "钩子机制", t.hook_mechanism],
+    ["list", "结构节奏", t.structure],
+  ];
+  return (
+    <div style={{ flexShrink: 0, background: "var(--accent-surface)", borderBottom: "1px solid var(--border-coral)" }}>
+      <button onClick={() => setOpen((v) => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+        <Icon name="feather" size={14} color="var(--primary)" />
+        <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--primary)" }}>仿写第一段 · 范本套路拆解</span>
+        {imitation.referenceTitle && <span style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 280 }}>仿自《{imitation.referenceTitle}》</span>}
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-subtle)" }}>{open ? "收起" : "展开"}</span>
+        <Icon name={open ? "chevron-up" : "chevron-down"} size={13} color="var(--text-subtle)" />
+      </button>
+      {open && (
+        <div style={{ padding: "0 20px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {rows.map(([icon, label, val]) => (
+            <div key={label} style={{ background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 3 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, color: "var(--primary)" }}><Icon name={icon} size={11} /> {label}</span>
+              <span style={{ fontSize: 11, color: "var(--text-body)", lineHeight: 1.6 }}>{val || "—"}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -196,6 +238,94 @@ function ABVersionCard({ id }: { id: VersionId }) {
 
       <div style={{ padding: 10, borderTop: "1px solid var(--border)" }}>
         <Button variant={active ? "secondary" : "primary"} size="sm" block disabled={active} onClick={() => { actions.setVersion(id); actions.toast(`✅ 已采用「${label}」为当前稿`); }}>{active ? "当前采用中" : "采用此版"}</Button>
+      </div>
+    </div>
+  );
+}
+
+// 标题优化整屏子界面(§4.5):左栏公式列表,右栏该公式的候选(LLM 按公式意图生成,非模板拼接)。
+// 顶部返回编辑 + 当前标题回显 + n/20 字数校验。选公式 → 委派 xhs-title 出候选 → 每条可编辑、
+// 独立字数校验,"采用这条"写回标题并自动返回编辑。候选来自真实 stream(titleSuggestions),不造假。
+function TitleScreen({ onBack }: { onBack: () => void }) {
+  const { note, actions, titleSuggestions } = useStudio();
+  const [formula, setFormula] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const generating = note.status === "writing";
+  // 候选属于当前所选公式时才展示(避免上一个公式的候选串台)。
+  const candidates = titleSuggestions && (!formula || titleSuggestions.formula === formula) ? titleSuggestions.candidates : [];
+
+  const pickFormula = (name: string) => {
+    setFormula(name);
+    setDrafts({});
+    const kw = note.kw ? `,核心词「${note.kw}」` : "";
+    const base = note.title ? `现有标题《${note.title}》` : "还没有标题";
+    actions.say(`用「${name}」这个标题公式,给我出 5 个小红书标题候选。${base}${kw}。每个都要 ≤20 字、有点击欲。只用 xhs_titles 代码块返回候选,不要别的话。`);
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: "var(--background)" }}>
+      {/* 顶部:返回 + 当前标题回显 + n/20 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 20px", background: "var(--surface-card)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <button onClick={onBack} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 10px", cursor: "pointer", fontSize: "var(--text-xs)", color: "var(--text-body)", fontWeight: 600 }}><Icon name="arrow-left" size={13} /> 返回编辑</button>
+        <span style={{ width: 1, height: 18, background: "var(--border)" }} />
+        <Icon name="type" size={14} color="var(--primary)" />
+        <span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>标题优化</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{note.title || "还没有标题"}</span>
+        <span className="font-tabular" style={{ fontSize: 11, color: note.title.length > 20 ? "var(--warning)" : "var(--text-subtle)" }}>{note.title.length}/20</span>
+      </div>
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {/* 左栏:标题公式列表 */}
+        <aside className="cs" style={{ width: 200, borderRight: "1px solid var(--border)", background: "var(--surface-card)", overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 7, flexShrink: 0 }}>
+          <Eyebrow>标题公式</Eyebrow>
+          {TITLE_FORMULAS.map((f) => {
+            const on = formula === f.name;
+            return (
+              <button key={f.name} onClick={() => pickFormula(f.name)} disabled={generating} title={f.hint}
+                style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "left", padding: "8px 10px", borderRadius: "var(--radius-sm)", cursor: generating ? "default" : "pointer", border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--accent-surface)" : "var(--surface-card)", opacity: generating && !on ? 0.6 : 1 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: on ? "var(--primary)" : "var(--text-body)" }}>{f.name}</span>
+                <span style={{ fontSize: 9, color: "var(--text-subtle)", lineHeight: 1.4 }}>{f.hint}</span>
+              </button>
+            );
+          })}
+        </aside>
+        {/* 右栏:候选(可编辑 + 独立字数校验 + 采用这条) */}
+        <div className="cs" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px 28px" }}>
+          <div style={{ maxWidth: 560, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
+            {!formula ? (
+              <div style={{ textAlign: "center", color: "var(--text-subtle)", fontSize: "var(--text-sm)", padding: "48px 20px", lineHeight: 1.7 }}>
+                <div style={{ fontSize: 30, marginBottom: 8 }}>✍️</div>
+                左边选一个标题公式,🍠 会按它的套路给你出几个候选标题。
+              </div>
+            ) : generating && candidates.length === 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--text-muted)", fontSize: "var(--text-sm)", padding: "40px 0", justifyContent: "center" }}>
+                <Icon name="loader" size={16} color="var(--primary)" /> 正在按「{formula}」生成候选…
+              </div>
+            ) : candidates.length === 0 ? (
+              <div style={{ textAlign: "center", color: "var(--text-subtle)", fontSize: "var(--text-sm)", padding: "40px 20px" }}>还没拿到候选,可再点一次公式重试。</div>
+            ) : (
+              <>
+                <Eyebrow>「{formula}」候选 · 可改后采用</Eyebrow>
+                {candidates.map((c, i) => {
+                  const val = drafts[i] ?? c;
+                  const over = val.length > 20;
+                  return (
+                    <div key={i} style={{ background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                      <textarea value={val} onChange={(e) => setDrafts((d) => ({ ...d, [i]: e.target.value }))} rows={2}
+                        style={{ border: "none", background: "transparent", resize: "none", fontFamily: "var(--font-display)", fontWeight: 700, fontSize: "var(--text-base)", lineHeight: 1.3, color: "var(--text-body)", outline: "none" }} />
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span className="font-tabular" style={{ fontSize: 10, color: over ? "var(--warning)" : "var(--text-subtle)" }}>{val.length}/20{over ? " · 偏长" : ""}</span>
+                        <Button variant="primary" size="sm" leftIcon={<Icon name="check" size={12} />} onClick={() => { actions.updateField("title", val); actions.toast("✅ 已采用为标题"); onBack(); }}>采用这条</Button>
+                      </div>
+                    </div>
+                  );
+                })}
+                <button onClick={() => pickFormula(formula)} disabled={generating} style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontSize: 11, fontWeight: 600 }}>
+                  <Icon name="refresh-cw" size={12} /> 换一批候选
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

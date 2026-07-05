@@ -76,7 +76,7 @@ test("design-system desktop starting points have production parity tests", () =>
   const uiTests = read("tests", "ds-ui-kit-alignment.test.ts");
   const requiredTestNames = [
     "studio production shell uses the fixed final screen composition",
-    "creation screen uses the fixed final right panel",
+    "creation screen right panel is the reference-material workbench",
     "deep creation uses the fixed final immersive editor",
     "operations screen uses the fixed final page hosting",
     "workbench starting point has a production entry and DS interaction affordances",

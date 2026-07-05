@@ -88,10 +88,15 @@ class FrontendDirectState(AgentState):
     - `selected_topic`:用户点选的那张选题卡的权威数据 `{topic, evidence}`,evidence 即卡片
       上展示的库内依据(带 resource_id)。`save_generated_topic` 经 `InjectedState("selected_topic")`
       注入它落库 —— 即「卡片展示的依据 = 落库的依据」,evidence 不再由 LLM 重填。
+    - `selected_reference`:用户在素材卡点「仿写」时,该范本的权威标识 `{resource_id?, note?}`。
+      本地已入库素材带 `resource_id`(直接可仿);线上未入库笔记只带 `note`(主控须先
+      `adopt_online_notes` 收录拿 id 再仿,满足「范本可追溯」§5)。委派 `imitation-writer` 时
+      把范本 resource_id 放进 brief,子代理 `get_resource` 精读范本原文原样。
     """
 
     selected_notes: NotRequired[list[dict]]
     selected_topic: NotRequired[dict]
+    selected_reference: NotRequired[dict]
 
 
 class FrontendStateMiddleware(AgentMiddleware):

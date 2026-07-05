@@ -85,13 +85,18 @@ export interface PanelSegment {
   kind: "panel";
   data: { actions: PanelAction[] };
 }
+/** 标题优化候选(§4.5 TitleScreen):按某个标题公式生成的候选标题列表(LLM 产出,非模板)。 */
+export interface TitlesSegment {
+  kind: "titles";
+  data: { formula: string; candidates: string[] };
+}
 export interface PendingSegment { kind: "pending"; lang: "xhs_topics" | "xhs_copy" }
-export type Segment = TextSegment | TopicsSegment | CopySegment | PanelSegment | PendingSegment;
+export type Segment = TextSegment | TopicsSegment | CopySegment | PanelSegment | TitlesSegment | PendingSegment;
 
 // 语言标签后允许「换行」或「同行空格紧跟 JSON」两种写法 —— 不同模型(OpenAI 兼容网关 vs
 // Anthropic 原生 /v1/messages)对围栏后换行习惯不同,Claude 常把 JSON 写在标签同一行,
 // 故标签后用 [ \t]*\r?\n? 兼容两者(不强制换行),否则同行写法会整块漏解析。
-const OPEN_FENCE_RE = /```(xhs_topics|xhs_copy|xhs_panel)[ \t]*\r?\n?/g;
+const OPEN_FENCE_RE = /```(xhs_topics|xhs_copy|xhs_imitation|xhs_titles|xhs_panel)[ \t]*\r?\n?/g;
 
 /**
  * 把内容字符串切成有序片段。
@@ -111,13 +116,16 @@ export function parseXhsBlocks(content: string): Segment[] {
     if (lang === "xhs_topics") {
       const partialData = parsePartialXhsTopics(inner);
       segments.push({ kind: "topics", data: partialData, isPending: true });
-    } else if (lang === "xhs_copy") {
+    } else if (lang === "xhs_copy" || lang === "xhs_imitation") {
+      // xhs_imitation 成品部分与 xhs_copy 同构(顶层 title/body/tags),流式期同样按 copy 局部解析;
+      // 第一段 teardown 由 StudioContext.parseCopyFromMessages 消费,不在此渲染(见 §5)。
       const partialData = parsePartialXhsCopy(inner);
       segments.push({ kind: "copy", data: partialData, isPending: true });
     } else if (lang === "xhs_panel") {
       const partialData = parsePartialXhsPanel(inner);
       segments.push({ kind: "panel", data: partialData });
     }
+    // xhs_titles 流式未闭合时不做局部渲染(候选须完整才可用),仅从 prose 中剥离,避免 JSON 糊屏。
   };
 
   while (cursor < content.length) {
@@ -168,7 +176,7 @@ export function parseXhsBlocks(content: string): Segment[] {
   return segments;
 }
 
-function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | PanelSegment | null {
+function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | PanelSegment | TitlesSegment | null {
   let obj: any;
   try {
     obj = JSON.parse(inner.trim());
@@ -200,12 +208,24 @@ function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | Pa
     }
     return null;
   }
-  if (lang === "xhs_copy") {
+  if (lang === "xhs_copy" || lang === "xhs_imitation") {
+    // 两者成品结构同构(顶层 title/body/tags)。此处只为把整块从 prose 中剥离(防 JSON 糊屏),
+    // 成品版本与仿写第一段 teardown 由 StudioContext 另行解析消费(见 §5)。
     if (obj && typeof obj.title === "string" && typeof obj.body === "string") {
       const tags = Array.isArray(obj.tags) ? obj.tags.filter((t: unknown) => typeof t === "string") : [];
       return {
         kind: "copy",
         data: { title: obj.title, body: obj.body, tags, evidence: parseEvidence(obj.evidence) },
+      };
+    }
+    return null;
+  }
+  if (lang === "xhs_titles") {
+    if (obj && Array.isArray(obj.candidates)) {
+      const candidates = obj.candidates.filter((c: unknown): c is string => typeof c === "string" && c.trim().length > 0);
+      return {
+        kind: "titles",
+        data: { formula: typeof obj.formula === "string" ? obj.formula : "", candidates },
       };
     }
     return null;

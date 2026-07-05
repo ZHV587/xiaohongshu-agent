@@ -34,6 +34,16 @@ export interface DiscoveryNote {
   tags?: string[];
   source?: "local" | "online";
   already_local?: boolean;
+  /** 已入库素材(本地卡)的真实资源 id;线上未采纳的瞬态笔记无此字段(需先收录才有)。
+   *  仿写要求范本可追溯到库内 resource_id,故本地卡直接用它,线上卡走「先收录再仿」。 */
+  resource_id?: string;
+}
+
+/** 意图分流按钮(§2):模糊创作请求时,模型用 xhs_panel 块给出可点选项,用户点一下直接进
+ *  对应流程(不用打字)。{label 显示文案, text 点击后代发的指令}。 */
+export interface PanelAction {
+  label: string;
+  text: string;
 }
 
 export type TimelineItem =
@@ -41,6 +51,7 @@ export type TimelineItem =
   | { kind: "thinking"; run: ThinkingRun }
   | { kind: "ai"; text: string }
   | { kind: "discovery"; notes: DiscoveryNote[] }
+  | { kind: "panel"; actions: PanelAction[] }
   | { kind: "error"; text: string };
 
 // 发现式搜索工具:结果是可勾选采纳的笔记卡(走卡片通道,不复述进正文,见 prompts.py §6.5)。
@@ -177,6 +188,17 @@ function proseOf(content: Message["content"]): string {
     .trim();
 }
 
+// 从 AI 消息里提取 xhs_panel 意图分流按钮(§2);无则空数组。合并所有 panel 段的 actions。
+function panelOf(content: Message["content"]): PanelAction[] {
+  const raw = getContentString(content);
+  if (!raw) return [];
+  const out: PanelAction[] = [];
+  for (const s of parseXhsBlocks(raw)) {
+    if (s.kind === "panel") out.push(...s.data.actions);
+  }
+  return out;
+}
+
 // 把发现工具的一条结果行规整成 DiscoveryNote;缺 note_id/title 的丢弃。健壮:非对象跳过。
 function toDiscoveryNote(raw: unknown): DiscoveryNote | null {
   if (!raw || typeof raw !== "object") return null;
@@ -202,6 +224,8 @@ function toDiscoveryNote(raw: unknown): DiscoveryNote | null {
     tags: Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === "string") : undefined,
     source: r.source === "local" || r.source === "online" ? r.source : undefined,
     already_local: typeof r.already_local === "boolean" ? r.already_local : undefined,
+    // 本地卡带真实 resource_id(local_cards.hydrate_note_card 输出);线上卡通常没有。
+    resource_id: typeof r.resource_id === "string" && r.resource_id.trim() ? r.resource_id.trim() : undefined,
   };
 }
 
@@ -338,6 +362,11 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
           out.push({ kind: "ai", text: prose });
         }
         appendOfficialTrace(typeof m.id === "string" ? m.id : undefined);
+      }
+      // 意图分流按钮(§2):xhs_panel 块 → 可点选项 timeline 项(紧跟在 prose 后)。
+      const panelActions = panelOf(m.content);
+      if (panelActions.length) {
+        out.push({ kind: "panel", actions: panelActions });
       }
       continue;
     }

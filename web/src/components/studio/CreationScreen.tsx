@@ -7,6 +7,7 @@ import Image from "next/image";
 import { Avatar, Badge, Button, Card, TopicCard, ThinkingAura, Textarea, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
+import { useDismiss } from "@/components/studio/useDismiss";
 import { Recents } from "./Shell";
 import type { Topic } from "@/components/studio/types";
 import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
@@ -15,135 +16,132 @@ import type { DiscoveryNote } from "@/lib/thinking-trace";
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
 
-// 选题卡「生成式占位封面」:后端/agent 不产出真实封面图 URL(evidence 仅文本),
-// 故不显示加载失败般的灰白空块,而是按选题内容做**确定性**的品牌色渐变占位——
-// 同一选题每次渲染同一配色,不同选题错开,配合角度文字/emoji 让卡片看起来是刻意设计。
-const COVER_PALETTES: [string, string][] = [
-  ["#FF6F91", "#FF9671"],
-  ["#845EC2", "#D65DB1"],
-  ["#00C9A7", "#4D8076"],
-  ["#FFC75F", "#FF9671"],
-  ["#4B7BEC", "#5EA0FF"],
-  ["#F27121", "#E94057"],
-];
-const COVER_EMOJIS = ["🍠", "✨", "🌿", "🔥", "☕", "📖", "🎀", "🧭"];
-
-function coverVisual(seed: string): { gradient: string; emoji: string } {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-  const [from, to] = COVER_PALETTES[hash % COVER_PALETTES.length];
-  const angle = 115 + (hash % 60);
-  return {
-    gradient: `linear-gradient(${angle}deg, ${from}, ${to})`,
-    emoji: COVER_EMOJIS[hash % COVER_EMOJIS.length],
-  };
-}
-
 export function CreationScreen() {
-  const { note, actions } = useStudio();
-  const [detailId, setDetailId] = useState<number | null>(null);
+  const { actions } = useStudio();
+  // 位置分工(需求 §3):选题卡 → 对话气泡(showTopics);右边栏 → 专职参考素材笔记工作台。
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-      <Recents onNew={() => { setDetailId(null); actions.newChat(); }} compact />
-      <ChatColumn showTopics={false} />
+      <Recents onNew={() => actions.newChat()} compact />
+      <ChatColumn showTopics />
       <section style={{ width: 400, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
-        <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-          {detailId
-            ? <TopicDetail topicId={detailId} onBack={() => setDetailId(null)} />
-            : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <TopicRail chosen={note.topicId} onChoose={(t) => setDetailId(t.id)} />
-                <div style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", lineHeight: 1.6, padding: "6px 8px", background: "var(--oats-light)", borderRadius: "var(--radius-sm)" }}>先看依据，再写正文</div>
-              </div>
-            )}
-        </div>
+        <RefMaterialRail />
       </section>
     </div>
   );
 }
 
-// 选题卡 rail
-function TopicRail({ chosen, onChoose }: { chosen: number | null; onChoose: (t: Topic) => void }) {
-  const { topics, evidence, images, actions } = useStudio();
+// 右边栏素材工作台 —— 专职展示检索出的参考素材笔记(线上+本地混排),固定可操作(需求 §1/§3)。
+// 三个平行动作(需求 §4,彼此无因果):① 批量收录(勾选框+底部主按钮)② 单张仿写(卡上按钮)。
+// 出选题不在此(智能体独立行为,结果进对话)。已收录卡:显示"已收录"、勾选禁用、仿写仍可点。
+function RefMaterialRail() {
+  const { materials, actions } = useStudio();
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  const adoptable = materials.filter((n) => !n.already_local);
+  const pickedNotes = adoptable.filter((n) => picked[n.note_id]);
+  const savedCount = materials.filter((n) => n.already_local).length;
+  const toggle = (id: string) => setPicked((p) => ({ ...p, [id]: !p[id] }));
+  const adopt = () => {
+    if (submitting || pickedNotes.length === 0) return;
+    setSubmitting(true);
+    actions.adoptNotes(pickedNotes);
+    setPicked({});
+    setTimeout(() => setSubmitting(false), 8000);
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-      <PanelHead icon="lightbulb" title="选题卡" sub="先看依据 · 再写正文" right={<Button variant="ghost" size="sm" leftIcon={<Icon name="refresh-cw" size={12} />} onClick={() => actions.say("再找一批不同角度的选题")}>再找一批</Button>} />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {topics.map((t) => {
-          const on = t.id === chosen;
-          const evCount = (evidence[t.id] || { items: [] }).items.length;
-          const hasRealCover = images.length > 0;
-          const cover = coverVisual(`${t.id}-${t.title}`);
-          return (
-            <div key={t.id} data-testid="topic-card" onClick={() => onChoose(t)} className="lift pop-in" style={{
-              borderRadius: "var(--radius-md)", overflow: "hidden", cursor: "pointer",
-              border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: "var(--surface-card)",
-              boxShadow: on ? "var(--shadow-md)" : "var(--shadow-xs)", display: "flex", flexDirection: "column" }}>
-                <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: hasRealCover ? "var(--accent-surface)" : cover.gradient }}>
-                {hasRealCover && <Image src={images[(t.id - 1) % images.length]} alt={t.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
-                {!hasRealCover && (
-                  <span aria-hidden style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40, opacity: 0.9, filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.25))" }}>{cover.emoji}</span>
-                )}
-                <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 58%, rgba(0,0,0,0.42))" }} />
-                <span style={{ position: "absolute", top: 7, left: 7, fontSize: 8, fontWeight: 700, color: "#fff", background: "rgba(0,0,0,0.36)", padding: "2px 7px", borderRadius: 999 }}>{t.angle}</span>
-                {t.hotRate != null && <span data-testid="topic-hot" style={{ position: "absolute", top: 7, right: 7, fontSize: 9, fontWeight: 800, color: "#fff", background: "var(--coral-500)", padding: "2px 6px", borderRadius: 999 }}>🔥{t.hotRate}</span>}
-                {on && <span style={{ position: "absolute", bottom: 7, right: 7, display: "inline-flex", alignItems: "center", gap: 2, fontSize: 8, fontWeight: 700, color: "var(--primary)", background: "#fff", padding: "2px 6px", borderRadius: 999 }}><Icon name="check" size={9} /> 已选</span>}
-              </div>
-              <div style={{ padding: "8px 9px", display: "flex", flexDirection: "column", gap: 5 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.title}</div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 9, color: "var(--text-subtle)" }}>
-                  <span>{t.rationale.split(" · ")[0]}</span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="database" size={9} /> 依据 {evCount}</span>
-                </div>
-              </div>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border)" }}>
+        <PanelHead
+          icon="layers"
+          title="参考素材笔记"
+          sub={materials.length ? `线上 + 本地混排 · 共 ${materials.length} 条` : "线上 + 本地混排"}
+          right={savedCount > 0 ? <Badge tone="synced" shape="chip">已入库 {savedCount}</Badge> : undefined}
+        />
+      </div>
+      <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        {materials.length === 0 ? (
+          <div style={{ margin: "24px auto", maxWidth: 260, textAlign: "center", display: "flex", flexDirection: "column", gap: 10, color: "var(--text-subtle)" }}>
+            <div style={{ margin: "0 auto", width: 44, height: 44, borderRadius: "var(--radius-lg)", background: "var(--oats-light)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon name="layers" size={20} color="var(--text-subtle)" />
             </div>
-          );
-        })}
+            <div style={{ fontSize: "var(--text-sm)", fontWeight: 700, color: "var(--text-muted)" }}>还没有参考素材</div>
+            <p style={{ margin: 0, fontSize: 11, lineHeight: 1.7 }}>说一个方向让我找爆款(线上+本地),检索到的参考笔记会固定在这里——可勾选收录入库,或挑一篇仿写。</p>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {materials.map((n) => (
+              <MaterialCard
+                key={n.note_id}
+                note={n}
+                picked={!!picked[n.note_id]}
+                onToggle={() => !n.already_local && toggle(n.note_id)}
+                onImitate={() => actions.imitate(n)}
+                onOpen={() => actions.openDetail({ kind: "material", noteId: n.note_id })}
+              />
+            ))}
+          </div>
+        )}
       </div>
-    </div>
-  );
-}
-
-function SelectedTopicBar({ onBrowse }: { onBrowse: () => void }) {
-  const { note, topics, actions } = useStudio();
-  const topic = topics.find((t) => t.id === note.topicId);
-  if (!topic) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: "var(--radius-md)", border: "1px dashed var(--border-coral)", background: "var(--accent-surface)", color: "var(--primary)", fontSize: "var(--text-xs)", fontWeight: 700 }}>
-        <Icon name="lightbulb" size={13} /> 先选择一个选题进入创作栏
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-coral)", background: "color-mix(in srgb, var(--accent-surface) 55%, white)" }}>
-      <Badge tone="topic" shape="chip">{topic.angle}</Badge>
-      <span style={{ flex: 1, minWidth: 0, fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topic.title}</span>
-      {topic.hotRate != null && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--hot)", whiteSpace: "nowrap" }}>🔥 {topic.hotRate}%</span>}
-      <button onClick={onBrowse} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid var(--border)", background: "var(--surface-card)", borderRadius: "var(--radius-sm)", padding: "4px 9px", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}><Icon name="list" size={12} /> 换题</button>
-      <Button variant="soft" size="sm" leftIcon={<Icon name="feather" size={12} />} onClick={() => actions.setSection("deep")}>深度创作</Button>
-    </div>
-  );
-}
-
-function DraftSnapshot({ expanded = false }: { expanded?: boolean }) {
-  const { note, actions } = useStudio();
-  const body = note.body || "草稿会出现在这里。也可以继续补充方向，我会跟着改。";
-  return (
-    <Card padding="md" tone={note.status === "idle" ? "sunken" : "default"} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <PanelHead icon="feather" title="创作栏" sub="标题 · 正文 · 标签 · 定稿入口" />
-      <div>
-        <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3, color: note.title ? "var(--text-body)" : "var(--text-subtle)" }}>
-          {note.title || "还没开始写标题"}
+      {adoptable.length > 0 && (
+        <div style={{ padding: 14, borderTop: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ flex: 1, fontSize: 11, color: "var(--text-subtle)" }}>
+            {pickedNotes.length ? `已选 ${pickedNotes.length} / ${adoptable.length} 篇` : "勾选线上笔记批量收录入库"}
+          </span>
+          <Button variant="primary" size="sm" disabled={submitting || pickedNotes.length === 0} leftIcon={<Icon name={submitting ? "loader" : "cloud-upload"} size={13} />} onClick={adopt}>
+            {submitting ? "收录中…" : `收录选中 ${pickedNotes.length || ""} 篇`}
+          </Button>
         </div>
-        <p style={{ margin: "8px 0 0", fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)", whiteSpace: "pre-wrap", maxHeight: expanded ? 260 : 120, overflow: "hidden" }}>
-          {body}
-        </p>
+      )}
+    </div>
+  );
+}
+
+// 单张素材卡:封面 + 来源 badge(线上/本地库) + 勾选框(批量收录) + 仿写按钮(单张即走)。
+function MaterialCard({ note: n, picked, onToggle, onImitate, onOpen }: {
+  note: DiscoveryNote;
+  picked: boolean;
+  onToggle: () => void;
+  onImitate: () => void;
+  onOpen: () => void;
+}) {
+  const locked = !!n.already_local;
+  const isLocal = n.source === "local";
+  return (
+    <div className="lift pop-in" style={{ position: "relative", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", boxShadow: picked ? "var(--shadow-md)" : "var(--shadow-xs)", outline: picked ? "2px solid var(--primary)" : "2px solid transparent", transition: "outline-color var(--dur-fast), box-shadow var(--dur-fast)", display: "flex", flexDirection: "column" }}>
+      <div onClick={onOpen} style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)", cursor: "pointer" }}>
+        {n.cover_url && <Image src={n.cover_url} alt={n.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 60%, rgba(0,0,0,0.34))" }} />
+        <span style={{ position: "absolute", top: 6, left: 6, fontSize: 8, fontWeight: 700, color: "#fff", background: isLocal ? "rgba(52,120,90,0.9)" : "rgba(0,0,0,0.42)", padding: "2px 7px", borderRadius: 999 }}>{isLocal ? "本地库" : "线上"}</span>
+        {locked ? (
+          <span style={{ position: "absolute", top: 6, right: 6, fontSize: 8, fontWeight: 700, color: "var(--success)", background: "#fff", padding: "2px 6px", borderRadius: 999, boxShadow: "var(--shadow-xs)" }}>已收录</span>
+        ) : (
+          <button
+            data-testid="material-check"
+            aria-label={picked ? "取消勾选" : "勾选收录"}
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            style={{ position: "absolute", top: 6, right: 6, width: 20, height: 20, borderRadius: 999, background: picked ? "var(--primary)" : "rgba(255,255,255,0.92)", border: picked ? "none" : "1px solid var(--border)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "var(--shadow-xs)", padding: 0 }}
+          >
+            {picked && <Icon name="check" size={12} color="#fff" />}
+          </button>
+        )}
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {note.tags.length ? note.tags.map((tag) => <Badge key={tag} tone="topic" shape="chip">#{tag}</Badge>) : <span style={{ fontSize: 10, color: "var(--text-subtle)" }}>暂无标签</span>}
+      <div style={{ padding: "8px 9px", display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", cursor: "pointer" }} onClick={onOpen}>{n.title}</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 9, color: "var(--text-subtle)" }}>
+          <span style={{ maxWidth: 78, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.author || ""}</span>
+          {n.likes != null && <span>♥ {n.likes}</span>}
+        </div>
+        <button
+          data-testid="material-imitate"
+          onClick={(e) => { e.stopPropagation(); onImitate(); }}
+          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4, width: "100%", border: "1px solid var(--border-coral)", background: "var(--accent-surface)", color: "var(--primary)", borderRadius: "var(--radius-sm)", padding: "5px 0", cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+        >
+          <Icon name="feather" size={12} /> 仿写
+        </button>
       </div>
-      <Button variant="primary" size="sm" block leftIcon={<Icon name="feather" size={13} />} onClick={() => actions.setSection("deep")}>进入完整创作栏</Button>
-    </Card>
+    </div>
   );
 }
 
@@ -227,77 +225,6 @@ function InterruptApprovalCard({
       <div style={{ display: "flex", gap: 8 }}>
         <Button variant="primary" size="sm" style={{ flex: 1 }} disabled={submitting} leftIcon={<Icon name="check" size={13} />} onClick={() => decide("approve")}>全部批准</Button>
         <Button variant="secondary" size="sm" style={{ flex: 1 }} disabled={submitting} leftIcon={<Icon name="x" size={13} />} onClick={() => decide("reject")}>全部驳回</Button>
-      </div>
-    </Card>
-  );
-}
-
-// 发现式笔记卡网格:本地/线上检索结果走卡片通道(prompts.py §6.5),用户勾选要收录的线上笔记,
-// 点"收录选中并出选题"经 adoptNotes 把 selected_notes 直传 graph state → 后端采纳落库 → 出选题。
-// 已收录(already_local)的卡显示"已收录"、禁选(重复采纳无意义)。
-function DiscoveryNotesCard({
-  notes,
-  onAdopt,
-}: {
-  notes: DiscoveryNote[];
-  onAdopt: (notes: DiscoveryNote[]) => void;
-}) {
-  const [picked, setPicked] = useState<Record<string, boolean>>({});
-  const [submitting, setSubmitting] = useState(false);
-  const adoptable = notes.filter((n) => !n.already_local);
-  const pickedNotes = adoptable.filter((n) => picked[n.note_id]);
-
-  const toggle = (id: string) => setPicked((p) => ({ ...p, [id]: !p[id] }));
-  const adopt = () => {
-    if (submitting || pickedNotes.length === 0) return;
-    setSubmitting(true);
-    onAdopt(pickedNotes);
-    // 提交后进入忙碌态;真正的采纳进度/出选题由后续流呈现。兜底解锁防卡死。
-    setTimeout(() => setSubmitting(false), 8000);
-  };
-
-  return (
-    <Card padding="md">
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
-        <Icon name="search" size={14} color="var(--primary)" />
-        <span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>找到 {notes.length} 篇相关笔记</span>
-        <span style={{ fontSize: 10, color: "var(--text-subtle)" }}>· 勾选线上笔记收录,作为出选题依据</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(128px, 1fr))", gap: 10, marginTop: 10 }}>
-        {notes.map((n) => {
-          const on = !!picked[n.note_id];
-          const locked = !!n.already_local;
-          return (
-            <div key={n.note_id} onClick={() => !locked && toggle(n.note_id)} style={{ position: "relative", cursor: locked ? "default" : "pointer", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", boxShadow: "var(--shadow-xs)", display: "flex", flexDirection: "column", outline: on ? "2px solid var(--primary)" : "2px solid transparent", transition: "outline-color var(--dur-fast)" }}>
-              <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)" }}>
-                {n.cover_url && <Image src={n.cover_url} alt={n.title} fill sizes="150px" unoptimized style={{ objectFit: "cover" }} />}
-              </div>
-              <div style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: 4 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{n.title}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, color: "var(--text-subtle)" }}>
-                  <span style={{ maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.author || ""}</span>
-                  {n.likes != null && <span>♥ {n.likes}</span>}
-                </div>
-              </div>
-              <span style={{ position: "absolute", top: 6, left: 6, fontSize: 8, fontWeight: 700, color: "#fff", background: n.source === "local" ? "rgba(52,120,90,0.85)" : "rgba(0,0,0,0.4)", padding: "2px 6px", borderRadius: 999 }}>{n.source === "local" ? "本地库" : "线上"}</span>
-              {locked ? (
-                <span style={{ position: "absolute", top: 6, right: 6, fontSize: 8, fontWeight: 700, color: "var(--success)", background: "#fff", padding: "2px 6px", borderRadius: 999, boxShadow: "var(--shadow-xs)" }}>已收录</span>
-              ) : (
-                <span style={{ position: "absolute", top: 6, right: 6, width: 18, height: 18, borderRadius: 999, background: on ? "var(--primary)" : "rgba(255,255,255,0.9)", border: on ? "none" : "1px solid var(--border)", display: "inline-flex", alignItems: "center", justifyContent: "center", boxShadow: "var(--shadow-xs)" }}>
-                  {on && <Icon name="check" size={11} color="#fff" />}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
-        <span style={{ fontSize: 11, color: "var(--text-subtle)", flex: 1 }}>
-          {adoptable.length === 0 ? "这些笔记都已在库中,可直接让我基于它们出选题。" : `已选 ${pickedNotes.length} / ${adoptable.length} 篇可收录`}
-        </span>
-        <Button variant="primary" size="sm" disabled={submitting || pickedNotes.length === 0} leftIcon={<Icon name={submitting ? "loader" : "cloud-upload"} size={13} />} onClick={adopt}>
-          {submitting ? "收录中…" : "收录选中并出选题"}
-        </Button>
       </div>
     </Card>
   );
@@ -390,11 +317,31 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
             );
           }
           if (item.kind === "discovery") {
+            // 检索出的参考素材笔记不再进对话流(会滚走),改由右边栏「参考素材工作台」固定展示
+            // (需求 §1/§3)。此处只给一句轻量提示,把用户视线引到右栏。
             return (
-              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "96%" }}>
+              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
                 <Avatar glyph="🍠" variant="agent" size={32} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <DiscoveryNotesCard notes={item.notes} onAdopt={actions.adoptNotes} />
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "var(--surface-card)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-xl)", padding: "10px 14px", fontSize: "var(--text-sm)", boxShadow: "var(--shadow-sm)", color: "var(--text-body)" }}>
+                  <Icon name="layers" size={14} color="var(--primary)" />
+                  找到 {item.notes.length} 篇参考素材,已放到右侧工作台 —— 可勾选收录,或挑一篇仿写。
+                </div>
+              </div>
+            );
+          }
+          if (item.kind === "panel") {
+            // 意图分流(§2):模糊创作请求时给可点选项(如「让 AI 出选题」/「找爆款来仿写」),
+            // 用户点一下直接进对应流程,不用打字。这是主控"请求模糊直接给最合理假设"的**有意例外**。
+            return (
+              <div key={key} style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
+                <Avatar glyph="🍠" variant="agent" size={32} />
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {item.actions.map((a, ai) => (
+                    <button key={ai} data-testid="intent-choice" onClick={() => actions.say(a.text)}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--border-coral)", background: "var(--surface-card)", color: "var(--primary)", borderRadius: "var(--radius-lg)", padding: "9px 15px", cursor: "pointer", fontSize: "var(--text-sm)", fontWeight: 700, boxShadow: "var(--shadow-xs)" }}>
+                      <Icon name="sparkles" size={13} /> {a.label}
+                    </button>
+                  ))}
                 </div>
               </div>
             );
@@ -558,28 +505,86 @@ function TrendingTopics() {
   );
 }
 
-// 选题详情 — 点选题卡先看各类信息，再进入深度创作
-function TopicDetail({ topicId, onBack }: { topicId: number; onBack: () => void }) {
+// 统一详情/仿写弹层(slide-over)—— 素材卡或选题卡点开后看详情,并直接触发动作。
+// 由 store.detail 驱动,从 StudioShell 挂载(与 EvidencePanel 同级)。素材:看封面/来源/
+// 互动 + 收录/仿写;选题:看角度/依据 + 进入深度创作。
+export function DetailModal() {
+  const { detail, actions } = useStudio();
+  const { closing, dismiss } = useDismiss(actions.closeDetail);
+  if (!detail) return null;
+  return (
+    <div onClick={dismiss} className={closing ? "scrim-out" : "scrim-in"} style={{ position: "fixed", inset: 0, background: "rgba(15,15,16,0.35)", zIndex: 56, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} className={`cs ${closing ? "slide-out-right" : "slide-in-right"}`} style={{ width: 400, maxWidth: "92vw", height: "100%", background: "var(--background)", boxShadow: "var(--shadow-2xl)", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "sticky", top: 0, background: "var(--surface-card)", borderBottom: "1px solid var(--border)", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <Icon name={detail.kind === "material" ? "layers" : "lightbulb"} size={16} color="var(--primary)" />
+            <span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>{detail.kind === "material" ? "参考素材详情" : "选题详情"}</span>
+          </div>
+          <button onClick={dismiss} aria-label="关闭" style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-subtle)", display: "inline-flex" }}><Icon name="x" size={16} /></button>
+        </div>
+        {detail.kind === "material" ? <MaterialDetailBody noteId={detail.noteId} /> : <TopicDetailBody topicId={detail.topicId} />}
+      </div>
+    </div>
+  );
+}
+
+function MaterialDetailBody({ noteId }: { noteId: string }) {
+  const { materials, actions } = useStudio();
+  const n = materials.find((m) => m.note_id === noteId);
+  if (!n) return null;
+  const isLocal = n.source === "local";
+  return (
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
+      <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: 300, overflow: "hidden", borderRadius: "var(--radius-md)", background: "var(--accent-surface)" }}>
+        {n.cover_url && <Image src={n.cover_url} alt={n.title} fill sizes="380px" unoptimized style={{ objectFit: "cover" }} />}
+        <span style={{ position: "absolute", top: 8, left: 8, fontSize: 9, fontWeight: 700, color: "#fff", background: isLocal ? "rgba(52,120,90,0.9)" : "rgba(0,0,0,0.42)", padding: "2px 8px", borderRadius: 999 }}>{isLocal ? "本地库" : "线上"}</span>
+      </div>
+      <h2 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3 }}>{n.title}</h2>
+      {n.summary && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>{n.summary}</p>}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 11, color: "var(--text-subtle)" }}>
+        {n.author && <span>作者 {n.author}</span>}
+        {n.likes != null && <span>♥ {n.likes}</span>}
+        {n.collects != null && <span>★ {n.collects}</span>}
+        {n.comments != null && <span>💬 {n.comments}</span>}
+      </div>
+      {n.tags && n.tags.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {n.tags.map((tg) => <span key={tg} style={{ fontSize: 10, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>#{tg}</span>)}
+        </div>
+      )}
+      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8, position: "sticky", bottom: 0, background: "var(--background)", paddingTop: 10 }}>
+        <Button variant="primary" block leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.imitate(n); actions.closeDetail(); }}>仿写这篇</Button>
+        {!n.already_local && (
+          <Button variant="soft" block leftIcon={<Icon name="cloud-upload" size={13} />} onClick={() => { actions.adoptNotes([n]); actions.closeDetail(); }}>收录入库</Button>
+        )}
+        {n.note_url && <a href={n.note_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", textDecoration: "none" }}>查看原文 ↗</a>}
+      </div>
+    </div>
+  );
+}
+
+function TopicDetailBody({ topicId }: { topicId: number }) {
   const { topics, evidence, actions } = useStudio();
   const topic = topics.find((t) => t.id === topicId);
   const ev = (evidence || {})[topicId];
   if (!topic) return null;
   return (
-    <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <button onClick={onBack} style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 11 }}><Icon name="chevron-left" size={13} /> 返回选题</button>
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Badge tone="topic" shape="chip">{topic.angle}</Badge>
+          {topic.angle && <Badge tone="topic" shape="chip">{topic.angle}</Badge>}
           {topic.hotRate != null && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--hot)" }}>🔥 爆款率 {topic.hotRate}%</span>}
         </div>
         <h2 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", lineHeight: 1.3 }}>{topic.title}</h2>
-        <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>{topic.rationale}</p>
+        {topic.rationale && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>{topic.rationale}</p>}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-        <span style={{ color: "var(--text-subtle)" }}>核心搜索词</span>
-        <span style={{ fontWeight: 600, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>{topic.kw}</span>
-        {ev && <span style={{ marginLeft: "auto", fontSize: 10, color: ev.mode === "keyword_fallback" ? "var(--warning)" : "var(--success)" }}>{ev.mode === "semantic" ? "语义命中" : "关键词兜底"}</span>}
-      </div>
+      {topic.kw && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
+          <span style={{ color: "var(--text-subtle)" }}>核心搜索词</span>
+          <span style={{ fontWeight: 600, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>{topic.kw}</span>
+          {ev && <span style={{ marginLeft: "auto", fontSize: 10, color: ev.mode === "keyword_fallback" ? "var(--warning)" : "var(--success)" }}>{ev.mode === "semantic" ? "语义命中" : "关键词兜底"}</span>}
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <Eyebrow><span data-testid="detail-evidence-count" data-count={ev ? ev.items.length : 0}>创作依据 · {ev ? ev.items.length : 0} 条（数据底座检索）</span></Eyebrow>
         {ev && ev.mode === "insufficient_relevance" && (
@@ -601,12 +606,8 @@ function TopicDetail({ topicId, onBack }: { topicId: number; onBack: () => void 
           </button>
         ))}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <Eyebrow>建议结构</Eyebrow>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.7 }}>① 共情钩子 → ② 编号清单干货 → ③ 选购 TIPS → ④ 互动收口 + 话题矩阵</div>
-      </div>
-      <div style={{ position: "sticky", bottom: 0, background: "var(--surface-card)", paddingTop: 10, borderTop: "1px solid var(--border)" }}>
-        <Button variant="primary" block leftIcon={<Icon name="feather" size={14} />} onClick={() => actions.chooseTopic(topic, "deep")}>进入深度创作</Button>
+      <div style={{ marginTop: "auto", position: "sticky", bottom: 0, background: "var(--background)", paddingTop: 10 }}>
+        <Button variant="primary" block leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.chooseTopic(topic, "deep"); actions.closeDetail(); }}>进入深度创作</Button>
       </div>
     </div>
   );

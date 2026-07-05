@@ -103,6 +103,23 @@ export interface StudioUser {
   fans: string;
 }
 
+/** 两段式仿写的第一段:对范本的套路拆解(§5),必须显性呈现给用户——让用户看到
+ *  "它凭什么这么仿"。从 xhs_imitation 块的 teardown 字段解析。四维对齐后端 ReferenceTeardown。 */
+export interface ImitationTeardown {
+  angle: string;
+  painpoint: string;
+  hook_mechanism: string;
+  structure: string;
+}
+
+/** 一次仿写产出的元信息:所仿范本 + 第一段拆解。第二段成品走 note.versions(与 xhs_copy 同构)。
+ *  非仿写会话为 null。 */
+export interface StudioImitation {
+  referenceResourceId: string;
+  referenceTitle: string;
+  teardown: ImitationTeardown;
+}
+
 // ── 账号运营 ──
 export interface DashboardStat {
   label: string;
@@ -188,8 +205,29 @@ export interface Trend {
 
 export type StudioSection = "create" | "deep" | "ops";
 
+/** 统一详情弹层的目标:一张选题卡,或一篇参考素材笔记。DetailModal 据 kind 分渲染。 */
+export type DetailTarget =
+  | { kind: "topic"; topicId: number }
+  | { kind: "material"; noteId: string };
+
 /** Static UI config (image roles, quick emoji, weekday labels) — not business
  *  data; safe to keep client-side. Ported from data.js. */
 export const IMAGE_ROLES = ["封面 · 大字报", "产品特写", "场景氛围", "清单合影", "选购对比"];
+
+/** 标题公式库(§4.5 TitleScreen 左栏)。这是**运营可维护的 prompt 意图预设**(半固定可配,
+ *  同 IMAGE_ROLES/QUICK_EMOJI),不是业务数据 —— 真实候选由 LLM 按该公式意图生成(走 xhs-title),
+ *  绝不本地模板拼接假候选。真实产品这批由飞书表格配置、接口拉取;此处作为前端默认意图集。 */
+export interface TitleFormula {
+  name: string;
+  hint: string;
+}
+export const TITLE_FORMULAS: TitleFormula[] = [
+  { name: "数字清单", hint: "用具体数字制造信息密度,如「5 个」「3 步」" },
+  { name: "痛点前置", hint: "开头直戳读者的坑/焦虑,引发「这说的就是我」" },
+  { name: "身份代入", hint: "点名目标人群,如「新手」「打工人」「学生党」" },
+  { name: "情绪钩子", hint: "用强情绪词制造点击冲动,如「谁懂」「绝了」" },
+  { name: "结果承诺", hint: "承诺读完能得到的确定结果/收益" },
+  { name: "反差悬念", hint: "制造反常识对比或悬念,吊起好奇" },
+];
 export const QUICK_EMOJI = ["🍠", "⛺", "☕", "✨", "🌿", "👇", "📝", "🔥", "🌅", "✅", "❌", "1️⃣", "2️⃣", "💛"];
 export const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];

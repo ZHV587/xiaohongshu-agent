@@ -155,11 +155,13 @@ export function CopyDoctor({ checks, score }: { checks: CheckResult[]; score: nu
   );
 }
 
-// 定稿 → 排期 bar
-export function ScheduleBar({ score, status }: { score: number; status: StudioNote["status"] }) {
+// 定稿 → 排期 bar。remaining=未通过的体检项数(可选):60-79 分时做「临界引导」,
+// 告诉用户"就差 N 项达标就能定稿",把注意力引到差的那几项而不是干看分数。
+export function ScheduleBar({ score, status, remaining }: { score: number; status: StudioNote["status"]; remaining?: number }) {
   const { month, setSection, actions } = useStudio();
   const [picking, setPicking] = useState(false);
   const ready = score >= 80;
+  const nearReady = !ready && score >= 60;
   const scheduled = status === "scheduled";
 
   return (
@@ -193,7 +195,13 @@ export function ScheduleBar({ score, status }: { score: number; status: StudioNo
         </div>
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: "var(--text-subtle)", flex: 1 }}>{ready ? "体检达标，可以定稿啦 🎉" : `体检 ${score} 分，建议 ≥80 再发`}</span>
+          <span style={{ fontSize: 11, color: nearReady ? "var(--primary)" : "var(--text-subtle)", fontWeight: nearReady ? 700 : 400, flex: 1 }}>
+            {ready
+              ? "体检达标，可以定稿啦 🎉"
+              : nearReady && remaining
+                ? `就差 ${remaining} 项达标就能定稿,再改改这几项 →`
+                : `体检 ${score} 分，建议 ≥80 再发`}
+          </span>
           <Button variant="secondary" size="sm" leftIcon={<Icon name="cloud-upload" size={13} />} onClick={actions.syncFeishu}>
             同步飞书
           </Button>
