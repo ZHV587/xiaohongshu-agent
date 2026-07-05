@@ -27,6 +27,7 @@ EXECUTOR_SUBAGENT_NAMES = frozenset({
     "content-system-ingestor",
     "curriculum-designer",
     "copywriting-coprocessor",
+    "imitation-writer",
 })
 
 
@@ -116,6 +117,26 @@ class CopywritingReport(BaseModel):
     outline: str = Field(description="文案写作大纲与逻辑结构说明")
     ai_audit_self_correction_log: str = Field(description="子代理在生成初稿后，根据 22 条 AI 指纹自我审计并重写迭代的过程日志")
     versions: list[CopywritingVersion] = Field(description="生成的 2-3 个供创作者挑选的对比版本，首个版本为主 canonical 稿")
+
+
+class ReferenceTeardown(BaseModel):
+    """仿写第一段:对单篇范本的选题方向与套路拆解(显性呈现给用户,不是后台默默做掉)。
+    字段与前端 xhs_imitation.teardown 一一对应,主控机械映射。"""
+    angle: str = Field(description="范本的切入角度,如 避坑/逆袭/对比/科普/清单/氛围情绪 等,一句话点明")
+    painpoint: str = Field(description="范本戳中的核心痛点/情绪(读者为什么点进来、为什么共鸣)")
+    hook_mechanism: str = Field(description="标题与开头钩子的机制:它靠什么在首屏抓住人(悬念/数字/身份代入/反差/利益前置…),具体说清")
+    structure: str = Field(description="内容结构与节奏:分几段、每段承担什么、编号/清单/故事线怎么走、互动收口方式")
+
+
+class ImitationReport(BaseModel):
+    """两段式仿写产出报告(§5)。第一段 teardown 拆解范本套路,第二段 versions 按该套路
+    换成用户自己的主题写成成品。两段都要让用户看得见。"""
+    reference_resource_id: str = Field(description="所仿范本的 resource_id(主控传入,原样回填,用于落 imitated_from 边)")
+    reference_title: str = Field(description="范本标题(供用户核对仿的是哪一篇)")
+    teardown: ReferenceTeardown = Field(description="第一段:对范本选题方向与套路的显性拆解")
+    outline: str = Field(description="第二段创作大纲:说明如何把范本的骨架套用到用户主题上(哪些结构/钩子被沿用、内容如何替换)")
+    ai_audit_self_correction_log: str = Field(description="按 22 条 AI 指纹自审纠偏的过程日志(纯文本编号)")
+    versions: list[CopywritingVersion] = Field(description="按范本套路写成的用户成品,2-3 个差异化对比版,首个为主 canonical 稿")
 
 
 def build_knowledge_atom_retriever(
@@ -331,6 +352,66 @@ def build_copywriting_coprocessor(
     }
 
 
+def build_imitation_writer(
+    registry: ModelPoolProvider,
+    initial_model: BaseChatModel,
+    backend: Any = None,
+) -> SubAgent:
+    # 两段式仿写(§5):先"看懂"这篇范本(显性拆解),再据此套路换成用户主题写成成品。
+    # 复用 copywriting-coprocessor 的去 AI 腔 + 22 条指纹规约(唯一权威源,逐条内联),
+    # 差异在于:① 必须 get_resource 精读**范本原文原样**(禁止凭记忆复述/压缩);
+    # ② 多产出一段结构化 teardown 显性呈现;③ 贴合档位是"学套路"(形似不逐句照抄)。
+    return {
+        "name": "imitation-writer",
+        "description": (
+            "两段式仿写协处理器:针对用户指定的**单篇范本素材**(resource_id),先精读范本原文、"
+            "显性拆解其选题方向与套路(切入角度/痛点/钩子机制/结构节奏),再据此套路换成用户自己的"
+            "主题写成成品(学套路、形似不照抄),输出 ImitationReport。用户在素材卡点「仿写」时委派。"
+        ),
+        "system_prompt": """你是小红书两段式仿写协处理器。你的产出**不是照抄原文**,而是先"看懂"这篇范本、再据它的套路重写成用户自己的一篇。下面两套规约是全系统去 AI 腔的唯一权威源,逐条遵守。
+
+## 铁律:范本原文必须完整原样作为依据
+- 主控会给你**范本的 resource_id**。你**必须**先调 `get_resource(resource_id)` 把范本正文**完整读进来**,以它的真实结构与钩子为准。
+- **严禁**凭记忆/想象复述范本,**严禁**压缩或概括后再仿——那样仿出来的东西贴不住范本的骨架与钩子。读不到范本原文(get_resource 返回 not found/空)时,不要硬编,如实在报告里说明并停下。
+
+## 任务分两段,两段都要让用户看得见
+**第一段 · 拆解范本套路(teardown,显性呈现)** —— 精读范本后,提炼:
+- `angle` 切入角度(避坑/逆袭/对比/科普/清单/氛围情绪…)
+- `painpoint` 戳中的核心痛点/情绪
+- `hook_mechanism` 标题与开头钩子的机制(靠什么在首屏抓住人)
+- `structure` 内容结构与节奏(分几段、每段承担什么、编号/清单/故事线、互动收口)
+这一段是仿写的依据,必须写清楚——让用户看到"它凭什么这么仿",而不是后台默默做掉。
+
+**第二段 · 按该套路写用户成品(versions)** —— 贴合档位是**学套路**:沿用范本的结构骨架、开头钩子类型、节奏,**内容换成用户自己的主题**(形似,不逐句照抄原文)。产出 A/B 两版(≥2 版,差异化角度)。`outline` 里说清:范本的哪些结构/钩子被沿用、用户主题如何替换进去。
+
+## 一、去 AI 腔与排版规约(逐条遵守)
+- 分享者视角:用"我买过/我踩过坑"的真人姿态,禁止"根据研究/显而易见"的俯瞰报告腔。
+- 单点心智:一篇只讲透一个核心痛点/故事/技巧,不贪多变成说明书。
+- 真人感断句:短句、多逗号、长短交错;允许日常语气词(啊/哈/啧/天呐);打破 AI 的对称三段式/对仗式结构。
+- 排版呼吸感:每段 ≤3 行,多留空行;Emoji 仅作分级或段尾点缀,每段 ≤2 个。
+- 场景化动词替代抽象形容词:不写"高效的/方便的/非常棒的",写具体动作场景。
+- 消灭名词化空转主语:不写"数据表明/趋势显示",还原为具体施动人("我翻了 20 篇发现…")。
+- 绝对禁词(逐词零命中):此外、至关重要、深入探讨、格局、织锦、正如、增强、获得、宝贵的、充满活力、双刃剑、显而易见、首先、其次、总之、综上、值得注意的是、需要强调的是、我们可以看到、由此可见。
+- 禁营销套话:赶快点击下方链接/关注我不迷路/收藏等于学会。
+- 禁无谓铺垫:开头前两句直接切痛点,禁止"在当今…""随着…的发展"。
+- 正文为纯文本:不夹带 Markdown 标题(##)/加粗(**)/编号骨架;带空行与 Emoji;单版正文 ≤1000 字。
+
+## 二、22 条 AI 指纹自审清单(初稿完成后逐条检查并纠偏,判定与动作记入 ai_audit_self_correction_log)
+1. 堵住所有反驳。2. 知识全部输出。3. 匀速排比。4. 同一让步模板反复用。5. 给概念起名字的仪式。6. 情绪曲线太光滑。7. 替读者说蠢话再纠正。8.「不是X是Y」高密度。9. 没有任何犹豫。10. 精确到不真实的情绪细节。11. 脆弱感服务于论点。12. 把结论包装成「协议」。13. 每段都有收束金句。14. 句子节奏过于均匀。15. 用身体感受替代论证。16. 开头「钩子+痛点+承诺」三件套。17. 连接词过度使用。18. 同义词刻意替换。19. 中文翻译腔。20. 虚假的「讲个故事」。21. 结尾「你值得」式祝福。22. 对「深刻」的过拟合。
+(误伤提示:#8 不足 3 次、#5 偶一次、学术/法律体的 #1、短视频体裁的 #13 不判 AI。)
+
+## 输出
+- `reference_resource_id`/`reference_title` 原样回填主控给的范本标识。
+- `teardown` 四字段填满(第一段)。`outline` 说清套路如何套用(第二段大纲)。
+- 每个 version 含 `label/title/body/tags/cover/note` 六字段照填;主控会**机械映射**进 xhs_imitation 块,你**不要**自己加任何 markdown 包装、不要把 teardown/outline/自审写进 body。
+- 严格按 ImitationReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。""",
+        "model": initial_model,
+        "tools": [get_resource, search_resources, semantic_search_resources],
+        "response_format": _structured(ImitationReport),
+        "middleware": build_subagent_middleware(registry),
+    }
+
+
 def build_executor_subagents(
     registry: ModelPoolProvider,
     initial_model: BaseChatModel,
@@ -345,4 +426,5 @@ def build_executor_subagents(
         build_content_system_ingestor(registry, initial_model, backend),
         build_curriculum_designer(registry, initial_model, backend),
         build_copywriting_coprocessor(registry, initial_model, backend),
+        build_imitation_writer(registry, initial_model, backend),
     ]

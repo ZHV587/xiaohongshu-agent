@@ -16,6 +16,7 @@ class FakeRepo:
         self.edges: dict[tuple, float] = {}
         self._metric_by_target: dict[str, str] = {}
         self._seq = 0
+        self.unreadable: set = set()  # 放进来的 resource_id 视为 actor 不可读(测越权闸门)
 
     def unit_of_work(self):
         return nullcontext()
@@ -60,6 +61,15 @@ class FakeRepo:
     def upsert_mapping(self, *, tenant_id, resource_id, system, external_type, external_id,
                        external_updated_at=None, sync_status="synced", conn=None):
         self.mappings[(system, external_type, external_id)] = resource_id
+
+    # associate_ingested_resource 会对每个候选 target 过读权限闸门(_actor_can_read)。
+    # FakeRepo 默认全部可读,除非放进 unreadable 集合。
+    conn = None
+
+    def check_permission(self, resource_id, actor, permission="read", conn=None):
+        if resource_id in self.unreadable:
+            raise PermissionError("not readable")
+        return True
 
 
 def _note(note_id="abc", **over):
@@ -176,3 +186,78 @@ def test_adopt_missing_note_id_collected_as_error(patched):
     assert res["ok"] is True
     assert res["results"] == []
     assert res["errors"][0]["error"].startswith("DB_ADOPT_FAILED") or "note_id" in res["errors"][0]["error"]
+
+
+# ── §0 素材不孤立:入库自动挂关联 ──────────────────────────────────────────────
+
+def test_adopt_links_semantic_neighbors(patched, monkeypatch):
+    """有已有素材时:采纳的笔记对语义/主题邻居建 semantically_related 边(权重=score)。"""
+    repo = patched
+    # 先塞一条"已有素材"当邻居(真实检索命中的库内资源)。
+    monkeypatch.setattr(
+        oa, "_find_neighbors",
+        lambda query, config: [{"resource_id": "res-existing", "score": 0.83}],
+    )
+    with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
+        res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=False)
+    rid = res["results"][0]["resource_id"]
+    sem = [e for e in repo.edges if e[2] == "semantically_related"]
+    assert (rid, "res-existing", "semantically_related") in repo.edges
+    assert repo.edges[(rid, "res-existing", "semantically_related")] == pytest.approx(0.83)
+    assert len(sem) == 1
+    assert res["results"][0]["associations"] == {"semantic": 1, "co_ingested": 0, "isolated": False}
+
+
+def test_adopt_batch_co_ingested_fallback(patched, monkeypatch):
+    """无语义邻居(空库)但同批多条:退化为 co_ingested 互挂,保证不孤岛。"""
+    repo = patched
+    monkeypatch.setattr(oa, "_find_neighbors", lambda query, config: [])
+    notes = [_note(note_id="a"), _note(note_id="b")]
+    with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
+        res = oa.adopt_online_notes.func(selected_notes=notes, sync_feishu=False)
+    co = [e for e in repo.edges if e[2] == "co_ingested"]
+    # 两条各挂到对方 → 2 条 co_ingested 边,均非孤岛。
+    assert len(co) == 2
+    for r in res["results"]:
+        assert r["associations"]["co_ingested"] >= 1
+        assert r["associations"]["isolated"] is False
+
+
+def test_adopt_single_note_empty_library_is_isolated(patched, monkeypatch):
+    """全库第一条素材(无邻居、无同批伙伴):唯一允许无边的情形,如实标 isolated。"""
+    repo = patched
+    monkeypatch.setattr(oa, "_find_neighbors", lambda query, config: [])
+    with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
+        res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=False)
+    assert not [e for e in repo.edges if e[2] in ("semantically_related", "co_ingested")]
+    assert res["results"][0]["associations"]["isolated"] is True
+
+
+def test_adopt_skips_unreadable_neighbor(patched, monkeypatch):
+    """越权闸门:邻居 target 对 actor 不可读时不建边(防连到他人私有资源)。"""
+    repo = patched
+    repo.unreadable.add("res-private")
+    monkeypatch.setattr(
+        oa, "_find_neighbors",
+        lambda query, config: [{"resource_id": "res-private", "score": 0.9}],
+    )
+    with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
+        res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=False)
+    assert not [e for e in repo.edges if e[2] == "semantically_related"]
+    # 单条 + 邻居不可读 + 无同批伙伴 → 孤岛(如实标记,不硬连不可读资源)。
+    assert res["results"][0]["associations"]["isolated"] is True
+
+
+def test_adopt_association_failure_does_not_break_adopt(patched, monkeypatch):
+    """关联建边报错绝不影响采纳:采纳仍成功,错误进 errors。"""
+    repo = patched
+
+    def boom(query, config):
+        raise RuntimeError("neighbor search exploded")
+
+    monkeypatch.setattr(oa, "_find_neighbors", boom)
+    with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
+        res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=False)
+    assert res["ok"] is True
+    assert res["results"][0]["adopted"] is True
+    assert any("ASSOCIATION_FAILED" in e["error"] for e in res["errors"])

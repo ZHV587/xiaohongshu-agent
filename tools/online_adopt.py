@@ -22,9 +22,45 @@ from data_foundation.online_notes import (
     XHS_NOTE_EXTERNAL_TYPE,
     adopt_online_note_resource,
 )
+from data_foundation.creation_memory import associate_ingested_resource
 from tools.feishu_actions import create_online_note_record
 
 FEISHU_COLLECT_SYSTEM = "feishu_collect"
+
+
+def _neighbor_query(note: dict[str, Any]) -> str:
+    """从笔记的标题/摘要/标签拼一段检索文本,用于找语义/主题邻居(§0 关联)。"""
+    parts: list[str] = []
+    for key in ("title", "summary"):
+        val = str(note.get(key) or "").strip()
+        if val:
+            parts.append(val)
+    tags = note.get("tags")
+    if isinstance(tags, list):
+        parts.extend(str(t).strip() for t in tags if str(t).strip())
+    return " ".join(parts).strip()
+
+
+def _find_neighbors(query: str, config: RunnableConfig | None) -> list[dict[str, Any]]:
+    """用全文检索(Meili,不依赖 embedding,永远可用)找已有素材作关联候选。
+
+    只取 resource_id + score;检索失败/无命中返回空(由 associate_ingested_resource 退化到
+    同批 co_ingested 兜底)。关联绝不能让采纳主流程失败,故此处吞掉一切异常。
+    """
+    try:
+        # 延迟导入避免与 data_foundation.tools 的循环依赖(tools 层互相引用)。
+        from data_foundation.tools import search_resources
+
+        res = search_resources.func(query, limit=6, config=config)
+    except Exception:  # noqa: BLE001 - 关联候选检索失败不影响采纳
+        return []
+    if not isinstance(res, dict) or not res.get("ok"):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in res.get("results", []) or []:
+        if isinstance(item, dict) and item.get("resource_id"):
+            out.append({"resource_id": item["resource_id"], "score": item.get("score")})
+    return out
 
 
 @tool
@@ -57,6 +93,8 @@ def adopt_online_notes(
     tenant_id = default_tenant_id()
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    # (resource_id, note) 对:采纳成功后统一做 §0 关联(需全批 resource_id 才能挂同批兜底边)。
+    adopted_pairs: list[tuple[str, dict[str, Any]]] = []
 
     conn = connect()
     try:
@@ -86,6 +124,7 @@ def adopt_online_notes(
                 continue
 
             resource_id = core["resource_id"]
+            adopted_pairs.append((resource_id, note))
             feishu_synced: bool | str = False
             if sync_feishu:
                 if note_id in already_synced:
@@ -112,6 +151,28 @@ def adopt_online_notes(
                 "resource_id": resource_id,
                 "feishu_synced": feishu_synced,
             })
+
+        # ── §0 素材不孤立:每条采纳成功的笔记至少挂一条关联边(永不孤岛)。 ──
+        # 全批采纳完再挂边:语义邻居用全文检索找已有素材;都没有时退化到同批 co_ingested。
+        # 关联失败(检索挂了/建边报错)绝不影响采纳结果——逐条 try,把关联情况记进 result。
+        all_ids = [rid for rid, _ in adopted_pairs]
+        by_resource = {r["resource_id"]: r for r in results if r.get("resource_id")}
+        for rid, note in adopted_pairs:
+            try:
+                neighbors = _find_neighbors(_neighbor_query(note), config)
+                assoc = associate_ingested_resource(
+                    repo,
+                    tenant_id=tenant_id,
+                    actor_open_id=actor,
+                    resource_id=rid,
+                    neighbors=neighbors,
+                    co_ingested_ids=all_ids,
+                )
+                if rid in by_resource:
+                    by_resource[rid]["associations"] = assoc
+            except Exception as exc:  # noqa: BLE001 - 关联失败不影响采纳
+                errors.append({"note_id": by_resource.get(rid, {}).get("note_id", ""),
+                               "error": f"ASSOCIATION_FAILED: {exc}"})
     finally:
         conn.close()
 

@@ -22,6 +22,7 @@ def test_subagents_refactoring_configs():
         "content-system-ingestor",
         "curriculum-designer",
         "copywriting-coprocessor",
+        "imitation-writer",
     }
 
     # 验证各子代理契约:response_format 为 ToolStrategy(走 tool-calling 提取,规避原生结构化输出

@@ -430,9 +430,14 @@ def save_generated_copy(
     tags: list[str],
     source_topic: str | None = None,
     evidence: list[dict[str, Any]] | None = None,
+    reference_resource_id: str | None = None,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation."""
+    """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation.
+
+    reference_resource_id: 仿写产出时,该篇所仿的范本素材 resource_id。传入则落一条
+    imitated_from 边(成品→范本),满足「仿写成品可追溯到范本原型」(§5)。非仿写留空。
+    """
     actor = actor_from_config(config)
     with _repository() as repo:
         return save_generated_copy_resource(
@@ -444,6 +449,7 @@ def save_generated_copy(
             tags=tags,
             source_topic=source_topic,
             evidence=evidence,
+            reference_resource_id=reference_resource_id,
         )
 
 
