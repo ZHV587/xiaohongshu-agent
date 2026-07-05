@@ -12,16 +12,20 @@ import { type CheckResult } from "@/components/studio/rubric";
 import { IMAGE_ROLES, type StudioNote } from "@/components/studio/types";
 
 export function EmptyComposer() {
-  const { actions, topics, note } = useStudio();
+  const { actions, topics, note, progressLabel } = useStudio();
   // 流进行中(status==="writing")但草稿尚未解析出来时,不再显示"还没有草稿 + 生成草稿"
-  // (点了也只会提示忙碌),而是明确显示"正在生成草稿…",让空态与忙碌态可区分。
+  // (点了也只会提示忙碌),而是显示**动态进度**:主行跟着思考链当前步骤走(真实工具调用派生),
+  // 让空态与忙碌态可区分、且有"在动"的感觉,而非一句写死的静态文案。
   const writing = note.status === "writing";
   if (writing) {
     return (
       <Card padding="lg" tone="sunken" style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <Icon name="loader" size={16} color="var(--primary)" />
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-base)", fontWeight: 800, color: "var(--text-body)" }}>🍠 正在生成草稿…</div>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-base)", fontWeight: 800, color: "var(--text-body)", display: "flex", alignItems: "center", gap: 6 }}>
+            🍠 {progressLabel ? `正在${progressLabel}…` : "正在生成草稿…"}
+            <span className="typing-dots" aria-hidden style={{ fontWeight: 800, color: "var(--primary)" }} />
+          </div>
           <p style={{ margin: "5px 0 0", fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>
             智能体正基于数据底座起稿，正文会实时出现在下方创作栏。
           </p>

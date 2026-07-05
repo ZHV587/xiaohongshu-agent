@@ -77,6 +77,8 @@ export interface StudioStore {
   setActiveRecent: (id: number | null) => void;
   note: StudioNote;
   timeline: TimelineItem[];
+  /** 当前进度短语(最新思考链里正在做的那一步的真实 label);无思考链时 null。生成中动态文案用。 */
+  progressLabel: string | null;
   calendar: CalendarDay[];
   selectedEvidence: SelectedEvidence | null;
   topics: Topic[];
@@ -390,6 +392,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [t.messages, t.isLoading, t.error, presentationsByTurnId],
   );
 
+  // 当前进度短语:取最新一条 thinking run 里"正在做的那一步"的真实 label(active 优先,
+  // 否则取最后一个 done),用于生成中动态文案。全是真实工具调用派生,不编造进度。
+  const progressLabel: string | null = useMemo(() => {
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const it = timeline[i];
+      if (it.kind !== "thinking") continue;
+      const steps = it.run.steps;
+      const active = steps.find((s) => s.state === "active");
+      if (active) return active.label;
+      const done = [...steps].reverse().find((s) => s.state === "done");
+      return done ? done.label : null;
+    }
+    return null;
+  }, [timeline]);
+
   // ── 参考素材笔记:从 timeline 的 discovery 项按 note_id 去重累积 ──
   // 右边栏素材工作台专职展示这批(线上+本地混排);选题只进对话气泡,不进右栏(需求 §3)。
   // 累积而非只取最后一批:多轮检索的素材都留在工作台,不随对话滚走(需求 §1 痛点)。
@@ -667,6 +684,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setActiveRecent,
     note,
     timeline,
+    progressLabel,
     calendar,
     selectedEvidence,
     topics,

@@ -641,6 +641,29 @@
 .pulse-dot {
   animation: blink 1.2s var(--ease-out) infinite;
 }
+/* 跳动省略号:纯 CSS 在文案尾部循环显示 . .. ...,给静态短语加"在动"的感觉。 */
+@keyframes typingDots {
+  0% {
+    content: "";
+  }
+  25% {
+    content: "·";
+  }
+  50% {
+    content: "··";
+  }
+  75%,
+  100% {
+    content: "···";
+  }
+}
+.typing-dots::after {
+  content: "···";
+  display: inline-block;
+  width: 1.4em;
+  text-align: left;
+  animation: typingDots 1.4s steps(1, end) infinite;
+}
 .slide-out-right {
   animation: slideOutRight 0.24s var(--ease-out) both;
 }
@@ -658,7 +681,8 @@
   .pop-out,
   .scrim-in,
   .scrim-out,
-  .pulse-dot {
+  .pulse-dot,
+  .typing-dots::after {
     animation: none;
   }
 }

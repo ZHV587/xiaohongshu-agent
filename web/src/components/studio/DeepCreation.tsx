@@ -39,15 +39,17 @@ export function DeepCreation() {
 // 也能明确看到"🍠 正在生成"——检索取证阶段(正文还没开始流)也显示,不再是一片静止无反馈。
 // 正文开始流后,正文区的 ▍光标 + 本条一起在场,双重确认。带停止入口(与工具条的停止同一动作)。
 function GeneratingBanner() {
-  const { note, actions } = useStudio();
+  const { note, actions, progressLabel } = useStudio();
   if (note.status !== "writing") return null;
   const streaming = Boolean(note.body && note.body.trim());
+  // 主文案跟着思考链当前步骤动态走(真实工具调用派生);正文开始流后固定为"正在写正文"。
+  const label = streaming ? "正在写正文" : progressLabel ? `正在${progressLabel}` : "正在查素材、拆依据";
   return (
     <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "9px 20px", background: "var(--accent-surface)", borderBottom: "1px solid var(--border-coral)" }}>
       <span className="pulse-dot" style={{ width: 9, height: 9, borderRadius: 999, background: "var(--primary)", flexShrink: 0 }} />
       <Icon name="loader" size={14} color="var(--primary)" />
-      <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--primary)" }}>
-        {streaming ? "🍠 正在写正文…" : "🍠 正在查素材、拆依据…"}
+      <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--primary)", display: "inline-flex", alignItems: "center" }}>
+        🍠 {label}<span className="typing-dots" aria-hidden />
       </span>
       <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{streaming ? "内容实时出现在下方" : "取证完就开始逐字生成"}</span>
       <button onClick={() => actions.stop()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>
