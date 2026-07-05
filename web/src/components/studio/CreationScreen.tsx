@@ -356,7 +356,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
             <Card padding="md">
               <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>我按相关素材整理了几个方向。每张卡都带依据，点进去就能继续写。</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 11 }}>
-                {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t)} />)}
+                {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t, "deep")} />)}
               </div>
             </Card>
           </div>
