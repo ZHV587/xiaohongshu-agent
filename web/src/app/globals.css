@@ -637,6 +637,10 @@
 .fade-up {
   animation: fadeUp 0.3s var(--ease-out) both;
 }
+/* 生成中脉冲圆点(深创页 GeneratingBanner):循环呼吸,表示"进行中"。 */
+.pulse-dot {
+  animation: blink 1.2s var(--ease-out) infinite;
+}
 .slide-out-right {
   animation: slideOutRight 0.24s var(--ease-out) both;
 }
@@ -653,7 +657,8 @@
   .slide-out-right,
   .pop-out,
   .scrim-in,
-  .scrim-out {
+  .scrim-out,
+  .pulse-dot {
     animation: none;
   }
 }

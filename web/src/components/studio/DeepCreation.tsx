@@ -24,10 +24,35 @@ export function DeepCreation() {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <DeepTopicBar mode={mode} setMode={setMode} onOpenProcess={() => setProcessOpen(true)} />
+      {/* 生成中状态条:检索/流式全程可见(note.status==="writing" 由真实 stream isLoading 派生),
+          解决"进了深创页看不出在不在生成"。带停止入口。 */}
+      <GeneratingBanner />
       {/* 两段式仿写第一段:范本套路拆解显性呈现在成品之上(需求 §5——让用户看到"它凭什么这么仿")。 */}
       <ImitationTeardownBanner />
       {body}
       {processOpen && <CreationProcessDrawer onClose={() => setProcessOpen(false)} />}
+    </div>
+  );
+}
+
+// 生成中状态条:note.status==="writing"(真实 stream isLoading 派生)时常驻顶部,让用户在深创页
+// 也能明确看到"🍠 正在生成"——检索取证阶段(正文还没开始流)也显示,不再是一片静止无反馈。
+// 正文开始流后,正文区的 ▍光标 + 本条一起在场,双重确认。带停止入口(与工具条的停止同一动作)。
+function GeneratingBanner() {
+  const { note, actions } = useStudio();
+  if (note.status !== "writing") return null;
+  const streaming = Boolean(note.body && note.body.trim());
+  return (
+    <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "9px 20px", background: "var(--accent-surface)", borderBottom: "1px solid var(--border-coral)" }}>
+      <span className="pulse-dot" style={{ width: 9, height: 9, borderRadius: 999, background: "var(--primary)", flexShrink: 0 }} />
+      <Icon name="loader" size={14} color="var(--primary)" />
+      <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--primary)" }}>
+        {streaming ? "🍠 正在写正文…" : "🍠 正在查素材、拆依据…"}
+      </span>
+      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{streaming ? "内容实时出现在下方" : "取证完就开始逐字生成"}</span>
+      <button onClick={() => actions.stop()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>
+        <Icon name="circle" size={11} /> 停止生成
+      </button>
     </div>
   );
 }
