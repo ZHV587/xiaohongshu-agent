@@ -16,31 +16,21 @@ export function buildDraftAutosaveKey(threadId: string | null): string {
   return `xhs_autosave_draft_${threadId ?? "new"}`;
 }
 
-// 只有 topics/panel 结构块、没有正文/xhs_copy 的 AI 消息不是草稿源(如"我整理了几个选题方向"
-// + ```xhs_topics``` 块)。用它当草稿会把选题摘要误写进正文。这类消息返回 null,不覆盖既有草稿。
-const NON_DRAFT_BLOCK_RE = /```xhs_(topics|panel)\b/;
-
-/** 从单条 AI 文本解析草稿快照;若这条消息不含可用草稿(纯选题/面板/空)返回 null。 */
+/** 从单条 AI 文本解析草稿快照;仅当含结构化成品块(xhs_copy/xhs_imitation)时返回草稿,
+ *  其它(纯选题/面板/确认语/问句/空)一律返回 null,不覆盖既有草稿。 */
 export function parseAiDraft(content: string): DraftSnapshot | null {
   const text = content.trim();
   if (!text) return null;
 
-  // 优先:结构化 xhs_copy 块(权威草稿)。
-  const structuredDraft = parseStructuredCopyDraft(text);
-  if (structuredDraft) return structuredDraft;
+  // 草稿的**唯一**来源是结构化成品块:xhs_copy(常规文案)或 xhs_imitation(两段式仿写成品)。
+  // 二者都由输出协议(prompts.py §5)强制,正文/标题从块里的 versions[0] 或顶层 title/body 取。
+  return parseStructuredCopyDraft(text);
 
-  // 无 xhs_copy 但含 topics/panel 块 → 这是选题/面板消息,不是草稿,跳过(不覆盖既有草稿)。
-  if (NON_DRAFT_BLOCK_RE.test(text)) return null;
-
-  const firstLine = text
-    .split("\n")[0]
-    .replace(/^[#\s*✨🍠⛺☕🌿👇📝🌟🔥🚗]*/gu, "")
-    .trim();
-
-  return {
-    title: firstLine && firstLine.length < 40 ? firstLine : "小红书爆款文案",
-    content: text,
-  };
+  // ⚠ 不再有"纯文本兜底":此前任何 AI 大白话(如采纳确认"已收录 N 条…"、意图分流问句、
+  // 选题引导语)都会被当草稿写进编辑器 → ① 正文被确认语污染;② status 变 draft 而非 writing,
+  // "生成中"状态条不显示;③ chooseTopic 的 alreadyHasCopy 误判为真、点选题卡直接早返回不再
+  // 触发生成(表现:点了没反应、几分钟无动静)。成品在本系统永远走 xhs_copy/xhs_imitation 块,
+  // 故只认结构化块,大白话一律不当草稿(返回 null,不覆盖既有草稿)。
 }
 
 /** 从消息流里取「最后一条含可用草稿的 AI 消息」的草稿快照。
@@ -61,7 +51,9 @@ export function latestDraftFromMessages(messages: Message[]): DraftSnapshot | nu
 }
 
 function parseStructuredCopyDraft(text: string): DraftSnapshot | null {
-  const fence = /```xhs_copy[ \t]*\r?\n?([\s\S]*?)```/g;
+  // xhs_copy(常规成品)与 xhs_imitation(仿写成品)结构同构(顶层 title/body 或 versions[0]),
+  // 都当草稿源;取两类块里**最后出现**的那个(最新产出)。
+  const fence = /```(?:xhs_copy|xhs_imitation)[ \t]*\r?\n?([\s\S]*?)```/g;
   let match: RegExpExecArray | null;
   let latest: RegExpExecArray | null = null;
   while ((match = fence.exec(text)) !== null) latest = match;
