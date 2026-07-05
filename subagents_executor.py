@@ -4,6 +4,7 @@
 """
 from typing import Any
 from deepagents.middleware.subagents import SubAgent
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 from models import ModelPoolProvider, build_router_middleware
@@ -37,6 +38,18 @@ def build_subagent_middleware(registry: ModelPoolProvider):
     (可能已跑几分钟)直接挂掉。此前 7 个执行型子代理只挂 router、无 retry(middlewares.py 头注曾警告
     "子代理仍需自带 retry")。"""
     return [build_retry_middleware(), build_router_middleware(registry)]
+
+
+def _structured(schema: type[BaseModel]) -> ToolStrategy:
+    """把子代理的结构化输出契约包成 ToolStrategy(工具调用提取),而非裸 Pydantic。
+
+    根因:裸 Pydantic 交给 create_agent 会走 AutoStrategy,对 anthropic 选**原生结构化输出**
+    (ProviderStrategy / provider 端 JSON 模式)。实测在 opus-4-8 + 扩展思考 + 中转网关这组组合下,
+    原生结构化 payload 偶发返回空/非 JSON,报 StructuredOutputValidationError;再叠加 retry(最多 3 次)
+    每次都是一整轮多分钟 LLM 调用,把单次失败放大成 25 分钟卡顿(见 run 019f2ecc)。
+    ToolStrategy 改用 tool-calling 提取结构化输出,不依赖 provider 原生 JSON 模式,在中转网关上稳得多,
+    直接消灭这条失败链。渠道无关(GPT/Claude/兼容中转都支持 tool-calling)。"""
+    return ToolStrategy(schema)
 
 
 class BenchmarkReport(BaseModel):
@@ -133,7 +146,7 @@ def build_knowledge_atom_retriever(
 只返回证据包,不写最终小红书文案、不保存数据、不同步飞书。""",
         "model": initial_model,
         "tools": [semantic_search_resources, search_resources, graph_expand, get_resource],
-        "response_format": EvidencePackage,
+        "response_format": _structured(EvidencePackage),
         "middleware": build_subagent_middleware(registry),
     }
 
@@ -183,7 +196,7 @@ def build_benchmark_analyst(
 3. 严格按 BenchmarkReport 契约格式返回结果。不得编造依据，无数据时在内容缺口中明说。""",
         "model": initial_model,
         "tools": [semantic_search_resources, search_resources, get_resource],
-        "response_format": BenchmarkReport,
+        "response_format": _structured(BenchmarkReport),
         "middleware": build_subagent_middleware(registry),
     }
 
@@ -205,7 +218,7 @@ def build_expert_panel_debater(
 4. 汇总为 DebateVerdictReport，共识中若有推荐选题，必须用标准的 JSON 结构格式化。""",
         "model": initial_model,
         "tools": [get_operations_data, get_resource, search_resources],
-        "response_format": DebateVerdictReport,
+        "response_format": _structured(DebateVerdictReport),
         "middleware": build_subagent_middleware(registry),
     }
 
@@ -227,7 +240,7 @@ def build_content_system_ingestor(
 4. 严格按照 ContentSystemReport 结构化返回。""",
         "model": initial_model,
         "tools": [get_operations_data, get_resource, search_resources],
-        "response_format": ContentSystemReport,
+        "response_format": _structured(ContentSystemReport),
         "middleware": build_subagent_middleware(registry),
     }
 
@@ -249,7 +262,7 @@ def build_curriculum_designer(
 4. 严格按照 CurriculumReport 结构化返回。""",
         "model": initial_model,
         "tools": [get_resource, search_resources],
-        "response_format": CurriculumReport,
+        "response_format": _structured(CurriculumReport),
         "middleware": build_subagent_middleware(registry),
     }
 
@@ -313,7 +326,7 @@ def build_copywriting_coprocessor(
 5. 严格按 CopywritingReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。""",
         "model": initial_model,
         "tools": [get_resource, search_resources, semantic_search_resources],
-        "response_format": CopywritingReport,
+        "response_format": _structured(CopywritingReport),
         "middleware": build_subagent_middleware(registry),
     }
 

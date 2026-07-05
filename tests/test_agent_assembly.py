@@ -363,7 +363,13 @@ def test_knowledge_retriever_subagent_has_evidence_response_format(monkeypatch):
     assert "state-manager" not in by_name
 
     retriever = by_name["knowledge-atom-retriever"]
-    assert retriever.get("response_format") is EvidencePackage
+    # response_format 由裸 Pydantic 改为 ToolStrategy(EvidencePackage):tool-calling 提取,
+    # 规避 anthropic 原生结构化输出在中转网关下偶发返空/非 JSON 的 StructuredOutputValidationError。
+    from langchain.agents.structured_output import ToolStrategy
+
+    rf = retriever.get("response_format")
+    assert isinstance(rf, ToolStrategy)
+    assert rf.schema is EvidencePackage
 
 
 def test_knowledge_retriever_subagent_uses_data_foundation_retrieval_tools(monkeypatch):

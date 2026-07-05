@@ -24,11 +24,17 @@ def test_subagents_refactoring_configs():
         "copywriting-coprocessor",
     }
 
-    # 验证各子代理契约是否为 BaseModel
+    # 验证各子代理契约:response_format 为 ToolStrategy(走 tool-calling 提取,规避原生结构化输出
+    # 在中转网关下偶发返空的 StructuredOutputValidationError),其包裹的 schema 仍是 BaseModel。
+    # persona-distiller 无结构化契约(response_format=None);knowledge-atom-retriever 也是 ToolStrategy。
+    from langchain.agents.structured_output import ToolStrategy
+
     for name in EXECUTOR_SUBAGENT_NAMES:
         agent = next(a for a in subagents if a["name"] == name)
-        if name not in ("knowledge-atom-retriever", "persona-distiller"):
-            assert issubclass(agent["response_format"], BaseModel)
+        if name != "persona-distiller":
+            rf = agent["response_format"]
+            assert isinstance(rf, ToolStrategy)
+            assert issubclass(rf.schema, BaseModel)
 
 
 def test_subagent_specs_use_only_official_deepagents_fields():

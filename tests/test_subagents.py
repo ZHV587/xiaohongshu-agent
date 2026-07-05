@@ -60,9 +60,17 @@ def test_knowledge_atom_retriever_tools():
 
 
 def test_knowledge_atom_retriever_returns_structured_evidence():
-    """重检索子代理必须以 EvidencePackage 作为 response_format,产出结构化证据包。"""
+    """重检索子代理必须以 EvidencePackage 作为结构化输出契约,产出结构化证据包。
+
+    response_format 由裸 Pydantic 改为 ToolStrategy(EvidencePackage):走 tool-calling 提取,
+    规避 anthropic 原生结构化输出在中转网关下偶发返空/非 JSON 的 StructuredOutputValidationError。
+    契约 schema 仍是 EvidencePackage,断言深入 ToolStrategy.schema。"""
+    from langchain.agents.structured_output import ToolStrategy
+
     ag = build_knowledge_atom_retriever(_registry(), Mock())
-    assert ag.get("response_format") is EvidencePackage
+    rf = ag.get("response_format")
+    assert isinstance(rf, ToolStrategy)
+    assert rf.schema is EvidencePackage
 
 
 def test_build_executor_subagents_returns_declared_names():
