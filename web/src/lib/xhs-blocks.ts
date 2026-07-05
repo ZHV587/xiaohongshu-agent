@@ -1,4 +1,24 @@
 // web/src/lib/xhs-blocks.ts
+
+/**
+ * 剥离字面 `<thinking>…</thinking>` / `<think>…</think>` 推理块。
+ *
+ * 背景:结构化输出(response_format)在 opus+扩展思考+中转网关下偶发失败时,子代理会把
+ * 整份内部报告连同思考过程当**大白话正文**吐出来(deepagents 回退取最后一条 AIMessage 文本);
+ * 模型有时把扩展思考写成字面 `<thinking>` 标签混进正文。Anthropic 原生 thinking 走独立
+ * content_block(getContentString 已过滤),但这种"写进 text 的字面标签"过滤不到。此处按文本
+ * 清洗兜底:未闭合标签(流式中途)也一并从开标签起截掉,避免半个标签糊屏。
+ */
+export function stripThinkingTags(text: string): string {
+  if (!text) return text;
+  return text
+    // 成对闭合的 <thinking>…</thinking> / <think>…</think>(大小写不敏感,跨行)
+    .replace(/<(thinking|think)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    // 未闭合的开标签(流式中途 flush):从开标签到结尾整段截掉
+    .replace(/<(thinking|think)\b[^>]*>[\s\S]*$/gi, "")
+    .trim();
+}
+
 export interface TextSegment { kind: "text"; text: string }
 export interface SourceEvidence {
   resource_id: string;
@@ -82,7 +102,9 @@ export function parseXhsBlocks(content: string): Segment[] {
   let cursor = 0;
 
   const pushText = (text: string) => {
-    if (text.length > 0) segments.push({ kind: "text", text });
+    // 文本段统一剥离字面 <thinking> 标签(见 stripThinkingTags);清洗后为空则不产生空段。
+    const cleaned = stripThinkingTags(text);
+    if (cleaned.length > 0) segments.push({ kind: "text", text: cleaned });
   };
 
   const pushPartial = (lang: string, inner: string) => {
@@ -138,7 +160,11 @@ export function parseXhsBlocks(content: string): Segment[] {
     }
   }
 
-  if (segments.length === 0) segments.push({ kind: "text", text: content });
+  // 兜底:全程未产出任何段(无围栏、纯文本)时,补一个已清洗的文本段(同样剥离 <thinking>)。
+  if (segments.length === 0) {
+    const cleaned = stripThinkingTags(content);
+    if (cleaned.length > 0) segments.push({ kind: "text", text: cleaned });
+  }
   return segments;
 }
 

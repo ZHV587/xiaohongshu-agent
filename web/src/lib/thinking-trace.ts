@@ -330,7 +330,13 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       }
       const prose = proseOf(m.content);
       if (prose) {
-        out.push({ kind: "ai", text: prose });
+        // 去重:结构化输出失败时,模型可能把同一份汇总吐好几遍(观察到重复 4 次),
+        // 或流式累积产生内容相同的相邻 AI 段。相邻 kind:"ai" 文本完全相同则不重复入列,
+        // 避免同一段话在时间线里连刷多屏。
+        const prev = out[out.length - 1];
+        if (!(prev && prev.kind === "ai" && prev.text === prose)) {
+          out.push({ kind: "ai", text: prose });
+        }
         appendOfficialTrace(typeof m.id === "string" ? m.id : undefined);
       }
       continue;

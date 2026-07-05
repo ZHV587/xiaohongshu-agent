@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseXhsBlocks } from "./xhs-blocks";
+import { parseXhsBlocks, stripThinkingTags } from "./xhs-blocks";
+
+test("stripThinkingTags removes paired <thinking> and <think> blocks", () => {
+  assert.equal(stripThinkingTags("<thinking>reason</thinking>正文"), "正文");
+  assert.equal(stripThinkingTags("<think>abc</think>hi"), "hi");
+  // 大小写不敏感 + 跨行
+  assert.equal(stripThinkingTags("<Thinking>\nmulti\nline\n</Thinking>结果"), "结果");
+});
+
+test("stripThinkingTags truncates an unclosed opening tag (streaming mid-flush)", () => {
+  assert.equal(stripThinkingTags("正文<thinking>还没写完的思考"), "正文");
+});
+
+test("stripThinkingTags leaves normal text untouched", () => {
+  assert.equal(stripThinkingTags("这是普通正文,没有标签"), "这是普通正文,没有标签");
+  assert.equal(stripThinkingTags(""), "");
+});
+
+test("parseXhsBlocks strips leaked <thinking> from text segments", () => {
+  const segs = parseXhsBlocks("<thinking>internal</thinking>给你的文案在下面");
+  const text = segs.filter((s) => s.kind === "text").map((s) => (s as { text: string }).text).join("");
+  assert.ok(!text.includes("<thinking>"));
+  assert.ok(!text.includes("internal"));
+  assert.ok(text.includes("给你的文案在下面"));
+});
 
 test("preserves valid topic evidence", () => {
   const [segment] = parseXhsBlocks(`\`\`\`xhs_topics

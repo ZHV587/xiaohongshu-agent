@@ -193,6 +193,41 @@ test("ai message that is only an xhs block produces no ai bubble", () => {
   assert.equal(tl.filter((i) => i.kind === "ai").length, 0);
 });
 
+test("ai bubble strips literal <thinking> tags leaked into prose", () => {
+  // 结构化输出失败时,子代理把扩展思考当字面 <thinking> 标签写进正文;必须剥掉。
+  const content = "<thinking>Now let me output the A version.</thinking>好的,这是文案。";
+  const tl = deriveTimeline([human("写文案"), aiText(content)]);
+  const ai = tl.find((i) => i.kind === "ai");
+  assert.ok(ai && ai.kind === "ai");
+  assert.ok(!ai.text.includes("<thinking>"), "must strip opening tag");
+  assert.ok(!ai.text.includes("Now let me output"), "must strip thinking content");
+  assert.ok(ai.text.includes("好的,这是文案"), "keeps real prose");
+});
+
+test("ai message that is only a <thinking> block produces no ai bubble", () => {
+  const content = "<thinking>internal reasoning only</thinking>";
+  const tl = deriveTimeline([human("写文案"), aiText(content)]);
+  assert.equal(tl.filter((i) => i.kind === "ai").length, 0);
+});
+
+test("consecutive identical AI prose is de-duplicated (repeated-summary guard)", () => {
+  // 结构化输出失败时观察到同一份汇总被吐 4 遍;相邻完全相同的 ai 段应只保留一条。
+  const dup = "全部流程已完成,以下是本次交付的完整摘要。";
+  const tl = deriveTimeline([
+    human("写文案"),
+    aiText(dup),
+    aiText(dup),
+    aiText(dup),
+    aiText(dup),
+  ]);
+  assert.equal(tl.filter((i) => i.kind === "ai").length, 1, "4 identical summaries collapse to 1");
+});
+
+test("distinct AI prose is NOT de-duplicated", () => {
+  const tl = deriveTimeline([human("写文案"), aiText("第一段"), aiText("第二段")]);
+  assert.equal(tl.filter((i) => i.kind === "ai").length, 2);
+});
+
 test("never throws on malformed / partial messages", () => {
   const weird = [
     { type: "ai", content: null, tool_calls: [{ id: "x", name: "task", args: undefined }] },
