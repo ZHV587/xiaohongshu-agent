@@ -388,10 +388,25 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setActiveRecent(topic.id);
       setActiveVersion("A");
       setSection(goSection);
-      // real round-trip: ask the agent to write this topic into the draft
-      t.submitText(`写第 ${topic.id} 个选题：${topic.title}`);
+      // 经官方 state-update 通道把选中选题卡的**权威依据**直传 graph(与 adoptNotes 同机制,
+      // 完全不经 LLM 转写)。这里带上卡片上展示的 evidence(含真实 resource_id):后端
+      // save_generated_topic 经 InjectedState("selected_topic") 读它落库,主控委派
+      // copywriting-coprocessor 时也从中取 resource_id 让子代理 get_resource 精读对标原文。
+      // 缺了这一传递,主控拿不到真实 id 只能凭空编造 → 子代理精读必然 "not found"(历史根因)。
+      // 字段形状对齐后端 _clean_evidence:resource_id/title/summary/source_updated_at/indexed_at。
+      const bundle = evidence[topic.id];
+      const selectedEvidence = (bundle?.items ?? []).map((it) => ({
+        resource_id: it.resource_id,
+        title: it.title,
+        summary: it.summary,
+        source_updated_at: it.source_updated_at,
+        indexed_at: it.indexed_at,
+      }));
+      t.submitText(`写第 ${topic.id} 个选题：${topic.title}`, {
+        selected_topic: { topic: topic.title, evidence: selectedEvidence },
+      });
     },
-    [setSection, t],
+    [setSection, t, evidence],
   );
 
   // 采纳用户在发现卡勾选的笔记:经官方 state-update 通道把 selected_notes 直传 graph

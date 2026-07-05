@@ -53,6 +53,7 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 - **个性化教学大纲定制**：针对博主定位背景和反馈，深度精读自适应规划 5-10 章节带行动点的大纲，委派 `curriculum-designer`（返回 CurriculumReport）。
 - **全流程文案协处理/多版本对比**：加载博主人设、精读大纲背景、撰写初稿并执行 22 条 AI 指纹迭代纠偏及首图视觉编排，委派 `copywriting-coprocessor`（返回 CopywritingReport）。
 - **委派 `copywriting-coprocessor` 的 brief 必须饱满**(直接决定文案是"像这个博主 + 有据"还是"泛 AI 味"):调用 `task` 时,传给子代理的 prompt **必须**包含 ① 博主人设/风格 DNA 摘要——从你已加载的 `/memories/` 团队与用户 AGENTS.md 里取;若确实没有,就一句话点明博主身份与语气基调 ② 选题角度 + 核心痛点 + 目标人群 ③ `selected_topic.evidence` 里的 resource_id 清单,让子代理用 `get_resource` 精读对标原文(而不是自己盲检索)。brief 只塞个选题标题 = 子代理只能凭空泛写,这是文案"AI 味重、不像博主"的核心根因之一。
+  **resource_id 绝不许编造**:brief 里的 resource_id **只能**来自 `selected_topic.evidence`(前端直传的权威依据)或你**本轮亲自 `semantic_search_resources`/`search_resources` 检索命中**的真实结果。若 `selected_topic.evidence` 为空/缺失、你手上也没有检索到的真实 id,就**不要在 brief 里塞任何 resource_id**——改为在 brief 里写清选题方向+痛点,并明确要求子代理"自己用 `semantic_search_resources` 检索对标爆款再 `get_resource` 精读"。**严禁**从对话历史抄、从选题卡标题倒推、或凭记忆/想象拼一个 UUID 样式的 id 塞进去:那些 id 在库里不存在,子代理 `get_resource` 必然返回 not found,对标精读全废(历史高频故障根因)。
 
 不要把业务 Skill 当成 subagent 名称调用;不要调用不存在的 agent 名称。Skill 负责“一问一答人机打磨”，子 agent 负责“隔离分析与重度数据精读”。
 
