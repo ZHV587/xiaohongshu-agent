@@ -383,13 +383,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const chooseTopic = useCallback(
     (topic: Topic, goSection: StudioSection = "create") => {
+      // 绑定选题 + 切 section 总是执行(轻量本地态,无副作用)。
       setTopicId(topic.id);
       setKw(topic.kw);
       setActiveRecent(topic.id);
       setActiveVersion("A");
       setSection(goSection);
-      // 经官方 state-update 通道把选中选题卡的**权威依据**直传 graph(与 adoptNotes 同机制,
-      // 完全不经 LLM 转写)。这里带上卡片上展示的 evidence(含真实 resource_id):后端
+
+      // 「进入深度创作/写选题」与「触发生成」解耦:本会话已经产出过文案(versions 或草稿正文
+      // 非空)时,只切过去看已生成的内容,**绝不**再自动委派重写。否则用户每次重进深度创作都会
+      // 把已生成的 A/B 版覆盖重跑(历史反馈:退出再进就重新生成)。重新生成只由深度创作里
+      // 「再生成一版」按钮(actions.say)显式触发。文案数据本身一直在 messages 里,不会丢。
+      const alreadyHasCopy = Boolean(t.draftTitle.trim() || t.draftContent.trim() || versions);
+      if (alreadyHasCopy) return;
+
+      // 首次生成:经官方 state-update 通道把选中选题卡的**权威依据**直传 graph(与 adoptNotes
+      // 同机制,完全不经 LLM 转写)。带上卡片上展示的 evidence(含真实 resource_id):后端
       // save_generated_topic 经 InjectedState("selected_topic") 读它落库,主控委派
       // copywriting-coprocessor 时也从中取 resource_id 让子代理 get_resource 精读对标原文。
       // 缺了这一传递,主控拿不到真实 id 只能凭空编造 → 子代理精读必然 "not found"(历史根因)。
@@ -406,7 +415,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         selected_topic: { topic: topic.title, evidence: selectedEvidence },
       });
     },
-    [setSection, t, evidence],
+    [setSection, t, evidence, versions],
   );
 
   // 采纳用户在发现卡勾选的笔记:经官方 state-update 通道把 selected_notes 直传 graph
