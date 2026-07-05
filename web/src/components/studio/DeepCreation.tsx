@@ -112,6 +112,28 @@ function DeepEmpty({ onGo }: { onGo: () => void }) {
   );
 }
 
+// 常驻状态芯片:顶栏右侧永远显示当前状态,让用户任何时候都知道"在不在干活"——
+// 不像 GeneratingBanner 只在生成中出现。四态:生成中(脉冲)/ 待生成 / 草稿就绪 / 已排期。
+// 生成中由真实 stream isLoading 派生(与后端 run 一致);"待生成"= 有选题但还没产出文案,
+// 提示用户可点"再生成一版"或回创作区起稿(不再让人对着空编辑器猜)。
+function DeepStatusChip() {
+  const { note } = useStudio();
+  const map = {
+    writing: { icon: "loader", label: "生成中", fg: "var(--primary)", bg: "var(--accent-surface)", pulse: true },
+    scheduled: { icon: "calendar-check", label: "已排期", fg: "var(--success)", bg: "var(--success-surface)", pulse: false },
+    draft: { icon: "pen-line", label: "草稿就绪", fg: "var(--text-body)", bg: "var(--oats-dark)", pulse: false },
+    idle: { icon: "circle", label: "待生成", fg: "var(--text-muted)", bg: "var(--oats-dark)", pulse: false },
+  } as const;
+  const s = map[note.status] ?? map.idle;
+  return (
+    <span title={note.status === "writing" ? "🍠 正在检索取证 / 写正文" : undefined}
+      style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+      {s.pulse && <span className="pulse-dot" style={{ width: 7, height: 7, borderRadius: 999, background: "var(--primary)" }} />}
+      <Icon name={s.icon} size={12} color={s.fg} /> {s.label}
+    </span>
+  );
+}
+
 // 顶部「基于选题」上下文条
 function DeepTopicBar({ mode, setMode, onOpenProcess }: { mode: DeepMode; setMode: (m: DeepMode) => void; onOpenProcess: () => void }) {
   const { note, setSection, topics } = useStudio();
@@ -128,6 +150,7 @@ function DeepTopicBar({ mode, setMode, onOpenProcess }: { mode: DeepMode; setMod
         {topic && <EvidenceChips topicId={topic.id} />}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <DeepStatusChip />
         <div style={{ display: "flex", gap: 3, background: "var(--oats-dark)", borderRadius: "var(--radius-sm)", padding: 3 }}>
           {([["edit", "编辑"], ["compare", "A·B 对比"]] as [DeepMode, string][]).map(([k, l]) => (
             <button key={k} onClick={() => setMode(k)} style={{ padding: "4px 10px", borderRadius: "var(--radius-xs)", border: "none", cursor: "pointer", fontSize: 11, fontWeight: mode === k ? 700 : 500, background: mode === k ? "var(--surface-card)" : "transparent", color: mode === k ? "var(--primary)" : "var(--text-muted)", boxShadow: mode === k ? "var(--shadow-xs)" : "none" }}>{l}</button>
