@@ -6,6 +6,7 @@
 - **浏览器验证直接操作,不必逐次征求同意。** 用浏览器工具登录、点按钮、跑 OAuth 授权、触发对话等验证动作直接执行,不用每步问用户。
 - **Git commit 一律用中文,且要详细到能看懂。** commit message 必须用中文书写(标题 + 正文),不用英文。标题一句话讲清"改了什么",正文用要点说清楚:① 问题/根因是什么(为什么要改),② 具体怎么改的(动了哪些模块、关键逻辑),③ 影响与验证(有无破坏性、跑了什么测试)。让不看代码的人只读 commit 就能明白这次改动。允许保留 `fix(scope):`/`feat(scope):` 这类前缀,但冒号后的描述用中文。
 - **素材不孤立,一律建关联。** 任何素材进入系统都必须至少与已有素材建立一条关联,不允许成孤岛。有真实依据时建强关联(行为:仿写自/基于选题/同批收录;语义:同垂类/同痛点/方向相近;效果:效果回填),没有强依据也要挂弱关联(同垂类/同主题)。这种素材间关联由底层图结构承载(继续用图,不换其他结构),贯穿收录、仿写、出选题等所有涉及素材的功能——凡有素材入库或素材间发生关系,都要落下对应关联边。
+- **一律基于 deepagents 底层框架拓展,不另起炉灶。** 本项目的智能体运行时就是 deepagents(`pyproject.toml` 锁 `deepagents>=0.6.8,<1.0.0`;`agent.py` 用 `create_deep_agent` 组装 xhs-router 主智能体 + Skills + 执行型子智能体)。所有能力扩展都必须走 deepagents 提供的扩展点,而不是绕过它自己造一套并行机制:新增/改工具→注册进 `create_deep_agent` 的 tools;新增子能力→用 deepagents 的 subagent 机制(见 `subagents_executor.py`);改运行时行为(重试、前端状态、路由等)→走 middleware(见 `middlewares.py`);调 harness 行为(工具白名单、通用子 agent 开关等)→改 `deepagents_harness.json` + `register_harness_profile`;换/配模型→走 `models.py`/`ModelRegistry`。**严禁另写 agent 主循环、自造调度/编排层或旁路 deepagents 的状态与中断机制。** 若 deepagents 现有扩展点确实无法满足,先说清缺口再定方案,不要静默偏离框架。
 
 ## 部署与测试
 
