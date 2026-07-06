@@ -35,12 +35,19 @@ export function parseAiDraft(content: string): DraftSnapshot | null {
 
 /** 从消息流里取「最后一条含可用草稿的 AI 消息」的草稿快照。
  *
- * 旧实现只看 messages[len-1] 且要求 content 为 string:真实流里草稿那条 AI 消息后常跟着
- * tool/思考/human 消息,或 content 是 Anthropic 内容块数组 → 草稿永远解析不出、进深创是空态、
- * 返回后"内容消失"。这里从后往前扫,用 getContentString 兼容数组态,取第一条能解析出草稿的 AI 消息。 */
+ * 从后往前扫,用 getContentString 兼容数组态,取**当前这一轮**里能解析出草稿的 AI 消息:
+ * 遇到 human 消息即停(不跨越对话回合边界)。这条边界很关键——换选题时会 submitText 追加一条
+ * "写第 N 个选题" 的 human 消息,若不停在这条边界继续往前扫,会扫到**上一个选题**的 xhs_copy,
+ * 把编辑器又填回上一个选题的旧正文(用户报告:新选题点进去是以前的东西)。停在 human 边界后:
+ * 换选题→本轮还没产出 copy→返回 null→effect 的 `if(!next) return` 保持 chooseTopic 已清空的
+ * 草稿(显示空+生成中),新 copy 流到后再填;精修(配标签/润色)同样只认本轮新 copy,旧稿由
+ * 状态保留(effect 不清 null),行为不变。
+ * 返回后"内容消失"的老问题(草稿那条 AI 后跟 tool/思考消息)仍解决:那些不是 human,不触发停。 */
 export function latestDraftFromMessages(messages: Message[]): DraftSnapshot | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
+    // 回合边界:遇到用户消息即停,只认"最后一条用户消息之后"这一轮的成品,不跨回合回捞旧选题的稿。
+    if (m.type === "human") break;
     if (m.type !== "ai") continue;
     const content = getContentString(m.content);
     if (!content) continue;

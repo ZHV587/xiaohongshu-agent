@@ -94,23 +94,32 @@ const toolMsg = (): Message =>
 const humanMsg = (text: string): Message =>
   ({ id: "h", type: "human", content: text } as unknown as Message);
 
-test("latestDraftFromMessages scans backwards past trailing tool/human messages", () => {
-  // 草稿那条 AI 消息后面跟着 tool 消息和 human 消息——旧实现只看末尾会解析不到草稿。
+test("latestDraftFromMessages scans past trailing tool/thinking within the same turn", () => {
+  // 草稿那条 AI 消息后面跟着 tool 消息(非 human)——不越回合边界,仍能解析到本轮草稿。
   const copy = [
     "```xhs_copy",
     JSON.stringify({ versions: [{ title: "露营别乱买", body: "正文：先解决睡眠照明收纳。" }] }),
     "```",
   ].join("\n");
-  const messages = [
-    humanMsg("写第 1 个选题"),
-    aiMsg(copy),
-    toolMsg(),
-    humanMsg("配个标签"),
-  ];
+  const messages = [humanMsg("写第 1 个选题"), aiMsg(copy), toolMsg()];
   assert.deepEqual(latestDraftFromMessages(messages), {
     title: "露营别乱买",
     content: "正文：先解决睡眠照明收纳。",
   });
+});
+
+test("latestDraftFromMessages 不跨回合回捞旧选题的稿(换选题独立性)", () => {
+  // 选题 A 生成过 copyA;换选题 B 时会 submitText 追加一条 human"写第 2 个选题"。此刻 B 还没
+  // 产出 copy → 必须返回 null(不能把 copyA 又捞回来填进 B 的编辑器)。这是"新选题点进去是以前
+  // 的东西"这个 bug 的根治点:扫描遇 human 即停。
+  const copyA = ["```xhs_copy", JSON.stringify({ versions: [{ title: "选题A标题", body: "选题A正文" }] }), "```"].join("\n");
+  const midSwitch = [humanMsg("写第 1 个选题"), aiMsg(copyA), toolMsg(), humanMsg("写第 2 个选题")];
+  assert.equal(latestDraftFromMessages(midSwitch), null);
+
+  // B 的 copy 流出来后(在 human 之后)→ 认 B、不认 A。
+  const copyB = ["```xhs_copy", JSON.stringify({ versions: [{ title: "选题B标题", body: "选题B正文" }] }), "```"].join("\n");
+  const afterB = [...midSwitch, aiMsg(copyB)];
+  assert.deepEqual(latestDraftFromMessages(afterB), { title: "选题B标题", content: "选题B正文" });
 });
 
 test("latestDraftFromMessages handles Anthropic content-block array form", () => {

@@ -42,29 +42,35 @@ test("chooseTopic 从 evidence[topic.id] 取真实 resource_id,不编造", () =>
   assert.match(body, /indexed_at:\s*it\.indexed_at/);
 });
 
-test("chooseTopic 依赖数组包含 evidence 与 versions(闭包拿到最新依据/文案态)", () => {
+test("chooseTopic 依赖数组包含 evidence/versions/topicId(闭包拿到最新依据/文案/绑定选题)", () => {
   const body = chooseTopicBody();
-  // useCallback 依赖需含 evidence(取真依据)与 versions(判定已生成),否则闭包读旧值误判
-  assert.match(body, /\[setSection,\s*t,\s*evidence,\s*versions\]/);
+  // 依赖需含 topicId:守卫要按"是否同一选题"判定,闭包必须读到当前绑定的 topicId,否则读旧值误判。
+  assert.match(body, /\[setSection,\s*t,\s*evidence,\s*versions,\s*topicId\]/);
 });
 
-test("chooseTopic 已生成文案时不重跑(alreadyHasCopy 守卫在 submitText 之前 return)", () => {
+test("chooseTopic 守卫按选题区分:只在重进同一选题且已有内容时不重跑", () => {
   const body = chooseTopicBody();
-  // 守卫:本会话已有草稿正文或 versions 就 early-return,不再 submit 重新生成
+  // 守卫必须**同时**满足"同一选题(sameTopicAsLoaded)"与"已有文案(alreadyHasCopy)"才 early-return。
+  // 只看 alreadyHasCopy(不看选题)是老 bug:生成过 A 后点 B 也被误拦,B 永不生成、显示 A 的旧稿。
+  assert.match(body, /sameTopicAsLoaded\s*=\s*topicId === topic\.id/);
   assert.match(body, /alreadyHasCopy\s*=\s*Boolean\(/);
-  assert.match(body, /t\.draftTitle\.trim\(\)/);
-  assert.match(body, /t\.draftContent\.trim\(\)/);
-  assert.match(body, /versions\)/);
-  assert.match(body, /if\s*\(alreadyHasCopy\)\s*return;/);
-  // 守卫 return 必须在 submitText 之前(否则形同虚设)
-  const guardIdx = body.indexOf("if (alreadyHasCopy) return;");
+  assert.match(body, /if\s*\(sameTopicAsLoaded && alreadyHasCopy\)\s*return;/);
+  const guardIdx = body.indexOf("if (sameTopicAsLoaded && alreadyHasCopy) return;");
   const submitIdx = body.indexOf("submitText(");
   assert.ok(guardIdx !== -1 && submitIdx !== -1 && guardIdx < submitIdx, "守卫应在 submitText 之前");
+});
+
+test("chooseTopic 换选题时先清空上一个选题的残留草稿", () => {
+  const body = chooseTopicBody();
+  // 换不同选题(!sameTopicAsLoaded)→ 清 draftTitle/draftContent/tags/cover,避免生成期间显示旧选题正文。
+  assert.match(body, /if\s*\(!sameTopicAsLoaded\)\s*\{/);
+  assert.match(body, /t\.setDraftTitle\(""\)/);
+  assert.match(body, /t\.setDraftContent\(""\)/);
 });
 
 test("chooseTopic 绑定选题/切 section 在守卫之前(总执行,与是否生成无关)", () => {
   const body = chooseTopicBody();
   const setSectionIdx = body.indexOf("setSection(goSection)");
-  const guardIdx = body.indexOf("if (alreadyHasCopy) return;");
+  const guardIdx = body.indexOf("if (sameTopicAsLoaded && alreadyHasCopy) return;");
   assert.ok(setSectionIdx !== -1 && setSectionIdx < guardIdx, "setSection 应在守卫之前,重进也能切过去看旧内容");
 });

@@ -448,12 +448,26 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setActiveVersion("A");
       setSection(goSection);
 
-      // 「进入深度创作/写选题」与「触发生成」解耦:本会话已经产出过文案(versions 或草稿正文
-      // 非空)时,只切过去看已生成的内容,**绝不**再自动委派重写。否则用户每次重进深度创作都会
-      // 把已生成的 A/B 版覆盖重跑(历史反馈:退出再进就重新生成)。重新生成只由深度创作里
-      // 「再生成一版」按钮(actions.say)显式触发。文案数据本身一直在 messages 里,不会丢。
+      // 「进入深度创作/写选题」与「触发生成」解耦,但必须**按选题区分**:
+      // - 重进**当前已绑定、且已生成过内容的同一选题** → 保留,绝不重跑(否则退出再进就把
+      //   已生成的 A/B 版覆盖重写,历史反馈的坑,commit 77af33e)。
+      // - 换成**另一个选题**(或同选题但还没内容)→ 必须重新生成。此前守卫只看"本会话有没有
+      //   任何文案",不看是哪个选题的 → 生成过选题 A 后点选题 B,守卫误判"已有文案"直接早返回,
+      //   B 永不生成、深创页还显示 A 的旧正文(用户报告的 bug:新选题点进去是以前的东西)。
+      // topicId 此刻仍是**上一次绑定**的选题(本次 setTopicId 的更新还没生效到这个闭包)。
+      const sameTopicAsLoaded = topicId === topic.id;
       const alreadyHasCopy = Boolean(t.draftTitle.trim() || t.draftContent.trim() || versions);
-      if (alreadyHasCopy) return;
+      if (sameTopicAsLoaded && alreadyHasCopy) return;
+
+      // 换了不同选题 → 先清掉上一个选题的残留草稿(标题/正文/标签/封面),避免新选题生成期间
+      // 编辑器还显示上一个选题的旧文案。清空后 status 进 writing → 显示"正在生成",B 的文案流
+      // 到后由 parseCopyFromMessages 取最新块填入,与选题 B 对齐。
+      if (!sameTopicAsLoaded) {
+        t.setDraftTitle("");
+        t.setDraftContent("");
+        setTags([]);
+        setCover("");
+      }
 
       // 首次生成:经官方 state-update 通道把选中选题卡的**权威依据**直传 graph(与 adoptNotes
       // 同机制,完全不经 LLM 转写)。带上卡片上展示的 evidence(含真实 resource_id):后端
@@ -473,7 +487,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         selected_topic: { topic: topic.title, evidence: selectedEvidence },
       });
     },
-    [setSection, t, evidence, versions],
+    [setSection, t, evidence, versions, topicId],
   );
 
   // 采纳用户在发现卡勾选的笔记:经官方 state-update 通道把 selected_notes 直传 graph
@@ -868,6 +882,10 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
   const fence = /```(xhs_copy|xhs_imitation)[ \t]*\r?\n?([\s\S]*?)```/g;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
+    // 回合边界:遇到用户消息即停,只取**本轮**的成品块(versions/仿写拆解/创作过程)。否则换选题
+    // 生成期间会回捞上一个选题的 xhs_copy → A·B 对比/创作过程显示上一个选题的旧版本(与草稿正文
+    // 同源的"新选题显示旧内容"问题)。与 latestDraftFromMessages 同边界口径。
+    if (m.type === "human") break;
     if (m.type !== "ai") continue;
     // 经 getContentString 取文本:兼容 string 与 Anthropic /v1/messages 的内容块数组。
     const content = getContentString(m.content);
