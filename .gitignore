@@ -53,6 +53,9 @@ ld2.txt
 # 编辑器/审计工具本地目录(可重建,不入库)
 .codex-ui-audit/
 .kiro/
-.claude/
+# .claude/ 整体不入库,但共享的权限配置 settings.json 入库(团队统一放开开发/部署/推送命令);
+# settings.local.json(个人本地)仍被 .claude/* 忽略。
+.claude/*
+!.claude/settings.json
 .hypothesis/
 .vscode/

@@ -1,0 +1,43 @@
+{
+  "$comment": "团队共享权限配置:预先放开开发/测试/部署/推送要用的命令,避免 auto 模式分类器逐条拦截。个人本地覆盖写 .claude/settings.local.json(不入库)。",
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(docker:*)",
+      "Bash(docker compose:*)",
+      "Bash(langgraph:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(pytest:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(pnpm:*)",
+      "Bash(uv:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(du:*)",
+      "Bash(df:*)",
+      "Bash(find:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(cut:*)",
+      "Bash(tr:*)",
+      "Bash(echo:*)",
+      "Bash(sleep:*)",
+      "Bash(hostname:*)",
+      "Bash(pgrep:*)",
+      "Bash(pkill:*)",
+      "Bash(curl:*)",
+      "Bash(unzip:*)",
+      "Read(//tmp/**)"
+    ]
+  }
+}
