@@ -363,10 +363,12 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
       await waitStreamIdle(page); // 等多版本文案流落定
 
       // v2:文案流落定后,创作屏右栏 note.status 从 idle→draft 原地渲染编辑器(不再跳独立深创整屏)。
-      // 若右栏仍未进编辑态(未绑定选题),点一张选题卡就地起稿。
+      // 若右栏仍未进编辑态(未绑定选题):点选题卡 → 详情弹窗 → 「基于此选题起稿」→ 右栏就地起稿。
       const draftBody = page.locator('[data-testid="draft-body"]');
       if (!(await draftBody.count())) {
         await topicCards.first().click({ force: true });
+        const startDraft = page.getByRole("button", { name: /基于此选题起稿|开始起稿/ });
+        if (await startDraft.count()) await startDraft.first().click({ force: true });
       }
       await expect(draftBody).toBeVisible({ timeout: 30_000 });
       await waitStreamIdle(page).catch(() => {});
@@ -421,11 +423,13 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     // 注:排期写接口的落库契约由独立的「写接口契约」测试硬断言,不依赖本步草稿恰好达标。
     if (topicsProduced) {
       await page.getByRole("button", { name: "创作" }).click();
-      // v2:点选题卡即在右栏就地起稿,编辑器底部 ScheduleBar 常驻(不再跳独立深创屏)。
+      // v2:点选题卡 → 详情弹窗 → 起稿,右栏就地渲染编辑器,底部 ScheduleBar 常驻(不再跳独立深创屏)。
       const draftBody5 = page.locator('[data-testid="draft-body"]');
       if (!(await draftBody5.count())) {
         await expect(topicCards.first()).toBeVisible({ timeout: 15_000 });
         await topicCards.first().click({ force: true });
+        const startDraft5 = page.getByRole("button", { name: /基于此选题起稿|开始起稿/ });
+        if (await startDraft5.count()) await startDraft5.first().click({ force: true });
       }
       await expect(draftBody5).toBeVisible({ timeout: 30_000 });
       await waitStreamIdle(page).catch(() => {});

@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import Image from "next/image";
-import { Avatar, Badge, Button, Card, TopicCard, ThinkingAura, Textarea, Icon } from "@/components/ds";
+import { Avatar, Badge, Button, Card, ThinkingAura, Textarea, Icon } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
 import { useDismiss } from "@/components/studio/useDismiss";
@@ -314,7 +314,7 @@ function InterruptApprovalCard({
 }
 
 function ChatColumn({ showTopics }: { showTopics: boolean }) {
-  const { topics, timeline, trends, actions, interrupt, note } = useStudio();
+  const { topics, evidence, timeline, trends, actions, interrupt, note } = useStudio();
   const generating = note.status === "writing";
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -437,9 +437,20 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
           <div style={{ display: "flex", gap: 11, maxWidth: "92%" }}>
             <Avatar glyph="🍠" variant="agent" size={32} />
             <Card padding="md">
-              <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>我按相关素材整理了几个方向。每张卡都带依据，点进去就能继续写。</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 11 }}>
-                {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t)} />)}
+              <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>我按相关素材整理了几个方向。每张卡都带依据，点进去看详情再起稿。</p>
+              {/* 3:4 海报卡栅格(对齐原型的内联选题卡):角度徽章 + 🔥爆款率 + 文字大字报版式 + 依据数。
+                  点卡 → 详情弹窗(DetailModal)看依据后起稿。无真实封面图源:用 angle/title 文字版式,
+                  绝不塞假图(原型的 CSS 渐变占位按铁律不搬)。 */}
+              <div className="stagger" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 11 }}>
+                {topics.map((t, i) => (
+                  <PosterTopicCard
+                    key={t.id}
+                    topic={t}
+                    index={i}
+                    evidenceCount={evidence[t.id]?.items.length ?? 0}
+                    onClick={() => actions.openDetail({ kind: "topic", topicId: t.id })}
+                  />
+                ))}
               </div>
             </Card>
           </div>
@@ -484,6 +495,55 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// 3:4 海报选题卡(对齐原型的内联选题卡设计)。无真实封面图源:封面区用「角度 + 标题」文字大字报
+// 版式 + 暖色渐变底(装饰性排版,非伪装成真实照片的假数据)。角度徽章 + 🔥爆款率 + 依据数皆真实。
+function PosterTopicCard({
+  topic,
+  index,
+  evidenceCount,
+  onClick,
+}: {
+  topic: Topic;
+  index: number;
+  evidenceCount: number;
+  onClick: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  // 三档暖色渐变,仅按序轮换做视觉区分(装饰,非数据)。
+  const grads = [
+    "linear-gradient(150deg, var(--accent-surface), color-mix(in srgb, var(--primary) 22%, var(--oats-light)))",
+    "linear-gradient(150deg, var(--topicblue-light), color-mix(in srgb, var(--topicblue-default) 16%, var(--oats-light)))",
+    "linear-gradient(150deg, var(--oats-dark), color-mix(in srgb, var(--warning) 16%, var(--oats-light)))",
+  ];
+  return (
+    <div
+      data-testid="topic-card"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{ "--i": index, borderRadius: "var(--radius-md)", overflow: "hidden", cursor: "pointer", border: `1px solid ${hover ? "var(--primary)" : "var(--border)"}`, background: "var(--surface-card)", boxShadow: hover ? "var(--shadow-md)" : "var(--shadow-xs)", transform: hover ? "translateY(-2px)" : "none", transition: "all var(--dur-fast) var(--ease-out)", display: "flex", flexDirection: "column" } as CSSProperties}
+    >
+      {/* 封面版式区(3:4):角度徽章 + 🔥 + 大字标题排版 */}
+      <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: grads[index % 3], display: "flex", alignItems: "flex-end", padding: 11 }}>
+        {topic.angle && <span style={{ position: "absolute", top: 7, left: 7, fontSize: 8, fontWeight: 700, color: "var(--text-body)", background: "rgba(255,255,255,0.86)", backdropFilter: "blur(4px)", padding: "2px 7px", borderRadius: 999 }}>{topic.angle}</span>}
+        {topic.hotRate != null && (
+          <span className="font-tabular" style={{ position: "absolute", top: 7, right: 7, fontSize: 9, fontWeight: 700, color: "var(--hot)", background: "rgba(255,255,255,0.92)", backdropFilter: "blur(4px)", padding: "2px 7px", borderRadius: 999, boxShadow: "0 1px 2px rgba(0,0,0,.1)" }}>🔥 {topic.hotRate}</span>
+        )}
+        <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.25, color: "var(--text-body)", letterSpacing: "var(--tracking-tight)", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", textShadow: "0 1px 0 rgba(255,255,255,0.4)" }}>{topic.title}</span>
+      </div>
+      {/* 卡脚:推荐理由首句 + 依据数 */}
+      <div style={{ padding: "9px 11px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <span style={{ minWidth: 0, fontSize: 9, color: "var(--text-subtle)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(topic.rationale || "").split(/[·,，]/)[0] || "点开看依据"}</span>
+        {evidenceCount > 0 && (
+          <span className="font-tabular" style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 600, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "1px 6px" }}>
+            <Icon name="database" size={9} /> 依据 {evidenceCount}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
