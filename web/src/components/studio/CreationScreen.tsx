@@ -12,6 +12,7 @@ import { Recents } from "./Shell";
 import { DeepEditor } from "./DeepEditor";
 import type { Topic } from "@/components/studio/types";
 import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
+import { coverProxyUrl } from "@/lib/cover-image";
 import type { DiscoveryNote } from "@/lib/thinking-trace";
 
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
@@ -219,7 +220,7 @@ function MaterialCard({ note: n, picked, onToggle, onImitate, onOpen }: {
   return (
     <div className="lift pop-in" style={{ position: "relative", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", boxShadow: picked ? "var(--shadow-md)" : "var(--shadow-xs)", outline: picked ? "2px solid var(--primary)" : "2px solid transparent", transition: "outline-color var(--dur-fast), box-shadow var(--dur-fast)", display: "flex", flexDirection: "column" }}>
       <div onClick={onOpen} style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)", cursor: "pointer" }}>
-        {n.cover_url && <Image src={n.cover_url} alt={n.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
+        {n.cover_url && <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 60%, rgba(0,0,0,0.34))" }} />
         <span style={{ position: "absolute", top: 6, left: 6, fontSize: 8, fontWeight: 700, color: "#fff", background: isLocal ? "rgba(52,120,90,0.9)" : "rgba(0,0,0,0.42)", padding: "2px 7px", borderRadius: 999 }}>{isLocal ? "本地库" : "线上"}</span>
         {locked ? (
@@ -707,7 +708,7 @@ function MaterialDetailBody({ noteId }: { noteId: string }) {
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
       <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: 300, overflow: "hidden", borderRadius: "var(--radius-md)", background: "var(--accent-surface)" }}>
-        {n.cover_url && <Image src={n.cover_url} alt={n.title} fill sizes="380px" unoptimized style={{ objectFit: "cover" }} />}
+        {n.cover_url && <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="380px" unoptimized style={{ objectFit: "cover" }} />}
         <span style={{ position: "absolute", top: 8, left: 8, fontSize: 9, fontWeight: 700, color: "#fff", background: isLocal ? "rgba(52,120,90,0.9)" : "rgba(0,0,0,0.42)", padding: "2px 8px", borderRadius: 999 }}>{isLocal ? "本地库" : "线上"}</span>
       </div>
       <h2 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3 }}>{n.title}</h2>
