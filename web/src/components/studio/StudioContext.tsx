@@ -76,6 +76,9 @@ export interface StudioStore {
   activeRecent: number | null;
   setActiveRecent: (id: number | null) => void;
   note: StudioNote;
+  // 右栏是否处于深度编辑器态。只由显式创作意图(点选题起稿/仿写)或本轮已产出成品(versions)
+  // 决定 —— 不看 t.isLoading,故纯搜索/出选题不会翻成编辑器。
+  editing: boolean;
   timeline: TimelineItem[];
   /** 当前进度短语(最新思考链里正在做的那一步的真实 label);无思考链时 null。生成中动态文案用。 */
   progressLabel: string | null;
@@ -189,6 +192,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [cover, setCover] = useState("");
   const [scheduled, setScheduled] = useState(false);
   const [activeVersion, setActiveVersion] = useState<VersionId>("A");
+  // 创作意图开关:右栏是否切成深度编辑器,只由「点选题起稿 / 点仿写」显式置真
+  // (chooseTopic/imitate),newChat/切到无记录会话复位。绝不看 t.isLoading —— 否则纯搜索
+  // /出选题(也在跑流)会误把右栏从「参考素材栏」翻成编辑器,即用户报的「搜索就弹创作 UI」bug。
+  // 按 threadId 持久化进 overlay,刷新/切回同一会话仍在编辑态。
+  const [creationMode, setCreationMode] = useState(false);
   const [selectedEvidence, setSelectedEvidence] = useState<SelectedEvidence | null>(null);
   // 统一详情/仿写弹层目标(素材或选题);null=不显示。
   const [detail, setDetail] = useState<DetailTarget | null>(null);
@@ -304,6 +312,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setTags(snap.tags);
         setCover(snap.cover);
         setActiveVersion(snap.activeVersion);
+        setCreationMode(snap.creationMode);
       } else if (prev !== undefined) {
         // 切到一个无 overlay 记录的会话 → 重置默认,避免与上一会话串台。
         setTopicId(null);
@@ -311,6 +320,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setTags([]);
         setCover("");
         setActiveVersion("A");
+        setCreationMode(false);
       }
     });
   }, [t.threadId]);
@@ -327,8 +337,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       tags,
       cover,
       activeVersion,
+      creationMode,
     });
-  }, [t.threadId, topicId, kw, tags, cover, activeVersion]);
+  }, [t.threadId, topicId, kw, tags, cover, activeVersion, creationMode]);
 
   const setSection = useCallback((s: StudioSection) => void setSectionRaw(s), [setSectionRaw]);
   // 白名单校验:URL ?section=任意值 不应被透传(消费组件 switch 不中会渲染空白)。
@@ -451,6 +462,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setActiveRecent(topic.id);
       setActiveVersion("A");
       setSection("create");
+      // 显式进入创作态:右栏此刻起变深度编辑器(区别于搜索/出选题只更新对话与素材栏)。
+      setCreationMode(true);
 
       // 「进入深度创作/写选题」与「触发生成」解耦,但必须**按选题区分**:
       // - 重进**当前已绑定、且已生成过内容的同一选题** → 保留,绝不重跑(否则退出再进就把
@@ -532,6 +545,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     (note: DiscoveryNote) => {
       if (!note || !note.note_id) return;
       setSection("create");
+      // 仿写同样是显式创作意图:右栏切成编辑器(顶部仿写拆解横幅 + 下方成品)。
+      setCreationMode(true);
       const label = note.title ? `《${note.title}》` : "这篇";
       if (note.resource_id) {
         t.submitText(`照着${label}的套路,仿写成我自己的一篇。先拆解它的选题方向与套路,再据此写成品。`, {
@@ -710,12 +725,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
   }, [t, showToast]);
 
+  // 右栏编辑器态:显式创作意图,或本轮真的产出了成品(versions),或已定稿排期。
+  // 与「有没有流在跑」彻底解耦 —— 搜索/出选题期间 t.isLoading 为真但这里仍为假,右栏留在素材栏。
+  const editing = creationMode || note.versions != null || scheduled;
+
   const store: StudioStore = {
     section: sectionVal,
     setSection,
     activeRecent,
     setActiveRecent,
     note,
+    editing,
     timeline,
     progressLabel,
     calendar,
@@ -763,6 +783,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setCover("");
         setScheduled(false);
         setActiveVersion("A");
+        // 复位创作态:新会话回到「先搜索/出选题」的参考素材栏,不直接进编辑器。
+        setCreationMode(false);
         t.setThreadId(null);
         setSection("create");
       },
@@ -969,6 +991,8 @@ interface StudioOverlaySnapshot {
   tags: string[];
   cover: string;
   activeVersion: VersionId;
+  // 该会话是否已进入创作态(点过选题起稿/仿写)。刷新/切回后据此决定右栏是编辑器还是素材栏。
+  creationMode: boolean;
 }
 
 function buildStudioOverlayKey(threadId: string | null): string {
@@ -991,6 +1015,7 @@ function readStudioOverlay(threadId: string | null): StudioOverlaySnapshot | nul
       tags: Array.isArray(o.tags) ? o.tags.filter((x): x is string => typeof x === "string") : [],
       cover: typeof o.cover === "string" ? o.cover : "",
       activeVersion: av === "A" || av === "B" || av === "C" ? av : "A",
+      creationMode: o.creationMode === true,
     };
   } catch {
     return null;

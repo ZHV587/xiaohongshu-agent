@@ -21,8 +21,9 @@ const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
 // v2 双栏:左=对话式选题+流式;右=选题起稿后**就地**变正文编辑器(note.status !== "idle"),
 // 起稿前是参考素材栏。右栏宽度随态变化——素材栏 400,编辑态放宽到 560 给写作更多空间。
 export function CreationScreen() {
-  const { actions, note } = useStudio();
-  const editing = note.status !== "idle";
+  const { actions, editing } = useStudio();
+  // editing 来自 store:只由「点选题起稿/仿写」或已产出成品驱动,不再看 note.status/t.isLoading。
+  // 纯搜索、出选题时右栏保持「参考素材栏」,点了选题或仿写才切成深度编辑器(修复搜索即弹创作 UI)。
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
       <Recents onNew={() => actions.newChat()} compact />
@@ -179,7 +180,7 @@ function RefMaterialRail() {
             <p style={{ margin: 0, fontSize: 11, lineHeight: 1.7 }}>说一个方向让我找爆款(线上+本地),检索到的参考笔记会固定在这里——可勾选收录入库,或挑一篇仿写。</p>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" }}>
             {materials.map((n) => (
               <MaterialCard
                 key={n.note_id}
@@ -219,8 +220,14 @@ function MaterialCard({ note: n, picked, onToggle, onImitate, onOpen }: {
   const isLocal = n.source === "local";
   return (
     <div className="lift pop-in" style={{ position: "relative", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", boxShadow: picked ? "var(--shadow-md)" : "var(--shadow-xs)", outline: picked ? "2px solid var(--primary)" : "2px solid transparent", transition: "outline-color var(--dur-fast), box-shadow var(--dur-fast)", display: "flex", flexDirection: "column" }}>
-      <div onClick={onOpen} style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)", cursor: "pointer" }}>
-        {n.cover_url && <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />}
+      {/* 封面盒:所有卡统一 3:4 定尺 + object-fit:cover。无封面图时用同尺寸的居中占位(🍠),
+          绝不塌成空盒或异形 —— 配合网格 align-items:start(卡片不被同行拉伸),整栏封面像素级一致。 */}
+      <div onClick={onOpen} style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {n.cover_url ? (
+          <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />
+        ) : (
+          <span aria-hidden style={{ fontSize: 26, opacity: 0.5, lineHeight: 1 }}>🍠</span>
+        )}
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 60%, rgba(0,0,0,0.34))" }} />
         <span style={{ position: "absolute", top: 6, left: 6, fontSize: 8, fontWeight: 700, color: "#fff", background: isLocal ? "rgba(52,120,90,0.9)" : "rgba(0,0,0,0.42)", padding: "2px 7px", borderRadius: 999 }}>{isLocal ? "本地库" : "线上"}</span>
         {locked ? (
@@ -237,7 +244,7 @@ function MaterialCard({ note: n, picked, onToggle, onImitate, onOpen }: {
         )}
       </div>
       <div style={{ padding: "8px 9px", display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", cursor: "pointer" }} onClick={onOpen}>{n.title}</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", cursor: "pointer", minHeight: "calc(1.35em * 2)" }} onClick={onOpen}>{n.title}</div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 9, color: "var(--text-subtle)" }}>
           <span style={{ maxWidth: 78, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.author || ""}</span>
           {n.likes != null && <span>♥ {n.likes}</span>}
@@ -404,7 +411,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
                     totalSteps={item.run.totalSteps}
                     running={!item.run.done}
                     defaultOpen={Boolean(item.run.presentation)}
-                    defaultCollapsed={item.run.presentation?.collapsedByDefault ?? item.run.done}
+                    defaultCollapsed={(item.run.presentation?.collapsedByDefault ?? false) || item.run.done}
                   />
                 </div>
               </div>

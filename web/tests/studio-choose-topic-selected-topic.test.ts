@@ -70,7 +70,9 @@ test("chooseTopic 换选题时先清空上一个选题的残留草稿", () => {
 
 test("chooseTopic 绑定选题/切 section 在守卫之前(总执行,与是否生成无关)", () => {
   const body = chooseTopicBody();
-  const setSectionIdx = body.indexOf("setSection(goSection)");
+  // 现实现固定切到创作屏 setSection("create")(历史 goSection 变量已重构掉);断言它在守卫之前,
+  // 保证重进同一选题也能先切过去看旧内容,再由守卫决定是否重跑生成。
+  const setSectionIdx = body.indexOf('setSection("create")');
   const guardIdx = body.indexOf("if (sameTopicAsLoaded && alreadyHasCopy) return;");
   assert.ok(setSectionIdx !== -1 && setSectionIdx < guardIdx, "setSection 应在守卫之前,重进也能切过去看旧内容");
 });
