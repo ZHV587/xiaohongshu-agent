@@ -17,4 +17,11 @@ docs/
 # 否则 docker 扫 context 读 root 文件权限不足,build 直接失败。
 data/
 .uat_store.enc
+# 本地专用大目录:backups 达 1.6G,legacy builder ADD 时扫它会 "mount callback failed" 直接卡死
+# 构建(本次踩坑);bug/ 是设计稿与问题截图(含 zip),.hypothesis 是属性测试缓存 —— 都与运行时
+# 无关,一律排除出 build context。
+backups/
+bug/
+.hypothesis/
+scripts/atoms.jsonl
 

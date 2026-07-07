@@ -535,8 +535,15 @@ class ResourceRepository(BaseRepository):
             raise ValueError("Embedding model is required")
         vector_literal = self._vector_literal(embedding)
         where_clause = self.readable_resource_where("r")
+        # HNSW 召回宽度 ef_search:pgvector 默认 40,当 top_k 上探到 100(工具层 5× over-fetch
+        # 的候选头寸)时,默认 40 会让候选池在近邻图上过早收敛、召回不足。按 top_k 放宽 ef_search
+        # (且 ef_search 需 ≥ limit),让候选真正取满再交给 rank_evidence 精排 —— 直接提召回。
+        # 上限 400 兜住极端 top_k 的查询开销。连接非 autocommit,SET LOCAL 作用于本次隐式事务。
+        ef_search = min(400, max(64, int(top_k) * 4))
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
+                # 作为事务内首条语句设置,仅本事务生效,不污染连接池上后续查询。
+                cursor.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
                 rows = cursor.execute(
                     f"""
                     with candidates as (

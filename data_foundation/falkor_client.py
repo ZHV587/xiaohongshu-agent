@@ -13,10 +13,16 @@ from data_foundation.engine_config import FalkorConfig
 _db_cache: dict[str, Any] = {}
 _cache_lock = threading.Lock()
 
+# 已建过索引的 graph 集合(按 "url::graph_name" 记),保证每进程只 CREATE INDEX 一次。
+# FalkorDB 的 CREATE INDEX 幂等失败会抛"already indexed",这里用集合先挡掉重复调用,
+# 真跑到时也 try/except 兜住,双保险。
+_indexed_graphs: set[str] = set()
+
 
 def _reset_db_cache() -> None:
     with _cache_lock:
         _db_cache.clear()
+        _indexed_graphs.clear()
 
 
 def _get_db(url: str) -> Any:
@@ -38,7 +44,32 @@ class FalkorResourceGraph:
     @classmethod
     def from_config(cls, config: FalkorConfig) -> "FalkorResourceGraph":
         db = _get_db(config.url)
-        return cls(graph=db.select_graph(config.graph_name))
+        inst = cls(graph=db.select_graph(config.graph_name))
+        inst._ensure_indexes(cache_key=f"{config.url}::{config.graph_name}")
+        return inst
+
+    def _ensure_indexes(self, *, cache_key: str) -> None:
+        """幂等建 Resource 节点的 range 索引(id / tenant_id)。
+
+        根因:此前图库无任何索引 —— 每次 merge_node/merge_edge(按 {id} MERGE)与 expand
+        (按 s.id IN $ids + tenant 过滤)都退化成全标签扫描,节点一多就线性变慢。id 是所有
+        MERGE/MATCH 的锚点、tenant_id 是 expand/count 的过滤键,给这两者建索引把点查从 O(N)
+        降到近 O(1),是最直接的提速。首次连接时建一次,进程内缓存不再重复尝试。
+        """
+        with _cache_lock:
+            if cache_key in _indexed_graphs:
+                return
+        for stmt in (
+            "CREATE INDEX FOR (r:Resource) ON (r.id)",
+            "CREATE INDEX FOR (r:Resource) ON (r.tenant_id)",
+        ):
+            try:
+                self.graph.query(stmt)
+            except Exception:
+                # 已存在 / 旧版语法差异等 —— 索引是纯优化,建不上不影响功能,静默跳过。
+                pass
+        with _cache_lock:
+            _indexed_graphs.add(cache_key)
 
     def merge_node(self, node: dict[str, Any]) -> None:
         self.graph.query(
@@ -88,9 +119,13 @@ class FalkorResourceGraph:
         if edge_types:
             et_clause = "WHERE all(rel IN relationships(p) WHERE rel.edge_type IN $etypes)"
             params["etypes"] = edge_types
+        # 无向遍历(-[:REL*1..hops]-,不再限定 ->):素材关联是双向语义(同垂类/同选题/仿写自
+        # 等),原先只沿 -> 方向扩展,会漏掉"只作为关联目标"的节点(它们的入边邻居永远召不回)。
+        # 无向后,从种子出发正反向邻居都能被扩展到,显著提召回;边仍按其存储的 source/target
+        # 原方向返回(startNode/endNode 给的是关系本身的两端,不因无向匹配而翻转)。
         rows = self.graph.query(
             f"""
-            MATCH p = (s:Resource)-[:REL*1..{hops}]->(t:Resource)
+            MATCH p = (s:Resource)-[:REL*1..{hops}]-(t:Resource)
             WHERE s.id IN $ids AND s.tenant_id = $tenant AND t.tenant_id = $tenant
             WITH p {et_clause}
             UNWIND relationships(p) as rel
