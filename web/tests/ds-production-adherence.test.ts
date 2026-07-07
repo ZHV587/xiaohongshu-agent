@@ -77,7 +77,7 @@ test("design-system desktop starting points have production parity tests", () =>
   const requiredTestNames = [
     "studio production shell uses the fixed final screen composition",
     "creation screen right panel is the reference-material workbench",
-    "deep creation uses the fixed final immersive editor",
+    "v2 in-place editor is single-column with a top toolbar and right drawers",
     "operations screen uses the fixed final page hosting",
     "workbench starting point has a production entry and DS interaction affordances",
     "workbench right canvas carries the DS bottom copy bar",

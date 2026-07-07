@@ -23,8 +23,10 @@ function walk(dir: string): string[] {
 
 test("studio production shell uses the fixed final screen composition", () => {
   const shell = read("src", "components", "studio", "StudioShell.tsx");
-  assertIncludes(shell, ["StudioTopBar", "<CreationScreen />", "<DeepCreation />", "<Operations />", "EvidencePanel"], "StudioShell");
+  // v2:深创并入创作屏右栏就地渲染,独立 DeepCreation 整屏已移除,shell 只挂 create/ops 两区。
+  assertIncludes(shell, ["StudioTopBar", "<CreationScreen />", "<Operations />", "EvidencePanel"], "StudioShell");
   assert.doesNotMatch(shell, /Tweaks|方案探索|rightLayout|deepForm|opsHosting|useState/);
+  assert.doesNotMatch(shell, /DeepCreation|section === "deep"|"deep"/);
 });
 
 test("creation screen right panel is the reference-material workbench", () => {
@@ -53,21 +55,31 @@ test("creation screen right panel is the reference-material workbench", () => {
   assert.doesNotMatch(creation, /RightLayout|rightLayout|orientation="horizontal"|仅创作栏|左右分栏/);
 });
 
-test("deep creation uses the fixed final immersive editor", () => {
-  const deep = read("src", "components", "studio", "DeepCreation.tsx");
-  const deepEditor = read("src", "components", "studio", "DeepEditor.tsx");
-  const source = `${deep}\n${deepEditor}`;
+test("v2 in-place editor is single-column with a top toolbar and right drawers", () => {
+  // v2(DEV-SPEC §4.5):deep 整屏已移除,编辑器在创作屏右栏就地渲染;单列编辑区 + 顶部工具条
+  // (版本/大纲/依据/文案体检/风控/标题优化,同时只开一个抽屉,按钮带实时角标)+ 底部 ScheduleBar 常驻。
+  const editor = read("src", "components", "studio", "DeepEditor.tsx");
   assertIncludes(
-    source,
+    editor,
     [
-      "Version",
+      "ToolBtn",       // 顶部工具按钮
+      "Drawer",        // 右侧抽屉容器
+      "VersionsDrawerBody",
+      "OutlineDrawerBody",
+      "TitleToolBody", // 标题优化(抽屉,非整屏)
+      "ProcessDrawerBody",
+      "ScheduleBar",   // 底部定稿常驻
       "话题标签",
       "文案体检",
-      "DeepEditor",
+      "版本",
+      'setTool',       // 单值工具态:同时只开一个抽屉
     ],
-    "DeepCreation",
+    "DeepEditor",
   );
-  assert.doesNotMatch(deep, /DeepForm|form =|DeepFlow|DeepWorkspace|StepCards|分步流程|多栏工作台/);
+  // v1 三栏 aside 与 ABCompare/TitleScreen 整屏均已删除,不留旧结构。
+  assert.doesNotMatch(editor, /ABCompare|TitleScreen|DeepTopicBar|DeepStatusChip|DeepMode|质检定稿/);
+  // 独立 DeepCreation 整屏文件应已删除。
+  assert.ok(!existsSync(join(webRoot, "src", "components", "studio", "DeepCreation.tsx")), "DeepCreation.tsx (v1 独立深创整屏) should be deleted");
 });
 
 test("operations screen uses the fixed final page hosting", () => {
@@ -273,7 +285,7 @@ test("production desktop removes mobile preview surfaces", () => {
     read("src", "components", "workbench", "WorkbenchShell.tsx"),
     read("src", "components", "studio", "CreationScreen.tsx"),
     read("src", "components", "studio", "Composer.tsx"),
-    read("src", "components", "studio", "DeepCreation.tsx"),
+    read("src", "components", "studio", "DeepEditor.tsx"),
   ].join("\n");
 
   for (const marker of [

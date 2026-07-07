@@ -348,7 +348,7 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     }
 
     // ── ③ 多版本草稿(需求 4.4/4.5):多版本由创作对话里 agent 产出 xhs_copy(versions),
-    // 深度创作(DeepEditor)是纯编辑工作台、无 chat。故在创作对话请求多版本,再进深度创作。
+    // v2:编辑器(DeepEditor)在创作屏右栏就地渲染,与左侧对话同屏。故在对话请求多版本后,右栏就地进编辑态。
     // 双合法硬断言:agent 真产 A/B/C → 点 B 硬断言正文切换;仅单版本 → 硬断言单版本编辑态连贯。
     if (topicsProduced) {
       await waitStreamIdle(page); // 等②的流完全落定,避免 DOM 持续变更
@@ -362,31 +362,32 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
       await page.getByRole("button", { name: "生成" }).first().click();
       await waitStreamIdle(page); // 等多版本文案流落定
 
-      // 进深度创作查看版本(选题卡 → 详情 → 进入深度创作)
-      let enterDeep = page.getByRole("button", { name: /进入深度创作/ });
-      if (!(await enterDeep.count())) {
+      // v2:文案流落定后,创作屏右栏 note.status 从 idle→draft 原地渲染编辑器(不再跳独立深创整屏)。
+      // 若右栏仍未进编辑态(未绑定选题),点一张选题卡就地起稿。
+      const draftBody = page.locator('[data-testid="draft-body"]');
+      if (!(await draftBody.count())) {
         await topicCards.first().click({ force: true });
-        enterDeep = page.getByRole("button", { name: /进入深度创作/ });
       }
-      await expect(enterDeep.first()).toBeVisible({ timeout: 15_000 });
-      await enterDeep.first().click({ force: true });
+      await expect(draftBody).toBeVisible({ timeout: 30_000 });
       await waitStreamIdle(page).catch(() => {});
 
-      const draftBody = page.locator('[data-testid="draft-body"]');
-      await expect(draftBody).toBeVisible({ timeout: 30_000 });
+      // 版本切换收进「版本」工具抽屉(v2 §4.5:A·B 并排对比屏已移除,改抽屉内点选切换)。
+      await page.getByRole("button", { name: /^版本/ }).click();
       const versionB = page.locator('[data-testid="version-B"]');
       if (await versionB.count()) {
-        // (A) agent 真产多版本 → 点 B 硬断言正文切换(需求 4.5)
+        // (A) agent 真产多版本 → 抽屉内点 B 硬断言正文切换(需求 4.5)
         const bodyBefore = await draftBody.inputValue();
         await versionB.click({ force: true });
         await expect.poll(async () => draftBody.inputValue()).not.toBe(bodyBefore);
-        step("③", "(A) 真实多版本产出,点版本 B 编辑区正文切换");
+        step("③", "(A) 真实多版本产出,版本抽屉点 B 编辑区正文切换");
       } else {
         // (B) agent 仅产单版本 → 硬断言单版本编辑态连贯(需求 4.4:无版本保持单版本编辑)
         await expect(page.locator('[data-testid="version-A"]')).toHaveCount(0);
         expect((await draftBody.inputValue()).length >= 0, "单版本编辑态正文可读").toBeTruthy();
         step("③", "(B) agent 仅产单版本:单版本编辑态连贯(需求 4.4)");
       }
+      // 关抽屉,回到编辑器主体,便于后续步骤操作。
+      await page.getByRole("button", { name: "关闭" }).click().catch(() => {});
     } else {
       step("③", "②为数据不足分支,无草稿可多版本(流程前置依赖未满足,非跳过)");
     }
@@ -397,12 +398,8 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     // 本步硬断言「页面渲染数 == 后端 API 真实返回数」,空与非空都成立(契约一致性)。
     await waitStreamIdle(page).catch(() => {}); // 等③的流落定再切 section
     await ensureNoEvidenceOverlay(page); // 清场:任一路径遗留的证据浮层都不得遮挡账号运营导航(root cause 3)
-    // ③可能停在深度创作(section=deep,顶栏隐藏,无「账号运营」按钮)→ 先退回创作页。
+    // v2:深创并入创作屏右栏,顶栏始终常驻,「账号运营」按钮任何时候都可达(不再需要先退出 deep 屏)。
     const opsNav = page.getByRole("button", { name: "账号运营" });
-    if (!(await opsNav.count())) {
-      const back = page.getByRole("button", { name: /^返回$|返回创作/ });
-      if (await back.count()) await back.first().click({ force: true });
-    }
     await expect(opsNav).toBeVisible({ timeout: 15_000 });
     await opsNav.click({ force: true });
     await expect(page.getByText("账号矩阵", { exact: false }).first()).toBeVisible();
@@ -418,17 +415,19 @@ test.describe("studio-data-integration 端到端基线(真实后端)", () => {
     await expect(page.locator('[data-testid="trend-row"]')).toHaveCount(backendTrends.length);
     step("④", `账号矩阵=${backendAccts.length}(==后端)、趋势=${backendTrends.length}(==后端)`);
 
-    // ── ⑤ 排期往返(需求 14.4):走深度创作 ScheduleBar。双合法硬断言:
+    // ── ⑤ 排期往返(需求 14.4):走创作屏右栏编辑器底部常驻 ScheduleBar。双合法硬断言:
     //   - 文案体检达标(≥80)→「定稿并排期」可点 → 点击断言真实 BFF /api/backend/schedule POST;
     //   - 体检未达标 → 按钮被正确门控(disabled),断言门控生效(产品真实规则:体检达标才可发)。
     // 注:排期写接口的落库契约由独立的「写接口契约」测试硬断言,不依赖本步草稿恰好达标。
     if (topicsProduced) {
       await page.getByRole("button", { name: "创作" }).click();
-      await expect(topicCards.first()).toBeVisible({ timeout: 15_000 });
-      await topicCards.first().click({ force: true });
-      const enterDeep5 = page.getByRole("button", { name: /进入深度创作/ });
-      await expect(enterDeep5.first()).toBeVisible({ timeout: 15_000 });
-      await enterDeep5.first().click({ force: true });
+      // v2:点选题卡即在右栏就地起稿,编辑器底部 ScheduleBar 常驻(不再跳独立深创屏)。
+      const draftBody5 = page.locator('[data-testid="draft-body"]');
+      if (!(await draftBody5.count())) {
+        await expect(topicCards.first()).toBeVisible({ timeout: 15_000 });
+        await topicCards.first().click({ force: true });
+      }
+      await expect(draftBody5).toBeVisible({ timeout: 30_000 });
       await waitStreamIdle(page).catch(() => {});
       const scheduleBtn = page.getByRole("button", { name: /定稿并排期|排期发布|立即排期/ }).first();
       await expect(scheduleBtn).toBeVisible({ timeout: 30_000 });

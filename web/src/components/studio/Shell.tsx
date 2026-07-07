@@ -1,7 +1,7 @@
 "use client";
 
 // Studio shell — top bar with brand, section switcher, account chip;
-// and the recents sidebar reused by the creation/deep screens.
+// and the recents sidebar reused by the creation screen.
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { Avatar, Badge, Button, Icon } from "@/components/ds";
@@ -40,7 +40,7 @@ export function StudioTopBar({ section, setSection }: StudioTopBarProps) {
         {/* section switcher */}
         <nav aria-label="工作区切换" style={{ display: "flex", gap: 2, background: "var(--oats-dark)", borderRadius: "var(--radius-md)", padding: 3 }}>
           {sections.map((s) => {
-            const on = section === s.id || (s.id === "create" && section === "deep");
+            const on = section === s.id;
             return (
               <button key={s.id} onClick={() => setSection(s.id)} style={{
                 display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer",

@@ -9,6 +9,7 @@ import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
 import { useDismiss } from "@/components/studio/useDismiss";
 import { Recents } from "./Shell";
+import { DeepEditor } from "./DeepEditor";
 import type { Topic } from "@/components/studio/types";
 import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
 import type { DiscoveryNote } from "@/lib/thinking-trace";
@@ -16,16 +17,98 @@ import type { DiscoveryNote } from "@/lib/thinking-trace";
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
 
+// v2 双栏:左=对话式选题+流式;右=选题起稿后**就地**变正文编辑器(note.status !== "idle"),
+// 起稿前是参考素材栏。右栏宽度随态变化——素材栏 400,编辑态放宽到 560 给写作更多空间。
 export function CreationScreen() {
-  const { actions } = useStudio();
-  // 位置分工(需求 §3):选题卡 → 对话气泡(showTopics);右边栏 → 专职参考素材笔记工作台。
+  const { actions, note } = useStudio();
+  const editing = note.status !== "idle";
   return (
     <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
       <Recents onNew={() => actions.newChat()} compact />
       <ChatColumn showTopics />
-      <section style={{ width: 400, borderLeft: "1px solid var(--border)", background: "var(--surface-card)", display: "flex", flexDirection: "column", flexShrink: 0, boxShadow: "var(--shadow-lg)" }}>
-        <RefMaterialRail />
+      <section
+        style={{
+          width: editing ? 560 : 400,
+          borderLeft: "1px solid var(--border)",
+          background: "var(--surface-card)",
+          display: "flex",
+          flexDirection: "column",
+          flexShrink: 0,
+          boxShadow: "var(--shadow-lg)",
+          transition: "width var(--dur-slow) var(--ease-out)",
+        }}
+      >
+        {/* 起稿后右栏原地渲染编辑器(生成横幅 + 仿写拆解常驻其上);未起稿是参考素材栏。
+            两态间切换带 pane-in 滑入 + 上面的宽度过渡。 */}
+        {editing ? (
+          <div className="pane-in" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <GeneratingBanner />
+            <ImitationTeardownBanner />
+            <DeepEditor />
+          </div>
+        ) : (
+          <div className="pane-in" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <RefMaterialRail />
+          </div>
+        )}
       </section>
+    </div>
+  );
+}
+
+// 生成中状态条:note.status==="writing"(真实 stream isLoading 派生)时常驻编辑器顶部。
+// 检索取证阶段(正文还没开始流)也显示,让"在不在生成"始终可见;带停止入口。
+function GeneratingBanner() {
+  const { note, actions, progressLabel } = useStudio();
+  if (note.status !== "writing") return null;
+  const streaming = Boolean(note.body && note.body.trim());
+  const label = streaming ? "正在写正文" : progressLabel ? `正在${progressLabel}` : "正在查素材、拆依据";
+  return (
+    <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", background: "var(--accent-surface)", borderBottom: "1px solid var(--border-coral)" }}>
+      <span className="pulse-dot" style={{ width: 9, height: 9, borderRadius: 999, background: "var(--primary)", flexShrink: 0 }} />
+      <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--primary)", display: "inline-flex", alignItems: "center" }}>
+        🍠 {label}<span className="typing-dots" aria-hidden />
+      </span>
+      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{streaming ? "内容实时出现在下方" : "取证完就开始逐字生成"}</span>
+      <button onClick={() => actions.stop()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "4px 10px", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>
+        <Icon name="circle" size={11} /> 停止生成
+      </button>
+    </div>
+  );
+}
+
+// 仿写第一段:范本拆解横幅。仅在本会话是仿写(imitation 非空)时显示,可折叠。
+// 显性呈现切入角度/痛点/钩子机制/结构节奏(需求 §5:分析必须让用户看得见)。第二段成品走下方编辑器。
+function ImitationTeardownBanner() {
+  const { imitation } = useStudio();
+  const [open, setOpen] = useState(true);
+  if (!imitation) return null;
+  const t = imitation.teardown;
+  const rows: [string, string, string][] = [
+    ["compass", "切入角度", t.angle],
+    ["target", "戳中痛点", t.painpoint],
+    ["anchor", "钩子机制", t.hook_mechanism],
+    ["list", "结构节奏", t.structure],
+  ];
+  return (
+    <div style={{ flexShrink: 0, background: "var(--accent-surface)", borderBottom: "1px solid var(--border-coral)" }}>
+      <button onClick={() => setOpen((v) => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+        <Icon name="feather" size={14} color="var(--primary)" />
+        <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, color: "var(--primary)" }}>仿写第一段 · 范本套路拆解</span>
+        {imitation.referenceTitle && <span style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>仿自《{imitation.referenceTitle}》</span>}
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-subtle)" }}>{open ? "收起" : "展开"}</span>
+        <Icon name={open ? "chevron-up" : "chevron-down"} size={13} color="var(--text-subtle)" />
+      </button>
+      {open && (
+        <div style={{ padding: "0 16px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {rows.map(([icon, label, val]) => (
+            <div key={label} style={{ background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 3 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, color: "var(--primary)" }}><Icon name={icon} size={11} /> {label}</span>
+              <span style={{ fontSize: 11, color: "var(--text-body)", lineHeight: 1.6 }}>{val || "—"}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -356,7 +439,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
             <Card padding="md">
               <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>我按相关素材整理了几个方向。每张卡都带依据，点进去就能继续写。</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 11 }}>
-                {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t, "deep")} />)}
+                {topics.map((t) => <TopicCard key={t.id} index={t.id} title={t.title} rationale={t.rationale} hotRate={t.hotRate} onClick={() => actions.chooseTopic(t)} />)}
               </div>
             </Card>
           </div>
@@ -607,7 +690,7 @@ function TopicDetailBody({ topicId }: { topicId: number }) {
         ))}
       </div>
       <div style={{ marginTop: "auto", position: "sticky", bottom: 0, background: "var(--background)", paddingTop: 10 }}>
-        <Button variant="primary" block leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.chooseTopic(topic, "deep"); actions.closeDetail(); }}>进入深度创作</Button>
+        <Button variant="primary" block leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.chooseTopic(topic); actions.closeDetail(); }}>基于此选题起稿</Button>
       </div>
     </div>
   );

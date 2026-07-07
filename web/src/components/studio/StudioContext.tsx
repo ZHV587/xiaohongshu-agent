@@ -108,7 +108,7 @@ export interface StudioStore {
   loadState: StudioLoadState;
   actions: {
     setSection: (s: StudioSection) => void;
-    chooseTopic: (topic: Topic, goSection?: StudioSection) => void;
+    chooseTopic: (topic: Topic) => void;
     setVersion: (v: VersionId) => void;
     updateField: (field: keyof StudioNote, value: unknown) => void;
     addTag: (tag: string) => void;
@@ -329,8 +329,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const setSection = useCallback((s: StudioSection) => void setSectionRaw(s), [setSectionRaw]);
   // 白名单校验:URL ?section=任意值 不应被透传(消费组件 switch 不中会渲染空白)。
-  const sectionVal: StudioSection =
-    section === "create" || section === "deep" || section === "ops" ? section : "create";
+  // v2 只剩 create/ops;历史 ?section=deep 链接归一到 create(深创已并入创作屏右栏)。
+  const sectionVal: StudioSection = section === "ops" ? "ops" : "create";
 
   // ── derive the live note status from the real stream ──
   const status: StudioNote["status"] = t.isLoading
@@ -440,13 +440,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const showToast = useCallback((msg: string) => toast(msg), []);
 
   const chooseTopic = useCallback(
-    (topic: Topic, goSection: StudioSection = "create") => {
-      // 绑定选题 + 切 section 总是执行(轻量本地态,无副作用)。
+    (topic: Topic) => {
+      // 绑定选题总是执行(轻量本地态,无副作用)。v2:起稿不跳屏,留在 create,
+      // 右栏随 note.status 从 idle → writing 原地变编辑器。
       setTopicId(topic.id);
       setKw(topic.kw);
       setActiveRecent(topic.id);
       setActiveVersion("A");
-      setSection(goSection);
+      setSection("create");
 
       // 「进入深度创作/写选题」与「触发生成」解耦,但必须**按选题区分**:
       // - 重进**当前已绑定、且已生成过内容的同一选题** → 保留,绝不重跑(否则退出再进就把
@@ -505,14 +506,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   );
 
   // 仿写:对单篇范本触发两段式仿写(§5)。经 state 直传 selected_reference(权威标识,不经
-  // LLM 转写);切到深度创作看两段(先拆解范本套路、再看成品)。
+  // LLM 转写);v2 留在创作屏——仿写流一起,右栏随 status 原地变编辑器,顶部仿写拆解横幅显性
+  // 呈现第一段套路,成品在下方编辑器。
   // · 本地已入库素材(有 resource_id):直接带 resource_id,后端可即刻 get_resource 精读范本。
   // · 线上未入库笔记(无 resource_id):同时直传 selected_notes,后端先 adopt 收录拿 id 再仿
   //   (满足「范本可追溯」——线上笔记仿写要求范本能追溯到库内一条真实素材)。
   const imitate = useCallback(
     (note: DiscoveryNote) => {
       if (!note || !note.note_id) return;
-      setSection("deep");
+      setSection("create");
       const label = note.title ? `《${note.title}》` : "这篇";
       if (note.resource_id) {
         t.submitText(`照着${label}的套路,仿写成我自己的一篇。先拆解它的选题方向与套路,再据此写成品。`, {

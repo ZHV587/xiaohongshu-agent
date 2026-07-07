@@ -7,7 +7,6 @@
 import { useStudio } from "./useStudio";
 import { StudioTopBar } from "./Shell";
 import { CreationScreen, EvidencePanel, DetailModal } from "./CreationScreen";
-import { DeepCreation } from "./DeepCreation";
 import { Operations } from "./Operations";
 
 export function StudioShell() {
@@ -27,12 +26,12 @@ export function StudioShell() {
       }}
     >
       <h1 className="sr-only">小红书创作运营工作室</h1>
-      {section !== "deep" && <StudioTopBar section={section} setSection={setSection} />}
-      {/* 三个工作区常驻挂载、按 section 切 display,而非条件渲染/换 key 重挂 ——
-          否则每次切换都卸载重建屏幕,丢失屏内本地态(创作区草稿输入框、已展开的选题详情、
-          深创的编辑/对比模式等),用户返回时以为"生成的内容没了"。数据本身在 StudioProvider,
-          常驻不会重复拉取。仅对当前可见区加一次进入动画。 */}
-      {(["create", "deep", "ops"] as const).map((s) => (
+      <StudioTopBar section={section} setSection={setSection} />
+      {/* v2 两个工作区常驻挂载、按 section 切 display,而非条件渲染/换 key 重挂 ——
+          否则每次切换都卸载重建屏幕,丢失屏内本地态(创作区草稿输入框、编辑器已展开的工具抽屉、
+          已选版本等),用户返回时以为"生成的内容没了"。数据本身在 StudioProvider,常驻不会重复
+          拉取。深度创作已并入创作屏右栏(note.status !== idle 就地渲染),不再是独立工作区。 */}
+      {(["create", "ops"] as const).map((s) => (
         <div
           key={s}
           style={{
@@ -44,7 +43,6 @@ export function StudioShell() {
           }}
         >
           {s === "create" && <CreationScreen />}
-          {s === "deep" && <DeepCreation />}
           {s === "ops" && <Operations />}
         </div>
       ))}

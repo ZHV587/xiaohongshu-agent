@@ -203,7 +203,8 @@ export interface Trend {
   tone: "hot" | "coral" | "topic";
 }
 
-export type StudioSection = "create" | "deep" | "ops";
+// v2:原独立 deep 深度创作整屏已并入 create 右栏就地编辑,section 只剩两个工作区。
+export type StudioSection = "create" | "ops";
 
 /** 统一详情弹层的目标:一张选题卡,或一篇参考素材笔记。DetailModal 据 kind 分渲染。 */
 export type DetailTarget =

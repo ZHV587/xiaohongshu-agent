@@ -18,13 +18,12 @@ test.describe("design-system desktop parity UAT", () => {
     if (await collapse.count()) await collapse.first().click();
 
     await expectNoPrototypeExploration(page);
-    await expect(page.getByText("选题卡", { exact: true })).toBeVisible();
-    await page.locator('[data-testid="topic-card"]').first().click();
-    const deepButton = page.getByRole("button", { name: "进入深度创作" });
-    await expect(deepButton).toBeVisible();
-    await deepButton.click();
-    await expect(page.getByText("文案体检 · 定稿")).toBeVisible();
-    await page.getByRole("button", { name: "返回" }).click();
+    // v2:dense fixture 已含 xhs_copy,note.status 派生为 draft,创作屏右栏直接就地渲染编辑器
+    // (不再跳独立深创整屏)。断言编辑器正文区 + 顶部「文案体检」工具按钮在场。
+    const draftBody = page.locator('[data-testid="draft-body"]');
+    await expect(draftBody).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: /文案体检/ })).toBeVisible();
+    // 顶栏常驻,直接切账号运营(v2 无需先返回)。
     await page.getByRole("button", { name: "账号运营" }).click();
     await expect(page.getByText("账号矩阵总览")).toBeVisible();
 
