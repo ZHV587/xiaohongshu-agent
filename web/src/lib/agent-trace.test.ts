@@ -121,6 +121,41 @@ test("presentation folds started and completed events into one user step", () =>
   assert.equal(presentation.userStages[0].resultText, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
 });
 
+test("each stage carries its own real state (done vs active), not one run-level verdict", () => {
+  // 第一步已完成(有 completed),第二步刚开始(只有 started 无终态)。
+  const state = reduceTraceEvents(undefined, [
+    event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
+    event({
+      event_id: "e2", seq: 2, type: "xhs.trace.tool.completed",
+      stage_id: "retrieve", tool_call_id: "call-1", tool_name: "semantic_search_resources",
+      metrics: { found_count: 8, used_count: 3 },
+    }),
+    event({
+      event_id: "e3", seq: 3, type: "xhs.trace.tool.started",
+      stage_id: "compose", tool_call_id: "call-2", tool_name: "save_generated_topic",
+    }),
+  ]);
+
+  const presentation = toTracePresentation(state);
+  assert.equal(presentation.userStages.length, 2);
+  assert.equal(presentation.userStages[0].state, "done", "first stage completed → done");
+  assert.equal(presentation.userStages[1].state, "active", "second stage only started → active");
+  assert.equal(presentation.status, "active", "run not terminated → active overall");
+});
+
+test("a failed stage surfaces as error state on that step", () => {
+  const state = reduceTraceEvents(undefined, [
+    event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
+    event({
+      event_id: "e2", seq: 2, type: "xhs.trace.tool.failed",
+      stage_id: "retrieve", tool_call_id: "call-1", tool_name: "semantic_search_resources",
+      status: "error",
+    }),
+  ]);
+  const presentation = toTracePresentation(state);
+  assert.equal(presentation.userStages[0].state, "error");
+});
+
 test("ordinary presentation hides engineering words", () => {
   const state = reduceTraceEvents(undefined, [
     event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),

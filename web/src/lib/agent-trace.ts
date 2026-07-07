@@ -41,6 +41,9 @@ export interface TracePresentation {
     action: string;
     resultText: string;
     statusText: string;
+    /** 机器可读的单步状态:done=该步已出终态事件;active=已开始未出终态;error=该步失败。
+     *  供 UI 逐步渲染真实进度指针(第 N/M 步),不再拿 run 级状态一刀切所有步。 */
+    state: "active" | "done" | "error";
     metricsText?: string;
     sourceEventIds: string[];
   }>;
@@ -304,6 +307,13 @@ export function toTracePresentation(state: TraceRunState): TracePresentation {
     const copy = userCopy(item);
     const title = userTitle(item);
     const result = resultText(item, copy);
+    // 单步真实状态:该组代表事件(foldStageEvents 已选终态优先)是否已到终态。
+    // failed → error;completed/其它终态 → done;仅有 started(尚无终态)→ active。
+    const stepState: "active" | "done" | "error" = item.type.endsWith(".failed") || item.status === "error"
+      ? "error"
+      : isStageTerminal(item)
+        ? "done"
+        : "active";
     return {
       id: item.stage_id ?? item.tool_call_id ?? item.event_id,
       title,
@@ -312,6 +322,7 @@ export function toTracePresentation(state: TraceRunState): TracePresentation {
       action: copy.action,
       resultText: result,
       statusText: statusText(item),
+      state: stepState,
       metricsText: metricsText(item.metrics),
       sourceEventIds,
     };

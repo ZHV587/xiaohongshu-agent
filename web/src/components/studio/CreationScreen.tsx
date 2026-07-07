@@ -399,6 +399,9 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
                     steps={item.run.steps}
                     logs={item.run.logs.length ? item.run.logs : null}
                     title={item.run.presentation?.userSummary ?? (item.run.done ? undefined : RESPONSE_LOADING_TEXT)}
+                    currentStep={item.run.currentStep}
+                    totalSteps={item.run.totalSteps}
+                    running={!item.run.done}
                     defaultOpen={Boolean(item.run.presentation)}
                     defaultCollapsed={item.run.presentation?.collapsedByDefault ?? item.run.done}
                   />

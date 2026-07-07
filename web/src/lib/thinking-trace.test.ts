@@ -61,6 +61,7 @@ const officialPresentation: TracePresentation = {
       action: "从数据底座检索与你需求相关的笔记和历史素材。",
       resultText: "找到 12 条相关素材，采用 3 条作为本次回答依据。",
       statusText: "已完成",
+      state: "done",
       metricsText: "找到 12 条，采用 3 条",
       sourceEventIds: ["e1"],
     },
@@ -124,6 +125,34 @@ test("official trace presentation mounts below the matching assistant answer", (
   assert.equal(thinking.run.steps[0].description, "先确认有没有可用素材，避免凭空给建议。");
   assert.equal(thinking.run.steps[0].result, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
   assert.equal(thinking.run.logs[0].text, "找到 12 条，采用 3 条");
+});
+
+test("official trace maps each step's real state and points at the current step (Claude-Code style)", () => {
+  // 三步:第1步 done、第2步 active(当前)、第3步也 active。run 未 done。
+  const presentation: TracePresentation = {
+    traceId: "t",
+    turnId: "a",
+    status: "active",
+    collapsedByDefault: false,
+    userSummary: "处理中",
+    userStages: [
+      { id: "s1", title: "核验素材依据", summary: "", intent: "i1", action: "a1", resultText: "r1", statusText: "已完成", state: "done", sourceEventIds: ["e1"] },
+      { id: "s2", title: "筛选可用依据", summary: "", intent: "i2", action: "a2", resultText: "r2", statusText: "正在处理", state: "active", sourceEventIds: ["e2"] },
+      { id: "s3", title: "组织回答结构", summary: "", intent: "i3", action: "a3", resultText: "r3", statusText: "正在处理", state: "active", sourceEventIds: ["e3"] },
+    ],
+    adminDetails: [],
+  };
+  const tl = deriveTimeline([human("出选题"), aiText("回答")], {
+    tracePresentationsByTurnId: { a: presentation },
+  });
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  // 每步状态忠实映射,而非一刀切。
+  assert.deepEqual(thinking.run.steps.map((s) => s.state), ["done", "active", "active"]);
+  assert.equal(thinking.run.done, false);
+  assert.equal(thinking.run.totalSteps, 3);
+  // 当前步 = 最后一个 active(第3步)。
+  assert.equal(thinking.run.currentStep, 3);
 });
 
 test("tool call with progress prose still keeps completed trace below the final answer", () => {
@@ -317,6 +346,8 @@ test("loading context appends an active thinking item when no tool call has star
         steps: [{ label: "正在查素材和历史数据", state: "active" }],
         logs: [],
         done: false,
+        currentStep: 1,
+        totalSteps: 1,
       },
     },
   ]);

@@ -5,7 +5,7 @@ import { parseXhsBlocks } from "@/lib/xhs-blocks";
 
 export interface ThinkingStep {
   label: string;
-  state: "done" | "active" | "pending";
+  state: "done" | "active" | "pending" | "error";
   description?: string;
   result?: string;
 }
@@ -18,6 +18,11 @@ export interface ThinkingRun {
   steps: ThinkingStep[];
   logs: ThinkingLog[];
   done: boolean;
+  /** 当前进行到第几步(1-based;基于真实已出现的步骤,未运行的步骤不虚构)。
+   *  = 最后一个 active 步的序号;全部完成时 = 总步数。无步骤时为 0。 */
+  currentStep: number;
+  /** 目前已知的总步数(= 已出现的步骤数;不预告未来步骤,忠实"绝不塞假")。 */
+  totalSteps: number;
   presentation?: TracePresentation;
 }
 
@@ -289,7 +294,14 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   const buildRunItem = (): TimelineItem | null => {
     if (!runOpen || atoms.length === 0) return null;
     const allAtomsDone = atoms.length > 0 && atoms.every((a) => a.done);
-    return { kind: "thinking", run: { steps: foldSteps(), logs, done: allAtomsDone } };
+    const steps = foldSteps();
+    // 兜底轨道同样给出进度指针:最后一个 active 步为当前步,全完成则停在末步。
+    const lastActive = steps.reduce((acc, s, i) => (s.state === "active" ? i : acc), -1);
+    const currentStep = steps.length === 0 ? 0 : lastActive >= 0 ? lastActive + 1 : steps.length;
+    return {
+      kind: "thinking",
+      run: { steps, logs, done: allAtomsDone, currentStep, totalSteps: steps.length },
+    };
   };
 
   const resetRun = () => {
@@ -312,19 +324,27 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     if (!turnId) return;
     const presentation = context.tracePresentationsByTurnId?.[turnId];
     if (!presentation) return;
+    // 逐步映射每一步的真实状态(stage.state 来自该步终态事件),不再用 run 级状态一刀切。
+    // 这样才能像 Claude Code / Codex 那样精确看出"哪几步已完成、当前正卡在第几步"。
+    const steps: ThinkingStep[] = presentation.userStages.map((stage) => ({
+      label: stage.title,
+      state: stage.state === "error" ? "error" : stage.state, // done | active | error
+      description: stage.intent,
+      result: stage.resultText,
+    }));
+    // 进度指针:最后一个仍在 active 的步 = 当前步;全部完成 = 停在最后一步。忠实真实事件,不虚构未来步。
+    const lastActive = steps.reduce((acc, s, i) => (s.state === "active" ? i : acc), -1);
+    const currentStep = steps.length === 0 ? 0 : lastActive >= 0 ? lastActive + 1 : steps.length;
     out.push({
       kind: "thinking",
       run: {
-        steps: presentation.userStages.map((stage) => ({
-          label: stage.title,
-          state: presentation.status === "done" ? "done" : "active",
-          description: stage.intent,
-          result: stage.resultText,
-        })),
+        steps,
         logs: presentation.userStages.map((stage) => ({
           text: stage.metricsText ?? stage.summary,
         })),
         done: presentation.status === "done",
+        currentStep,
+        totalSteps: steps.length,
         presentation,
       },
     });
@@ -398,6 +418,8 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         steps: [{ label: "正在查素材和历史数据", state: "active" }],
         logs: [],
         done: false,
+        currentStep: 1,
+        totalSteps: 1,
       },
     });
   }

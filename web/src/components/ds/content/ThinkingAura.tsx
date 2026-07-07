@@ -9,7 +9,7 @@ import { useState, type CSSProperties, type HTMLAttributes } from "react";
  *
  * Faithfully ported 1:1 from 小红书文案助手 Design System/components/content/ThinkingAura.jsx.
  */
-type StepState = "done" | "active" | "pending";
+type StepState = "done" | "active" | "pending" | "error";
 
 export interface ThinkingStep {
   label: string;
@@ -26,6 +26,12 @@ export interface ThinkingAuraProps extends HTMLAttributes<HTMLDivElement> {
   logs?: ThinkingLog[] | null;
   defaultOpen?: boolean;
   defaultCollapsed?: boolean;
+  /** 当前进行到第几步(1-based)。>0 且未全部完成时,顶栏显示"第 N / M 步"精确进度指针。 */
+  currentStep?: number;
+  /** 已知总步数。 */
+  totalSteps?: number;
+  /** 整轮是否已结束(全部步骤完成/失败)。用于决定是否显示"进行中"进度指针。 */
+  running?: boolean;
 }
 
 export function ThinkingAura({
@@ -34,6 +40,9 @@ export function ThinkingAura({
   logs = null,
   defaultOpen = false,
   defaultCollapsed = false,
+  currentStep = 0,
+  totalSteps = 0,
+  running = false,
   style = {},
   ...rest
 }: ThinkingAuraProps) {
@@ -72,8 +81,12 @@ export function ThinkingAura({
     done: "var(--success)",
     active: "var(--primary)",
     pending: "var(--text-subtle)",
+    error: "var(--danger, #e5484d)",
   };
-  const stateIcon: Record<StepState, string> = { done: "✓", active: "◐", pending: "○" };
+  const stateIcon: Record<StepState, string> = { done: "✓", active: "◐", pending: "○", error: "✕" };
+  // 精确进度指针:一轮尚未结束(running)且已知步数时,展示"第 N / M 步"——像 Claude Code 那样
+  // 让用户一眼看出智能体正卡在第几步(忠实已发生的步骤,未运行的步不虚构总数)。
+  const showProgress = running && totalSteps > 0 && currentStep > 0;
 
   return (
     <div
@@ -95,6 +108,18 @@ export function ThinkingAura({
             <span style={{ position: "relative", borderRadius: "var(--radius-full)", width: 10, height: 10, background: "var(--primary)" }} />
           </span>
           <span style={{ fontFamily: "var(--font-sans)", fontWeight: "var(--weight-bold)" as CSSProperties["fontWeight"], fontSize: "var(--text-xs)", color: "var(--text-body)" }}>{title}</span>
+          {showProgress && (
+            <span
+              className="font-tabular"
+              style={{
+                flexShrink: 0, fontSize: "var(--text-2xs)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"],
+                color: "var(--primary)", background: "var(--accent-surface)", borderRadius: "var(--radius-full)",
+                padding: "1px 8px", letterSpacing: "var(--tracking-tight)",
+              }}
+            >
+              第 {Math.min(currentStep, totalSteps)} / {totalSteps} 步
+            </span>
+          )}
         </div>
         {logs && (
           <button
