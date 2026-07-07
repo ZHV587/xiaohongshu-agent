@@ -67,8 +67,33 @@ function WorkbenchSidebar({ onNew }: { onNew: () => void }) {
   const setThreads = threadsCtx?.setThreads;
   const setThreadsLoading = threadsCtx?.setThreadsLoading;
   const threadsLoading = threadsCtx?.threadsLoading ?? false;
+  const deleteThread = threadsCtx?.deleteThread;
   const [collapsed, setCollapsed] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [hoveredThread, setHoveredThread] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deletingThread, setDeletingThread] = useState<string | null>(null);
+
+  // 与 Shell.tsx 的 Recents 同款两击确认删除:列表与删除同源(langgraph SDK),删除后 deleteThread 已
+  // 从 context 列表移除该项,持久不复活。删的是当前会话则切回新对话空态。
+  const handleDeleteThread = async (e: React.MouseEvent, targetId: string) => {
+    e.stopPropagation(); // 不要触发行的 setThreadId(切换会话)
+    if (!deleteThread || deletingThread) return;
+    if (confirmDelete !== targetId) {
+      setConfirmDelete(targetId); // 首次点亮确认态,再点执行
+      return;
+    }
+    setDeletingThread(targetId);
+    try {
+      await deleteThread(targetId);
+      if (targetId === threadId) onNew();
+    } catch {
+      /* 失败保持列表不变;deleteThread 内成功才移除,无需回滚 */
+    } finally {
+      setDeletingThread(null);
+      setConfirmDelete(null);
+    }
+  };
 
   useEffect(() => {
     if (!getThreads || !setThreads) return;
@@ -125,10 +150,15 @@ function WorkbenchSidebar({ onNew }: { onNew: () => void }) {
           )}
           {threads.map((item) => {
             const active = item.thread_id === threadId;
+            const hovered = hoveredThread === item.thread_id;
+            const confirming = confirmDelete === item.thread_id;
+            const deleting = deletingThread === item.thread_id;
             return (
-              <button
+              <div
                 key={item.thread_id}
                 onClick={() => setThreadId?.(item.thread_id)}
+                onMouseEnter={() => setHoveredThread(item.thread_id)}
+                onMouseLeave={() => setHoveredThread((cur) => (cur === item.thread_id ? null : cur))}
                 title={threadTitle(item)}
                 style={{
                   display: "flex",
@@ -141,7 +171,6 @@ function WorkbenchSidebar({ onNew }: { onNew: () => void }) {
                   fontSize: "var(--text-sm)",
                   borderRadius: "var(--radius-sm)",
                   cursor: "pointer",
-                  border: "none",
                   borderLeft: active ? "2px solid var(--primary)" : "2px solid transparent",
                   background: active ? "var(--oats-dark)" : "transparent",
                   color: active ? "var(--primary)" : "var(--text-muted)",
@@ -149,11 +178,27 @@ function WorkbenchSidebar({ onNew }: { onNew: () => void }) {
                   fontFamily: "var(--font-sans)",
                 }}
               >
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   🍠 {threadTitle(item)}
                 </span>
-                <Badge tone={active ? "synced" : "draft"} shape="chip">{active ? "当前" : "草稿"}</Badge>
-              </button>
+                {deleteThread && (hovered || confirming || deleting) ? (
+                  <button
+                    onClick={(e) => handleDeleteThread(e, item.thread_id)}
+                    title={confirming ? "再次点击确认删除" : "删除会话"}
+                    aria-label={confirming ? "确认删除会话" : "删除会话"}
+                    disabled={deleting}
+                    style={{
+                      border: "none", background: "transparent", cursor: deleting ? "default" : "pointer",
+                      color: confirming ? "var(--danger, #e5484d)" : "var(--text-subtle)",
+                      display: "inline-flex", alignItems: "center", padding: 2, flexShrink: 0,
+                    }}
+                  >
+                    <Icon name={deleting ? "loader" : confirming ? "check" : "trash-2"} size={14} />
+                  </button>
+                ) : (
+                  <Badge tone={active ? "synced" : "draft"} shape="chip">{active ? "当前" : "草稿"}</Badge>
+                )}
+              </div>
             );
           })}
         </div>
