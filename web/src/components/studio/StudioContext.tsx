@@ -129,6 +129,9 @@ export interface StudioStore {
     closeEvidence: () => void;
     respondToInterrupt: (decisions: HITLDecision[]) => void;
     adoptNotes: (notes: DiscoveryNote[]) => void;
+    // 素材栏搜索:发一条明确的「检索参考素材」指令给 agent(走 search_local_note_cards /
+    // search_xhs_online 工具),命中的笔记作为 discovery 项流回、累积进 materials 工作台。
+    searchMaterials: (query: string) => void;
     // 仿写:对单篇范本触发两段式仿写。本地已入库素材直接带 resource_id;线上未入库笔记
     // 同时直传 selected_notes(供后端先收录拿 id 再仿),满足「范本可追溯」§5。
     imitate: (note: DiscoveryNote) => void;
@@ -505,6 +508,20 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [t],
   );
 
+  // 素材栏搜索:用户在参考素材工作台输入关键词,发一条明确的「只检索参考素材、先别出选题/写文案」
+  // 指令给 agent。agent 走检索工具(本地笔记卡 + 线上),命中的笔记以 discovery 项流回,由
+  // materials 去重累积到工作台(不覆盖已入库记录)。留在 create,不跳屏。这是走 deepagents 工具
+  // 机制的真实检索,不在前端造假 seed 池。
+  const searchMaterials = useCallback(
+    (query: string) => {
+      const q = query.trim();
+      if (!q) return;
+      setSection("create");
+      t.submitText(`帮我检索「${q}」相关的参考素材笔记(本地库 + 线上都找),只把找到的笔记列出来放进参考素材工作台,先不要出选题、也先别写文案。`);
+    },
+    [setSection, t],
+  );
+
   // 仿写:对单篇范本触发两段式仿写(§5)。经 state 直传 selected_reference(权威标识,不经
   // LLM 转写);v2 留在创作屏——仿写流一起,右栏随 status 原地变编辑器,顶部仿写拆解横幅显性
   // 呈现第一段套路,成品在下方编辑器。
@@ -756,6 +773,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       closeEvidence: () => setSelectedEvidence(null),
       respondToInterrupt: t.respondToInterrupt,
       adoptNotes,
+      searchMaterials,
       imitate,
       openDetail: setDetail,
       closeDetail: () => setDetail(null),

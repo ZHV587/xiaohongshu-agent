@@ -117,14 +117,22 @@ function ImitationTeardownBanner() {
 // 三个平行动作(需求 §4,彼此无因果):① 批量收录(勾选框+底部主按钮)② 单张仿写(卡上按钮)。
 // 出选题不在此(智能体独立行为,结果进对话)。已收录卡:显示"已收录"、勾选禁用、仿写仍可点。
 function RefMaterialRail() {
-  const { materials, actions } = useStudio();
+  const { materials, actions, note } = useStudio();
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [query, setQuery] = useState("");
+  const searching = note.status === "writing";
 
   const adoptable = materials.filter((n) => !n.already_local);
   const pickedNotes = adoptable.filter((n) => picked[n.note_id]);
   const savedCount = materials.filter((n) => n.already_local).length;
   const toggle = (id: string) => setPicked((p) => ({ ...p, [id]: !p[id] }));
+  const runSearch = () => {
+    const q = query.trim();
+    if (!q || searching) return;
+    actions.searchMaterials(q);
+    setQuery("");
+  };
   const adopt = () => {
     if (submitting || pickedNotes.length === 0) return;
     setSubmitting(true);
@@ -135,13 +143,30 @@ function RefMaterialRail() {
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border)" }}>
+      <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
         <PanelHead
           icon="layers"
           title="参考素材笔记"
           sub={materials.length ? `线上 + 本地混排 · 共 ${materials.length} 条` : "线上 + 本地混排"}
           right={savedCount > 0 ? <Badge tone="synced" shape="chip">已入库 {savedCount}</Badge> : undefined}
         />
+        {/* 搜索框:发「检索素材」指令给 agent(走检索工具),命中笔记流回累积进工作台。
+            生成中禁用,避免打断当前流。这是真检索,不是本地假 seed 池过滤。 */}
+        <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, background: "var(--input-bg)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-md)", padding: "7px 10px", opacity: searching ? 0.55 : 1 }}>
+            <Icon name="search" size={13} color="var(--text-subtle)" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") runSearch(); }}
+              disabled={searching}
+              placeholder={searching ? "🍠 正在检索…" : "搜索更多参考素材…"}
+              aria-label="搜索参考素材"
+              style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "var(--text-xs)", color: "var(--text-body)" }}
+            />
+          </div>
+          <Button variant="primary" size="sm" disabled={searching || !query.trim()} onClick={runSearch}>搜索</Button>
+        </div>
       </div>
       <div className="cs" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
         {materials.length === 0 ? (
