@@ -54,6 +54,8 @@ TRACE_TOOL_STAGES = {
     "search_local_note_cards": ("retrieve", "检索本地笔记卡"),
     "get_resource": ("retrieve", "打开原文细看"),
     "graph_expand": ("retrieve", "顺着图谱找关联"),
+    "get_operations_data": ("retrieve", "读取运营数据"),
+    "get_resource_performance": ("retrieve", "读取效果表现"),
     "save_generated_topic": ("persist", "保存选题"),
     "save_generated_copy": ("persist", "保存文案"),
     "save_user_feedback": ("persist", "沉淀反馈"),

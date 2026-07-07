@@ -119,6 +119,42 @@ const SUBAGENT_LABELS: Record<string, string> = {
   "persona-distiller": "请风格提炼助手看样本",
   "benchmark-analyst": "请对标分析助手拆爆款",
   "expert-panel-debater": "请专家会商助手给判断",
+  "content-system-ingestor": "请内容入库助手收录素材",
+  "curriculum-designer": "请课程设计助手搭框架",
+  "copywriting-coprocessor": "请文案协处理助手起稿",
+  "imitation-writer": "请仿写助手照范本写成品",
+};
+
+// 步骤一句话意图(按中文 label 键):让「兜底轨道」也像 Claude Code/Codex 那样每步说清
+// "为什么做这一步",而不是只甩一个动作名(黑盒感的主因)。仅补真实工具/委派对应的说明,
+// 不虚构内容;缺失则不显示描述。
+const STEP_DESCRIPTIONS: Record<string, string> = {
+  "按语义找相关素材": "从数据底座按语义相似度召回可用笔记和历史素材",
+  "按关键词补查素材": "用关键词补一轮检索,避免只依赖语义相似的一组",
+  "检索本地笔记卡": "在本地素材库里找能支撑本轮主题的历史笔记",
+  "打开原文细看": "打开候选素材原文,核对关键表达、数据与上下文",
+  "顺着图谱找关联": "沿素材关联图找相邻线索,补单条素材的信息盲区",
+  "保存选题": "把本轮生成的选题沉淀入库,便于后续继续编辑/同步",
+  "保存文案": "把本轮文案草稿沉淀入库",
+  "沉淀反馈": "把用户反馈沉淀下来,供后续学习复用",
+  "沉淀效果指标": "把发布后的效果数据回填沉淀",
+  "同步文案到飞书": "把文案同步到飞书生产线",
+  "同步选题到飞书": "把选题同步到飞书生产线",
+  "同步诊断到飞书": "把诊断结果同步到飞书生产线",
+  "发送审阅通知": "在飞书发起人工审阅通知",
+  "采纳线上笔记": "把线上检索到的可用笔记收录进素材库(可追溯)",
+  "搜索小红书线上": "在线检索小红书,补本地库之外的新鲜样本",
+  "读取运营数据": "读取账号运营数据用于判断",
+  "飞书 CLI 操作": "调用飞书 CLI 执行外部动作",
+  "请知识检索助手查证据": "委派子助手隔离上下文,专门检索并核验证据",
+  "请风格提炼助手看样本": "委派子助手提炼账号既有风格样本",
+  "请对标分析助手拆爆款": "委派子助手拆解对标爆款的套路",
+  "请专家会商助手给判断": "委派多角色专家会商给出判断",
+  "请内容入库助手收录素材": "委派子助手把素材规范化收录入库",
+  "请课程设计助手搭框架": "委派子助手搭内容框架",
+  "请文案协处理助手起稿": "委派子助手起草并打磨文案",
+  "请仿写助手照范本写成品": "委派子助手照范本套路仿写成品",
+  "请子任务助手处理": "委派子助手在隔离上下文中处理这步重活",
 };
 
 export function toolLabel(name: string, args: unknown): string {
@@ -285,7 +321,9 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         allDone = allDone && atoms[j].done;
         j++;
       }
-      steps.push({ label: name, state: allDone ? "done" : "active" });
+      // 兜底轨道也带一句意图说明(有则显示),让每步读起来是"在干什么/为什么",不再是裸动作名。
+      const description = STEP_DESCRIPTIONS[name];
+      steps.push({ label: name, state: allDone ? "done" : "active", ...(description ? { description } : {}) });
       i = j;
     }
     return steps;
@@ -335,6 +373,10 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     // 进度指针:最后一个仍在 active 的步 = 当前步;全部完成 = 停在最后一步。忠实真实事件,不虚构未来步。
     const lastActive = steps.reduce((acc, s, i) => (s.state === "active" ? i : acc), -1);
     const currentStep = steps.length === 0 ? 0 : lastActive >= 0 ? lastActive + 1 : steps.length;
+    // 后端目前不发 run.completed 生命周期事件,presentation.status 会一直停在 "active"。
+    // 但"流是否还在跑"前端已知(context.loading):流结束即本轮思考结束 —— 据此收尾,
+    // 让思考链能干净折叠成「✓ 思考了 Ns · 查了 N 处」,而不是永远显示"正在思考"。
+    const runDone = presentation.status === "done" || context.loading === false;
     out.push({
       kind: "thinking",
       run: {
@@ -342,7 +384,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         logs: presentation.userStages.map((stage) => ({
           text: stage.metricsText ?? stage.summary,
         })),
-        done: presentation.status === "done",
+        done: runDone,
         currentStep,
         totalSteps: steps.length,
         presentation,

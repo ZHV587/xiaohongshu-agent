@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, type CSSProperties, type HTMLAttributes } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type HTMLAttributes } from "react";
 
 /**
- * ThinkingAura — the agent's visible work trace. A
- * breathing coral dot, a stepper of statuses (done / active /
- * pending), and an optional collapsible log of tool/action details.
+ * ThinkingAura — the agent's visible work trace, rendered Claude Code / Codex 式:
+ * 运行中顶部有走秒计时(「正在思考 · Ns」)+ 当前步 spinner + 精确「第 N / M 步」指针;
+ * 每一步逐行冒出,完成后降噪为灰色 ✓ 并展开 描述 / ↳ 结果;整轮结束折叠成单行
+ * 「🍠 ✓ 思考了 Ns · 查了 N 处」,点击可展开完整轨迹。可选「查看做了什么」日志。
  *
- * Faithfully ported 1:1 from 小红书文案助手 Design System/components/content/ThinkingAura.jsx.
+ * 数据由真实后端 trace 流驱动(steps 随事件增长、状态 active→done),本组件只负责把它
+ * 呈现成可读的流式工作轨迹——不自造步骤、不虚构进度。
  */
 type StepState = "done" | "active" | "pending" | "error";
 
@@ -30,9 +32,17 @@ export interface ThinkingAuraProps extends HTMLAttributes<HTMLDivElement> {
   currentStep?: number;
   /** 已知总步数。 */
   totalSteps?: number;
-  /** 整轮是否已结束(全部步骤完成/失败)。用于决定是否显示"进行中"进度指针。 */
+  /** 整轮是否已结束(全部步骤完成/失败)。false=运行中,显示走秒计时与进度指针。 */
   running?: boolean;
 }
+
+const stateColor: Record<StepState, string> = {
+  done: "var(--success)",
+  active: "var(--primary)",
+  pending: "var(--text-subtle)",
+  error: "var(--danger, #e5484d)",
+};
+const stateIcon: Record<StepState, string> = { done: "✓", active: "◐", pending: "○", error: "✕" };
 
 export function ThinkingAura({
   title = "工作轨迹",
@@ -53,9 +63,38 @@ export function ThinkingAura({
   });
   const collapsed = collapsedState.source === defaultCollapsed ? collapsedState.value : defaultCollapsed;
   const setCollapsed = (value: boolean) => setCollapsedState({ source: defaultCollapsed, value });
-  const collapsedTitle = title === "工作轨迹" ? `查完 ${steps.length} 步` : title;
 
+  // ── 走秒计时:像 Claude Code 那样让"思考了多久"可见。运行中每 200ms tick;整轮结束后
+  //    冻结在最后测得的秒数。历史/刷新后加载的已完成轮我们没测到时长 → 秒数为 null,
+  //    折叠摘要只显示"查了 N 处"(绝不编造耗时,遵守真实数据铁律)。 ──
+  // startedAtRef 只在 effect 内读写(不在 render 期读 ref,满足 react-hooks/refs);
+  // 渲染只消费 elapsedSec 这个 state —— 它在计时开始前为 null,故天然区分"从未开始"。
+  const startedAtRef = useRef<number | null>(null);
+  const [elapsedSec, setElapsedSec] = useState<number | null>(null);
+  useEffect(() => {
+    if (!running) return undefined;
+    if (startedAtRef.current == null) startedAtRef.current = Date.now();
+    const tick = () => {
+      const start = startedAtRef.current;
+      if (start != null) setElapsedSec(Math.max(0, Math.round((Date.now() - start) / 1000)));
+    };
+    tick();
+    const id = window.setInterval(tick, 200);
+    return () => window.clearInterval(id);
+  }, [running]);
+
+  // 未开始计时(历史/刷新后加载的已完成轮)elapsedSec 仍为 null → 折叠摘要省略"思考了 Ns"。
+  const measuredSec = elapsedSec;
+  const stepCount = steps.length;
+
+  // 折叠摘要单行:🍠 ✓ 思考了 Ns · 查了 N 处(未测到耗时则省略"思考了 Ns")。
   if (collapsed) {
+    const summary =
+      measuredSec != null
+        ? `思考了 ${measuredSec}s · 查了 ${stepCount} 处`
+        : title && title !== "工作轨迹"
+          ? title
+          : `查了 ${stepCount} 处`;
     return (
       <div
         onClick={() => setCollapsed(false)}
@@ -63,29 +102,20 @@ export function ThinkingAura({
           display: "inline-flex", alignItems: "center", gap: "0.5rem", cursor: "pointer",
           background: "var(--surface-card)", border: "1px solid var(--border-coral)",
           borderRadius: "var(--radius-xl)", boxShadow: "var(--shadow-sm)", padding: "0.5rem 0.75rem",
+          fontFamily: "var(--font-mono)",
         }}
         {...rest}
       >
-        <span style={{ position: "relative", display: "inline-flex", width: 8, height: 8 }}>
-          <span style={{ position: "relative", borderRadius: "var(--radius-full)", width: 8, height: 8, background: "var(--success)" }} />
+        <span style={{ color: "var(--success)", fontWeight: 700 }}>✓</span>
+        <span style={{ fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>
+          🍠 {summary}
         </span>
-        <span style={{ fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-xs)", color: "var(--text-body)" }}>
-          🍠 {collapsedTitle}
-        </span>
-        <span style={{ color: "var(--primary)", fontSize: "var(--text-2xs)" }}>▾</span>
+        <span style={{ color: "var(--text-subtle)", fontSize: "var(--text-2xs)" }}>▾</span>
       </div>
     );
   }
 
-  const stateColor: Record<StepState, string> = {
-    done: "var(--success)",
-    active: "var(--primary)",
-    pending: "var(--text-subtle)",
-    error: "var(--danger, #e5484d)",
-  };
-  const stateIcon: Record<StepState, string> = { done: "✓", active: "◐", pending: "○", error: "✕" };
-  // 精确进度指针:一轮尚未结束(running)且已知步数时,展示"第 N / M 步"——像 Claude Code 那样
-  // 让用户一眼看出智能体正卡在第几步(忠实已发生的步骤,未运行的步不虚构总数)。
+  // 精确进度指针:运行中且已知步数时,展示"第 N / M 步"(忠实真实事件,不虚构未来步)。
   const showProgress = running && totalSteps > 0 && currentStep > 0;
 
   return (
@@ -102,12 +132,20 @@ export function ThinkingAura({
       {...rest}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-          <span style={{ position: "relative", display: "inline-flex", width: 10, height: 10 }}>
-            <span style={{ position: "absolute", inset: 0, borderRadius: "var(--radius-full)", background: "var(--primary)", animation: "xhs-ping 1.4s var(--ease-out) infinite" }} />
-            <span style={{ position: "relative", borderRadius: "var(--radius-full)", width: 10, height: 10, background: "var(--primary)" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", minWidth: 0 }}>
+          <span style={{ position: "relative", display: "inline-flex", width: 10, height: 10, flexShrink: 0 }}>
+            {running && (
+              <span style={{ position: "absolute", inset: 0, borderRadius: "var(--radius-full)", background: "var(--primary)", animation: "xhs-ping 1.4s var(--ease-out) infinite" }} />
+            )}
+            <span style={{ position: "relative", borderRadius: "var(--radius-full)", width: 10, height: 10, background: running ? "var(--primary)" : "var(--success)" }} />
           </span>
-          <span style={{ fontFamily: "var(--font-sans)", fontWeight: "var(--weight-bold)" as CSSProperties["fontWeight"], fontSize: "var(--text-xs)", color: "var(--text-body)" }}>{title}</span>
+          <span style={{ fontWeight: "var(--weight-bold)" as CSSProperties["fontWeight"], fontSize: "var(--text-xs)", color: "var(--text-body)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {running ? "正在思考" : title}
+          </span>
+          {/* 走秒计时:运行中显示已思考多少秒(Claude Code 式)。 */}
+          {running && measuredSec != null && (
+            <span className="font-tabular" style={{ flexShrink: 0, fontSize: "var(--text-2xs)", color: "var(--text-subtle)" }}>· {measuredSec}s</span>
+          )}
           {showProgress && (
             <span
               className="font-tabular"
@@ -121,32 +159,46 @@ export function ThinkingAura({
             </span>
           )}
         </div>
-        {logs && (
-          <button
-            onClick={() => setOpen((o) => !o)}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-2xs)", display: "inline-flex", alignItems: "center", gap: "0.2rem" }}
-          >
-            {open ? "收起记录 ▴" : "查看做了什么 ▾"}
-          </button>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
+          {logs && (
+            <button
+              onClick={() => setOpen((o) => !o)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontWeight: "var(--weight-semibold)" as CSSProperties["fontWeight"], fontSize: "var(--text-2xs)", display: "inline-flex", alignItems: "center", gap: "0.2rem" }}
+            >
+              {open ? "收起记录 ▴" : "查看做了什么 ▾"}
+            </button>
+          )}
+          {/* 已完成时给一个收起入口,折叠成单行摘要。 */}
+          {!running && (
+            <button
+              onClick={() => setCollapsed(true)}
+              aria-label="收起工作轨迹"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)", fontSize: "var(--text-2xs)", display: "inline-flex", alignItems: "center" }}
+            >
+              收起 ▴
+            </button>
+          )}
+        </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+      {/* 步骤列 —— 左侧描边模拟流式轨迹;每步逐行呈现,当前步 spinner,完成步灰色 ✓ + 描述 + ↳ 结果。 */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", paddingLeft: "0.4rem", borderLeft: "2px solid var(--border)" }}>
         {steps.map((s, i) => {
           const st: StepState = s.state || "pending";
           return (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "14px 1fr", columnGap: "0.5rem", rowGap: "0.25rem", fontSize: "var(--text-xs)" }}>
+            <div key={i} className="fade-up" style={{ display: "grid", gridTemplateColumns: "14px 1fr", columnGap: "0.5rem", rowGap: "0.25rem", fontSize: "var(--text-xs)" }}>
               <span style={{ width: 14, textAlign: "center", display: "inline-block", color: stateColor[st], animation: st === "active" ? "spin 1.4s linear infinite" : "none" }}>{stateIcon[st]}</span>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", minWidth: 0 }}>
-                <span style={{ color: stateColor[st], fontWeight: (st === "active" ? "var(--weight-semibold)" : "var(--weight-bold)") as CSSProperties["fontWeight"] }}>{s.label}</span>
+                <span style={{ color: st === "done" ? "var(--text-muted)" : stateColor[st], fontWeight: (st === "active" ? "var(--weight-semibold)" : "var(--weight-bold)") as CSSProperties["fontWeight"] }}>{s.label}</span>
                 {s.description && (
-                  <span style={{ color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>
+                  <span style={{ color: "var(--text-subtle)", lineHeight: "var(--leading-relaxed)" }}>
                     {s.description}
                   </span>
                 )}
                 {s.result && (
-                  <span style={{ color: "var(--text-body)", lineHeight: "var(--leading-relaxed)", background: "var(--oats-light)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "0.35rem 0.5rem" }}>
-                    结果：{s.result}
+                  <span style={{ color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)", display: "inline-flex", gap: "0.35rem" }}>
+                    <span style={{ color: "var(--text-subtle)", flexShrink: 0 }}>↳</span>
+                    <span>{s.result}</span>
                   </span>
                 )}
               </div>
@@ -170,7 +222,7 @@ export function ThinkingAura({
             background: "var(--oats-light)",
             borderRadius: "var(--radius-sm)",
             padding: "0.6rem",
-            maxHeight: 140,
+            maxHeight: 160,
             overflowY: "auto",
           }}
         >

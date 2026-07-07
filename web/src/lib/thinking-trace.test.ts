@@ -81,7 +81,10 @@ test("tool call without ToolMessage is active", () => {
   const tl = deriveTimeline([human("出选题"), aiCall("c1", "semantic_search_resources", { query: "露营" })]);
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
-  assert.deepEqual(thinking.run.steps, [{ label: "按语义找相关素材", state: "active" }]);
+  // 兜底轨道现在给每步补一句意图说明(Claude Code/Codex 式,消除黑盒感),故断言含 description。
+  assert.deepEqual(thinking.run.steps, [
+    { label: "按语义找相关素材", state: "active", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
+  ]);
   assert.equal(thinking.run.done, false);
 });
 
@@ -94,7 +97,9 @@ test("tool call with matching ToolMessage is done", () => {
   ]);
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
-  assert.deepEqual(thinking.run.steps, [{ label: "按语义找相关素材", state: "done" }]);
+  assert.deepEqual(thinking.run.steps, [
+    { label: "按语义找相关素材", state: "done", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
+  ]);
   assert.equal(thinking.run.done, true);
 });
 

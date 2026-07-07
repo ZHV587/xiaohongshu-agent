@@ -50,9 +50,16 @@ test("ThinkingAura renders step purpose and result details", () => {
 });
 
 test("ThinkingAura renders a collapsed summary with step count", () => {
-  // 摘要头显示「查完 N 步」,N 来自 steps.length
-  assert.match(src, /查完/);
+  // Claude Code / Codex 式折叠摘要:「✓ 思考了 Ns · 查了 N 处」,N 来自 steps.length。
+  assert.match(src, /查了/);
+  assert.match(src, /思考了/);
   assert.match(src, /steps\.length/);
+});
+
+test("ThinkingAura shows a live elapsed timer while running", () => {
+  // 运行中走秒计时(Claude Code 式「正在思考 · Ns」),数据来自 setInterval 测得的真实秒数。
+  assert.match(src, /正在思考/);
+  assert.match(src, /setInterval/);
 });
 
 test("collapsed state is toggleable", () => {
