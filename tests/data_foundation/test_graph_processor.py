@@ -45,6 +45,8 @@ def test_process_merges_node_and_its_edges():
     graph.merge_node.assert_called_once()
     graph.merge_edge.assert_called_once()
     assert graph.merge_edge.call_args.kwargs["edge_type"] == "derived_from"
+    # 占位节点补 tenant 的前提:处理器必须把 outbox item 的 tenant 传给 merge_edge。
+    assert graph.merge_edge.call_args.kwargs["tenant_id"] == "default"
 
 
 def test_process_deletes_node_when_resource_gone():

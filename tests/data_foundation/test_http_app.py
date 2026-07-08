@@ -73,6 +73,7 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
 
     registry = FakeRegistry()
     monkeypatch.setenv("FEISHU_APP_ID", "seed")  # lifespan 投影会写 os.environ,setenv 以便 teardown 回滚
+    monkeypatch.setattr(http_app, "_run_startup_migrations", lambda: None)  # lifespan 现在启动即迁移,单测不连真库
     monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
     monkeypatch.setattr(http_app, "shutdown_grace_seconds", lambda: 7)
     monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: registry)
@@ -133,6 +134,7 @@ async def test_http_app_lifespan_skips_align_when_no_snapshot(monkeypatch):
             return True
 
     registry = FakeRegistry()
+    monkeypatch.setattr(http_app, "_run_startup_migrations", lambda: None)  # lifespan 现在启动即迁移,单测不连真库
     monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
     monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: registry)
     monkeypatch.setattr(http_app, "build_model_health_probe", lambda reg: FakeProbe())

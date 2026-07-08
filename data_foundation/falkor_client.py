@@ -79,16 +79,22 @@ class FalkorResourceGraph:
         )
 
     def merge_edge(self, *, source_id: str, target_id: str, edge_type: str,
-                   weight: float, properties: dict[str, Any]) -> None:
-        # source 节点应已 merge_node;target 仅占位 MERGE(后续其任务补属性)
+                   weight: float, properties: dict[str, Any], tenant_id: str) -> None:
+        # source 节点应已 merge_node;target 仅占位 MERGE(后续其任务补属性)。
+        # 占位节点必须立刻带上 tenant_id:expand/count 全部按 tenant 过滤,没有 tenant 的
+        # 占位节点在其补属性任务跑完前是"隐形"的 —— 无向遍历也永远召不回(线上曾积累 12 个)。
+        # ON CREATE SET 只在新建时写,不会覆盖已 merge_node 节点的真实属性。
         self.graph.query(
             """
             MERGE (s:Resource {id: $sid})
+            ON CREATE SET s.tenant_id = $tenant
             MERGE (t:Resource {id: $tid})
+            ON CREATE SET t.tenant_id = $tenant
             MERGE (s)-[e:REL {edge_type: $etype}]->(t)
             SET e.weight = $weight
             """,
-            {"sid": source_id, "tid": target_id, "etype": edge_type, "weight": weight},
+            {"sid": source_id, "tid": target_id, "etype": edge_type, "weight": weight,
+             "tenant": tenant_id},
         )
 
     def delete_node(self, resource_id: str) -> None:

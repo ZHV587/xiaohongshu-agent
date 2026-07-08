@@ -9,6 +9,13 @@ from data_foundation.repositories.base import BaseRepository
 from data_foundation.models import Resource, RuntimeIdentityConfig
 from data_foundation.outbox_requests import default_write_requests
 
+
+def hnsw_ef_search_width(top_k: int) -> int:
+    """语义检索的 HNSW 召回宽度:按 top_k 放宽(4×),下限 64(pgvector 默认 40 偏窄)、
+    上限 400(兜住极端 top_k 的查询开销)。独立成纯函数,便于对边界值做单测。"""
+    return min(400, max(64, int(top_k) * 4))
+
+
 class ResourceRepository(BaseRepository):
     def upsert_resource(
         self,
@@ -539,7 +546,9 @@ class ResourceRepository(BaseRepository):
         # 的候选头寸)时,默认 40 会让候选池在近邻图上过早收敛、召回不足。按 top_k 放宽 ef_search
         # (且 ef_search 需 ≥ limit),让候选真正取满再交给 rank_evidence 精排 —— 直接提召回。
         # 上限 400 兜住极端 top_k 的查询开销。连接非 autocommit,SET LOCAL 作用于本次隐式事务。
-        ef_search = min(400, max(64, int(top_k) * 4))
+        # 注意:该参数只对 HNSW 索引生效 —— schema.sql 的条件升级块负责 ivfflat→HNSW,
+        # 且 http_app 启动时显式跑迁移保证生产已升级(否则这里是 no-op 死代码)。
+        ef_search = hnsw_ef_search_width(top_k)
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 # 作为事务内首条语句设置,仅本事务生效,不污染连接池上后续查询。

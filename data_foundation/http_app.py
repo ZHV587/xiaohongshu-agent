@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -56,6 +57,22 @@ def _resolve_model_registry():
     return model_registry
 
 
+def _run_startup_migrations() -> None:
+    """启动即迁移:对生产库执行 schema.sql(全量幂等:create ... if not exists / drop if exists /
+    upsert 重算,含 ivfflat→HNSW 向量索引的条件升级块)。
+
+    根因:run_migrations 此前在整个代码库没有任何运行时/部署调用点(只有测试用),
+    生产 schema 与 schema.sql 静默漂移 —— HNSW 升级块从未执行,向量检索仍走 ivfflat
+    (probes 默认 1,每次只扫约 1% 向量),`SET LOCAL hnsw.ef_search` 一直是死代码,
+    "放宽召回"在生产上是 no-op。启动时显式跑迁移,让 schema.sql 成为唯一权威来源;
+    失败直接上抛中断启动(带病运行比启动失败更难排查)。
+    """
+    from data_foundation import db
+
+    with db.connect() as conn:
+        db.run_migrations(conn)
+
+
 async def ok(_request):
     return JSONResponse({"ok": True})
 
@@ -70,6 +87,9 @@ async def lifespan(app: Starlette):
         # 启动即校验单进程不变量:>1 worker 会让 os.environ 冷启动对齐/模型池热重载在 worker
         # 间分裂。放在最前,误配立即失败而非带病运行。
         _assert_single_worker()
+        # 迁移先于一切组件:supervisor/检索都假设 schema 与 schema.sql 一致。
+        # 同步 psycopg 调用卸到线程,不阻塞事件循环(首次建 HNSW 索引可能要数十秒)。
+        await asyncio.to_thread(_run_startup_migrations)
         supervisor = build_supervisor()
         await supervisor.start()
         runtime_snapshot = create_runtime_snapshot(supervisor)

@@ -68,5 +68,6 @@ class GraphProcessor:
                 source_id=e["source_resource_id"], target_id=e["target_resource_id"],
                 edge_type=e["edge_type"], weight=float(e["weight"] or 1.0),
                 properties=dict(e["properties"] or {}),
+                tenant_id=item.tenant_id,
             )
         return ProcessResult(status="succeeded")
