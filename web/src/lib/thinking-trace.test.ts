@@ -43,6 +43,8 @@ const human = (text: string): Message => ({ id: "h", type: "human", content: tex
 const aiText = (text: string): Message => ({ id: "a", type: "ai", content: text, tool_calls: [] } as unknown as Message);
 const aiCall = (id: string, name: string, args: Record<string, unknown> = {}): Message =>
   ({ id, type: "ai", content: "", tool_calls: [{ id, name, args }] } as unknown as Message);
+const aiCallWithText = (id: string, text: string, name: string, args: Record<string, unknown> = {}): Message =>
+  ({ id, type: "ai", content: text, tool_calls: [{ id, name, args }] } as unknown as Message);
 const toolMsg = (callId: string): Message =>
   ({ id: "t" + callId, type: "tool", tool_call_id: callId, content: "ok" } as unknown as Message);
 // write_todos 规划调用:content 空,tool_calls 带 todos 数组(智能体写的工作流阶段计划)。
@@ -62,7 +64,7 @@ test("write_todos plan renders as the primary workflow-phase track (generic phas
       { content: "产出候选选题", status: "pending" },
     ]),
     toolMsg("p1"),
-    aiCall("c1", "search_local_note_cards", { keyword: "职场穿搭" }),
+    aiCallWithText("c1", "我先从本地库检索能支撑这个方向的爆款素材。", "search_local_note_cards", { keyword: "职场穿搭" }),
     toolMsgResults("c1", 4),
     aiText("给你几个选题方向"),
   ], { loading: true });
@@ -71,15 +73,22 @@ test("write_todos plan renders as the primary workflow-phase track (generic phas
   // 思考链主轴是工作流阶段(智能体真实计划),不是工具名。
   assert.deepEqual(
     thinking.run.steps.map((s) => s.label),
-    ["理解需求", "检索爆款素材依据", "拆解共性套路", "产出候选选题"],
+    ["理解需求", "检索爆款素材依据"],
+    "pending 阶段尚未执行，不提前预列",
   );
   assert.deepEqual(
     thinking.run.steps.map((s) => s.state),
-    ["done", "active", "pending", "pending"],
+    ["done", "active"],
   );
+  assert.equal(thinking.run.steps[1].description, "我先从本地库检索能支撑这个方向的爆款素材。");
   // 命中数归到"命中它时正 in_progress 的阶段"作结果行。
   assert.equal(thinking.run.steps[1].result, "命中 4 条相关素材");
   assert.equal(thinking.run.currentStep, 2, "当前步 = 唯一 in_progress 的第 2 步");
+  assert.ok(
+    thinking.run.logs.some((log) => log.text.includes("检索本地笔记卡")),
+    "真实工具调用保留在同一个轨迹框的可展开记录中",
+  );
+  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "ai"]);
 });
 
 test("workflow track suppresses the fallback tool track (only one thinking item, phases not tools)", () => {
@@ -223,7 +232,7 @@ test("official trace maps each step's real state and points at the current step 
   assert.equal(thinking.run.currentStep, 3);
 });
 
-test("tool call with progress prose flushes the trace before the prose lands", () => {
+test("tool-call progress prose stays inside the trace; only the final answer becomes an ai bubble", () => {
   const tl = deriveTimeline([
     human("出选题"),
     {
@@ -236,13 +245,67 @@ test("tool call with progress prose flushes the trace before the prose lands", (
   ]);
   assert.deepEqual(
     tl.map((item) => item.kind),
-    ["user", "thinking", "ai", "ai"],
-    "the work trace streams above; progress prose and the final answer land below it",
+    ["user", "thinking", "ai"],
+    "过程旁白归入工作轨迹，正式答复才落普通气泡",
   );
   const thinking = tl[1];
   assert.ok(thinking.kind === "thinking");
   assert.equal(thinking.run.done, true);
   assert.equal(thinking.run.steps[0].label, "按语义找相关素材");
+  assert.equal(thinking.run.steps[0].description, "我先检索相关素材作为选题依据。");
+  assert.ok(thinking.run.logs.some((log) => log.text === "我先检索相关素材作为选题依据。"));
+  const answer = tl[2];
+  assert.ok(answer.kind === "ai" && answer.text === "这是最终选题建议");
+});
+
+test("standalone progress prose before a later tool call also stays inside the single trace", () => {
+  const tl = deriveTimeline([
+    human("出选题"),
+    aiText("本地库暂时没有强相关内容，我再扩大关键词范围补一轮。"),
+    aiCall("c1", "search_xhs_online", { keyword: "职场通勤" }),
+    toolMsg("c1"),
+    aiText("这是最终选题建议"),
+  ]);
+  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "ai"]);
+  const thinking = tl[1];
+  assert.ok(thinking.kind === "thinking");
+  assert.equal(
+    thinking.run.steps[0].description,
+    "本地库暂时没有强相关内容，我再扩大关键词范围补一轮。",
+  );
+  assert.ok(
+    thinking.run.logs.some((log) => log.text === "本地库暂时没有强相关内容，我再扩大关键词范围补一轮。"),
+  );
+});
+
+test("completed todo workflow reveals every stage and keeps all process prose inside one trace", () => {
+  const tl = deriveTimeline([
+    human("出选题"),
+    aiTodos("p1", [
+      { content: "理解需求", status: "completed" },
+      { content: "检索爆款素材依据", status: "in_progress" },
+      { content: "产出候选选题", status: "pending" },
+    ]),
+    toolMsg("p1"),
+    aiCallWithText("c1", "正在检索高互动素材。", "search_local_note_cards", { keyword: "职场穿搭" }),
+    toolMsgResults("c1", 3),
+    aiTodos("p2", [
+      { content: "理解需求", status: "completed" },
+      { content: "检索爆款素材依据", status: "completed" },
+      { content: "产出候选选题", status: "completed" },
+    ]),
+    toolMsg("p2"),
+    aiText("最终给你三个方向"),
+  ]);
+  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "ai"]);
+  const thinking = tl[1];
+  assert.ok(thinking.kind === "thinking");
+  assert.deepEqual(
+    thinking.run.steps.map((step) => step.label),
+    ["理解需求", "检索爆款素材依据", "产出候选选题"],
+  );
+  assert.ok(thinking.run.steps.every((step) => step.state === "done"));
+  assert.equal(thinking.run.done, true);
 });
 
 // ── live 路径回归(此前的"黑盒"根因):trace 事件到达 store 时,官方轨道必须当场流式可见 ──

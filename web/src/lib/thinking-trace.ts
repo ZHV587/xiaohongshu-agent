@@ -262,6 +262,46 @@ function hasCJK(text: string): boolean {
   return CJK_RE.test(text);
 }
 
+function toolCallsOf(message: Message): ToolCall[] {
+  if (message.type !== "ai") return [];
+  return ((message as { tool_calls?: ToolCall[] }).tool_calls ?? []).filter(
+    (call) => call && typeof call.name === "string",
+  );
+}
+
+/**
+ * DeepAgents 的 ReAct 回合会产生两类 AI 文本：
+ * 1. 调工具前/工具之间的过程说明；
+ * 2. 所有工具结束后的正式答复。
+ *
+ * LangGraph 消息本身没有另造一个“progress”角色，可靠边界是工具调用：
+ * 当前消息带 tool_calls，或本轮后面仍有 AI tool_calls → 过程说明；
+ * 后面再无工具调用 → 正式答复。
+ */
+function isProcessNarration(turnMessages: Message[], index: number): boolean {
+  if (turnMessages[index]?.type !== "ai") return false;
+  if (toolCallsOf(turnMessages[index]).length > 0) return true;
+  for (let i = index + 1; i < turnMessages.length; i++) {
+    if (toolCallsOf(turnMessages[i]).length > 0) return true;
+  }
+  return false;
+}
+
+function compactNarration(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length > 72 ? `${compact.slice(0, 72)}…` : compact;
+}
+
+function processNarrations(turnMessages: Message[]): string[] {
+  const narrations: string[] = [];
+  for (let i = 0; i < turnMessages.length; i++) {
+    if (!isProcessNarration(turnMessages, i)) continue;
+    const prose = proseOf(turnMessages[i].content);
+    if (prose && hasCJK(prose)) narrations.push(prose);
+  }
+  return narrations;
+}
+
 // 从 AI 消息里提取 xhs_panel 意图分流按钮(§2);无则空数组。合并所有 panel 段的 actions。
 function panelOf(content: Message["content"]): PanelAction[] {
   const raw = getContentString(content);
@@ -380,23 +420,50 @@ function buildTodoRun(
   let latest: TodoItem[] | null = null;
   let currentPhase = ""; // 当前 in_progress 阶段的 content
   const resultsByPhase = new Map<string, number>();
+  const narrationsByPhase = new Map<string, string[]>();
+  const logs: ThinkingLog[] = [];
+  const toolNameByCallId = new Map<string, string>();
 
-  for (const m of turnMsgs) {
+  for (let messageIndex = 0; messageIndex < turnMsgs.length; messageIndex++) {
+    const m = turnMsgs[messageIndex];
     if (m.type === "ai") {
-      for (const c of ((m as { tool_calls?: ToolCall[] }).tool_calls ?? [])) {
-        if (c && c.name === "write_todos") {
+      const calls = toolCallsOf(m);
+      for (const c of calls) {
+        if (c.id) toolNameByCallId.set(c.id, c.name);
+        if (c.name === "write_todos") {
           const todos = parseTodos(c.args);
           if (todos) {
             latest = todos;
             currentPhase = todos.find((t) => t.status === "in_progress")?.content ?? currentPhase;
           }
+          continue;
+        }
+        const label = toolLabel(c.name, c.args);
+        logs.push({ text: WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args) });
+      }
+      if (isProcessNarration(turnMsgs, messageIndex)) {
+        const narration = proseOf(m.content);
+        if (narration && hasCJK(narration)) {
+          // 正常情况取当前 in_progress 阶段；模型刚把所有阶段标完、但仍有收尾工具时，
+          // 归到最后一个已完成阶段，确保过程说明仍留在同一个小框里。
+          const phase =
+            currentPhase ||
+            latest?.find((item) => item.status === "in_progress")?.content ||
+            [...(latest ?? [])].reverse().find((item) => item.status === "completed")?.content ||
+            latest?.[0]?.content ||
+            "";
+          if (phase) {
+            narrationsByPhase.set(phase, [...(narrationsByPhase.get(phase) ?? []), narration]);
+          }
+          logs.push({ text: narration });
         }
       }
     }
     if (m.type === "tool") {
       const cid = (m as { tool_call_id?: string }).tool_call_id;
-      // 只在有明确"进行中阶段"时归属命中数,不硬凑;工具名由外层 toolNameById 提供。
-      if (cid && currentPhase) {
+      const toolName = cid ? toolNameByCallId.get(cid) : undefined;
+      // 只统计真实检索/发现工具，避免其它返回 {results:[]} 的工具被误算成素材命中数。
+      if (cid && toolName && COUNTABLE_TOOLS.has(toolName) && currentPhase) {
         const n = countResults(m.content);
         if (n != null) resultsByPhase.set(currentPhase, (resultsByPhase.get(currentPhase) ?? 0) + n);
       }
@@ -405,21 +472,25 @@ function buildTodoRun(
 
   if (!latest) return null;
 
-  const steps: ThinkingStep[] = latest.map((t) => {
-    const state: ThinkingStep["state"] = t.status === "completed" ? "done" : t.status === "in_progress" ? "active" : "pending";
+  // 参考设计的流式契约是“逐行追加，不预列待办”：pending 阶段尚未发生，不提前展示。
+  const visibleTodos = latest.filter((item) => item.status !== "pending");
+  const steps: ThinkingStep[] = visibleTodos.map((t) => {
+    const state: ThinkingStep["state"] = t.status === "completed" ? "done" : "active";
     const hit = resultsByPhase.get(t.content);
+    const narrations = narrationsByPhase.get(t.content) ?? [];
+    const description = narrations.length ? compactNarration(narrations[narrations.length - 1]) : undefined;
     return {
       label: t.content,
       state,
+      ...(description ? { description } : {}),
       ...(hit != null ? { result: `命中 ${hit} 条相关素材` } : {}),
     };
   });
   const lastActive = steps.reduce((acc, s, i) => (s.state === "active" ? i : acc), -1);
-  const allDone = steps.every((s) => s.state === "done");
   const currentStep = steps.length === 0 ? 0 : lastActive >= 0 ? lastActive + 1 : steps.length;
   // 收尾口径同官方轨道:全阶段 completed∥历史回合∥最后一轮且流已停。
-  const done = allDone || !turnIsLast || loading === false;
-  return { steps, logs: [], done, currentStep, totalSteps: steps.length };
+  const done = latest.every((item) => item.status === "completed") || !turnIsLast || loading === false;
+  return { steps, logs, done, currentStep, totalSteps: steps.length };
 }
 
 export function deriveTimeline(messages: Message[], context: TimelineContext = {}): TimelineItem[] {
@@ -451,9 +522,10 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   }
 
   // 一轮内累积的原子步骤记录(渲染前折叠)。
-  type Atom = { name: string; state: "done" | "active" | "error" };
+  type Atom = { name: string; state: "done" | "active" | "error"; description?: string };
   let atoms: Atom[] = [];
   let logs: ThinkingLog[] = [];
+  let queuedNarration: string | undefined;
   let runOpen = false;
   // 当前回合是否有官方 trace 轨道(逐轮判断,不再全局一刀切:
   // 只压制「匹配到 presentation 的那一轮」的兜底轨道,其余轮照常显示)。
@@ -470,14 +542,16 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       const name = atoms[i].name;
       let hasError = atoms[i].state === "error";
       let allDone = atoms[i].state !== "active";
+      let narration = atoms[i].description;
       let j = i + 1;
       while (j < atoms.length && atoms[j].name === name) {
         hasError = hasError || atoms[j].state === "error";
         allDone = allDone && atoms[j].state !== "active";
+        narration = atoms[j].description ?? narration;
         j++;
       }
       // 兜底轨道也带一句意图说明(有则显示),让每步读起来是"在干什么/为什么",不再是裸动作名。
-      const description = STEP_DESCRIPTIONS[name];
+      const description = narration ?? STEP_DESCRIPTIONS[name];
       const state: ThinkingStep["state"] = hasError ? "error" : allDone ? "done" : "active";
       steps.push({ label: name, state, ...(description ? { description } : {}) });
       i = j;
@@ -501,6 +575,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   const resetRun = () => {
     atoms = [];
     logs = [];
+    queuedNarration = undefined;
     runOpen = false;
   };
 
@@ -517,12 +592,22 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   // 官方轨道:turn_id 契约 = 本轮 human 消息 id(前端 submit 时写入 configurable.turn_id,
   // 后端 agent_trace._config_identity 原样采用)。在 user 项之后立即挂出 —— 像 Claude Code /
   // Codex 一样,工作轨迹在回答上方流式展开,不依赖 prose 是否已产出。
-  const appendOfficialTrace = (presentation: TracePresentation, turnIsLast: boolean) => {
+  const appendOfficialTrace = (
+    presentation: TracePresentation,
+    turnMessages: Message[],
+    turnIsLast: boolean,
+  ) => {
+    const narrations = processNarrations(turnMessages);
+    const lastNarration = narrations.length ? compactNarration(narrations[narrations.length - 1]) : undefined;
+    const lastActiveIndex = presentation.userStages.reduce(
+      (acc, stage, index) => (stage.state === "active" ? index : acc),
+      -1,
+    );
     // 逐步映射每一步的真实状态(stage.state 来自该步终态事件),不再用 run 级状态一刀切。
-    const steps: ThinkingStep[] = presentation.userStages.map((stage) => ({
+    const steps: ThinkingStep[] = presentation.userStages.map((stage, index) => ({
       label: stage.title,
       state: stage.state === "error" ? "error" : stage.state, // done | active | error
-      description: stage.intent,
+      description: index === lastActiveIndex && lastNarration ? lastNarration : stage.intent,
       result: stage.resultText,
     }));
     // 进度指针:最后一个仍在 active 的步 = 当前步;全部完成 = 停在最后一步。忠实真实事件,不虚构未来步。
@@ -537,9 +622,12 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       kind: "thinking",
       run: {
         steps,
-        logs: presentation.userStages.map((stage) => ({
-          text: stage.metricsText ?? stage.summary,
-        })),
+        logs: [
+          ...presentation.userStages.map((stage) => ({
+            text: stage.metricsText ?? stage.summary,
+          })),
+          ...narrations.map((text) => ({ text })),
+        ],
         done: runDone,
         currentStep,
         totalSteps: steps.length,
@@ -575,16 +663,25 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       turnHasOfficial = !!presentation && presentation.userStages.length > 0;
       turnHasWorkflow = turnHasOfficial;
       if (presentation && turnHasOfficial) {
-        appendOfficialTrace(presentation, i === lastHumanIdx);
+        appendOfficialTrace(presentation, turnMsgs, i === lastHumanIdx);
       }
       continue;
     }
     if (m.type === "ai") {
       runOpen = true;
-      const calls = ((m as { tool_calls?: ToolCall[] }).tool_calls ?? []).filter(
-        (c) => c && typeof c.name === "string",
-      );
+      const calls = toolCallsOf(m);
+      let nextHumanIdx = messages.length;
+      for (let k = i + 1; k < messages.length; k++) {
+        if (messages[k].type === "human") { nextHumanIdx = k; break; }
+      }
+      const turnTail = messages.slice(i, nextHumanIdx);
+      const rawProse = proseOf(m.content);
+      const prose = hasCJK(rawProse) ? rawProse : "";
+      const processNarration = isProcessNarration(turnTail, 0);
+      const narration = processNarration && prose ? compactNarration(prose) : undefined;
+      if (processNarration && narration && calls.length === 0) queuedNarration = narration;
       if (!turnHasWorkflow) {
+        let narrationAttached = false;
         for (const c of calls) {
           // write_todos 是规划工具(它产出的阶段计划已由工作流轨道单独渲染),不作为兜底工具步。
           if (c.name === "write_todos") continue;
@@ -594,17 +691,27 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
             : c.id && answered.has(c.id)
               ? "done"
               : "active";
-          atoms.push({ name: label, state });
+          atoms.push({
+            name: label,
+            state,
+            // 同一条 AI 消息并行调用多个工具时只挂一次过程说明，避免重复刷屏。
+            ...(!narrationAttached && (narration || queuedNarration)
+              ? { description: narration ?? queuedNarration }
+              : {}),
+          });
+          narrationAttached = true;
+          queuedNarration = undefined;
           // 写类工具只存中文 label,不回显 payload;task 按读类处理(args 无凭证)。
           const logText = WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args);
           logs.push({ text: logText });
         }
+        if (processNarration && prose) logs.push({ text: prose });
       }
       // 纯英文 prose 是子代理/模型的英文脚手架旁白(过程噪声),既不落轨迹也不进对话流:
       // 保持 run 打开,让后续工具继续累积到同一条思考链——不因一句英文旁白把轨迹提前切断。
-      const rawProse = proseOf(m.content);
-      const prose = hasCJK(rawProse) ? rawProse : "";
-      if (prose) {
+      // 中文过程旁白同样属于 deepagents 的工作过程，只进入轨迹；本轮最后一条、后面已无
+      // 工具调用的中文文本才是正式答复气泡。
+      if (prose && !processNarration) {
         // 兜底轨道在回答落地前先落轨迹(user → thinking → ai),与官方轨道的呈现次序一致,
         // 也与 Claude Code / Codex 的"先看到过程、再看到答案"一致。
         flushRun();
@@ -617,7 +724,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         }
       }
       // 意图分流按钮(§2):xhs_panel 块 → 可点选项 timeline 项(紧跟在 prose 后)。
-      const panelActions = panelOf(m.content);
+      const panelActions = processNarration ? [] : panelOf(m.content);
       if (panelActions.length) {
         out.push({ kind: "panel", actions: panelActions });
       }
