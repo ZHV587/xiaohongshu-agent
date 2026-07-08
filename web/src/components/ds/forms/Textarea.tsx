@@ -7,7 +7,8 @@ import { useState, type CSSProperties, type ReactNode, type Ref, type TextareaHT
  * Input. Optional footer slot for char-count / actions, matching
  * the workbench composer and the in-place note editor.
  *
- * Faithfully ported 1:1 from 小红书文案助手 Design System/components/forms/Textarea.jsx.
+ * 对齐总设计 bug/设计稿/creation.html 的 composer 版式:输入盒常态用 --border-strong,
+ * 润色/发送等 footer 动作与文本同盒、无分隔条(旧 DS 原型的 borderTop + oats-light 已按设计稿移除)。
  */
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   footer?: ReactNode;
@@ -34,7 +35,7 @@ export function Textarea({
         display: "flex",
         flexDirection: "column",
         background: "var(--surface-card)",
-        border: `1px solid ${invalid ? "var(--primary)" : focus ? "var(--primary)" : "var(--border)"}`,
+        border: `1px solid ${invalid ? "var(--primary)" : focus ? "var(--primary)" : "var(--border-strong)"}`,
         borderRadius: "var(--radius-lg)",
         boxShadow: focus ? "var(--ring-focus)" : "var(--shadow-xs)",
         overflow: "hidden",
@@ -75,8 +76,6 @@ export function Textarea({
             justifyContent: "space-between",
             gap: "0.5rem",
             padding: "0.5rem 0.75rem",
-            borderTop: "1px solid var(--border)",
-            background: "var(--oats-light)",
           }}
         >
           {footer}

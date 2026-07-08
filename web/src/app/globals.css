@@ -319,9 +319,11 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   --font-sans:
-    "Inter", -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC",
-    system-ui, sans-serif;
-  --font-display: "Outfit", -apple-system, "PingFang SC", sans-serif;
+    "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-display:
+    "Outfit", -apple-system, "PingFang SC", "Microsoft YaHei",
+    "Noto Sans SC", sans-serif;
 }
 
 /* Custom scrollbars for oats/coral theme */
@@ -467,7 +469,7 @@
 @keyframes xhs-ping {
   75%,
   100% {
-    transform: scale(2);
+    transform: scale(2.2);
     opacity: 0;
   }
 }
@@ -636,6 +638,29 @@
 }
 .fade-up {
   animation: fadeUp 0.3s var(--ease-out) both;
+}
+/* 右栏素材栏 ↔ 编辑器两态切换的入场(CreationScreen/DeepEditor)。沿用设计稿 fadeUp 动效体系。 */
+.pane-in {
+  animation: fadeUp 0.3s var(--ease-out) both;
+}
+/* 选题卡等网格入场:逐卡 60ms 级联(设计稿 assets/tokens.css .stagger 原样搬运)。 */
+.stagger > * {
+  animation: fadeUp 0.34s var(--ease-out) both;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 60ms;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 120ms;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 180ms;
+}
+.stagger > *:nth-child(5) {
+  animation-delay: 240ms;
+}
+.stagger > *:nth-child(6) {
+  animation-delay: 300ms;
 }
 /* 生成中脉冲圆点(深创页 GeneratingBanner):循环呼吸,表示"进行中"。 */
 .pulse-dot {

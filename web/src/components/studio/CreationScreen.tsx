@@ -515,7 +515,7 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
         )}
       </div>
 
-      <div style={{ padding: 18, borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+      <div style={{ padding: "14px 22px 16px", borderTop: "1px solid var(--border)", background: "var(--surface-card)", flexShrink: 0 }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <Textarea rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="比如：按职场穿搭出 3 个选题，要有依据…" footer={<>
             <button onClick={() => actions.polish()} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}>

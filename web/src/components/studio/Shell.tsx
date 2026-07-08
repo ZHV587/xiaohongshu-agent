@@ -32,7 +32,7 @@ export function StudioTopBar({ section, setSection }: StudioTopBarProps) {
   ];
   return (
     <header style={{ height: 56, background: "rgba(255,255,255,0.88)", backdropFilter: "blur(8px)", borderBottom: "1px solid var(--border)", padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, zIndex: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: "var(--coral-brand)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, boxShadow: "var(--shadow-coral)" }}>🍠</span>
           <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", letterSpacing: "var(--tracking-tight)" }}>小红书创作运营工作室</span>
@@ -44,8 +44,8 @@ export function StudioTopBar({ section, setSection }: StudioTopBarProps) {
             return (
               <button key={s.id} onClick={() => setSection(s.id)} style={{
                 display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer",
-                fontFamily: "var(--font-sans)", fontSize: "var(--text-xs)", fontWeight: on ? 700 : 500,
-                background: on ? "var(--surface-card)" : "transparent", color: on ? "var(--primary)" : "var(--text-muted)",
+                fontFamily: "var(--font-sans)", fontSize: "var(--text-xs)", fontWeight: 600,
+                background: on ? "var(--surface-card)" : "transparent", color: on ? "var(--text-body)" : "var(--text-muted)",
                 boxShadow: on ? "var(--shadow-xs)" : "none",
               }}>
                 <Icon name={s.icon} size={14} /> {s.label}
@@ -149,7 +149,7 @@ export function Recents({ onNew, compact = false }: RecentsProps) {
   }
 
   return (
-    <aside style={{ width: compact ? 220 : 260, background: "var(--surface-sidebar)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+    <aside style={{ width: compact ? 216 : 260, background: "var(--surface-sidebar)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
       <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14, flex: 1, overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Button variant="primary" block size="sm" leftIcon={<Icon name="square-pen" size={15} />} onClick={onNew}>开启全新灵感对话</Button>
