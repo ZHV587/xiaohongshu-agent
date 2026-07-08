@@ -9,6 +9,12 @@ test("allows known image CDN hosts and their subdomains", () => {
   assert.equal(isAllowedHost("ci.xiaohongshu.com"), true);
   assert.equal(isAllowedHost("p1.meituan.net"), true);
   assert.equal(isAllowedHost("open.feishu.cn"), true);
+  // 新增:小红书新 CDN(rednotecdn)、抖音图床、视频号封面 —— 这些是本地库里"有的显示有的不显示"
+  // 的破图根因(封面直链指向这些域,旧白名单没收 → /api/img 返回 403)。
+  assert.equal(isAllowedHost("sns-i14-ae.rednotecdn.com"), true);
+  assert.equal(isAllowedHost("sns-i11.rednotecdn.com"), true);
+  assert.equal(isAllowedHost("p3-pc-sign.douyinpic.com"), true);
+  assert.equal(isAllowedHost("finder.video.qq.com"), true);
 });
 
 test("rejects non-allowlisted hosts (SSRF guard)", () => {
@@ -61,4 +67,19 @@ test("non-heif urls pass through untouched", () => {
 test("referer targets xiaohongshu for xhs cdn hosts", () => {
   assert.equal(refererFor(new URL("https://sns-na-i11.xhscdn.com/x")), "https://www.xiaohongshu.com/");
   assert.equal(refererFor(new URL("https://open.feishu.cn/x")), "https://open.feishu.cn/");
+});
+
+test("rednotecdn is treated as xhs family: xiaohongshu referer + heif rewrite", () => {
+  assert.equal(refererFor(new URL("https://sns-i14-ae.rednotecdn.com/x")), "https://www.xiaohongshu.com/");
+  const r = resolveImageTarget(
+    "https://sns-i14-ae.rednotecdn.com/abc?imageView2/2/w/1080/format/heif/q/58",
+  );
+  assert.equal(r.ok, true);
+  assert.ok(r.ok && !r.target.toString().includes("format/heif"));
+  assert.ok(r.ok && r.target.toString().includes("format/jpg"));
+});
+
+test("douyinpic + video.qq.com covers resolve (no longer 403)", () => {
+  assert.equal(resolveImageTarget("https://p3-pc-sign.douyinpic.com/x.jpg").ok, true);
+  assert.equal(resolveImageTarget("https://finder.video.qq.com/x.jpg").ok, true);
 });

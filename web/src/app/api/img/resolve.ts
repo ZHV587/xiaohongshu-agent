@@ -5,6 +5,9 @@ export const ALLOWED_HOST_SUFFIXES = [
   ".xhscdn.com", // 小红书图片 CDN(sns-na-i11.xhscdn.com 等)
   ".xhscdn.net", // 小红书另一图片 CDN 域(sns-img-hw.xhscdn.net,常以 http 下发)
   ".xiaohongshu.com", // ci.xiaohongshu.com 等
+  ".rednotecdn.com", // 小红书(RedNote)新 CDN 域(sns-i14-ae.rednotecdn.com 等,与 xhscdn 同源同防盗链)
+  ".douyinpic.com", // 抖音图片 CDN(p3-pc-sign.douyinpic.com,部分转采自抖音的封面)
+  ".video.qq.com", // 微信视频号封面(finder.video.qq.com)
   ".meituan.net", // 部分封面走美团 CDN
   ".sankuai.com",
   ".feishu.cn", // 飞书封面直链
@@ -22,7 +25,13 @@ export function isAllowedHost(hostname: string): boolean {
 
 // 依来源域给出合适的 Referer(防盗链校验的正是它)。
 export function refererFor(url: URL): string {
-  if (url.hostname.endsWith("xhscdn.com") || url.hostname.endsWith("xiaohongshu.com")) {
+  // 小红书系全部 CDN(xhscdn.com/.net、rednotecdn.com、ci.xiaohongshu.com)都按小红书站点校验防盗链。
+  if (
+    url.hostname.endsWith("xhscdn.com") ||
+    url.hostname.endsWith("xhscdn.net") ||
+    url.hostname.endsWith("rednotecdn.com") ||
+    url.hostname.endsWith("xiaohongshu.com")
+  ) {
     return "https://www.xiaohongshu.com/";
   }
   return `${url.protocol}//${url.hostname}/`;
@@ -53,8 +62,12 @@ export function resolveImageTarget(raw: string | null): ResolveResult {
     return { ok: false, status: 403, error: "图片来源不在允许列表" };
   }
 
-  // 小红书 CDN 默认下发 image/heif —— 浏览器 <img> 无法渲染(灰白破图)。改写为 jpg 让浏览器可显示。
-  if (target.hostname.endsWith("xhscdn.com") || target.hostname.endsWith("xhscdn.net")) {
+  // 小红书系 CDN 默认下发 image/heif —— 浏览器 <img> 无法渲染(灰白破图)。改写为 jpg 让浏览器可显示。
+  if (
+    target.hostname.endsWith("xhscdn.com") ||
+    target.hostname.endsWith("xhscdn.net") ||
+    target.hostname.endsWith("rednotecdn.com")
+  ) {
     if (target.search.includes("format/heif")) {
       target.search = target.search.replace("format/heif", "format/jpg");
     }

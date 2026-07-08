@@ -22,6 +22,11 @@ _AUTHOR_FIELDS = ("博主", "作者", "博主昵称", "达人", "author")
 _FANS_FIELDS = ("粉丝数", "粉丝量", "博主粉丝数", "fans")
 _CREATED_FIELDS = ("发布时间", "笔记发布时间", "创建时间", "createTime", "时间")
 _TAGS_FIELDS = ("话题标签", "标签", "话题", "tags")
+# 评论行标志字段:飞书表里评论数据与笔记混在一张表,评论行有「评论内容」等字段但无正文/封面,
+# 不该当作参考笔记卡出现在发现面板(报告的 bug:本地卡里混入无封面的评论/配置行)。
+_COMMENT_MARKER_FIELDS = ("评论内容", "评论时间", "回复数")
+# 配置/字典行:如「搜索下拉词」「选题类型」等运营配置,标题是这些固定词、无正文无链接,同样过滤。
+_CONFIG_TITLE_MARKERS = ("搜索下拉词", "爆款搜索", "选题类型", "选题分类", "种子词", "关键词")
 _METRIC_FIELDS = {
     "likes": ("点赞数", "点赞", "likes"),
     "collects": ("收藏数", "收藏", "collects"),
@@ -58,6 +63,38 @@ def _coerce_tags(value: Any) -> list[str]:
 
         return [t.strip() for t in re.split(r"[,，#\s]+", value) if t.strip()]
     return []
+
+
+def _is_non_note_row(fields: dict[str, Any], title: str, body: str) -> bool:
+    """判定一行是否**不是**参考笔记(评论行 / 配置字典行),这类行不该当笔记卡渲染。
+
+    - 评论行:有「评论内容」等字段,且没有正文(评论本身不是一篇笔记)。
+    - 配置行:标题命中「搜索下拉词/选题类型」等固定运营字典词,且无正文。
+    真笔记(有正文或标题且非上述字典词)一律放行,缺封面走占位,不误杀。
+    """
+    has_comment_marker = any(f in fields for f in _COMMENT_MARKER_FIELDS)
+    if has_comment_marker and not body:
+        return True
+    if not body and any(marker in title for marker in _CONFIG_TITLE_MARKERS):
+        return True
+    return False
+
+
+def _fallback_cover(fields: dict[str, Any]) -> str:
+    """封面直链取空时的兜底:从附件对象列的公网 url 里捞一张(有则用,无则空,不伪造)。
+
+    飞书附件对象通常只有带时效的 tmp_url,但部分同步会带 url 直链;能取到就比破图/占位强。
+    """
+    for name, value in fields.items():
+        if "图" not in name and "封面" not in name and "附件" not in name:
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    url = item.get("url") or item.get("tmp_url")
+                    if isinstance(url, str) and url.startswith("http"):
+                        return url
+    return ""
 
 
 def _hydrate_feishu_record(content_json: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +163,14 @@ def hydrate_note_card(
         if resource_type == "xhs_online_note"
         else _hydrate_feishu_record(cj)
     )
+    # 过滤非笔记行(评论/配置字典行):它们无正文无封面,不该当参考笔记卡出现。
+    if resource_type == "feishu_base_record":
+        fields = cj.get("fields") if isinstance(cj.get("fields"), dict) else {}
+        if _is_non_note_row(fields, base.get("title") or "", base.get("summary") or ""):
+            return None
+        # 真笔记但封面直链取空 → 从附件对象列兜底捞一张公网 url(取不到则留空走前端占位)。
+        if not base.get("cover_url"):
+            base["cover_url"] = _fallback_cover(fields)
     base.update({
         "note_id": base.get("note_url") or resource_id,
         "resource_id": str(resource_id),
