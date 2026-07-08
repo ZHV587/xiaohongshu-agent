@@ -146,7 +146,14 @@ export function useThreadDraftState(
 
   useEffect(() => {
     const current = { title: draftTitle, content: draftContent };
-    localStorage.setItem(buildDraftAutosaveKey(threadId), JSON.stringify(current));
+    // 只对**已落定 id 的会话**持久化草稿。threadId===null(新对话 id 未定)时绝不写
+    // 共享的 `_new` 槽 —— 否则会话 A 在拿到 id 前流出的正文写进 `_new`,拿到 id 后(null→id
+    // 不触发 resetForThreadSwitch)`_new` 仍留着 A 的旧稿;下次「新建对话」(id→null)读回
+    // 这份 `_new` 旧稿,把上一条会话的正文串进新会话编辑器(用户报的「新会话显示旧选题正文」)。
+    // 刷新未定 id 会话丢草稿属可接受(那本就是尚未成形的临时态,无 id 可归属)。
+    if (threadId != null) {
+      localStorage.setItem(buildDraftAutosaveKey(threadId), JSON.stringify(current));
+    }
     queueMicrotask(() => {
       setIsDirty(
         shouldDirtyDraft(current, {
@@ -161,9 +168,13 @@ export function useThreadDraftState(
     setIsDirty(false);
     setLastSavedContent("");
     setLastSavedTitle("");
-    const saved = readDraftSnapshot(
-      localStorage.getItem(buildDraftAutosaveKey(nextThreadId)),
-    );
+    // 新对话(id 未定)一律回到空白稿 —— 绝不从共享 `_new` 槽读回(那可能是上一条尚未定 id 的
+    // 会话残留,读回即串台)。已有 id 的会话才按自己的槽恢复草稿。与持久化侧的 `threadId!=null`
+    // 守卫对称:`_new` 槽既不写也不读,彻底断掉跨会话正文泄漏。
+    const saved =
+      nextThreadId == null
+        ? { title: "", content: "" }
+        : readDraftSnapshot(localStorage.getItem(buildDraftAutosaveKey(nextThreadId)));
     setDraftTitle(saved.title);
     setDraftContent(saved.content);
   };

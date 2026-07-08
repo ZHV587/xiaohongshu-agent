@@ -13,7 +13,7 @@ import { DeepEditor } from "./DeepEditor";
 import type { Topic } from "@/components/studio/types";
 import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
 import { coverProxyUrl } from "@/lib/cover-image";
-import type { DiscoveryNote } from "@/lib/thinking-trace";
+import type { DiscoveryNote, AdoptionRow } from "@/lib/thinking-trace";
 
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
@@ -827,5 +827,83 @@ function TopicDetailBody({ topicId, onClose }: { topicId: number; onClose: () =>
         <Button variant="primary" leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.chooseTopic(topic); actions.closeDetail(); }}>用这个选题起稿</Button>
       </div>
     </>
+  );
+}
+
+// 收录结果弹窗(居中对话框,对齐设计稿「部分收录完成」)—— 采纳线上笔记后展示本次结局:
+// 成功/跳过/失败计数 + 逐条列出(✓ 已入库 / ! 失败·可重试)+ 失败可一键重试。由 store.adoptionModal
+// 驱动(最新一次采纳、未被手动关闭时非 null),从 StudioShell 挂载(与 DetailModal 同级)。
+// 修复:此前 adopt_online_notes 是写类工具,结果只在思考链显示中文 label,采纳后屏上毫无反馈。
+export function AdoptionResultModal() {
+  const { adoptionModal, actions } = useStudio();
+  const { closing, dismiss } = useDismiss(actions.dismissAdoptionModal);
+  // Esc 关闭(对齐 DetailModal);仅在弹层打开时挂监听。
+  useEffect(() => {
+    if (!adoptionModal) return undefined;
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape") dismiss(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [adoptionModal, dismiss]);
+  if (!adoptionModal) return null;
+
+  const { successCount, skippedCount, failedCount, rows } = adoptionModal;
+  const hasFailure = failedCount > 0;
+  const allFailed = successCount === 0 && skippedCount === 0 && failedCount > 0;
+  // 标题按结局分档:全失败=收录失败;有失败但也有成功/跳过=部分收录完成;否则=收录完成。
+  const title = allFailed ? "收录失败" : hasFailure ? "部分收录完成" : "收录完成";
+  // 副标题如实分述三态计数,有失败项时点明「可重试失败项」。
+  const summaryParts = [`成功 ${successCount}`, `跳过 ${skippedCount}`, `失败 ${failedCount}`];
+  const summary = summaryParts.join(" · ") + (hasFailure ? "，可重试失败项" : "");
+
+  return (
+    <div onClick={dismiss} className={closing ? "scrim-out" : "scrim-in"} style={{ position: "fixed", inset: 0, zIndex: 57, display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "rgba(20,18,16,0.42)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)" }}>
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title} data-testid="adoption-result-modal" className={closing ? "pop-out" : "pop-in"} style={{ width: "min(460px, 100%)", maxHeight: "82vh", overflow: "hidden", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-xl)", boxShadow: "var(--shadow-2xl)", display: "flex", flexDirection: "column" }}>
+        {/* 头部:状态图标 + 标题 + 计数副标题 + 分档色条(有失败=珊瑚红,全成功=绿) */}
+        <div style={{ padding: "22px 24px 0", display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <Icon name={hasFailure ? "alert-circle" : "check-circle-2"} size={20} color={hasFailure ? "var(--primary)" : "var(--success)"} />
+            <span style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", color: "var(--text-body)" }}>{title}</span>
+          </div>
+          <span data-testid="adoption-result-summary" style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", paddingLeft: 29 }}>{summary}</span>
+        </div>
+        <div style={{ height: 3, margin: "14px 24px 0", borderRadius: 999, background: hasFailure ? "var(--primary)" : "var(--success)" }} />
+        {/* 逐条结果:每行 状态图标 + 标题 + 右侧结局标签 */}
+        <div className="cs" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 12px", display: "flex", flexDirection: "column" }}>
+          {rows.map((r, i) => (
+            <AdoptionRowItem key={`${r.note_id}-${i}`} row={r} />
+          ))}
+        </div>
+        {/* 页脚:关闭 + 有失败时「重试失败 N 篇」 */}
+        <div style={{ padding: "12px 24px 18px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, flexShrink: 0 }}>
+          <Button variant="secondary" onClick={dismiss}>关闭</Button>
+          {hasFailure && (
+            <Button data-testid="adoption-retry" variant="primary" leftIcon={<Icon name="refresh-cw" size={14} />} onClick={() => { actions.retryFailedAdoptions(); }}>
+              重试失败 {failedCount} 篇
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 收录结果单行:成功=绿 ✓「已入库」,跳过=中性「库里已有」,失败=珊瑚 !「失败·可重试」+ 原因。
+function AdoptionRowItem({ row }: { row: AdoptionRow }) {
+  const conf = {
+    success: { icon: "check" as const, iconColor: "var(--success)", label: "已入库", labelColor: "var(--success)" },
+    skipped: { icon: "check" as const, iconColor: "var(--text-subtle)", label: "库里已有", labelColor: "var(--text-subtle)" },
+    failed: { icon: "alert-circle" as const, iconColor: "var(--primary)", label: "失败·可重试", labelColor: "var(--primary)" },
+  }[row.outcome];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: "var(--radius-sm)" }}>
+      <Icon name={conf.icon} size={15} color={conf.iconColor} />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.title}</span>
+        {row.outcome === "failed" && row.error && (
+          <span style={{ fontSize: 10, color: "var(--text-subtle)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.error}</span>
+        )}
+      </div>
+      <span style={{ flexShrink: 0, fontSize: "var(--text-xs)", fontWeight: 600, color: conf.labelColor }}>{conf.label}</span>
+    </div>
   );
 }

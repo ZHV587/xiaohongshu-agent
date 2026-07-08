@@ -23,7 +23,14 @@ import { getContentString } from "@/components/thread/utils";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 import { useTraceContext } from "@/providers/trace-store";
 import { useBackendResource, type LoadStatus } from "./useBackendResource";
-import { deriveTimeline, type TimelineItem, type DiscoveryNote } from "@/lib/thinking-trace";
+import {
+  deriveTimeline,
+  parseLatestAdoption,
+  adoptedNoteResourceIds,
+  type TimelineItem,
+  type DiscoveryNote,
+  type AdoptionOutcome,
+} from "@/lib/thinking-trace";
 import { StudioContext } from "./useStudio";
 import {
   applyOptimisticSchedule,
@@ -141,7 +148,14 @@ export interface StudioStore {
     // 统一详情/仿写弹层(素材或选题)。
     openDetail: (target: DetailTarget) => void;
     closeDetail: () => void;
+    // 关闭收录结果弹窗(记住本次 callId,不再自动重弹)。
+    dismissAdoptionModal: () => void;
+    // 重试收录失败的笔记(把失败项重新走 adoptNotes;需从 materials 回取原始笔记数据)。
+    retryFailedAdoptions: () => void;
   };
+  // 收录(adopt_online_notes)结果弹窗:最新一次采纳的结局(成功/跳过/失败逐条 + 计数);
+  // 无采纳、结果为空、或用户已手动关闭本次结果 → null。驱动居中「收录完成」结果弹窗。
+  adoptionModal: AdoptionOutcome | null;
   // HITL 工具审批中断:非 null 时聊天区渲染审批卡,用户批准/驳回后经 respondToInterrupt 恢复。
   interrupt: HITLRequest | null;
 }
@@ -200,6 +214,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [selectedEvidence, setSelectedEvidence] = useState<SelectedEvidence | null>(null);
   // 统一详情/仿写弹层目标(素材或选题);null=不显示。
   const [detail, setDetail] = useState<DetailTarget | null>(null);
+  // 已手动关闭的收录结果 callId:用户点「关闭」后记住本次采纳的 tool_call_id,不再自动重弹
+  // (下一次新采纳的 callId 不同 → 会重新弹)。
+  const [dismissedAdoptionId, setDismissedAdoptionId] = useState<string | null>(null);
 
   // account 维度：null = 矩阵总览（跨账号聚合，requireAdmin）；指定 id = 单账号视图。
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null);
@@ -430,6 +447,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   // 右边栏素材工作台专职展示这批(线上+本地混排);选题只进对话气泡,不进右栏(需求 §3)。
   // 累积而非只取最后一批:多轮检索的素材都留在工作台,不随对话滚走(需求 §1 痛点)。
   // 已入库(already_local)优先保留其记录(带 resource_id,可直接仿写)。
+  // 全流程已成功采纳的 note_id → resource_id 映射:采纳成功后,素材栏对应卡应立即标「已收录」
+  // (already_local)并带上真实 resource_id(可直接仿写,不必再走「先收录再仿」)。这也让底部
+  // 「收录选中 N 篇」的可采纳集合把刚入库的排除掉,不会重复勾选采纳。
+  const adoptedIds = useMemo(() => adoptedNoteResourceIds(t.messages), [t.messages]);
+
   const materials: DiscoveryNote[] = useMemo(() => {
     const byId = new Map<string, DiscoveryNote>();
     for (const item of timeline) {
@@ -442,8 +464,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         }
       }
     }
+    // 采纳结果回填:命中 adoptedIds 的笔记标为已入库,补上真实 resource_id(后端结果权威)。
+    for (const [noteId, resourceId] of adoptedIds) {
+      const existing = byId.get(noteId);
+      if (!existing) continue;
+      byId.set(noteId, {
+        ...existing,
+        already_local: true,
+        resource_id: existing.resource_id || resourceId || undefined,
+      });
+    }
     return Array.from(byId.values());
-  }, [timeline]);
+  }, [timeline, adoptedIds]);
 
   // 测试可观测钩子:暴露思考链总步数,供 e2e 断言思考 UI 已渲染。仅写 window,生产无副作用。
   useEffect(() => {
@@ -526,6 +558,48 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     [t],
   );
 
+  // ── 收录结果弹窗:最新一次 adopt_online_notes 的结局(计数 + 逐条 + 失败项) ──
+  // 写类工具的结果此前无 UI 消费(只在思考链显示中文 label),用户点「收录」后屏上毫无反馈。
+  // 这里把结果解析成结局对象,失败行的 title 从素材栏(materials)回填(后端失败行只回带 note_id)。
+  const latestAdoption = useMemo(() => parseLatestAdoption(t.messages), [t.messages]);
+  const adoptionModal: AdoptionOutcome | null = useMemo(() => {
+    if (!latestAdoption) return null;
+    // 用户已手动关闭本次结果(按 callId 去重)→ 不再自动重弹。重试会产生新 callId,自动重新出现。
+    if (latestAdoption.callId === dismissedAdoptionId) return null;
+    // 失败行标题回填:后端失败行只回带 note_id,尽量用素材栏里的真实标题让用户认得是哪篇。
+    const byId = new Map(materials.map((m) => [m.note_id, m] as const));
+    const rows = latestAdoption.rows.map((r) => {
+      if (r.outcome !== "failed") return r;
+      const mat = byId.get(r.note_id);
+      return mat && mat.title ? { ...r, title: mat.title } : r;
+    });
+    return { ...latestAdoption, rows };
+  }, [latestAdoption, dismissedAdoptionId, materials]);
+
+  const dismissAdoptionModal = useCallback(() => {
+    if (latestAdoption) setDismissedAdoptionId(latestAdoption.callId);
+  }, [latestAdoption]);
+
+  // 重试收录失败项:从素材栏按 note_id 回取原始笔记数据,重新走 adoptNotes(产生新 callId,
+  // 结果弹窗自动重新出现)。素材栏已无该笔记(理论上罕见)则跳过,至少不报错。
+  const retryFailedAdoptions = useCallback(() => {
+    if (!adoptionModal || adoptionModal.failedNoteIds.length === 0) return;
+    const byId = new Map(materials.map((m) => [m.note_id, m] as const));
+    const notes = adoptionModal.failedNoteIds
+      .map((id) => byId.get(id))
+      .filter((n): n is DiscoveryNote => !!n);
+    if (!notes.length) {
+      showToast("找不到失败笔记的原始数据,请回素材栏重新勾选收录");
+      return;
+    }
+    // 关闭当前结果弹窗(会被新采纳的结果替换),重发采纳。
+    setDismissedAdoptionId(adoptionModal.callId);
+    t.submitText(
+      "请重新采纳我上次收录失败的这些线上笔记(仅这几篇,收录入库即可)。",
+      { selected_notes: notes },
+    );
+  }, [adoptionModal, materials, t, showToast]);
+
   // 素材栏搜索:用户在参考素材工作台输入关键词,发一条明确的「只检索参考素材、先别出选题/写文案」
   // 指令给 agent。agent 走检索工具(本地笔记卡 + 线上),命中的笔记以 discovery 项流回,由
   // materials 去重累积到工作台(不覆盖已入库记录)。留在 create,不跳屏。这是走 deepagents 工具
@@ -552,6 +626,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setSection("create");
       // 仿写同样是显式创作意图:右栏切成编辑器(顶部仿写拆解横幅 + 下方成品)。
       setCreationMode(true);
+      // 先清掉上一次创作/仿写的残留草稿(标题/正文/标签/封面)。仿写每次都是全新成品,无「重进
+      // 同一篇不重跑」的场景 —— 不清会在新仿写流出前一直显示上一篇的旧正文(与 chooseTopic 换选题
+      // 同类的「新意图显示旧内容」泄漏;配合 useThreadDraftState 的 `_new` 槽守卫一并根治)。
+      t.setDraftTitle("");
+      t.setDraftContent("");
+      setTags([]);
+      setCover("");
       const label = note.title ? `《${note.title}》` : "这篇";
       if (note.resource_id) {
         t.submitText(`照着${label}的套路,仿写成我自己的一篇。先拆解它的选题方向与套路,再据此写成品。`, {
@@ -567,6 +648,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     },
     [setSection, t],
   );
+  // 注:setTags/setCover 是 useState setter,恒稳定(React 保证),无需列入 imitate 依赖;
+  // t 已在依赖内(其 setDraft* 亦稳定)。此处保持与 chooseTopic 同样的依赖口径。
 
   const updateField = useCallback(
     (field: keyof StudioNote, value: unknown) => {
@@ -804,7 +887,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       imitate,
       openDetail: setDetail,
       closeDetail: () => setDetail(null),
+      dismissAdoptionModal,
+      retryFailedAdoptions,
     },
+    adoptionModal,
     interrupt: t.interrupt,
   };
 

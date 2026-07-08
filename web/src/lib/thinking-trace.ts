@@ -59,6 +59,29 @@ export type TimelineItem =
   | { kind: "panel"; actions: PanelAction[] }
   | { kind: "error"; text: string };
 
+/** 一条笔记的收录结局(供结果弹窗逐条列出)。
+ *  - success:本次新收录入库;
+ *  - skipped:库里早有(幂等 upsert,非本次新增);
+ *  - failed:入库失败(可重试)。 */
+export interface AdoptionRow {
+  note_id: string;
+  title: string;
+  outcome: "success" | "skipped" | "failed";
+  /** failed 行的失败原因(取该 note 的第一条 DB/采纳错误,不含飞书/关联的二级告警)。 */
+  error?: string;
+}
+
+/** 一次 adopt_online_notes 的整体结局:计数 + 逐条 + 失败项 note_id(供「重试失败」)。
+ *  callId = 该次采纳的 tool_call_id,用于前端「已看过就不再自动弹」的去重。 */
+export interface AdoptionOutcome {
+  callId: string;
+  rows: AdoptionRow[];
+  successCount: number;
+  skippedCount: number;
+  failedCount: number;
+  failedNoteIds: string[];
+}
+
 // 发现式搜索工具:结果是可勾选采纳的笔记卡(走卡片通道,不复述进正文,见 prompts.py §6.5)。
 const DISCOVERY_TOOLS = new Set(["search_local_note_cards", "search_xhs_online"]);
 
@@ -508,6 +531,155 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   }
   if (context.error) {
     out.push({ kind: "error", text: safeVisibleText(context.error) || "响应失败，请稍后重试" });
+  }
+  return out;
+}
+
+// ── 收录(adopt_online_notes)结果解析 ────────────────────────────────────────
+// adopt_online_notes 是写类工具:它只在思考链里显示中文 label「采纳线上笔记」,其**结果**
+// (JSON {ok, results, errors, next_step})此前无任何 UI 消费 → 用户点「收录」后屏上毫无反馈
+// (报告的 bug)。这里把最新一次采纳的 tool 结果解析成结局对象,驱动居中「收录完成」结果弹窗。
+
+const ADOPT_TOOL = "adopt_online_notes";
+
+// 建 tool_call_id → 工具名 的映射(AI 消息的 tool_calls 里声明)。
+function buildToolNameById(messages: Message[]): Map<string, string> {
+  const byId = new Map<string, string>();
+  for (const m of messages) {
+    if (m.type !== "ai") continue;
+    for (const c of ((m as { tool_calls?: ToolCall[] }).tool_calls ?? [])) {
+      if (c && typeof c.name === "string" && c.id) byId.set(c.id, c.name);
+    }
+  }
+  return byId;
+}
+
+interface AdoptResultRow {
+  note_id?: unknown;
+  title?: unknown;
+  adopted?: unknown;
+  already_adopted?: unknown;
+  resource_id?: unknown;
+}
+interface AdoptErrorRow {
+  note_id?: unknown;
+  title?: unknown;
+  error?: unknown;
+}
+interface AdoptPayload {
+  ok?: unknown;
+  results?: unknown;
+  errors?: unknown;
+}
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+// 把一条 adopt_online_notes tool 结果的 JSON 解析成结局对象。健壮:非法 JSON / 形状不符 → null。
+function parseAdoptionPayload(callId: string, content: Message["content"]): AdoptionOutcome | null {
+  const text = getContentString(content);
+  if (!text) return null;
+  let payload: AdoptPayload;
+  try {
+    payload = JSON.parse(text) as AdoptPayload;
+  } catch {
+    return null;
+  }
+  const results = Array.isArray(payload.results) ? (payload.results as AdoptResultRow[]) : [];
+  const errorRows = Array.isArray(payload.errors) ? (payload.errors as AdoptErrorRow[]) : [];
+  // 成功入库的 note_id 集合:用于判定 errors 里哪些是「真失败」(从未入库),哪些只是二级告警
+  // (已入库但飞书同步/关联建边失败 —— 库记录仍在,不算收录失败)。
+  const adoptedIds = new Set<string>();
+  for (const r of results) {
+    if (r && r.adopted === true) {
+      const id = str(r.note_id);
+      if (id) adoptedIds.add(id);
+    }
+  }
+
+  const rows: AdoptionRow[] = [];
+  for (const r of results) {
+    if (!r || r.adopted !== true) continue;
+    const noteId = str(r.note_id);
+    rows.push({
+      note_id: noteId,
+      title: str(r.title) || noteId,
+      // already_adopted=库里早有 → 跳过;否则本次新收录 → 成功。
+      outcome: r.already_adopted === true ? "skipped" : "success",
+    });
+  }
+
+  // 真失败:error 行的 note_id 不在成功集合里(那些是 DB_ADOPT_FAILED / 缺 note_id)。
+  // 每个失败 note_id 只列一行,取其第一条错误信息。已入库 note 的飞书/关联告警不计失败。
+  const failedSeen = new Set<string>();
+  for (const e of errorRows) {
+    if (!e) continue;
+    const noteId = str(e.note_id);
+    if (adoptedIds.has(noteId)) continue; // 二级告警(已入库),不算失败
+    if (failedSeen.has(noteId)) continue; // 同一 note 的多条错误只列一次
+    failedSeen.add(noteId);
+    rows.push({
+      note_id: noteId,
+      // 后端失败行现也回带 title(兜底为 note_id);缺失时再退化。StudioContext 还会用素材栏兜底。
+      title: str(e.title) || noteId || "未知笔记",
+      outcome: "failed",
+      error: str(e.error) || "收录失败",
+    });
+  }
+
+  const successCount = rows.filter((r) => r.outcome === "success").length;
+  const skippedCount = rows.filter((r) => r.outcome === "skipped").length;
+  const failedRows = rows.filter((r) => r.outcome === "failed");
+  // 空结局(既无成功/跳过也无失败,如 selected_notes 为空的 ok:false)不弹窗。
+  if (rows.length === 0) return null;
+  return {
+    callId,
+    rows,
+    successCount,
+    skippedCount,
+    failedCount: failedRows.length,
+    failedNoteIds: failedRows.map((r) => r.note_id).filter(Boolean),
+  };
+}
+
+/** 取消息流里**最新一次** adopt_online_notes 的采纳结局;无采纳/结果为空 → null。
+ *  从后往前找第一条 adopt 工具结果消息即止(最新一次采纳)。 */
+export function parseLatestAdoption(messages: Message[]): AdoptionOutcome | null {
+  const toolNameById = buildToolNameById(messages);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type !== "tool") continue;
+    const cid = (m as { tool_call_id?: string }).tool_call_id;
+    if (!cid || toolNameById.get(cid) !== ADOPT_TOOL) continue;
+    return parseAdoptionPayload(cid, m.content);
+  }
+  return null;
+}
+
+/** 全流程里已成功采纳的线上笔记 note_id → resource_id 映射(跨所有 adopt 结果累积)。
+ *  供素材栏把这些笔记标为「已入库」(already_local)并带上真实 resource_id(可直接仿写)。 */
+export function adoptedNoteResourceIds(messages: Message[]): Map<string, string> {
+  const toolNameById = buildToolNameById(messages);
+  const out = new Map<string, string>();
+  for (const m of messages) {
+    if (m.type !== "tool") continue;
+    const cid = (m as { tool_call_id?: string }).tool_call_id;
+    if (!cid || toolNameById.get(cid) !== ADOPT_TOOL) continue;
+    const text = getContentString(m.content);
+    if (!text) continue;
+    try {
+      const payload = JSON.parse(text) as AdoptPayload;
+      const results = Array.isArray(payload.results) ? (payload.results as AdoptResultRow[]) : [];
+      for (const r of results) {
+        if (!r || r.adopted !== true) continue;
+        const id = str(r.note_id);
+        const rid = str(r.resource_id);
+        if (id) out.set(id, rid);
+      }
+    } catch {
+      continue;
+    }
   }
   return out;
 }

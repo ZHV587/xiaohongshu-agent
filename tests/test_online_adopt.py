@@ -170,6 +170,34 @@ def test_adopt_is_idempotent(patched):
     assert mock_feishu.call_count == 1
 
 
+def test_adopt_result_carries_title_and_new_vs_skipped(patched):
+    """结果行回带 title,并区分「本次新收录」与「库里早有(跳过)」——供前端拆成/跳/败三态。"""
+    repo = patched
+    with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
+        # 首次:库里没有 → 新收录,already_adopted=False。
+        first = oa.adopt_online_notes.func(
+            selected_notes=[_note(note_id="abc", title="露营装备清单")], sync_feishu=False
+        )
+        r1 = first["results"][0]
+        assert r1["title"] == "露营装备清单"
+        assert r1["already_adopted"] is False
+        # 再次采纳同一条:upsert 幂等,但对用户是「跳过」(库里早有)→ already_adopted=True。
+        second = oa.adopt_online_notes.func(
+            selected_notes=[_note(note_id="abc", title="露营装备清单")], sync_feishu=False
+        )
+        assert second["results"][0]["already_adopted"] is True
+        # 全跳过时笔记仍在库、仍可据此出选题 → next_step 照常给出;但如实叙述「库里早有」,
+        # 不把跳过项当新入库邀功(new_count=0 时括注只提跳过条数)。
+        assert second.get("next_step") and "库里早有" in second["next_step"]
+
+
+def test_adopt_result_title_falls_back_to_note_id(patched):
+    """笔记无 title 时,结果行 title 兜底为 note_id(前端弹窗至少有可辨识文案,不空行)。"""
+    repo = patched
+    res = oa.adopt_online_notes.func(selected_notes=[_note(note_id="xyz", title="")], sync_feishu=False)
+    assert res["results"][0]["title"] == "xyz"
+
+
 def test_adopt_feishu_failure_keeps_db(patched):
     repo = patched
     with patch.object(oa, "create_online_note_record", return_value={"ok": False, "error": "perm denied"}):

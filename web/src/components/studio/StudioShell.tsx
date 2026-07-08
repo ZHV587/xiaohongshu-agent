@@ -6,11 +6,11 @@
 
 import { useStudio } from "./useStudio";
 import { StudioTopBar } from "./Shell";
-import { CreationScreen, EvidencePanel, DetailModal } from "./CreationScreen";
+import { CreationScreen, EvidencePanel, DetailModal, AdoptionResultModal } from "./CreationScreen";
 import { Operations } from "./Operations";
 
 export function StudioShell() {
-  const { section, setSection, selectedEvidence, detail } = useStudio();
+  const { section, setSection, selectedEvidence, detail, adoptionModal } = useStudio();
 
   return (
     <main
@@ -49,6 +49,7 @@ export function StudioShell() {
 
       {selectedEvidence && <EvidencePanel />}
       {detail && <DetailModal />}
+      {adoptionModal && <AdoptionResultModal />}
     </main>
   );
 }

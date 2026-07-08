@@ -21,6 +21,7 @@ from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.online_notes import (
     XHS_NOTE_EXTERNAL_TYPE,
     adopt_online_note_resource,
+    find_adopted_note_ids,
 )
 from data_foundation.creation_memory import associate_ingested_resource
 from tools.feishu_actions import create_online_note_record
@@ -106,21 +107,29 @@ def adopt_online_notes(
             external_type=XHS_NOTE_EXTERNAL_TYPE,
             external_ids=note_ids,
         )
+        # 采纳前先探这批里哪些已在库(redfox mapping 已存在)——upsert 幂等,重复采纳不会新建,
+        # 但对用户是「跳过」(库里早有)而非「新收录」。前端据此把结果拆成 成功/跳过/失败 三态,
+        # 忠实反映本次真实动作,不把已有的当成新入库邀功。
+        already_adopted = find_adopted_note_ids(
+            repo, tenant_id=tenant_id, note_ids=note_ids
+        )
 
         for note in notes:
             if not isinstance(note, dict):
                 errors.append({"note_id": "", "error": "note must be an object"})
                 continue
             note_id = str(note.get("note_id") or "").strip()
+            # 标题随成功/失败行一并回带,供前端结果弹窗逐条辨识「哪篇」;缺标题兜底为 note_id。
+            note_title = str(note.get("title") or "").strip() or note_id
             try:
                 core = adopt_online_note_resource(
                     repo, tenant_id=tenant_id, actor_open_id=actor, note=note
                 )
             except Exception as exc:  # noqa: BLE001 - 单条失败不影响其余
-                errors.append({"note_id": note_id, "error": f"DB_ADOPT_FAILED: {exc}"})
+                errors.append({"note_id": note_id, "title": note_title, "error": f"DB_ADOPT_FAILED: {exc}"})
                 continue
             if not core.get("ok"):
-                errors.append({"note_id": note_id, "error": core.get("error", "DB_ADOPT_FAILED")})
+                errors.append({"note_id": note_id, "title": note_title, "error": core.get("error", "DB_ADOPT_FAILED")})
                 continue
 
             resource_id = core["resource_id"]
@@ -147,7 +156,12 @@ def adopt_online_notes(
 
             results.append({
                 "note_id": note_id,
+                # 标题随结果回带,供前端结果弹窗逐条列出「哪篇入库/哪篇失败」而不必回查素材栏
+                # (失败项通常已不在素材栏或用户已切走)。
+                "title": note_title,
                 "adopted": True,
+                # already_adopted=True 表示本次采纳前库里就有(幂等 upsert,非本次新收录)→ 前端计「跳过」。
+                "already_adopted": note_id in already_adopted,
                 "resource_id": resource_id,
                 "feishu_synced": feishu_synced,
             })
@@ -177,8 +191,13 @@ def adopt_online_notes(
         conn.close()
 
     adopted_count = sum(1 for r in results if r.get("adopted"))
+    # 拆「本次新收录」与「库里早有(跳过)」两个计数,供 next_step 如实叙述,不把已有的当新入库邀功。
+    skipped_count = sum(1 for r in results if r.get("adopted") and r.get("already_adopted"))
+    new_count = adopted_count - skipped_count
     next_step = (
-        f"已收录 {adopted_count} 条到库(已进检索)。可基于这批 + 本地相关内容出选题:"
+        f"已收录 {adopted_count} 条到库"
+        + (f"(其中 {new_count} 条新入库、{skipped_count} 条库里早有)" if skipped_count else "")
+        + "(均已进检索)。可基于这批 + 本地相关内容出选题:"
         "按 topic-content 流程检索取证后产出带 resource_id 依据的选题卡。"
         if adopted_count
         else None

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { toolLabel, deriveTimeline } from "./thinking-trace";
+import { toolLabel, deriveTimeline, parseLatestAdoption, adoptedNoteResourceIds } from "./thinking-trace";
 
 test("toolLabel maps known data_foundation tools to Chinese", () => {
   assert.equal(toolLabel("semantic_search_resources", {}), "按语义找相关素材");
@@ -576,4 +576,89 @@ test("streaming (unclosed) rich xhs_topics does NOT leak flattened field garbage
     assert.ok(!ai.text.includes("resource_id"), "resource_id 不应出现在正文");
     assert.ok(!ai.text.includes("b799225a"), "evidence id 不应出现在正文");
   }
+});
+
+// ── adopt_online_notes 结果解析(收录结果弹窗数据源) ──────────────────────────
+const adoptResult = (callId: string, payload: unknown): Message =>
+  ({ id: "t" + callId, type: "tool", tool_call_id: callId, content: JSON.stringify(payload) } as unknown as Message);
+
+test("parseLatestAdoption splits results into success / skipped / failed", () => {
+  const messages = [
+    human("收录这些笔记"),
+    aiCall("c1", "adopt_online_notes", {}),
+    adoptResult("c1", {
+      ok: true,
+      results: [
+        { note_id: "n1", title: "露营装备清单", adopted: true, already_adopted: false, resource_id: "res-1" },
+        { note_id: "n2", title: "平价好物", adopted: true, already_adopted: true, resource_id: "res-2" },
+      ],
+      errors: [{ note_id: "n3", error: "DB_ADOPT_FAILED: boom" }],
+    }),
+  ];
+  const outcome = parseLatestAdoption(messages);
+  assert.ok(outcome);
+  assert.equal(outcome!.callId, "c1");
+  assert.equal(outcome!.successCount, 1);
+  assert.equal(outcome!.skippedCount, 1);
+  assert.equal(outcome!.failedCount, 1);
+  assert.deepEqual(outcome!.failedNoteIds, ["n3"]);
+  const failed = outcome!.rows.find((r) => r.outcome === "failed");
+  assert.ok(failed && failed.error!.includes("boom"));
+});
+
+test("parseLatestAdoption treats feishu/association warnings on adopted notes as NOT failures", () => {
+  // n1 已入库(adopted:true)但飞书同步失败 → errors 里有它,但不算收录失败(库记录仍在)。
+  const messages = [
+    human("收录"),
+    aiCall("c1", "adopt_online_notes", {}),
+    adoptResult("c1", {
+      ok: true,
+      results: [{ note_id: "n1", title: "笔记一", adopted: true, already_adopted: false, resource_id: "res-1" }],
+      errors: [{ note_id: "n1", error: "FEISHU_SYNC_FAILED: perm denied" }],
+    }),
+  ];
+  const outcome = parseLatestAdoption(messages);
+  assert.ok(outcome);
+  assert.equal(outcome!.successCount, 1);
+  assert.equal(outcome!.failedCount, 0);
+  assert.deepEqual(outcome!.failedNoteIds, []);
+});
+
+test("parseLatestAdoption returns the most recent adoption (retry supersedes prior)", () => {
+  const messages = [
+    human("收录"),
+    aiCall("c1", "adopt_online_notes", {}),
+    adoptResult("c1", { ok: true, results: [], errors: [{ note_id: "n1", error: "DB_ADOPT_FAILED: x" }] }),
+    human("重试失败的"),
+    aiCall("c2", "adopt_online_notes", {}),
+    adoptResult("c2", { ok: true, results: [{ note_id: "n1", title: "笔记一", adopted: true, already_adopted: false, resource_id: "res-1" }], errors: [] }),
+  ];
+  const outcome = parseLatestAdoption(messages);
+  assert.ok(outcome);
+  assert.equal(outcome!.callId, "c2");
+  assert.equal(outcome!.successCount, 1);
+  assert.equal(outcome!.failedCount, 0);
+});
+
+test("parseLatestAdoption returns null for empty/failed-shape payloads", () => {
+  assert.equal(parseLatestAdoption([human("hi"), aiText("no tools")]), null);
+  const emptyBatch = [
+    human("收录"),
+    aiCall("c1", "adopt_online_notes", {}),
+    adoptResult("c1", { ok: false, error: "no selected notes", results: [], errors: [] }),
+  ];
+  assert.equal(parseLatestAdoption(emptyBatch), null);
+});
+
+test("adoptedNoteResourceIds accumulates note_id → resource_id across all adopt results", () => {
+  const messages = [
+    aiCall("c1", "adopt_online_notes", {}),
+    adoptResult("c1", { ok: true, results: [{ note_id: "n1", adopted: true, resource_id: "res-1" }], errors: [] }),
+    aiCall("c2", "adopt_online_notes", {}),
+    adoptResult("c2", { ok: true, results: [{ note_id: "n2", adopted: true, resource_id: "res-2" }], errors: [] }),
+  ];
+  const map = adoptedNoteResourceIds(messages);
+  assert.equal(map.get("n1"), "res-1");
+  assert.equal(map.get("n2"), "res-2");
+  assert.equal(map.size, 2);
 });
