@@ -285,16 +285,24 @@ function parseDiscoveryResults(content: Message["content"]): DiscoveryNote[] {
 
 export function deriveTimeline(messages: Message[], context: TimelineContext = {}): TimelineItem[] {
   const out: TimelineItem[] = [];
-  const hasOfficialTrace = Object.keys(context.tracePresentationsByTurnId ?? {}).length > 0;
+  const presentations = context.tracePresentationsByTurnId ?? {};
 
-  // 全局:已答的 tool_call_id 集合(按 tool_call_id 配对,不靠顺序)。
+  // 全局:已答/已失败的 tool_call_id 集合(按 tool_call_id 配对,不靠顺序)。
   // 同时记录每个 tool_call_id 对应的工具名,供 tool 消息判断是否是发现工具(要渲染卡片网格)。
   const answered = new Set<string>();
+  const errored = new Set<string>();
   const toolNameById = new Map<string, string>();
-  for (const m of messages) {
+  let lastHumanIdx = -1;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.type === "human") lastHumanIdx = i;
     if (m.type === "tool") {
       const cid = (m as { tool_call_id?: string }).tool_call_id;
-      if (cid) answered.add(cid);
+      if (cid) {
+        answered.add(cid);
+        // ToolMessage.status === "error":该步真实失败,兜底轨道要如实标 ✕,不能装作 done。
+        if ((m as { status?: string }).status === "error") errored.add(cid);
+      }
     }
     if (m.type === "ai") {
       for (const c of ((m as { tool_calls?: ToolCall[] }).tool_calls ?? [])) {
@@ -304,26 +312,32 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   }
 
   // 一轮内累积的原子步骤记录(渲染前折叠)。
-  type Atom = { name: string; done: boolean };
+  type Atom = { name: string; state: "done" | "active" | "error" };
   let atoms: Atom[] = [];
   let logs: ThinkingLog[] = [];
   let runOpen = false;
+  // 当前回合是否有官方 trace 轨道(逐轮判断,不再全局一刀切:
+  // 只压制「匹配到 presentation 的那一轮」的兜底轨道,其余轮照常显示)。
+  let turnHasOfficial = false;
 
-  // 把原子记录按「同名连续」折叠成语义步骤;每组状态 = 组内全部 done 才 done。
+  // 把原子记录按「同名连续」折叠成语义步骤;组状态:任一 error → error;全 done → done;否则 active。
   const foldSteps = (): ThinkingStep[] => {
     const steps: ThinkingStep[] = [];
     let i = 0;
     while (i < atoms.length) {
       const name = atoms[i].name;
-      let allDone = atoms[i].done;
+      let hasError = atoms[i].state === "error";
+      let allDone = atoms[i].state !== "active";
       let j = i + 1;
       while (j < atoms.length && atoms[j].name === name) {
-        allDone = allDone && atoms[j].done;
+        hasError = hasError || atoms[j].state === "error";
+        allDone = allDone && atoms[j].state !== "active";
         j++;
       }
       // 兜底轨道也带一句意图说明(有则显示),让每步读起来是"在干什么/为什么",不再是裸动作名。
       const description = STEP_DESCRIPTIONS[name];
-      steps.push({ label: name, state: allDone ? "done" : "active", ...(description ? { description } : {}) });
+      const state: ThinkingStep["state"] = hasError ? "error" : allDone ? "done" : "active";
+      steps.push({ label: name, state, ...(description ? { description } : {}) });
       i = j;
     }
     return steps;
@@ -331,7 +345,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
 
   const buildRunItem = (): TimelineItem | null => {
     if (!runOpen || atoms.length === 0) return null;
-    const allAtomsDone = atoms.length > 0 && atoms.every((a) => a.done);
+    const allAtomsDone = atoms.length > 0 && atoms.every((a) => a.state !== "active");
     const steps = foldSteps();
     // 兜底轨道同样给出进度指针:最后一个 active 步为当前步,全完成则停在末步。
     const lastActive = steps.reduce((acc, s, i) => (s.state === "active" ? i : acc), -1);
@@ -349,7 +363,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   };
 
   const flushRun = () => {
-    if (hasOfficialTrace) {
+    if (turnHasOfficial) {
       resetRun();
       return;
     }
@@ -358,12 +372,11 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     resetRun();
   };
 
-  const appendOfficialTrace = (turnId: string | undefined) => {
-    if (!turnId) return;
-    const presentation = context.tracePresentationsByTurnId?.[turnId];
-    if (!presentation) return;
+  // 官方轨道:turn_id 契约 = 本轮 human 消息 id(前端 submit 时写入 configurable.turn_id,
+  // 后端 agent_trace._config_identity 原样采用)。在 user 项之后立即挂出 —— 像 Claude Code /
+  // Codex 一样,工作轨迹在回答上方流式展开,不依赖 prose 是否已产出。
+  const appendOfficialTrace = (presentation: TracePresentation, turnIsLast: boolean) => {
     // 逐步映射每一步的真实状态(stage.state 来自该步终态事件),不再用 run 级状态一刀切。
-    // 这样才能像 Claude Code / Codex 那样精确看出"哪几步已完成、当前正卡在第几步"。
     const steps: ThinkingStep[] = presentation.userStages.map((stage) => ({
       label: stage.title,
       state: stage.state === "error" ? "error" : stage.state, // done | active | error
@@ -374,9 +387,10 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     const lastActive = steps.reduce((acc, s, i) => (s.state === "active" ? i : acc), -1);
     const currentStep = steps.length === 0 ? 0 : lastActive >= 0 ? lastActive + 1 : steps.length;
     // 后端目前不发 run.completed 生命周期事件,presentation.status 会一直停在 "active"。
-    // 但"流是否还在跑"前端已知(context.loading):流结束即本轮思考结束 —— 据此收尾,
-    // 让思考链能干净折叠成「✓ 思考了 Ns · 查了 N 处」,而不是永远显示"正在思考"。
-    const runDone = presentation.status === "done" || context.loading === false;
+    // 收尾口径:①事件已给终态;②历史回合(非最后一轮,同页早已跑完);③最后一轮且流已停。
+    // 不能只看 context.loading —— 否则新一轮开跑时,旧回合的轨迹会倒退回"进行中"。
+    const runDone =
+      presentation.status === "done" || !turnIsLast || context.loading === false;
     out.push({
       kind: "thinking",
       run: {
@@ -392,11 +406,19 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     });
   };
 
-  for (const m of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
     if (m.type === "human") {
       flushRun();
       out.push({ kind: "user", text: getContentString(m.content) });
       runOpen = true;
+      // 逐轮匹配官方 trace:turn_id ≡ 本轮 human 消息 id。匹配到且有真实步骤才用官方轨道
+      // (空 presentation 不如兜底轨道信息多);匹配不上(如刷新后 store 已清)自动回退兜底。
+      const presentation = typeof m.id === "string" ? presentations[m.id] : undefined;
+      turnHasOfficial = !!presentation && presentation.userStages.length > 0;
+      if (presentation && turnHasOfficial) {
+        appendOfficialTrace(presentation, i === lastHumanIdx);
+      }
       continue;
     }
     if (m.type === "ai") {
@@ -404,11 +426,15 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       const calls = ((m as { tool_calls?: ToolCall[] }).tool_calls ?? []).filter(
         (c) => c && typeof c.name === "string",
       );
-      if (!hasOfficialTrace) {
+      if (!turnHasOfficial) {
         for (const c of calls) {
           const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分
-          const done = !!(c.id && answered.has(c.id));
-          atoms.push({ name: label, done });
+          const state: Atom["state"] = c.id && errored.has(c.id)
+            ? "error"
+            : c.id && answered.has(c.id)
+              ? "done"
+              : "active";
+          atoms.push({ name: label, state });
           // 写类工具只存中文 label,不回显 payload;task 按读类处理(args 无凭证)。
           const logText = WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args);
           logs.push({ text: logText });
@@ -416,6 +442,9 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       }
       const prose = proseOf(m.content);
       if (prose) {
+        // 兜底轨道在回答落地前先落轨迹(user → thinking → ai),与官方轨道的呈现次序一致,
+        // 也与 Claude Code / Codex 的"先看到过程、再看到答案"一致。
+        flushRun();
         // 去重:结构化输出失败时,模型可能把同一份汇总吐好几遍(观察到重复 4 次),
         // 或流式累积产生内容相同的相邻 AI 段。相邻 kind:"ai" 文本完全相同则不重复入列,
         // 避免同一段话在时间线里连刷多屏。
@@ -423,7 +452,6 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         if (!(prev && prev.kind === "ai" && prev.text === prose)) {
           out.push({ kind: "ai", text: prose });
         }
-        appendOfficialTrace(typeof m.id === "string" ? m.id : undefined);
       }
       // 意图分流按钮(§2):xhs_panel 块 → 可点选项 timeline 项(紧跟在 prose 后)。
       const panelActions = panelOf(m.content);

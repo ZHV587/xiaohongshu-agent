@@ -75,6 +75,18 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     [isDirty, _setThreadId, setView, setIsDirty],
   );
 
+  // turn_id 契约:每轮 = 本轮 human 消息 id(前端生成的 uuid)。写入 configurable 随 run 下发,
+  // 后端 agent_trace._config_identity 优先采用 configurable.turn_id —— 由此思考链 trace 事件
+  // 能精确回挂到发起它的那条用户消息(deriveTimeline 按 human id 逐轮取 presentation)。
+  // 此前前端不传 turn_id,后端回退 thread_id:同一会话所有轮共用一个 key,官方轨道永远匹配不上。
+  const lastHumanTurnId = () => {
+    for (let i = stream.messages.length - 1; i >= 0; i--) {
+      const m = stream.messages[i];
+      if (m.type === "human" && typeof m.id === "string") return m.id;
+    }
+    return undefined;
+  };
+
   const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
     if (!text.trim()) return;
     // 流进行中不能并发提交(SDK 限制)。此前是静默 return —— 用户点「生成草稿/生成选题/润色」等
@@ -103,6 +115,7 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         streamMode: ["values"],
         streamSubgraphs: true,
         streamResumable: true,
+        config: { configurable: { turn_id: newHumanMessage.id } },
         optimisticValues: (prev) => ({
           ...prev,
           context,
@@ -247,6 +260,7 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         streamMode: ["values"],
         streamSubgraphs: true,
         streamResumable: true,
+        config: { configurable: { turn_id: newHumanMessage.id } },
         optimisticValues: (prev) => ({
           ...prev,
           context,
@@ -270,11 +284,14 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
   const handleRegenerate = (parentCheckpoint: Checkpoint | null | undefined) => {
     prevMessageLength.current = prevMessageLength.current - 1;
     setFirstTokenReceived(false);
+    // 重跑仍属于最后那条用户消息的回合:沿用其 id 作 turn_id,轨迹回挂同一轮。
+    const turnId = lastHumanTurnId();
     stream.submit(undefined, {
       checkpoint: parentCheckpoint,
       streamMode: ["values"],
       streamSubgraphs: true,
       streamResumable: true,
+      ...(turnId ? { config: { configurable: { turn_id: turnId } } } : {}),
     });
   };
 
@@ -289,11 +306,20 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
   const respondToInterrupt = useCallback(
     (decisions: HITLDecision[]) => {
       setFirstTokenReceived(false);
+      // HITL 恢复是同一回合的延续:沿用最后一条用户消息 id 作 turn_id,轨迹不断档。
+      const turnId = (() => {
+        for (let i = stream.messages.length - 1; i >= 0; i--) {
+          const m = stream.messages[i];
+          if (m.type === "human" && typeof m.id === "string") return m.id;
+        }
+        return undefined;
+      })();
       stream.submit(undefined, {
         command: { resume: { decisions } },
         streamMode: ["values"],
         streamSubgraphs: true,
         streamResumable: true,
+        ...(turnId ? { config: { configurable: { turn_id: turnId } } } : {}),
       });
     },
     [stream],

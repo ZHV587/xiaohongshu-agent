@@ -48,7 +48,7 @@ const toolMsg = (callId: string): Message =>
 
 const officialPresentation: TracePresentation = {
   traceId: "trace-1",
-  turnId: "a",
+  turnId: "h",
   status: "done",
   collapsedByDefault: true,
   userSummary: "查完 1 步",
@@ -103,7 +103,7 @@ test("tool call with matching ToolMessage is done", () => {
   assert.equal(thinking.run.done, true);
 });
 
-test("completed thinking run appears below the final AI output", () => {
+test("completed thinking run appears between the user message and the final AI output", () => {
   const tl = deriveTimeline([
     human("出选题"),
     aiCall("c1", "semantic_search_resources", { query: "露营" }),
@@ -112,18 +112,18 @@ test("completed thinking run appears below the final AI output", () => {
   ]);
   assert.deepEqual(
     tl.map((item) => item.kind),
-    ["user", "ai", "thinking"],
-    "completed agent trace should read like agent editors: output first, trace below it",
+    ["user", "thinking", "ai"],
+    "like Claude Code / Codex: the work trace streams above, the answer lands below it",
   );
 });
 
-test("official trace presentation mounts below the matching assistant answer", () => {
+test("official trace mounts right after its turn's user message (turn_id = human message id)", () => {
   const tl = deriveTimeline([human("按职场穿搭出 1 个选题"), aiText("这是最终回答")], {
-    tracePresentationsByTurnId: { a: officialPresentation },
+    tracePresentationsByTurnId: { h: officialPresentation },
   });
 
-  assert.deepEqual(tl.map((item) => item.kind), ["user", "ai", "thinking"]);
-  const thinking = tl[2];
+  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "ai"]);
+  const thinking = tl[1];
   assert.ok(thinking.kind === "thinking");
   assert.equal(thinking.run.presentation?.userSummary, "查完 1 步");
   assert.equal(thinking.run.steps[0].label, "查找相关素材");
@@ -148,7 +148,8 @@ test("official trace maps each step's real state and points at the current step 
     adminDetails: [],
   };
   const tl = deriveTimeline([human("出选题"), aiText("回答")], {
-    tracePresentationsByTurnId: { a: presentation },
+    loading: true,
+    tracePresentationsByTurnId: { h: presentation },
   });
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
@@ -160,7 +161,7 @@ test("official trace maps each step's real state and points at the current step 
   assert.equal(thinking.run.currentStep, 3);
 });
 
-test("tool call with progress prose still keeps completed trace below the final answer", () => {
+test("tool call with progress prose flushes the trace before the prose lands", () => {
   const tl = deriveTimeline([
     human("出选题"),
     {
@@ -173,13 +174,127 @@ test("tool call with progress prose still keeps completed trace below the final 
   ]);
   assert.deepEqual(
     tl.map((item) => item.kind),
-    ["user", "ai", "ai", "thinking"],
-    "progress prose and final answer should both appear before the completed trace",
+    ["user", "thinking", "ai", "ai"],
+    "the work trace streams above; progress prose and the final answer land below it",
   );
-  const thinking = tl[3];
+  const thinking = tl[1];
   assert.ok(thinking.kind === "thinking");
   assert.equal(thinking.run.done, true);
   assert.equal(thinking.run.steps[0].label, "按语义找相关素材");
+});
+
+// ── live 路径回归(此前的"黑盒"根因):trace 事件到达 store 时,官方轨道必须当场流式可见 ──
+
+const liveStage = (id: string, title: string, state: "active" | "done" | "error") => ({
+  id, title, summary: "", intent: "i-" + id, action: "a-" + id, resultText: "r-" + id,
+  statusText: state === "done" ? "已完成" : "正在处理", state, sourceEventIds: ["e-" + id],
+});
+
+test("LIVE: official trace streams step-by-step while the run is still loading", () => {
+  // 运行中(loading=true),还没有任何 AI 消息 —— 官方轨道已能逐步展示,不再整体压制。
+  const presentation: TracePresentation = {
+    traceId: "t", turnId: "h", status: "active", collapsedByDefault: false, userSummary: "处理中",
+    userStages: [liveStage("s1", "核验素材依据", "done"), liveStage("s2", "筛选可用依据", "active")],
+    adminDetails: [],
+  };
+  const tl = deriveTimeline([human("找露营爆款")], {
+    loading: true,
+    tracePresentationsByTurnId: { h: presentation },
+  });
+  assert.deepEqual(tl.map((i) => i.kind), ["user", "thinking"]);
+  const thinking = tl[1];
+  assert.ok(thinking.kind === "thinking");
+  assert.deepEqual(thinking.run.steps.map((s) => s.label), ["核验素材依据", "筛选可用依据"]);
+  assert.deepEqual(thinking.run.steps.map((s) => s.state), ["done", "active"]);
+  assert.equal(thinking.run.done, false, "live turn must stay visibly in-progress");
+  assert.equal(thinking.run.currentStep, 2);
+});
+
+test("LIVE→DONE: trace does not vanish when the stream ends on the same page", () => {
+  // 此前的重大纰漏:流结束(loading=false)后思考链整段消失。现在必须保留并折叠为完成态。
+  const presentation: TracePresentation = {
+    traceId: "t", turnId: "h", status: "active", collapsedByDefault: false, userSummary: "处理中",
+    userStages: [liveStage("s1", "核验素材依据", "done")],
+    adminDetails: [],
+  };
+  const tl = deriveTimeline([human("找露营爆款"), aiText("给你找到了这些素材")], {
+    loading: false,
+    tracePresentationsByTurnId: { h: presentation },
+  });
+  assert.deepEqual(tl.map((i) => i.kind), ["user", "thinking", "ai"]);
+  const thinking = tl[1];
+  assert.ok(thinking.kind === "thinking");
+  assert.equal(thinking.run.done, true, "stream ended → the turn's trace folds as done");
+});
+
+test("multi-turn: an older turn's official trace stays done while a new turn is streaming", () => {
+  const h2: Message = { id: "h2", type: "human", content: "再来一轮" } as Message;
+  const oldPresentation: TracePresentation = {
+    traceId: "t1", turnId: "h", status: "active", collapsedByDefault: false, userSummary: "s",
+    userStages: [liveStage("s1", "核验素材依据", "done")],
+    adminDetails: [],
+  };
+  const tl = deriveTimeline([human("第一轮"), aiText("第一轮回答"), h2], {
+    loading: true,
+    tracePresentationsByTurnId: { h: oldPresentation },
+  });
+  const thinkingItems = tl.filter((i) => i.kind === "thinking");
+  assert.ok(thinkingItems.length >= 1);
+  assert.equal(thinkingItems[0].run.done, true, "旧回合不因新一轮开跑而倒退回进行中");
+});
+
+test("per-turn fallback: a turn without official trace still shows its fallback track", () => {
+  // 逐轮判断(不再全局一刀切):turn1 有官方轨道,turn2 匹配不到 → turn2 用兜底轨道。
+  const presentation: TracePresentation = {
+    traceId: "t1", turnId: "h", status: "done", collapsedByDefault: true, userSummary: "s",
+    userStages: [liveStage("s1", "核验素材依据", "done")],
+    adminDetails: [],
+  };
+  const h2: Message = { id: "h2", type: "human", content: "第二轮" } as Message;
+  const tl = deriveTimeline(
+    [
+      human("第一轮"),
+      aiText("第一轮回答"),
+      h2,
+      aiCall("c9", "semantic_search_resources", { query: "x" }),
+      toolMsg("c9"),
+      { id: "a2", type: "ai", content: "第二轮回答", tool_calls: [] } as unknown as Message,
+    ],
+    { loading: false, tracePresentationsByTurnId: { h: presentation } },
+  );
+  const thinkingItems = tl.filter((i) => i.kind === "thinking");
+  assert.equal(thinkingItems.length, 2, "官方轨道一条 + 第二轮兜底轨道一条");
+  assert.equal(thinkingItems[1].run.steps[0].label, "按语义找相关素材");
+});
+
+test("fallback track marks a failed tool step as error, not done", () => {
+  const failedTool: Message = {
+    id: "tE", type: "tool", tool_call_id: "cE", content: "boom", status: "error",
+  } as unknown as Message;
+  const tl = deriveTimeline([
+    human("同步"),
+    aiCall("cE", "sync_copy_to_feishu", {}),
+    failedTool,
+    aiText("同步失败了"),
+  ]);
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  assert.equal(thinking.run.steps[0].state, "error", "真实失败要如实标 ✕,不能装作 done");
+  assert.equal(thinking.run.done, true, "步骤已出终态(失败也是终态),run 不再悬置");
+});
+
+test("empty official presentation falls back to the richer fallback track", () => {
+  const empty: TracePresentation = {
+    traceId: "t", turnId: "h", status: "active", collapsedByDefault: false, userSummary: "",
+    userStages: [], adminDetails: [],
+  };
+  const tl = deriveTimeline(
+    [human("出选题"), aiCall("c1", "semantic_search_resources", { query: "x" })],
+    { loading: true, tracePresentationsByTurnId: { h: empty } },
+  );
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  assert.equal(thinking.run.steps[0].label, "按语义找相关素材", "空 presentation 不压制兜底轨道");
 });
 
 test("consecutive same-name tools fold into one step but keep per-call logs", () => {
