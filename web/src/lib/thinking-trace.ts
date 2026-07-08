@@ -229,6 +229,16 @@ function proseOf(content: Message["content"]): string {
     .trim();
 }
 
+// 是否含中日韩表意文字。本产品面向中文创作者,所有面向用户的回答/进展叙述都是中文;
+// 纯英文的 prose 只可能是子代理/模型的英文脚手架旁白(如 "I'll start by reading the
+// reference material.")——它是过程噪声,绝不是给用户看的答案,不进对话流(§8 防糊屏的语言维扩展)。
+// 判据:出现任一 CJK 表意字即视为"面向用户的中文内容"(中英混排的正常回答也含中文,照常保留);
+// 一个中文字都没有 → 判为英文脚手架,丢弃。
+const CJK_RE = /[㐀-䶿一-鿿豈-﫿]/;
+function hasCJK(text: string): boolean {
+  return CJK_RE.test(text);
+}
+
 // 从 AI 消息里提取 xhs_panel 意图分流按钮(§2);无则空数组。合并所有 panel 段的 actions。
 function panelOf(content: Message["content"]): PanelAction[] {
   const raw = getContentString(content);
@@ -440,7 +450,10 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
           logs.push({ text: logText });
         }
       }
-      const prose = proseOf(m.content);
+      // 纯英文 prose 是子代理/模型的英文脚手架旁白(过程噪声),既不落轨迹也不进对话流:
+      // 保持 run 打开,让后续工具继续累积到同一条思考链——不因一句英文旁白把轨迹提前切断。
+      const rawProse = proseOf(m.content);
+      const prose = hasCJK(rawProse) ? rawProse : "";
       if (prose) {
         // 兜底轨道在回答落地前先落轨迹(user → thinking → ai),与官方轨道的呈现次序一致,
         // 也与 Claude Code / Codex 的"先看到过程、再看到答案"一致。

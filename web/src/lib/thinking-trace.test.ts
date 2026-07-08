@@ -325,6 +325,43 @@ test("intermediate tool-only ai does not produce ai bubble; only final text does
   assert.equal((aiBubbles[0] as { text: string }).text, "最终选题");
 });
 
+test("pure-English scaffolding prose never surfaces as an ai bubble", () => {
+  // 细节2 复现:子代理起手的英文旁白 "I'll start by reading the reference material."
+  // 曾被当成最终答案渲染成 🍠 气泡。它是过程噪声,不含任何中文 → 必须丢弃,不进对话流。
+  const tl = deriveTimeline([
+    human("照《健身包推荐》的套路仿写"),
+    aiText("I'll start by reading the reference material."),
+  ]);
+  assert.equal(tl.filter((i) => i.kind === "ai").length, 0, "英文脚手架旁白不得成为答案气泡");
+});
+
+test("English scaffolding between tool calls is dropped but the trace keeps flowing", () => {
+  // 英文旁白夹在工具调用之间:不切断思考链,后续步骤继续累积到同一条轨迹;英文本身不出气泡。
+  const tl = deriveTimeline([
+    human("仿写这篇"),
+    {
+      type: "ai",
+      content: "Let me read the reference first.",
+      tool_calls: [{ id: "c1", name: "get_resource", args: { resource_id: "n1" } }],
+    } as unknown as Message,
+    toolMsg("c1"),
+    aiText("读完了,这是仿写成品。"),
+  ]);
+  assert.deepEqual(
+    tl.map((i) => i.kind),
+    ["user", "thinking", "ai"],
+    "英文旁白不产气泡,只有最终中文答案落地",
+  );
+  const ai = tl.find((i) => i.kind === "ai");
+  assert.ok(ai && ai.kind === "ai" && ai.text === "读完了,这是仿写成品。");
+});
+
+test("mixed Chinese+English prose is kept (contains CJK)", () => {
+  const tl = deriveTimeline([human("出选题"), aiText("已用 A/B test 思路给你两个方向。")]);
+  const ai = tl.find((i) => i.kind === "ai");
+  assert.ok(ai && ai.kind === "ai" && ai.text.includes("A/B test"), "中英混排的正常回答照常保留");
+});
+
 test("ai bubble strips xhs code blocks, keeps prose", () => {
   const content = '这是给你的选题:\n```xhs_topics\n{"topics":["露营"]}\n```\n点卡片进入创作。';
   const tl = deriveTimeline([human("出选题"), aiText(content)]);

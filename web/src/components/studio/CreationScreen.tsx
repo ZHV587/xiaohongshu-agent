@@ -684,110 +684,148 @@ function TrendingTopics() {
   );
 }
 
-// 统一详情/仿写弹层(slide-over)—— 素材卡或选题卡点开后看详情,并直接触发动作。
-// 由 store.detail 驱动,从 StudioShell 挂载(与 EvidencePanel 同级)。素材:看封面/来源/
-// 互动 + 收录/仿写;选题:看角度/依据 + 进入深度创作。
+// 统一详情/仿写弹层(居中对话框,1:1 对齐设计稿 openModal)—— 素材卡或选题卡点开后看详情,
+// 并直接触发动作。由 store.detail 驱动,从 StudioShell 挂载(与 EvidencePanel 同级)。
+// 素材:看封面/来源/摘录 + 收录/仿写;选题:看角度/依据 + 支撑素材 + 起稿。
 export function DetailModal() {
   const { detail, actions } = useStudio();
   const { closing, dismiss } = useDismiss(actions.closeDetail);
+  // Esc 关闭(对齐设计稿 openModal 的 onModalKey);仅在弹层打开时挂监听。
+  useEffect(() => {
+    if (!detail) return undefined;
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape") dismiss(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [detail, dismiss]);
   if (!detail) return null;
+  const label = detail.kind === "material" ? "参考素材详情" : "选题详情";
   return (
-    <div onClick={dismiss} className={closing ? "scrim-out" : "scrim-in"} style={{ position: "fixed", inset: 0, background: "rgba(15,15,16,0.35)", zIndex: 56, display: "flex", justifyContent: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} className={`cs ${closing ? "slide-out-right" : "slide-in-right"}`} style={{ width: 400, maxWidth: "92vw", height: "100%", background: "var(--background)", boxShadow: "var(--shadow-2xl)", overflowY: "auto", display: "flex", flexDirection: "column" }}>
-        <div style={{ position: "sticky", top: 0, background: "var(--surface-card)", borderBottom: "1px solid var(--border)", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <Icon name={detail.kind === "material" ? "layers" : "lightbulb"} size={16} color="var(--primary)" />
-            <span style={{ fontSize: "var(--text-sm)", fontWeight: 700 }}>{detail.kind === "material" ? "参考素材详情" : "选题详情"}</span>
-          </div>
-          <button onClick={dismiss} aria-label="关闭" style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-subtle)", display: "inline-flex" }}><Icon name="x" size={16} /></button>
-        </div>
-        {detail.kind === "material" ? <MaterialDetailBody noteId={detail.noteId} /> : <TopicDetailBody topicId={detail.topicId} />}
+    <div onClick={dismiss} className={closing ? "scrim-out" : "scrim-in"} style={{ position: "fixed", inset: 0, zIndex: 56, display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "rgba(20,18,16,0.42)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)" }}>
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={label} className={closing ? "pop-out" : "pop-in"} style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "hidden", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-xl)", boxShadow: "var(--shadow-2xl)", display: "flex", flexDirection: "column" }}>
+        {detail.kind === "material" ? <MaterialDetailBody noteId={detail.noteId} onClose={dismiss} /> : <TopicDetailBody topicId={detail.topicId} onClose={dismiss} />}
       </div>
     </div>
   );
 }
 
-function MaterialDetailBody({ noteId }: { noteId: string }) {
+// 悬浮关闭按钮(对齐设计稿 modalClose):浮在封面带右上角的圆形 ×。
+function ModalCloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button onClick={onClose} aria-label="关闭" style={{ position: "absolute", top: 14, right: 14, width: 30, height: 30, borderRadius: 999, border: 0, background: "rgba(255,255,255,0.9)", color: "var(--text-body)", cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "var(--shadow-sm)" }}>
+      <Icon name="x" size={16} />
+    </button>
+  );
+}
+
+function MaterialDetailBody({ noteId, onClose }: { noteId: string; onClose: () => void }) {
   const { materials, actions } = useStudio();
   const n = materials.find((m) => m.note_id === noteId);
   if (!n) return null;
   const isLocal = n.source === "local";
   return (
-    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
-      <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: 300, overflow: "hidden", borderRadius: "var(--radius-md)", background: "var(--accent-surface)" }}>
-        {n.cover_url && <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="380px" unoptimized style={{ objectFit: "cover" }} />}
-        <span style={{ position: "absolute", top: 8, left: 8, fontSize: 9, fontWeight: 700, color: "#fff", background: isLocal ? "rgba(52,120,90,0.9)" : "rgba(0,0,0,0.42)", padding: "2px 8px", borderRadius: 999 }}>{isLocal ? "本地库" : "线上"}</span>
+    <>
+      {/* 封面带:16/9 满宽(对齐设计稿),真实封面走同源代理裁切;无图源退化为中性底色,绝不塞假图。 */}
+      <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", maxHeight: 280, overflow: "hidden", background: "var(--accent-surface)", flexShrink: 0 }}>
+        {n.cover_url && <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="720px" unoptimized style={{ objectFit: "cover" }} />}
+        <span style={{ position: "absolute", top: 16, left: 18, fontSize: "var(--text-xs)", fontWeight: 600, color: "#fff", background: isLocal ? "var(--success)" : "var(--charcoal-default)", padding: "3px 10px", borderRadius: "var(--radius-sm)" }}>{isLocal ? "本地库" : "线上"}</span>
+        <ModalCloseButton onClose={onClose} />
       </div>
-      <h2 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-base)", lineHeight: 1.3 }}>{n.title}</h2>
-      {n.summary && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>{n.summary}</p>}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 11, color: "var(--text-subtle)" }}>
-        {n.author && <span>作者 {n.author}</span>}
-        {n.likes != null && <span>♥ {n.likes}</span>}
-        {n.collects != null && <span>★ {n.collects}</span>}
-        {n.comments != null && <span>💬 {n.comments}</span>}
-      </div>
-      {n.tags && n.tags.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-          {n.tags.map((tg) => <span key={tg} style={{ fontSize: 10, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>#{tg}</span>)}
+      {/* 可滚动正文(flex:1 + minHeight:0 才能在 maxHeight 卡片内真正滚动,否则会撑破卡片顶走页脚) */}
+      <div className="cs" style={{ flex: 1, minHeight: 0, padding: "20px 22px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
+        <h2 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-xl)", lineHeight: 1.3, letterSpacing: "var(--tracking-tight)", color: "var(--text-body)" }}>{n.title}</h2>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+          {n.author && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 22, height: 22, borderRadius: 999, background: "var(--accent-surface)", color: "var(--coral-default)", display: "grid", placeItems: "center", fontSize: 10, fontWeight: 700 }}>{n.author.charAt(0)}</span>
+              {n.author}
+            </span>
+          )}
+          {n.likes != null && <span>♥ {n.likes}</span>}
+          {n.collects != null && <span>★ {n.collects}</span>}
+          {n.comments != null && <span>💬 {n.comments}</span>}
+          {n.already_local && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "var(--success-surface)", color: "var(--success)", border: "1px solid var(--success-border)", borderRadius: 999, padding: "3px 10px", fontSize: "var(--text-xs)", fontWeight: 600 }}><Icon name="check" size={12} />已收录入库</span>
+          )}
         </div>
-      )}
-      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8, position: "sticky", bottom: 0, background: "var(--background)", paddingTop: 10 }}>
-        <Button variant="primary" block leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.imitate(n); actions.closeDetail(); }}>仿写这篇</Button>
-        {!n.already_local && (
-          <Button variant="soft" block leftIcon={<Icon name="cloud-upload" size={13} />} onClick={() => { actions.adoptNotes([n]); actions.closeDetail(); }}>收录入库</Button>
+        {n.summary && (
+          <div>
+            <Eyebrow style={{ marginBottom: 6 }}>正文摘录</Eyebrow>
+            <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: 1.75, color: "var(--text-body)", whiteSpace: "pre-wrap" }}>{n.summary}</p>
+          </div>
         )}
-        {n.note_url && <a href={n.note_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "var(--text-subtle)", textAlign: "center", textDecoration: "none" }}>查看原文 ↗</a>}
+        {n.tags && n.tags.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {n.tags.map((tg) => <span key={tg} style={{ fontSize: 10, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>#{tg}</span>)}
+          </div>
+        )}
       </div>
-    </div>
+      {/* 页脚:带上边框的操作行(对齐设计稿) */}
+      <div style={{ padding: "14px 22px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, flexShrink: 0 }}>
+        {n.note_url && <a href={n.note_url} target="_blank" rel="noopener noreferrer" style={{ marginRight: "auto", fontSize: 11, color: "var(--text-subtle)", textDecoration: "none" }}>查看原文 ↗</a>}
+        <Button variant="secondary" onClick={onClose}>关闭</Button>
+        {!n.already_local && (
+          <Button variant="soft" leftIcon={<Icon name="cloud-upload" size={14} />} onClick={() => { actions.adoptNotes([n]); actions.closeDetail(); }}>收录入库</Button>
+        )}
+        <Button variant="primary" leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.imitate(n); actions.closeDetail(); }}>仿写这篇</Button>
+      </div>
+    </>
   );
 }
 
-function TopicDetailBody({ topicId }: { topicId: number }) {
+function TopicDetailBody({ topicId, onClose }: { topicId: number; onClose: () => void }) {
   const { topics, evidence, actions } = useStudio();
   const topic = topics.find((t) => t.id === topicId);
   const ev = (evidence || {})[topicId];
   if (!topic) return null;
+  const evCount = ev ? ev.items.length : 0;
   return (
-    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {topic.angle && <Badge tone="topic" shape="chip">{topic.angle}</Badge>}
-          {topic.hotRate != null && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--hot)" }}>🔥 爆款率 {topic.hotRate}%</span>}
-        </div>
-        <h2 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", lineHeight: 1.3 }}>{topic.title}</h2>
-        {topic.rationale && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>{topic.rationale}</p>}
+    <>
+      {/* 封面带:中性底色 + 左上角度徽章 + 右上关闭(标题落在下方正文,对齐已确认的居中弹窗版式)。 */}
+      <div style={{ position: "relative", height: 132, background: "var(--accent-surface)", flexShrink: 0 }}>
+        {topic.angle && <span style={{ position: "absolute", top: 16, left: 18, background: "rgba(26,26,28,0.72)", color: "#fff", borderRadius: "var(--radius-sm)", padding: "3px 10px", fontSize: "var(--text-xs)", fontWeight: 600 }}>{topic.angle}</span>}
+        <ModalCloseButton onClose={onClose} />
       </div>
-      {topic.kw && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-          <span style={{ color: "var(--text-subtle)" }}>核心搜索词</span>
-          <span style={{ fontWeight: 600, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>{topic.kw}</span>
-          {ev && <span style={{ marginLeft: "auto", fontSize: 10, color: ev.mode === "keyword_fallback" ? "var(--warning)" : "var(--success)" }}>{ev.mode === "semantic" ? "语义命中" : "关键词兜底"}</span>}
+      {/* 可滚动正文(flex:1 + minHeight:0 才能在 maxHeight 卡片内真正滚动,否则依据多了会撑破卡片顶走页脚) */}
+      <div className="cs" style={{ flex: 1, minHeight: 0, padding: "20px 22px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+        <h2 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-2xl)", lineHeight: 1.2, letterSpacing: "var(--tracking-tight)", color: "var(--text-body)" }}>{topic.title}</h2>
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          {topic.hotRate != null && <span style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "var(--hot-surface)", color: "var(--hot)", borderRadius: 999, padding: "3px 10px", fontSize: "var(--text-xs)", fontWeight: 700 }}>🔥 爆款率 {topic.hotRate}%</span>}
+          <span data-testid="detail-evidence-count" data-count={evCount} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "var(--topicblue-light)", color: "var(--topicblue-default)", borderRadius: 999, padding: "3px 10px", fontSize: "var(--text-xs)", fontWeight: 600 }}><Icon name="database" size={13} />依据 {evCount} 条</span>
+          {topic.kw && <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11 }}><span style={{ color: "var(--text-subtle)" }}>核心搜索词</span><span style={{ fontWeight: 600, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 999, padding: "2px 8px" }}>{topic.kw}</span></span>}
         </div>
-      )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <Eyebrow><span data-testid="detail-evidence-count" data-count={ev ? ev.items.length : 0}>创作依据 · {ev ? ev.items.length : 0} 条（数据底座检索）</span></Eyebrow>
-        {ev && ev.mode === "insufficient_relevance" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 10, borderRadius: "var(--radius-md)", border: "1px solid var(--border-coral)", background: "var(--accent-surface)" }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>当前数据不足</span>
-            {ev.gaps && <span style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.6 }}>{ev.gaps}</span>}
+        {topic.rationale && (
+          <div>
+            <Eyebrow style={{ marginBottom: 6 }}>选题依据</Eyebrow>
+            <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: 1.7, color: "var(--text-body)" }}>{topic.rationale}</p>
           </div>
         )}
-        {ev && ev.items.map((it) => (
-          <button key={it.resource_id} data-testid="detail-evidence-item" onClick={() => actions.openEvidence({ ...it, mode: ev.mode })} style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 10, background: "var(--oats-light)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 5 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>{it.type}</span>
-              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{it.title}</span>
-              <span className="font-tabular" style={{ fontSize: 10, color: "var(--primary)", fontWeight: 700 }}>{it.score.toFixed(2)}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Eyebrow>支撑素材（{evCount}）· 数据底座检索</Eyebrow>
+          {ev && ev.mode === "insufficient_relevance" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 10, borderRadius: "var(--radius-md)", border: "1px solid var(--border-coral)", background: "var(--accent-surface)" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>当前数据不足</span>
+              {ev.gaps && <span style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.6 }}>{ev.gaps}</span>}
             </div>
-            <div style={{ display: "flex", gap: 10, fontSize: 9, color: "var(--text-subtle)" }}>
-              <span>相关 {(it.relevance * 100).toFixed(0)}%</span><span>时效 {(it.freshness * 100).toFixed(0)}%</span><span>表现 {(it.performance * 100).toFixed(0)}%</span>
-            </div>
-          </button>
-        ))}
+          )}
+          {ev && ev.items.map((it) => (
+            <button key={it.resource_id} data-testid="detail-evidence-item" onClick={() => actions.openEvidence({ ...it, mode: ev.mode })} style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 10, background: "var(--oats-light)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 5 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>{it.type}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{it.title}</span>
+                <span className="font-tabular" style={{ fontSize: 10, color: "var(--primary)", fontWeight: 700 }}>{it.score.toFixed(2)}</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, fontSize: 9, color: "var(--text-subtle)" }}>
+                <span>相关 {(it.relevance * 100).toFixed(0)}%</span><span>时效 {(it.freshness * 100).toFixed(0)}%</span><span>表现 {(it.performance * 100).toFixed(0)}%</span>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
-      <div style={{ marginTop: "auto", position: "sticky", bottom: 0, background: "var(--background)", paddingTop: 10 }}>
-        <Button variant="primary" block leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.chooseTopic(topic); actions.closeDetail(); }}>基于此选题起稿</Button>
+      {/* 页脚:带上边框的操作行(对齐设计稿) */}
+      <div style={{ padding: "14px 22px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, flexShrink: 0 }}>
+        <Button variant="secondary" onClick={onClose}>关闭</Button>
+        <Button variant="primary" leftIcon={<Icon name="feather" size={14} />} onClick={() => { actions.chooseTopic(topic); actions.closeDetail(); }}>用这个选题起稿</Button>
       </div>
-    </div>
+    </>
   );
 }
