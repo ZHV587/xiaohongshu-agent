@@ -175,3 +175,58 @@ def test_trace_tool_wrapper_keeps_seq_monotonic_for_same_trace(monkeypatch) -> N
     wrapped.func("通勤包", config=config)
 
     assert [event["seq"] for event in emitted] == [1, 2, 3, 4]
+
+
+def test_trace_tool_uses_langgraph_config_turn_id(monkeypatch) -> None:
+    """根因 A 回归:被包装工具签名是 config: RunnableConfig | None,langchain 不会注入 config
+    (Optional 检测不到)→ 传进包装器的 config 为 None。此时必须从 langgraph get_config()
+    contextvar 取本轮真实 turn_id(前端写入的 human 消息 id),否则伪造 turn_id 会让前端官方
+    trace 轨道永远匹配不上、只能退兜底轨道。"""
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+
+    emitted = []
+    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
+    # 模拟 langgraph 运行上下文:contextvar 提供本轮真实 configurable。
+    monkeypatch.setattr(
+        "langgraph.config.get_config",
+        lambda: {"configurable": {"turn_id": "human-msg-abc", "thread_id": "thread-x", "run_id": "run-x", "trace_id": "run-x"}},
+    )
+
+    @tool
+    def sample_tool(query: str, config: "dict | None" = None) -> dict:
+        """Search sample resources."""
+        return {"ok": True, "results": [1]}
+
+    wrapped = trace_tool(sample_tool, stage_id="retrieve", label="按语义找相关素材")
+    # 关键:不显式传 config(复刻 langchain 因 Optional 注解漏注入的真实情形)。
+    wrapped.func("职场穿搭")
+
+    assert emitted, "应 emit 出 trace 事件"
+    assert all(event["turn_id"] == "human-msg-abc" for event in emitted)
+    assert all(event["trace_id"] == "run-x" for event in emitted)
+
+
+def test_trace_tool_prefers_explicit_config_when_it_carries_identity(monkeypatch) -> None:
+    """显式传入的 config 已带身份(turn_id/thread_id)时,以它为准,不被 contextvar 覆盖。"""
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+
+    emitted = []
+    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
+    monkeypatch.setattr(
+        "langgraph.config.get_config",
+        lambda: {"configurable": {"turn_id": "ctx-turn", "run_id": "ctx-run"}},
+    )
+
+    @tool
+    def sample_tool(query: str, config: "dict | None" = None) -> dict:
+        """Search sample resources."""
+        return {"ok": True, "results": [1]}
+
+    wrapped = trace_tool(sample_tool, stage_id="retrieve", label="按语义找相关素材")
+    wrapped.func("职场穿搭", config={"configurable": {"turn_id": "explicit-turn", "run_id": "explicit-run"}})
+
+    assert all(event["turn_id"] == "explicit-turn" for event in emitted)

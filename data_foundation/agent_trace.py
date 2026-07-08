@@ -207,16 +207,44 @@ def emit_trace(
     writer(event)
 
 
-def _config_identity(config: Any) -> dict[str, str | None]:
-    configurable: dict[str, Any] = {}
+def _configurable_of(config: Any) -> dict[str, Any]:
+    """从一个 config-like 对象里取 configurable dict(dict 或带属性的对象都兼容)。"""
     if isinstance(config, dict):
         raw = config.get("configurable")
-        if isinstance(raw, dict):
-            configurable = raw
-    else:
-        raw = getattr(config, "configurable", None)
-        if isinstance(raw, dict):
-            configurable = raw
+        return raw if isinstance(raw, dict) else {}
+    raw = getattr(config, "configurable", None)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _resolve_config(config: Any) -> Any:
+    """解析本轮真实 config。
+
+    根因(历史踩坑):被 trace 包装的工具签名是 `config: RunnableConfig | None = None`,
+    而 langchain 的 `_get_runnable_config_param` 只认**裸** `RunnableConfig`,Optional(Union)一律
+    检测不到 → `StructuredTool._run` 根本不注入 config → 传进包装器的 config 恒为 None →
+    `_config_identity(None)` 每次伪造一套新 `run_id/trace_id/turn_id`,turn_id 永远 ≠ 前端写入的
+    human 消息 id → 官方 trace 轨道在前端永远匹配不上,只能退兜底轨道。
+
+    修法:优先用 langgraph 的 `get_config()` contextvar 拿本轮真实 configurable(前端 submit 时写入的
+    turn_id 在这里),它不依赖工具签名注入,子图(子代理)里同样继承同一 configurable;
+    仅当 contextvar 不可用(非 langgraph 运行上下文,如单测直调)时才回退到显式传入的 config。
+    """
+    explicit_conf = _configurable_of(config)
+    if explicit_conf.get("turn_id") or explicit_conf.get("thread_id"):
+        return config
+    try:
+        from langgraph.config import get_config
+
+        runtime_config = get_config()
+    except Exception:
+        return config
+    if _configurable_of(runtime_config):
+        return runtime_config
+    return config
+
+
+def _config_identity(config: Any) -> dict[str, str | None]:
+    configurable = _configurable_of(config)
 
     thread_id = configurable.get("thread_id")
     run_id = str(configurable.get("run_id") or thread_id or f"run-{uuid.uuid4().hex}")
@@ -251,7 +279,14 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
     original = tool_obj.func
 
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        identity = _config_identity(kwargs.get("config"))
+        # 本轮真实身份优先取自 langgraph get_config() contextvar(前端写入的 turn_id 在此),
+        # 不依赖 config 是否被注入进 kwargs(Optional 注解会让 langchain 漏注入)。
+        resolved_config = _resolve_config(kwargs.get("config"))
+        identity = _config_identity(resolved_config)
+        # 把解析到的真实 config 回填给原始工具:原始工具用它做租户/actor 解析。
+        # 仅当调用方未显式带 config(或带的是空 config)时才覆盖,避免踩掉显式传参。
+        if resolved_config is not None and not _configurable_of(kwargs.get("config")):
+            kwargs = {**kwargs, "config": resolved_config}
         tool_call_id = f"xhs-tool-{uuid.uuid4().hex}"
         started = build_trace_event(
             type="xhs.trace.tool.started",
@@ -303,3 +338,39 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
     setattr(tool_obj, "_xhs_trace_wrapped", True)
     setattr(tool_obj, "_xhs_trace_stage_id", stage_id)
     return tool_obj
+
+
+# 工具名 → (stage_id, 中文 label)。主 agent 与执行型子代理共用同一份映射,避免两处漂移。
+# stage_id 归类 retrieve/persist,供前端把同类步骤折叠;label 是链上显示的"用了哪个工具"。
+TRACE_TOOL_STAGES: dict[str, tuple[str, str]] = {
+    "semantic_search_resources": ("retrieve", "按语义找相关素材"),
+    "search_resources": ("retrieve", "按关键词补查素材"),
+    "search_local_note_cards": ("retrieve", "检索本地笔记卡"),
+    "get_resource": ("retrieve", "打开原文细看"),
+    "graph_expand": ("retrieve", "顺着图谱找关联"),
+    "get_operations_data": ("retrieve", "读取运营数据"),
+    "get_resource_performance": ("retrieve", "读取效果表现"),
+    "save_generated_topic": ("persist", "保存选题"),
+    "save_generated_copy": ("persist", "保存文案"),
+    "save_user_feedback": ("persist", "沉淀反馈"),
+    "save_performance_metric": ("persist", "沉淀效果指标"),
+    "sync_copy_to_feishu": ("persist", "同步文案到飞书"),
+    "sync_topic_to_feishu": ("persist", "同步选题到飞书"),
+    "sync_diagnosis_to_feishu": ("persist", "同步诊断到飞书"),
+    "send_review_notification": ("persist", "发送审阅通知"),
+    "adopt_online_notes": ("persist", "采纳线上笔记"),
+    "search_xhs_online": ("retrieve", "搜索小红书线上"),
+}
+
+
+def with_trace(tools: list[Any]) -> list[Any]:
+    """对一组工具按 TRACE_TOOL_STAGES 逐个包 trace;未登记的工具原样返回。
+
+    主 agent 与所有执行型子代理都过这一层,子代理内部的检索/精读因此也会 emit trace 事件,
+    并继承父上下文的同一 turn_id → 委派出去的重活真实显示在同一条工具调用链上(根治链条稀疏)。
+    """
+    wrapped: list[Any] = []
+    for tool_obj in tools:
+        stage = TRACE_TOOL_STAGES.get(getattr(tool_obj, "name", ""))
+        wrapped.append(trace_tool(tool_obj, stage_id=stage[0], label=stage[1]) if stage else tool_obj)
+    return wrapped

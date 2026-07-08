@@ -90,133 +90,181 @@ interface StageCopy {
   fallbackResult: string;
 }
 
-const STAGE_COPY: Record<string, StageCopy> = {
-  understand: {
-    title: "确认创作目标",
-    summaryTitle: "需求确认",
-    intent: "先把你要的交付物、主题和限制条件对齐，避免答偏。",
-    action: "读取你的输入，区分是要选题、正文、标题，还是账号运营判断。",
-    fallbackResult: "已确认本轮回答的目标和边界。",
-  },
-  retrieve: {
-    title: "核验素材依据",
-    summaryTitle: "素材核验",
-    intent: "先确认有没有可用素材，避免凭空给建议。",
-    action: "从数据底座检索与你需求相关的笔记和历史素材。",
-    fallbackResult: "已完成相关素材检索。",
-  },
-  rank: {
-    title: "筛选可用依据",
-    summaryTitle: "依据筛选",
-    intent: "把相关但不够有用的素材剔除，只保留能支撑回答的依据。",
-    action: "按相关度、信息完整度和可转化程度筛选素材。",
-    fallbackResult: "已筛出本轮回答可用的依据。",
-  },
-  compose: {
-    title: "组织回答结构",
-    summaryTitle: "回答组织",
-    intent: "把素材结论整理成你能直接使用的选题或文案。",
-    action: "按小红书表达场景组织标题、正文结构和行动建议。",
-    fallbackResult: "已把依据整理成回答内容。",
-  },
-  validate: {
-    title: "检查依据是否充分",
-    summaryTitle: "依据检查",
-    intent: "确认回答没有脱离素材，也没有把不确定内容说满。",
-    action: "复核回答和素材依据之间的对应关系。",
-    fallbackResult: "已完成依据充分性检查。",
-  },
-  persist: {
-    title: "保存/同步结果",
-    summaryTitle: "结果同步",
-    intent: "把本轮产出沉淀下来，方便后续继续编辑或同步到飞书。",
-    action: "保存生成结果，并按需同步到生产工作流。",
-    fallbackResult: "已完成结果保存或同步。",
-  },
-};
-
+// 工具调用链(§Bug1):思考链 = 真实"用了哪个工具、做了什么"。每一步的 title 直接是该工具的中文名
+// (与后端 TRACE_TOOL_STAGES / thinking-trace.ts 的 TOOL_LABELS 对齐,单一事实源口径),
+// intent 说清这步在干嘛,fallbackResult 是无 metrics 时的兜底结果句。
+// 不再用「确认创作目标/核验素材依据」这类预设叙事阶段(那是编好的故事,不是真实工具链)。
 const TOOL_COPY: Record<string, StageCopy> = {
-  semantic_search_resources: STAGE_COPY.retrieve,
+  semantic_search_resources: {
+    title: "按语义找相关素材",
+    summaryTitle: "语义检索",
+    intent: "从数据底座按语义相似度召回可用笔记和历史素材。",
+    action: "按语义相似度召回与本轮主题相关的素材。",
+    fallbackResult: "已完成语义检索。",
+  },
   search_resources: {
-    ...STAGE_COPY.retrieve,
-    action: "用关键词补充检索，避免只依赖语义相似的一组素材。",
+    title: "按关键词补查素材",
+    summaryTitle: "关键词检索",
+    intent: "用关键词补一轮检索，避免只依赖语义相似的一组。",
+    action: "用关键词补充检索素材。",
+    fallbackResult: "已完成关键词检索。",
   },
   search_local_note_cards: {
-    ...STAGE_COPY.retrieve,
+    title: "检索本地笔记卡",
+    summaryTitle: "本地笔记检索",
+    intent: "在本地素材库里找能支撑本轮主题的历史笔记。",
     action: "检索本地笔记卡片，找出能支撑本轮主题的历史素材。",
+    fallbackResult: "已检索本地笔记卡。",
   },
   get_resource: {
-    title: "查看原文细节",
+    title: "打开原文细看",
     summaryTitle: "原文核验",
-    intent: "确认素材的具体语境，避免只看标题或摘要就下判断。",
+    intent: "打开候选素材原文，核对关键表达、数据与上下文。",
     action: "打开候选素材原文，核对关键表达、数据和上下文。",
     fallbackResult: "已核对候选素材原文。",
   },
   graph_expand: {
-    title: "查找关联线索",
+    title: "顺着图谱找关联",
     summaryTitle: "关联扩展",
-    intent: "沿着已有素材继续找相邻线索，补足单条素材的信息盲区。",
+    intent: "沿素材关联图找相邻线索，补单条素材的信息盲区。",
     action: "顺着主题、账号、标签和内容关系扩展关联素材。",
     fallbackResult: "已完成关联素材扩展。",
   },
+  get_operations_data: {
+    title: "读取运营数据",
+    summaryTitle: "运营数据",
+    intent: "读取账号运营数据用于判断。",
+    action: "读取账号近期运营表现与指标。",
+    fallbackResult: "已读取运营数据。",
+  },
+  get_resource_performance: {
+    title: "读取效果表现",
+    summaryTitle: "效果表现",
+    intent: "读取素材发布后的真实效果表现。",
+    action: "读取素材的互动/转化等效果数据。",
+    fallbackResult: "已读取效果表现。",
+  },
   save_generated_topic: {
-    ...STAGE_COPY.persist,
-    title: "保存选题结果",
+    title: "保存选题",
+    summaryTitle: "保存选题",
+    intent: "把本轮生成的选题沉淀入库，便于后续继续编辑/同步。",
+    action: "把本轮选题写入素材库。",
     fallbackResult: "已保存本轮生成的选题。",
   },
   save_generated_copy: {
-    ...STAGE_COPY.persist,
-    title: "保存文案草稿",
+    title: "保存文案",
+    summaryTitle: "保存文案",
+    intent: "把本轮文案草稿沉淀入库。",
+    action: "把本轮文案草稿写入素材库。",
     fallbackResult: "已保存本轮生成的文案草稿。",
   },
+  save_user_feedback: {
+    title: "沉淀反馈",
+    summaryTitle: "沉淀反馈",
+    intent: "把用户反馈沉淀下来，供后续学习复用。",
+    action: "把用户反馈写入库。",
+    fallbackResult: "已沉淀用户反馈。",
+  },
+  save_performance_metric: {
+    title: "沉淀效果指标",
+    summaryTitle: "沉淀效果",
+    intent: "把发布后的效果数据回填沉淀。",
+    action: "把效果指标回填入库。",
+    fallbackResult: "已沉淀效果指标。",
+  },
   sync_copy_to_feishu: {
-    ...STAGE_COPY.persist,
     title: "同步文案到飞书",
+    summaryTitle: "同步文案",
+    intent: "把文案同步到飞书生产线。",
+    action: "把文案写入飞书多维表。",
     fallbackResult: "已把文案同步到飞书生产线。",
   },
   sync_topic_to_feishu: {
-    ...STAGE_COPY.persist,
     title: "同步选题到飞书",
+    summaryTitle: "同步选题",
+    intent: "把选题同步到飞书生产线。",
+    action: "把选题写入飞书多维表。",
     fallbackResult: "已把选题同步到飞书生产线。",
   },
   sync_diagnosis_to_feishu: {
-    ...STAGE_COPY.persist,
     title: "同步诊断到飞书",
+    summaryTitle: "同步诊断",
+    intent: "把诊断结果同步到飞书生产线。",
+    action: "把诊断结果写入飞书。",
     fallbackResult: "已把诊断结果同步到飞书生产线。",
+  },
+  send_review_notification: {
+    title: "发送审阅通知",
+    summaryTitle: "审阅通知",
+    intent: "在飞书发起人工审阅通知。",
+    action: "发送审阅通知。",
+    fallbackResult: "已发送审阅通知。",
   },
   adopt_online_notes: {
     title: "采纳线上笔记",
     summaryTitle: "线上素材采纳",
-    intent: "把线上检索到的可用笔记纳入数据底座，减少一次性素材浪费。",
+    intent: "把线上检索到的可用笔记收录进素材库（可追溯）。",
     action: "整理线上笔记的标题、链接和可用信息，并写入素材库。",
     fallbackResult: "已采纳可用的线上笔记。",
   },
   search_xhs_online: {
-    ...STAGE_COPY.retrieve,
-    title: "搜索小红书线上素材",
-    action: "在线检索小红书相关内容，补充本地数据底座之外的新鲜样本。",
+    title: "搜索小红书线上",
+    summaryTitle: "线上搜索",
+    intent: "在线检索小红书，补本地库之外的新鲜样本。",
+    action: "在线检索小红书相关内容。",
     fallbackResult: "已完成线上素材搜索。",
   },
 };
 
+// task 委派:按 subagent_type 给出"请了哪个子助手"。与 thinking-trace.ts SUBAGENT_LABELS 对齐。
+const SUBAGENT_TITLES: Record<string, string> = {
+  "knowledge-atom-retriever": "请知识检索助手查证据",
+  "persona-distiller": "请风格提炼助手看样本",
+  "benchmark-analyst": "请对标分析助手拆爆款",
+  "expert-panel-debater": "请专家会商助手给判断",
+  "content-system-ingestor": "请内容入库助手收录素材",
+  "curriculum-designer": "请课程设计助手搭框架",
+  "copywriting-coprocessor": "请文案协处理助手起稿",
+  "imitation-writer": "请仿写助手照范本写成品",
+};
+
 const ENGINEERING_WORD_RE = /\b(agent|trace|run|tool|custom|debug|schema|payload|warning|error|retry)\b/i;
 
+// 工具链口径:每步先按真实 tool_name 取该工具的中文语义;task 委派按 subagent_type 细化;
+// 都取不到才落到「处理当前步骤」的通用兜底(理论上不该出现,因为后端只 emit tool 事件)。
+function copyForTool(event: XhsTraceEvent): StageCopy | undefined {
+  if (event.tool_name === "task") {
+    const sub =
+      event.metrics && typeof event.metrics.subagent_type === "string"
+        ? (event.metrics.subagent_type as string)
+        : undefined;
+    const title = (sub && SUBAGENT_TITLES[sub]) || "请子任务助手处理";
+    return {
+      title,
+      summaryTitle: "子任务委派",
+      intent: "委派子助手在隔离上下文里处理这步重活。",
+      action: "把任务委派给执行型子助手。",
+      fallbackResult: "子助手已返回处理结果。",
+    };
+  }
+  if (event.tool_name && TOOL_COPY[event.tool_name]) return TOOL_COPY[event.tool_name];
+  return undefined;
+}
+
+const GENERIC_COPY: StageCopy = {
+  title: "处理当前步骤",
+  summaryTitle: "步骤处理",
+  intent: "把当前任务继续往前推进。",
+  action: "根据当前上下文执行必要的处理步骤。",
+  fallbackResult: "已完成当前处理步骤。",
+};
+
 function userTitle(event: XhsTraceEvent): string {
-  if (event.stage_id && STAGE_COPY[event.stage_id]) return STAGE_COPY[event.stage_id].title;
-  if (event.tool_name && TOOL_COPY[event.tool_name]) return TOOL_COPY[event.tool_name].title;
-  return "处理当前步骤";
+  return (copyForTool(event) ?? GENERIC_COPY).title;
 }
 
 function userCopy(event: XhsTraceEvent): StageCopy {
-  if (event.stage_id && STAGE_COPY[event.stage_id]) return STAGE_COPY[event.stage_id];
-  if (event.tool_name && TOOL_COPY[event.tool_name]) return TOOL_COPY[event.tool_name];
-  return {
-    title: "处理当前步骤",
-    summaryTitle: "步骤处理",
-    intent: "把当前任务继续往前推进。",
-    action: "根据当前上下文执行必要的处理步骤。",
-    fallbackResult: "已完成当前处理步骤。",
-  };
+  return copyForTool(event) ?? GENERIC_COPY;
 }
 
 function userSummary(event: XhsTraceEvent, title: string): string {

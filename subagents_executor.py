@@ -9,6 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 from models import ModelPoolProvider, build_router_middleware
 from middlewares import build_retry_middleware
+from data_foundation.agent_trace import with_trace
 from data_foundation.evidence import EvidencePackage
 from data_foundation.tools import (
     get_operations_data,
@@ -418,7 +419,7 @@ def build_executor_subagents(
     backend: Any = None,
 ) -> list[SubAgent]:
     """返回全部执行型子智能体列表，直接传给 create_deep_agent(subagents=...)。"""
-    return [
+    subagents = [
         build_knowledge_atom_retriever(registry, initial_model, backend),
         build_persona_distiller(registry, initial_model, backend),
         build_benchmark_analyst(registry, initial_model, backend),
@@ -428,3 +429,9 @@ def build_executor_subagents(
         build_copywriting_coprocessor(registry, initial_model, backend),
         build_imitation_writer(registry, initial_model, backend),
     ]
+    # 子代理工具统一过 trace(与主 agent 同一份 TRACE_TOOL_STAGES):子代理内部的检索/精读
+    # 也 emit trace 事件,继承父上下文同一 turn_id → 委派出去的重活真实显示在同一条工具调用链上。
+    for sub in subagents:
+        if sub.get("tools"):
+            sub["tools"] = with_trace(sub["tools"])
+    return subagents

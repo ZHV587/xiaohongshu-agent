@@ -43,7 +43,7 @@ test("reduceTraceEvents dedupes by event_id and sorts by seq", () => {
   );
 });
 
-test("presentation uses friendly Chinese and preserves source ids", () => {
+test("presentation names the real tool and preserves source ids", () => {
   const state = reduceTraceEvents(undefined, [
     event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "开始处理" }),
     event({
@@ -51,6 +51,7 @@ test("presentation uses friendly Chinese and preserves source ids", () => {
       seq: 2,
       type: "xhs.trace.tool.completed",
       stage_id: "retrieve",
+      tool_name: "semantic_search_resources",
       metrics: { found_count: 12, used_count: 3 },
     }),
     event({ event_id: "e3", seq: 3, type: "xhs.trace.run.completed", label: "处理完成" }),
@@ -59,13 +60,13 @@ test("presentation uses friendly Chinese and preserves source ids", () => {
   const presentation = toTracePresentation(state);
 
   assert.equal(presentation.traceId, "trace-1");
-  assert.match(presentation.userSummary, /已完成素材核验/);
-  assert.equal(presentation.userStages[0].title, "核验素材依据");
+  assert.match(presentation.userSummary, /已完成语义检索/);
+  assert.equal(presentation.userStages[0].title, "按语义找相关素材");
   assert.equal(presentation.userStages[0].metricsText, "找到 12 条，采用 3 条");
   assert.deepEqual(presentation.userStages[0].sourceEventIds, ["e2"]);
 });
 
-test("presentation explains what happened instead of naming a tool", () => {
+test("presentation is a real tool-call chain: each step names its tool + what it did", () => {
   const state = reduceTraceEvents(undefined, [
     event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
     event({
@@ -81,10 +82,10 @@ test("presentation explains what happened instead of naming a tool", () => {
   const presentation = toTracePresentation(state);
   const [stage] = presentation.userStages;
 
-  assert.equal(presentation.userSummary, "已完成素材核验：找到 12 条，采用 3 条");
-  assert.equal(stage.title, "核验素材依据");
-  assert.equal(stage.intent, "先确认有没有可用素材，避免凭空给建议。");
-  assert.equal(stage.action, "从数据底座检索与你需求相关的笔记和历史素材。");
+  assert.equal(presentation.userSummary, "已完成语义检索：找到 12 条，采用 3 条");
+  assert.equal(stage.title, "按语义找相关素材");
+  assert.equal(stage.intent, "从数据底座按语义相似度召回可用笔记和历史素材。");
+  assert.equal(stage.action, "按语义相似度召回与本轮主题相关的素材。");
   assert.equal(stage.resultText, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
 });
 
@@ -187,6 +188,6 @@ test("ordinary presentation hides engineering words", () => {
   ]) {
     assert.equal(visible.includes(word), false, `ordinary UI leaked ${word}`);
   }
-  assert.match(visible, /核验素材依据/);
+  assert.match(visible, /按语义找相关素材/);
   assert.match(visible, /找到 12 条/);
 });
