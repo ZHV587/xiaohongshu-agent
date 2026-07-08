@@ -313,6 +313,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setCover(snap.cover);
         setActiveVersion(snap.activeVersion);
         setCreationMode(snap.creationMode);
+        setScheduled(snap.scheduled);
       } else if (prev !== undefined) {
         // 切到一个无 overlay 记录的会话 → 重置默认,避免与上一会话串台。
         setTopicId(null);
@@ -321,6 +322,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setCover("");
         setActiveVersion("A");
         setCreationMode(false);
+        // scheduled 同样按会话隔离复位:否则会话 A 排期成功后切到会话 B,editing 派生仍为 true,
+        // 右栏误弹深度编辑器(「没点选题/仿写也弹创作 UI」的残留形态)。
+        setScheduled(false);
       }
     });
   }, [t.threadId]);
@@ -338,8 +342,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       cover,
       activeVersion,
       creationMode,
+      scheduled,
     });
-  }, [t.threadId, topicId, kw, tags, cover, activeVersion, creationMode]);
+  }, [t.threadId, topicId, kw, tags, cover, activeVersion, creationMode, scheduled]);
 
   const setSection = useCallback((s: StudioSection) => void setSectionRaw(s), [setSectionRaw]);
   // 白名单校验:URL ?section=任意值 不应被透传(消费组件 switch 不中会渲染空白)。
@@ -993,6 +998,8 @@ interface StudioOverlaySnapshot {
   activeVersion: VersionId;
   // 该会话是否已进入创作态(点过选题起稿/仿写)。刷新/切回后据此决定右栏是编辑器还是素材栏。
   creationMode: boolean;
+  // 该会话是否已排期定稿。此前是全局裸 state,不随会话切换复位 → 跨会话泄漏误弹编辑器。
+  scheduled: boolean;
 }
 
 function buildStudioOverlayKey(threadId: string | null): string {
@@ -1016,6 +1023,7 @@ function readStudioOverlay(threadId: string | null): StudioOverlaySnapshot | nul
       cover: typeof o.cover === "string" ? o.cover : "",
       activeVersion: av === "A" || av === "B" || av === "C" ? av : "A",
       creationMode: o.creationMode === true,
+      scheduled: o.scheduled === true,
     };
   } catch {
     return null;
