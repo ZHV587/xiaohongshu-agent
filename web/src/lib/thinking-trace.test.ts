@@ -88,7 +88,8 @@ test("write_todos plan renders as the primary workflow-phase track (generic phas
     thinking.run.logs.some((log) => log.text.includes("检索本地笔记卡")),
     "真实工具调用保留在同一个轨迹框的可展开记录中",
   );
-  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "ai"]);
+  // search_local_note_cards 命中素材 → 卡片网格(discovery)在思考链后、答复前渲染。
+  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "discovery", "ai"]);
 });
 
 test("workflow track suppresses the fallback tool track (only one thinking item, phases not tools)", () => {
@@ -297,7 +298,8 @@ test("completed todo workflow reveals every stage and keeps all process prose in
     toolMsg("p2"),
     aiText("最终给你三个方向"),
   ]);
-  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "ai"]);
+  // 检索命中素材 → 卡片网格(discovery)在思考链后、最终答复前渲染。
+  assert.deepEqual(tl.map((item) => item.kind), ["user", "thinking", "discovery", "ai"]);
   const thinking = tl[1];
   assert.ok(thinking.kind === "thinking");
   assert.deepEqual(
