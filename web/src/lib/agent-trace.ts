@@ -11,9 +11,6 @@ export interface XhsTraceEvent {
   stage_id?: string;
   tool_call_id?: string;
   tool_name?: string;
-  /** 本步真实检索词(仅搜索类工具有:keyword/query)。后端 trace_tool 从工具入参提取后带上,
-   *  前端把它拼进步骤标题("检索本地笔记卡:露营装备"),让同工具多次调用不再看起来一模一样。 */
-  query?: string;
   attempt?: number;
   ts: string;
   label: string;
@@ -263,13 +260,7 @@ const GENERIC_COPY: StageCopy = {
 };
 
 function userTitle(event: XhsTraceEvent): string {
-  const base = (copyForTool(event) ?? GENERIC_COPY).title;
-  // 带上本步真实检索词 → 同工具多次调用在链上可区分("检索本地笔记卡:露营装备" vs "…:新手帐篷"),
-  // 不再是无意义的重复。query 只有搜索类工具有;截断防超长标题糊屏。
-  const q = typeof event.query === "string" ? event.query.trim() : "";
-  if (!q) return base;
-  const shown = q.length > 18 ? q.slice(0, 18) + "…" : q;
-  return `${base}：${shown}`;
+  return (copyForTool(event) ?? GENERIC_COPY).title;
 }
 
 function userCopy(event: XhsTraceEvent): StageCopy {
@@ -364,9 +355,6 @@ export function toTracePresentation(state: TraceRunState): TracePresentation {
     const copy = userCopy(item);
     const title = userTitle(item);
     const result = resultText(item, copy);
-    // 意图行也带上真实检索词 → 每步说清"围绕『露营装备』在本地库找历史笔记",而非千篇一律的静态句。
-    const q = typeof item.query === "string" ? item.query.trim() : "";
-    const intent = q ? `围绕「${q}」${copy.intent}` : copy.intent;
     // 单步真实状态:该组代表事件(foldStageEvents 已选终态优先)是否已到终态。
     // failed → error;completed/其它终态 → done;仅有 started(尚无终态)→ active。
     const stepState: "active" | "done" | "error" = item.type.endsWith(".failed") || item.status === "error"
@@ -378,7 +366,7 @@ export function toTracePresentation(state: TraceRunState): TracePresentation {
       id: item.stage_id ?? item.tool_call_id ?? item.event_id,
       title,
       summary: userSummary(item, title),
-      intent,
+      intent: copy.intent,
       action: copy.action,
       resultText: result,
       statusText: statusText(item),

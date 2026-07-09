@@ -180,20 +180,7 @@ const STEP_DESCRIPTIONS: Record<string, string> = {
   "请子任务助手处理": "委派子助手在隔离上下文中处理这步重活",
 };
 
-// 从工具 args 里取真实检索词(keyword/query),与后端 agent_trace._extract_query 同口径。
-// 只认这两个命名字段,避免把 resource_id 等非查询参数误当检索词。
-function queryOf(args: unknown): string {
-  if (!args || typeof args !== "object") return "";
-  const a = args as Record<string, unknown>;
-  for (const key of ["keyword", "query"]) {
-    const v = a[key];
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return "";
-}
-
-// 基础中文名(不含检索词):供 STEP_DESCRIPTIONS 查描述与折叠归并。task 按 subagent 细分。
-export function baseToolLabel(name: string, args: unknown): string {
+export function toolLabel(name: string, args: unknown): string {
   if (name === "task") {
     const sub =
       args && typeof args === "object" && "subagent_type" in args
@@ -203,16 +190,6 @@ export function baseToolLabel(name: string, args: unknown): string {
     return "请子任务助手处理";
   }
   return TOOL_LABELS[name] ?? name;
-}
-
-export function toolLabel(name: string, args: unknown): string {
-  const base = baseToolLabel(name, args);
-  if (name === "task") return base; // 委派步不拼检索词(其 args 是子任务描述,非检索词)
-  // 带上真实检索词,让同工具多次调用在兜底轨道也能区分("检索本地笔记卡:露营装备")。
-  const q = queryOf(args);
-  if (!q) return base;
-  const shown = q.length > 18 ? q.slice(0, 18) + "…" : q;
-  return `${base}：${shown}`;
 }
 
 interface ToolCall {
@@ -339,6 +316,112 @@ function parseDiscoveryResults(content: Message["content"]): DiscoveryNote[] {
   }
 }
 
+// ── 工作流阶段轨道(write_todos 驱动)────────────────────────────────────────
+// 智能体开工前用 write_todos 写下这一轮的**工作流阶段计划**(理解需求→检索爆款素材→拆解套路
+// →产出选题…),每完成一阶段标 completed、下一阶段标 in_progress。这份计划就是用户在思考链里
+// 看到的"智能体在干什么"的进度——泛化的工作流阶段,不是某次具体检索。它是最高优先的轨道:
+// 一旦本轮有 write_todos,就用它当思考链主轴,压制官方/兜底的工具级轨道(避免两套并存糊屏)。
+
+interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+// 计数类工具(检索/发现):其结果条数补进"当前进行中的阶段"作一句结果行(↳ 命中 N 条)。
+const COUNTABLE_TOOLS = new Set([
+  "search_local_note_cards",
+  "search_xhs_online",
+  "semantic_search_resources",
+  "search_resources",
+]);
+
+// 从一条 write_todos 工具调用的 args 里解析 todos 数组(args 可能是对象或 JSON 串)。非法 → null。
+function parseTodos(args: unknown): TodoItem[] | null {
+  let obj = args;
+  if (typeof obj === "string") {
+    try { obj = JSON.parse(obj); } catch { return null; }
+  }
+  if (!obj || typeof obj !== "object") return null;
+  const raw = (obj as { todos?: unknown }).todos;
+  if (!Array.isArray(raw)) return null;
+  const out: TodoItem[] = [];
+  for (const t of raw) {
+    if (!t || typeof t !== "object") continue;
+    const content = typeof (t as { content?: unknown }).content === "string" ? (t as { content: string }).content.trim() : "";
+    const status = (t as { status?: unknown }).status;
+    if (!content) continue;
+    out.push({
+      content,
+      status: status === "in_progress" || status === "completed" ? status : "pending",
+    });
+  }
+  return out.length ? out : null;
+}
+
+// 数一条工具结果里命中的条数(结果形如 {results:[...]});取不到 → null(不伪造)。
+function countResults(content: Message["content"]): number | null {
+  const text = getContentString(content);
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text) as { results?: unknown };
+    return Array.isArray(parsed.results) ? parsed.results.length : null;
+  } catch {
+    return null;
+  }
+}
+
+// 给一个回合的消息片段构建"工作流阶段" run:以最新一次 write_todos 计划为主轴,把计数类工具
+// 命中数归到"命中它时正处于 in_progress 的那个阶段"作结果行。本轮无 write_todos → null(回退)。
+function buildTodoRun(
+  turnMsgs: Message[],
+  turnIsLast: boolean,
+  loading: boolean | undefined,
+): ThinkingRun | null {
+  let latest: TodoItem[] | null = null;
+  let currentPhase = ""; // 当前 in_progress 阶段的 content
+  const resultsByPhase = new Map<string, number>();
+
+  for (const m of turnMsgs) {
+    if (m.type === "ai") {
+      for (const c of ((m as { tool_calls?: ToolCall[] }).tool_calls ?? [])) {
+        if (c && c.name === "write_todos") {
+          const todos = parseTodos(c.args);
+          if (todos) {
+            latest = todos;
+            currentPhase = todos.find((t) => t.status === "in_progress")?.content ?? currentPhase;
+          }
+        }
+      }
+    }
+    if (m.type === "tool") {
+      const cid = (m as { tool_call_id?: string }).tool_call_id;
+      // 只在有明确"进行中阶段"时归属命中数,不硬凑;工具名由外层 toolNameById 提供。
+      if (cid && currentPhase) {
+        const n = countResults(m.content);
+        if (n != null) resultsByPhase.set(currentPhase, (resultsByPhase.get(currentPhase) ?? 0) + n);
+      }
+    }
+  }
+
+  if (!latest) return null;
+
+  const steps: ThinkingStep[] = latest.map((t) => {
+    const state: ThinkingStep["state"] = t.status === "completed" ? "done" : t.status === "in_progress" ? "active" : "pending";
+    const hit = resultsByPhase.get(t.content);
+    return {
+      label: t.content,
+      state,
+      ...(hit != null ? { result: `命中 ${hit} 条相关素材` } : {}),
+    };
+  });
+  const lastActive = steps.reduce((acc, s, i) => (s.state === "active" ? i : acc), -1);
+  const allDone = steps.every((s) => s.state === "done");
+  const currentStep = steps.length === 0 ? 0 : lastActive >= 0 ? lastActive + 1 : steps.length;
+  // 收尾口径同官方轨道:全阶段 completed∥历史回合∥最后一轮且流已停。
+  const done = allDone || !turnIsLast || loading === false;
+  return { steps, logs: [], done, currentStep, totalSteps: steps.length };
+}
+
 export function deriveTimeline(messages: Message[], context: TimelineContext = {}): TimelineItem[] {
   const out: TimelineItem[] = [];
   const presentations = context.tracePresentationsByTurnId ?? {};
@@ -367,15 +450,17 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     }
   }
 
-  // 一轮内累积的原子步骤记录(渲染前折叠)。base=不含检索词的基础中文名,用于查 STEP_DESCRIPTIONS
-  // 与折叠归并(同工具同 query 才折叠);name=展示名(可能带检索词,如"检索本地笔记卡:露营装备")。
-  type Atom = { name: string; base: string; state: "done" | "active" | "error" };
+  // 一轮内累积的原子步骤记录(渲染前折叠)。
+  type Atom = { name: string; state: "done" | "active" | "error" };
   let atoms: Atom[] = [];
   let logs: ThinkingLog[] = [];
   let runOpen = false;
   // 当前回合是否有官方 trace 轨道(逐轮判断,不再全局一刀切:
   // 只压制「匹配到 presentation 的那一轮」的兜底轨道,其余轮照常显示)。
   let turnHasOfficial = false;
+  // 当前回合是否已有更高优先级的轨道(工作流 todos 或官方 trace)→ 压制兜底工具轨道。
+  // 优先级:工作流阶段(write_todos)> 官方工具 trace > 兜底工具轨道。三者只显示最高的一条。
+  let turnHasWorkflow = false;
 
   // 把原子记录按「同名连续」折叠成语义步骤;组状态:任一 error → error;全 done → done;否则 active。
   const foldSteps = (): ThinkingStep[] => {
@@ -386,15 +471,13 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       let hasError = atoms[i].state === "error";
       let allDone = atoms[i].state !== "active";
       let j = i + 1;
-      // 按展示名折叠:同工具但检索词不同(name 不同)→ 不折叠,各成一步(它们本就是不同的检索)。
       while (j < atoms.length && atoms[j].name === name) {
         hasError = hasError || atoms[j].state === "error";
         allDone = allDone && atoms[j].state !== "active";
         j++;
       }
-      // 兜底轨道也带一句意图说明(按 base 基础名查,不含检索词才能命中);有则显示,让每步读起来是
-      // "在干什么/为什么",不再是裸动作名。
-      const description = STEP_DESCRIPTIONS[atoms[i].base];
+      // 兜底轨道也带一句意图说明(有则显示),让每步读起来是"在干什么/为什么",不再是裸动作名。
+      const description = STEP_DESCRIPTIONS[name];
       const state: ThinkingStep["state"] = hasError ? "error" : allDone ? "done" : "active";
       steps.push({ label: name, state, ...(description ? { description } : {}) });
       i = j;
@@ -422,7 +505,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
   };
 
   const flushRun = () => {
-    if (turnHasOfficial) {
+    if (turnHasWorkflow) {
       resetRun();
       return;
     }
@@ -471,10 +554,26 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       flushRun();
       out.push({ kind: "user", text: getContentString(m.content) });
       runOpen = true;
-      // 逐轮匹配官方 trace:turn_id ≡ 本轮 human 消息 id。匹配到且有真实步骤才用官方轨道
+      turnHasOfficial = false;
+      turnHasWorkflow = false;
+      // 本轮消息片段(到下一条 human 之前),供工作流 todos 轨道解析。
+      let nextHumanIdx = messages.length;
+      for (let k = i + 1; k < messages.length; k++) {
+        if (messages[k].type === "human") { nextHumanIdx = k; break; }
+      }
+      const turnMsgs = messages.slice(i + 1, nextHumanIdx);
+      // 优先级 1:工作流阶段轨道(智能体 write_todos 写的真实阶段计划)。有则当思考链主轴。
+      const todoRun = buildTodoRun(turnMsgs, i === lastHumanIdx, context.loading);
+      if (todoRun) {
+        out.push({ kind: "thinking", run: todoRun });
+        turnHasWorkflow = true;
+        continue;
+      }
+      // 优先级 2:官方工具 trace(turn_id ≡ 本轮 human 消息 id)。匹配到且有真实步骤才用
       // (空 presentation 不如兜底轨道信息多);匹配不上(如刷新后 store 已清)自动回退兜底。
       const presentation = typeof m.id === "string" ? presentations[m.id] : undefined;
       turnHasOfficial = !!presentation && presentation.userStages.length > 0;
+      turnHasWorkflow = turnHasOfficial;
       if (presentation && turnHasOfficial) {
         appendOfficialTrace(presentation, i === lastHumanIdx);
       }
@@ -485,16 +584,17 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       const calls = ((m as { tool_calls?: ToolCall[] }).tool_calls ?? []).filter(
         (c) => c && typeof c.name === "string",
       );
-      if (!turnHasOfficial) {
+      if (!turnHasWorkflow) {
         for (const c of calls) {
-          const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分;含检索词
-          const base = baseToolLabel(c.name, c.args); // 不含检索词,供查描述/折叠归并
+          // write_todos 是规划工具(它产出的阶段计划已由工作流轨道单独渲染),不作为兜底工具步。
+          if (c.name === "write_todos") continue;
+          const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分
           const state: Atom["state"] = c.id && errored.has(c.id)
             ? "error"
             : c.id && answered.has(c.id)
               ? "done"
               : "active";
-          atoms.push({ name: label, base, state });
+          atoms.push({ name: label, state });
           // 写类工具只存中文 label,不回显 payload;task 按读类处理(args 无凭证)。
           const logText = WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args);
           logs.push({ text: logText });

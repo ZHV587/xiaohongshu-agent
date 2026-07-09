@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { toolLabel, baseToolLabel, deriveTimeline, parseLatestAdoption, adoptedNoteResourceIds } from "./thinking-trace";
+import { toolLabel, deriveTimeline, parseLatestAdoption, adoptedNoteResourceIds } from "./thinking-trace";
 
 test("toolLabel maps known data_foundation tools to Chinese", () => {
   assert.equal(toolLabel("semantic_search_resources", {}), "按语义找相关素材");
@@ -9,46 +9,6 @@ test("toolLabel maps known data_foundation tools to Chinese", () => {
   assert.equal(toolLabel("get_resource", {}), "打开原文细看");
   assert.equal(toolLabel("graph_expand", {}), "顺着图谱找关联");
   assert.equal(toolLabel("save_generated_topic", {}), "保存选题");
-});
-
-test("toolLabel appends the real search query so repeated calls differ", () => {
-  // 根因修复:同工具多次调用此前显示完全一样(报告的"根本不是一个东西")。带上检索词后可区分。
-  assert.equal(toolLabel("search_local_note_cards", { keyword: "露营装备" }), "检索本地笔记卡：露营装备");
-  assert.equal(toolLabel("search_xhs_online", { keyword: "新手帐篷" }), "搜索小红书线上：新手帐篷");
-  assert.equal(toolLabel("semantic_search_resources", { query: "职场穿搭" }), "按语义找相关素材：职场穿搭");
-  // 超长检索词截断防糊屏(18 字 + 省略号)。
-  assert.equal(
-    toolLabel("search_local_note_cards", { keyword: "一二三四五六七八九十一二三四五六七八九十" }),
-    "检索本地笔记卡：一二三四五六七八九十一二三四五六七八…",
-  );
-  // 非搜索类工具(无 keyword/query)不拼后缀;task 委派也不拼(其 args 非检索词)。
-  assert.equal(toolLabel("get_resource", { resource_id: "n1" }), "打开原文细看");
-  assert.equal(toolLabel("task", { subagent_type: "benchmark-analyst", description: "拆爆款" }), "请对标分析助手拆爆款");
-});
-
-test("baseToolLabel keeps the query-free label for description lookup", () => {
-  assert.equal(baseToolLabel("search_local_note_cards", { keyword: "露营装备" }), "检索本地笔记卡");
-  assert.equal(baseToolLabel("task", { subagent_type: "benchmark-analyst" }), "请对标分析助手拆爆款");
-});
-
-test("same tool with different queries renders as distinct steps, not one folded step", () => {
-  const tl = deriveTimeline([
-    human("出选题"),
-    aiCall("c1", "search_local_note_cards", { keyword: "露营装备" }),
-    toolMsg("c1"),
-    aiCall("c2", "search_local_note_cards", { keyword: "新手帐篷" }),
-    toolMsg("c2"),
-    aiText("给你几个方向"),
-  ]);
-  const thinking = tl.find((i) => i.kind === "thinking");
-  assert.ok(thinking && thinking.kind === "thinking");
-  assert.deepEqual(
-    thinking.run.steps.map((s) => s.label),
-    ["检索本地笔记卡：露营装备", "检索本地笔记卡：新手帐篷"],
-    "检索词不同 → 不折叠,各成一步",
-  );
-  // 描述按基础名查得到,两步都带描述。
-  assert.ok(thinking.run.steps.every((s) => s.description === "在本地素材库里找能支撑本轮主题的历史笔记"));
 });
 
 test("toolLabel maps feishu action tools", () => {
@@ -85,6 +45,68 @@ const aiCall = (id: string, name: string, args: Record<string, unknown> = {}): M
   ({ id, type: "ai", content: "", tool_calls: [{ id, name, args }] } as unknown as Message);
 const toolMsg = (callId: string): Message =>
   ({ id: "t" + callId, type: "tool", tool_call_id: callId, content: "ok" } as unknown as Message);
+// write_todos 规划调用:content 空,tool_calls 带 todos 数组(智能体写的工作流阶段计划)。
+const aiTodos = (id: string, todos: Array<{ content: string; status: string }>): Message =>
+  ({ id, type: "ai", content: "", tool_calls: [{ id, name: "write_todos", args: { todos } }] } as unknown as Message);
+// 带命中结果的工具消息(results 数组用于工作流阶段结果行"命中 N 条")。
+const toolMsgResults = (callId: string, n: number): Message =>
+  ({ id: "t" + callId, type: "tool", tool_call_id: callId, content: JSON.stringify({ results: Array.from({ length: n }, (_, i) => ({ note_id: "n" + i, title: "t" + i })) }) } as unknown as Message);
+
+test("write_todos plan renders as the primary workflow-phase track (generic phases, not tool names)", () => {
+  const tl = deriveTimeline([
+    human("按职场穿搭出选题"),
+    aiTodos("p1", [
+      { content: "理解需求", status: "completed" },
+      { content: "检索爆款素材依据", status: "in_progress" },
+      { content: "拆解共性套路", status: "pending" },
+      { content: "产出候选选题", status: "pending" },
+    ]),
+    toolMsg("p1"),
+    aiCall("c1", "search_local_note_cards", { keyword: "职场穿搭" }),
+    toolMsgResults("c1", 4),
+    aiText("给你几个选题方向"),
+  ], { loading: true });
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  // 思考链主轴是工作流阶段(智能体真实计划),不是工具名。
+  assert.deepEqual(
+    thinking.run.steps.map((s) => s.label),
+    ["理解需求", "检索爆款素材依据", "拆解共性套路", "产出候选选题"],
+  );
+  assert.deepEqual(
+    thinking.run.steps.map((s) => s.state),
+    ["done", "active", "pending", "pending"],
+  );
+  // 命中数归到"命中它时正 in_progress 的阶段"作结果行。
+  assert.equal(thinking.run.steps[1].result, "命中 4 条相关素材");
+  assert.equal(thinking.run.currentStep, 2, "当前步 = 唯一 in_progress 的第 2 步");
+});
+
+test("workflow track suppresses the fallback tool track (only one thinking item, phases not tools)", () => {
+  const tl = deriveTimeline([
+    human("出选题"),
+    aiTodos("p1", [{ content: "检索爆款素材依据", status: "in_progress" }]),
+    toolMsg("p1"),
+    aiCall("c1", "search_local_note_cards", { keyword: "x" }),
+    toolMsg("c1"),
+    aiText("答案"),
+  ]);
+  const thinkingItems = tl.filter((i) => i.kind === "thinking");
+  assert.equal(thinkingItems.length, 1, "只有工作流一条,兜底工具轨道被压制");
+  assert.deepEqual(thinkingItems[0].run.steps.map((s) => s.label), ["检索爆款素材依据"]);
+});
+
+test("no write_todos → falls back to the tool-name track (short tasks keep working)", () => {
+  const tl = deriveTimeline([
+    human("出选题"),
+    aiCall("c1", "semantic_search_resources", { query: "x" }),
+    toolMsg("c1"),
+    aiText("答案"),
+  ]);
+  const thinking = tl.find((i) => i.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  assert.deepEqual(thinking.run.steps.map((s) => s.label), ["按语义找相关素材"]);
+});
 
 const officialPresentation: TracePresentation = {
   traceId: "trace-1",
@@ -122,9 +144,8 @@ test("tool call without ToolMessage is active", () => {
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
   // 兜底轨道现在给每步补一句意图说明(Claude Code/Codex 式,消除黑盒感),故断言含 description。
-  // 步骤 label 现带真实检索词(区分同工具多次调用),故为"…：露营"。
   assert.deepEqual(thinking.run.steps, [
-    { label: "按语义找相关素材：露营", state: "active", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
+    { label: "按语义找相关素材", state: "active", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
   ]);
   assert.equal(thinking.run.done, false);
 });
@@ -139,7 +160,7 @@ test("tool call with matching ToolMessage is done", () => {
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
   assert.deepEqual(thinking.run.steps, [
-    { label: "按语义找相关素材：露营", state: "done", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
+    { label: "按语义找相关素材", state: "done", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
   ]);
   assert.equal(thinking.run.done, true);
 });
@@ -221,7 +242,7 @@ test("tool call with progress prose flushes the trace before the prose lands", (
   const thinking = tl[1];
   assert.ok(thinking.kind === "thinking");
   assert.equal(thinking.run.done, true);
-  assert.equal(thinking.run.steps[0].label, "按语义找相关素材：职场穿搭");
+  assert.equal(thinking.run.steps[0].label, "按语义找相关素材");
 });
 
 // ── live 路径回归(此前的"黑盒"根因):trace 事件到达 store 时,官方轨道必须当场流式可见 ──
@@ -305,7 +326,7 @@ test("per-turn fallback: a turn without official trace still shows its fallback 
   );
   const thinkingItems = tl.filter((i) => i.kind === "thinking");
   assert.equal(thinkingItems.length, 2, "官方轨道一条 + 第二轮兜底轨道一条");
-  assert.equal(thinkingItems[1].run.steps[0].label, "按语义找相关素材：x");
+  assert.equal(thinkingItems[1].run.steps[0].label, "按语义找相关素材");
 });
 
 test("fallback track marks a failed tool step as error, not done", () => {
@@ -335,7 +356,7 @@ test("empty official presentation falls back to the richer fallback track", () =
   );
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
-  assert.equal(thinking.run.steps[0].label, "按语义找相关素材：x", "空 presentation 不压制兜底轨道");
+  assert.equal(thinking.run.steps[0].label, "按语义找相关素材", "空 presentation 不压制兜底轨道");
 });
 
 test("consecutive same-name tools fold into one step but keep per-call logs", () => {

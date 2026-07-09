@@ -208,66 +208,6 @@ def test_trace_tool_uses_langgraph_config_turn_id(monkeypatch) -> None:
     assert all(event["trace_id"] == "run-x" for event in emitted)
 
 
-def test_extract_query_reads_keyword_and_query_only() -> None:
-    """检索词只认命名参数 keyword/query,不认位置参数或其它键(避免把 resource_id 误当检索词)。"""
-    from data_foundation.agent_trace import _extract_query
-
-    assert _extract_query({"keyword": "露营装备"}) == "露营装备"
-    assert _extract_query({"query": "职场穿搭"}) == "职场穿搭"
-    assert _extract_query({"keyword": "  帐篷  "}) == "帐篷"  # 去空白
-    assert _extract_query({"resource_id": "n1"}) is None  # 非检索词不误取
-    assert _extract_query({"keyword": ""}) is None  # 空串不算
-    assert _extract_query({}) is None
-
-
-def test_trace_tool_threads_query_into_events(monkeypatch) -> None:
-    """根因修复回归:同工具多次调用此前链上显示完全一样(报告的"根本不是一个东西")。
-    真实检索词(keyword/query)必须带进 started/completed 事件,前端才能区分每步搜的是什么。"""
-    from langchain_core.tools import tool
-
-    from data_foundation.agent_trace import trace_tool
-
-    emitted = []
-    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
-
-    @tool
-    def search_local_note_cards(keyword: str, config: dict | None = None) -> dict:
-        """Search local note cards."""
-        return {"ok": True, "results": [1, 2]}
-
-    wrapped = trace_tool(search_local_note_cards, stage_id="retrieve", label="检索本地笔记卡")
-    config = {"configurable": {"thread_id": "t", "run_id": "r", "turn_id": "u"}}
-    # langchain 结构化 dispatch 把工具入参按名传(kwargs),故检索词以 keyword= 到达(见 .invoke 路径)。
-    wrapped.func(keyword="露营装备", config=config)
-
-    assert [e["type"] for e in emitted] == ["xhs.trace.tool.started", "xhs.trace.tool.completed"]
-    # started 与 completed 都带上真实检索词,供前端每步显示"检索本地笔记卡:露营装备"。
-    assert emitted[0]["query"] == "露营装备"
-    assert emitted[1]["query"] == "露营装备"
-
-
-def test_trace_tool_omits_query_for_non_search_tools(monkeypatch) -> None:
-    """非搜索类工具(无 keyword/query 命名参数)不带 query 字段,前端据此不拼检索词后缀。"""
-    from langchain_core.tools import tool
-
-    from data_foundation.agent_trace import trace_tool
-
-    emitted = []
-    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
-
-    @tool
-    def get_resource(resource_id: str, config: dict | None = None) -> dict:
-        """Open a resource."""
-        return {"ok": True}
-
-    wrapped = trace_tool(get_resource, stage_id="retrieve", label="打开原文细看")
-    wrapped.func(resource_id="n1", config={"configurable": {"thread_id": "t", "run_id": "r", "turn_id": "u"}})
-
-    # build_trace_event 只加非 None kwargs → 无检索词时事件里根本没有 query 键。
-    assert "query" not in emitted[0]
-    assert "query" not in emitted[1]
-
-
 def test_trace_tool_prefers_explicit_config_when_it_carries_identity(monkeypatch) -> None:
     """显式传入的 config 已带身份(turn_id/thread_id)时,以它为准,不被 contextvar 覆盖。"""
     from langchain_core.tools import tool
