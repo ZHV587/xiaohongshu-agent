@@ -218,13 +218,17 @@ function MaterialCard({ note: n, picked, onToggle, onImitate, onOpen }: {
 }) {
   const locked = !!n.already_local;
   const isLocal = n.source === "local";
+  // 封面代理拉取失败(过期签名/上游 403·502/非图片响应)时,退化为 🍠 占位,绝不显示浏览器破图。
+  // 这是"个别封面仍缺图"的根因:cover_url 有值但代理拉不到时,原先无 onError 兜底 → 破图。
+  const [coverFailed, setCoverFailed] = useState(false);
+  const showCover = !!n.cover_url && !coverFailed;
   return (
     <div className="lift pop-in" style={{ position: "relative", background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", boxShadow: picked ? "var(--shadow-md)" : "var(--shadow-xs)", outline: picked ? "2px solid var(--primary)" : "2px solid transparent", transition: "outline-color var(--dur-fast), box-shadow var(--dur-fast)", display: "flex", flexDirection: "column" }}>
-      {/* 封面盒:所有卡统一 3:4 定尺 + object-fit:cover。无封面图时用同尺寸的居中占位(🍠),
-          绝不塌成空盒或异形 —— 配合网格 align-items:start(卡片不被同行拉伸),整栏封面像素级一致。 */}
+      {/* 封面盒:所有卡统一 3:4 定尺 + object-fit:cover。无封面图(或代理拉取失败)时用同尺寸的居中
+          占位(🍠),绝不塌成空盒、异形或破图 —— 配合网格 align-items:start,整栏封面像素级一致。 */}
       <div onClick={onOpen} style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", overflow: "hidden", background: "var(--accent-surface)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {n.cover_url ? (
-          <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} />
+        {showCover ? (
+          <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="180px" unoptimized style={{ objectFit: "cover" }} onError={() => setCoverFailed(true)} />
         ) : (
           <span aria-hidden style={{ fontSize: 26, opacity: 0.5, lineHeight: 1 }}>🍠</span>
         )}
@@ -720,13 +724,16 @@ function ModalCloseButton({ onClose }: { onClose: () => void }) {
 function MaterialDetailBody({ noteId, onClose }: { noteId: string; onClose: () => void }) {
   const { materials, actions } = useStudio();
   const n = materials.find((m) => m.note_id === noteId);
+  // 封面代理拉取失败时退化为中性底色(与卡片一致),不显示破图。Hooks 必须在任何 return 之前调用。
+  const [coverFailed, setCoverFailed] = useState(false);
   if (!n) return null;
   const isLocal = n.source === "local";
+  const showCover = !!n.cover_url && !coverFailed;
   return (
     <>
-      {/* 封面带:16/9 满宽(对齐设计稿),真实封面走同源代理裁切;无图源退化为中性底色,绝不塞假图。 */}
+      {/* 封面带:16/9 满宽(对齐设计稿),真实封面走同源代理裁切;无图源或拉取失败退化为中性底色,绝不塞假图/破图。 */}
       <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", maxHeight: 280, overflow: "hidden", background: "var(--accent-surface)", flexShrink: 0 }}>
-        {n.cover_url && <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="720px" unoptimized style={{ objectFit: "cover" }} />}
+        {showCover && <Image src={coverProxyUrl(n.cover_url)!} alt={n.title} fill sizes="720px" unoptimized style={{ objectFit: "cover" }} onError={() => setCoverFailed(true)} />}
         <span style={{ position: "absolute", top: 16, left: 18, fontSize: "var(--text-xs)", fontWeight: 600, color: "#fff", background: isLocal ? "var(--success)" : "var(--charcoal-default)", padding: "3px 10px", borderRadius: "var(--radius-sm)" }}>{isLocal ? "本地库" : "线上"}</span>
         <ModalCloseButton onClose={onClose} />
       </div>

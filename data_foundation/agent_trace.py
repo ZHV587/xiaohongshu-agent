@@ -258,6 +258,26 @@ def _config_identity(config: Any) -> dict[str, str | None]:
     }
 
 
+# 工具入参里"这步在搜什么"的命名参数名。只认命名参数(不认位置参数),避免把 get_resource
+# 的 resource_id 等非查询词误当检索词。搜索类工具统一用 keyword / query 两个名字。
+_QUERY_ARG_KEYS = ("keyword", "query")
+
+
+def _extract_query(kwargs: dict[str, Any]) -> str | None:
+    """从工具 kwargs 里取真实检索词(keyword/query),供思考链每步显示"搜的是什么"。
+
+    根因:同一工具(如 search_local_note_cards / search_xhs_online)在一轮里会以不同 query
+    被调多次,但链上只显示固定中文名 + 固定描述 → 两次调用看起来完全一样(报告的"根本不是
+    一个东西")。把真实检索词带进 trace 事件,链上每步就能区分"检索本地笔记卡:露营装备"与
+    "检索本地笔记卡:新手帐篷",不再是无意义的重复。取不到(非搜索类工具)返回 None,不显示。
+    """
+    for key in _QUERY_ARG_KEYS:
+        value = kwargs.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _metrics_from_result(result: Any) -> dict[str, Any]:
     if not isinstance(result, dict):
         return {}
@@ -288,6 +308,9 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
         if resolved_config is not None and not _configurable_of(kwargs.get("config")):
             kwargs = {**kwargs, "config": resolved_config}
         tool_call_id = f"xhs-tool-{uuid.uuid4().hex}"
+        # 本步真实检索词(仅搜索类工具有):带进 started/completed/failed 三种事件,
+        # 前端每步显示"用哪个工具 + 搜的是什么",让同工具多次调用不再看起来一模一样。
+        query = _extract_query(kwargs)
         started = build_trace_event(
             type="xhs.trace.tool.started",
             stage_id=stage_id,
@@ -296,6 +319,7 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
             label=label,
             visibility="user",
             sequencer=_GLOBAL_SEQUENCER,
+            query=query,
             safe_args=sanitize_payload({"args": args, "kwargs": kwargs}),
             **identity,
         )
@@ -312,6 +336,7 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
                 visibility="user",
                 sequencer=_GLOBAL_SEQUENCER,
                 parent_id=started["event_id"],
+                query=query,
                 error={"code": exc.__class__.__name__, "message": str(exc)},
                 **identity,
             )
@@ -327,6 +352,7 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
             visibility="user",
             sequencer=_GLOBAL_SEQUENCER,
             parent_id=started["event_id"],
+            query=query,
             metrics=_metrics_from_result(result),
             safe_result=sanitize_payload(result if isinstance(result, dict) else {}),
             **identity,

@@ -180,7 +180,20 @@ const STEP_DESCRIPTIONS: Record<string, string> = {
   "请子任务助手处理": "委派子助手在隔离上下文中处理这步重活",
 };
 
-export function toolLabel(name: string, args: unknown): string {
+// 从工具 args 里取真实检索词(keyword/query),与后端 agent_trace._extract_query 同口径。
+// 只认这两个命名字段,避免把 resource_id 等非查询参数误当检索词。
+function queryOf(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  const a = args as Record<string, unknown>;
+  for (const key of ["keyword", "query"]) {
+    const v = a[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+// 基础中文名(不含检索词):供 STEP_DESCRIPTIONS 查描述与折叠归并。task 按 subagent 细分。
+export function baseToolLabel(name: string, args: unknown): string {
   if (name === "task") {
     const sub =
       args && typeof args === "object" && "subagent_type" in args
@@ -190,6 +203,16 @@ export function toolLabel(name: string, args: unknown): string {
     return "请子任务助手处理";
   }
   return TOOL_LABELS[name] ?? name;
+}
+
+export function toolLabel(name: string, args: unknown): string {
+  const base = baseToolLabel(name, args);
+  if (name === "task") return base; // 委派步不拼检索词(其 args 是子任务描述,非检索词)
+  // 带上真实检索词,让同工具多次调用在兜底轨道也能区分("检索本地笔记卡:露营装备")。
+  const q = queryOf(args);
+  if (!q) return base;
+  const shown = q.length > 18 ? q.slice(0, 18) + "…" : q;
+  return `${base}：${shown}`;
 }
 
 interface ToolCall {
@@ -344,8 +367,9 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
     }
   }
 
-  // 一轮内累积的原子步骤记录(渲染前折叠)。
-  type Atom = { name: string; state: "done" | "active" | "error" };
+  // 一轮内累积的原子步骤记录(渲染前折叠)。base=不含检索词的基础中文名,用于查 STEP_DESCRIPTIONS
+  // 与折叠归并(同工具同 query 才折叠);name=展示名(可能带检索词,如"检索本地笔记卡:露营装备")。
+  type Atom = { name: string; base: string; state: "done" | "active" | "error" };
   let atoms: Atom[] = [];
   let logs: ThinkingLog[] = [];
   let runOpen = false;
@@ -362,13 +386,15 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       let hasError = atoms[i].state === "error";
       let allDone = atoms[i].state !== "active";
       let j = i + 1;
+      // 按展示名折叠:同工具但检索词不同(name 不同)→ 不折叠,各成一步(它们本就是不同的检索)。
       while (j < atoms.length && atoms[j].name === name) {
         hasError = hasError || atoms[j].state === "error";
         allDone = allDone && atoms[j].state !== "active";
         j++;
       }
-      // 兜底轨道也带一句意图说明(有则显示),让每步读起来是"在干什么/为什么",不再是裸动作名。
-      const description = STEP_DESCRIPTIONS[name];
+      // 兜底轨道也带一句意图说明(按 base 基础名查,不含检索词才能命中);有则显示,让每步读起来是
+      // "在干什么/为什么",不再是裸动作名。
+      const description = STEP_DESCRIPTIONS[atoms[i].base];
       const state: ThinkingStep["state"] = hasError ? "error" : allDone ? "done" : "active";
       steps.push({ label: name, state, ...(description ? { description } : {}) });
       i = j;
@@ -461,13 +487,14 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       );
       if (!turnHasOfficial) {
         for (const c of calls) {
-          const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分
+          const label = toolLabel(c.name, c.args); // task → 已并入 subagent 细分;含检索词
+          const base = baseToolLabel(c.name, c.args); // 不含检索词,供查描述/折叠归并
           const state: Atom["state"] = c.id && errored.has(c.id)
             ? "error"
             : c.id && answered.has(c.id)
               ? "done"
               : "active";
-          atoms.push({ name: label, state });
+          atoms.push({ name: label, base, state });
           // 写类工具只存中文 label,不回显 payload;task 按读类处理(args 无凭证)。
           const logText = WRITE_TOOLS.has(c.name) ? label : safeArgsLog(label, c.args);
           logs.push({ text: logText });
