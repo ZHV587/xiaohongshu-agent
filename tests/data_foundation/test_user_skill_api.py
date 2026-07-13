@@ -189,6 +189,7 @@ def test_list_detail_and_append_use_authenticated_owner_scope(monkeypatch):
     assert "instructions" not in listed.json()["skills"][0]
     assert "skillMd" not in listed.json()["skills"][0]
     assert len(detailed.json()["skill"]["versions"]) == 1
+    assert detailed.json()["skill"]["versions"][0]["versionId"] == repo.skill.latest_definition.id
     append_call = next(value for name, value in repo.calls if name == "append")
     assert append_call["owner_open_id"] == "ou-user"
     assert append_call["expected_latest_version"] == 1

@@ -215,3 +215,12 @@ class PublishedUserSkillDocument:
     non_trigger_examples: list[str]
     tags: list[str]
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class SelectedUserSkillDocument:
+    skill_id: str
+    runtime_name: str
+    status: str
+    published_version: int | None
+    definition: UserSkillVersion

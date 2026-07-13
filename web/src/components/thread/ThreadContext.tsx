@@ -23,6 +23,12 @@ export type HITLDecision =
   | { type: "respond"; message: string }
   | { type: "edit"; edited_action: { action: string; args: Record<string, unknown> } };
 
+export interface UserSkillInvocation {
+  skillId: string;
+  versionId: string;
+  mode: "execute" | "test";
+}
+
 export interface ThreadContextProps {
   threadId: string | null;
   setThreadId: (id: string | null) => void;
@@ -40,6 +46,7 @@ export interface ThreadContextProps {
   setFirstTokenReceived: (v: boolean) => void;
   // stateUpdate:可选,把结构化数据(如采纳的 selected_notes)经官方 state 通道直传 graph,不经 LLM。
   submitText: (text: string, stateUpdate?: Record<string, unknown>) => void;
+  executeUserSkill: (text: string, invocation: UserSkillInvocation) => void;
   handleSubmit: (e: any) => void;
   handleRegenerate: (parentCheckpoint: any) => void;
   /** 停止当前正在进行的生成(SDK stream.stop)。仅在 isLoading 时有效。 */

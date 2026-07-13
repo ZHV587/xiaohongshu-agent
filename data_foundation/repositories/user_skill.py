@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 
 from data_foundation.models import (
     PublishedUserSkillDocument,
+    SelectedUserSkillDocument,
     UserSkill,
     UserSkillAuditEvent,
     UserSkillVersion,
@@ -627,6 +628,61 @@ class UserSkillRepository(BaseRepository):
             )
             for row in rows
         ]
+
+    def resolve_selected_document(
+        self,
+        *,
+        tenant_id: str,
+        owner_open_id: str,
+        skill_id: str,
+        version_id: str,
+        mode: str,
+        conn: Optional[Connection] = None,
+    ) -> SelectedUserSkillDocument:
+        """重新鉴权前端选择，只返回本人当前模式允许执行的不可变版本。"""
+        tenant_id, owner_open_id, _ = self._validate_identity(
+            tenant_id, owner_open_id, owner_open_id
+        )
+        skill_id = self._validate_uuid(skill_id)
+        version_id = self._validate_uuid(version_id)
+        if mode not in {"execute", "test"}:
+            raise KeyError("Selected Skill not found")
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    select s.runtime_name, p.status, p.published_version, v.*
+                    from user_skills s
+                    join user_skill_publications p
+                      on p.tenant_id = s.tenant_id
+                     and p.owner_open_id = s.owner_open_id
+                     and p.skill_id = s.id
+                    join user_skill_versions v
+                      on v.tenant_id = s.tenant_id
+                     and v.owner_open_id = s.owner_open_id
+                     and v.skill_id = s.id
+                    where s.tenant_id = %s and s.owner_open_id = %s
+                      and s.id = %s and v.id = %s
+                    """,
+                    (tenant_id, owner_open_id, skill_id, version_id),
+                ).fetchone()
+        if not row:
+            raise KeyError("Selected Skill not found")
+        if mode == "execute" and (
+            row["status"] != "published" or row["published_version"] != row["version"]
+        ):
+            raise KeyError("Selected Skill not found")
+        if mode == "test" and row["status"] == "archived":
+            raise KeyError("Selected Skill not found")
+        return SelectedUserSkillDocument(
+            skill_id=skill_id,
+            runtime_name=str(row["runtime_name"]),
+            status=str(row["status"]),
+            published_version=(
+                int(row["published_version"]) if row["published_version"] is not None else None
+            ),
+            definition=self._version_from_row(row),
+        )
 
     def list_versions(
         self,

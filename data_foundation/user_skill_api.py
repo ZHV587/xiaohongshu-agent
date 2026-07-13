@@ -91,6 +91,7 @@ def _definition_payload(definition: SkillDefinition) -> dict[str, Any]:
 def _version_payload(version: Any, runtime_name: str) -> dict[str, Any]:
     definition = definition_from_version(version)
     return {
+        "versionId": version.id,
         "version": version.version,
         "contentHash": version.content_hash,
         "createdAt": version.created_at.isoformat(),

@@ -16,7 +16,12 @@ import { useQueryState, parseAsBoolean } from "nuqs";
 import { toast } from "sonner";
 import { ThreadActionsProvider } from "@/lib/thread-actions";
 import { useFileUpload } from "@/hooks/use-file-upload";
-import { ThreadContext, type HITLRequest, type HITLDecision } from "./ThreadContext";
+import {
+  ThreadContext,
+  type HITLRequest,
+  type HITLDecision,
+  type UserSkillInvocation,
+} from "./ThreadContext";
 import { useThreadDraftState } from "./useThreadDraftState";
 
 export function ThreadStateProvider({ children }: { children: ReactNode }) {
@@ -87,7 +92,11 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     return undefined;
   };
 
-  const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
+  const submitTextForTurn = (
+    text: string,
+    stateUpdate: Record<string, unknown> | undefined,
+    turnId: string,
+  ) => {
     if (!text.trim()) return;
     // 流进行中不能并发提交(SDK 限制)。此前是静默 return —— 用户点「生成草稿/生成选题/润色」等
     // 毫无反馈,误以为按钮坏了。改为明确提示"正在生成中",让"没反应"变成可理解的忙碌态。
@@ -97,7 +106,7 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
     }
     setFirstTokenReceived(false);
     const newHumanMessage: Message = {
-      id: uuidv4(),
+      id: turnId,
       type: "human",
       content: text as Message["content"],
     };
@@ -123,6 +132,26 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
           messages: [...(prev.messages ?? []), ...toolMessages, newHumanMessage],
         }),
       },
+    );
+  };
+
+  const submitText = (text: string, stateUpdate?: Record<string, unknown>) => {
+    submitTextForTurn(text, stateUpdate, uuidv4());
+  };
+
+  const executeUserSkill = (text: string, invocation: UserSkillInvocation) => {
+    const turnId = uuidv4();
+    submitTextForTurn(
+      text,
+      {
+        selected_user_skill: {
+          skill_id: invocation.skillId,
+          version_id: invocation.versionId,
+          mode: invocation.mode,
+          invocation_id: turnId,
+        },
+      },
+      turnId,
     );
   };
 
@@ -343,6 +372,7 @@ export function ThreadStateProvider({ children }: { children: ReactNode }) {
         error: stream.error,
         setFirstTokenReceived,
         submitText,
+        executeUserSkill,
         handleSubmit,
         handleRegenerate,
         stopGeneration,

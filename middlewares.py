@@ -97,6 +97,7 @@ class FrontendDirectState(AgentState):
     selected_notes: NotRequired[list[dict]]
     selected_topic: NotRequired[dict]
     selected_reference: NotRequired[dict]
+    selected_user_skill: NotRequired[dict | None]
 
 
 class FrontendStateMiddleware(AgentMiddleware):

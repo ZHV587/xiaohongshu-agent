@@ -265,6 +265,75 @@ def test_runtime_document_batch_returns_only_current_owner_published_versions(mi
     ) == []
 
 
+def test_selected_document_modes_enforce_current_publication_and_owner(migrated_conn):
+    repo = UserSkillRepository(migrated_conn)
+    skill = _create(repo, display_name="精确执行流程")
+    draft_version_id = skill.latest_definition.id
+
+    tested = repo.resolve_selected_document(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+        skill_id=skill.id,
+        version_id=draft_version_id,
+        mode="test",
+    )
+    assert tested.definition.id == draft_version_id
+    with pytest.raises(KeyError, match="Selected Skill not found"):
+        repo.resolve_selected_document(
+            tenant_id="tenant-a",
+            owner_open_id="ou-owner",
+            skill_id=skill.id,
+            version_id=draft_version_id,
+            mode="execute",
+        )
+
+    published = repo.publish_version(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+        actor_open_id="ou-owner",
+        skill_id=skill.id,
+    )
+    executed = repo.resolve_selected_document(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+        skill_id=skill.id,
+        version_id=draft_version_id,
+        mode="execute",
+    )
+    assert executed.published_version == published.published_version
+
+    repo.disable_skill(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+        actor_open_id="ou-owner",
+        skill_id=skill.id,
+    )
+    with pytest.raises(KeyError, match="Selected Skill not found"):
+        repo.resolve_selected_document(
+            tenant_id="tenant-a",
+            owner_open_id="ou-owner",
+            skill_id=skill.id,
+            version_id=draft_version_id,
+            mode="execute",
+        )
+    assert repo.resolve_selected_document(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+        skill_id=skill.id,
+        version_id=draft_version_id,
+        mode="test",
+    ).status == "disabled"
+
+    with pytest.raises(KeyError, match="Selected Skill not found"):
+        repo.resolve_selected_document(
+            tenant_id="tenant-a",
+            owner_open_id="ou-other",
+            skill_id=skill.id,
+            version_id=draft_version_id,
+            mode="test",
+        )
+
+
 def test_rollback_accepts_only_previously_published_version_and_preserves_disabled(migrated_conn):
     repo = UserSkillRepository(migrated_conn)
     skill = _create(repo)
