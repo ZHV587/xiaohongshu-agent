@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 import pytest
 
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
+from data_foundation.knowledge.service import KnowledgeService
 from data_foundation.repositories.resource import ResourceRepository
 
 
@@ -17,7 +18,7 @@ def _vector(first: float = 0.1) -> list[float]:
 
 
 def _resource(conn, *, tenant_id: str = "tenant-a", title: str = "文档"):
-    return ResourceRepository(conn).upsert_resource(
+    resource = ResourceRepository(conn).upsert_resource(
         tenant_id=tenant_id,
         actor_open_id="ou_owner",
         resource_type="doc",
@@ -28,10 +29,16 @@ def _resource(conn, *, tenant_id: str = "tenant-a", title: str = "文档"):
         owner_open_id="ou_owner",
         mapping={"system": "test", "external_type": "doc", "external_id": f"{tenant_id}:{title}"},
     )
+    KnowledgeService(conn).enrich_exact_version(
+        tenant_id=resource.tenant_id,
+        resource_id=resource.id,
+        resource_version=resource.version,
+    )
+    return resource
 
 
 def _update_resource(conn, resource):
-    return ResourceRepository(conn).upsert_resource(
+    updated = ResourceRepository(conn).upsert_resource(
         tenant_id=resource.tenant_id,
         actor_open_id="ou_owner",
         resource_type=resource.type,
@@ -46,6 +53,12 @@ def _update_resource(conn, resource):
             "external_id": f"{resource.tenant_id}:{resource.title}",
         },
     )
+    KnowledgeService(conn).enrich_exact_version(
+        tenant_id=updated.tenant_id,
+        resource_id=updated.id,
+        resource_version=updated.version,
+    )
+    return updated
 
 
 def test_embedding_repository_uses_schema_qualified_vector_cast_for_custom_search_paths():
@@ -265,7 +278,7 @@ def test_activation_recomputes_counts_after_resource_becomes_blank(migrated_conn
         resource_version=resource.version,
         chunks=[VectorChunk(0, "正文", _vector())],
     )
-    ResourceRepository(migrated_conn).upsert_resource(
+    blank = ResourceRepository(migrated_conn).upsert_resource(
         tenant_id=resource.tenant_id,
         actor_open_id="ou_owner",
         resource_type=resource.type,
@@ -279,6 +292,11 @@ def test_activation_recomputes_counts_after_resource_becomes_blank(migrated_conn
             "external_type": "doc",
             "external_id": f"{resource.tenant_id}:{resource.title}",
         },
+    )
+    KnowledgeService(migrated_conn).enrich_exact_version(
+        tenant_id=blank.tenant_id,
+        resource_id=blank.id,
+        resource_version=blank.version,
     )
 
     assert repo.activate_if_complete(index.id, tenant_id="tenant-a") is True

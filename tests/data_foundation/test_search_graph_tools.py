@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from data_foundation.graph import expand_graph
+from data_foundation.knowledge.service import KnowledgeService
 from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.search import _result_from_row, semantic_search
 
@@ -387,8 +388,15 @@ def test_readable_rows_by_ids_filters_by_permission(migrated_conn):
 
 def test_semantic_search_returns_best_chunk_once_per_resource(migrated_conn):
     repo = ResourceRepository(migrated_conn)
-    first = _create_resource(repo, title="露营装备")
-    second = _create_resource(repo, title="厨房收纳")
+    first = _create_resource(repo, title="露营装备", content="露营装备正文")
+    second = _create_resource(repo, title="厨房收纳", content="厨房收纳正文")
+    knowledge = KnowledgeService(migrated_conn)
+    for resource in (first, second):
+        knowledge.enrich_exact_version(
+            tenant_id=resource.tenant_id,
+            resource_id=resource.id,
+            resource_version=resource.version,
+        )
     query = [1.0] + [0.0] * 1535
     index_id = _create_embedding_index(migrated_conn)
     _insert_embedding(migrated_conn, resource=first, index_id=index_id, chunk_index=0, chunk_text="差匹配", embedding=[0.0, 1.0] + [0.0] * 1534)

@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from data_foundation.embedding_repository import EmbeddingRepository
+from data_foundation.knowledge.service import KnowledgeService
 from data_foundation.models import OutboxItem
 from data_foundation.outbox_repository import OutboxRepository
 from data_foundation.processors.base import LeaseGuard
@@ -22,7 +23,7 @@ def _embedding(first: float = 0.1) -> list[float]:
 
 
 def _resource(conn, *, tenant_id: str = "tenant-a", content: str = "第一段内容\n第二段内容"):
-    return ResourceRepository(conn).upsert_resource(
+    resource = ResourceRepository(conn).upsert_resource(
         tenant_id=tenant_id,
         actor_open_id="ou_owner",
         resource_type="doc",
@@ -33,6 +34,12 @@ def _resource(conn, *, tenant_id: str = "tenant-a", content: str = "第一段内
         owner_open_id="ou_owner",
         mapping={"system": "test", "external_type": "doc", "external_id": tenant_id},
     )
+    KnowledgeService(conn).enrich_exact_version(
+        tenant_id=resource.tenant_id,
+        resource_id=resource.id,
+        resource_version=resource.version,
+    )
+    return resource
 
 
 def _item(resource, *, index_id: str) -> OutboxItem:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from data_foundation.embedding_repository import VectorChunk
 from data_foundation.embedding_service import EmbeddingIndexProfile, EmbeddingIndexService
+from data_foundation.knowledge.service import KnowledgeService
 from data_foundation.repositories.resource import ResourceRepository
 
 
@@ -46,7 +47,7 @@ def _resource(
     content: str | None = "正文",
     external_id: str | None = None,
 ):
-    return ResourceRepository(conn).upsert_resource(
+    resource = ResourceRepository(conn).upsert_resource(
         tenant_id=tenant_id,
         actor_open_id="ou_owner",
         resource_type="doc",
@@ -61,6 +62,12 @@ def _resource(
             "external_id": external_id or f"{tenant_id}:{title}",
         },
     )
+    KnowledgeService(conn).enrich_exact_version(
+        tenant_id=resource.tenant_id,
+        resource_id=resource.id,
+        resource_version=resource.version,
+    )
+    return resource
 
 
 def _service(conn, *, profile_version: str = "cfg-v1") -> EmbeddingIndexService:
@@ -151,7 +158,7 @@ def test_new_profile_enqueues_complete_backfill_once(migrated_conn):
         """
         select topic, payload
         from resource_outbox
-        where tenant_id = 'tenant-a'
+        where tenant_id = 'tenant-a' and topic = 'embedding_generate'
         order by payload->>'resource_id'
         """
     ).fetchall()
