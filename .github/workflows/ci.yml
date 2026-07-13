@@ -70,6 +70,10 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
         working-directory: web
       - name: Build web application
+        env:
+          # NEXT_PUBLIC_* 由 Next 在编译期写入浏览器 bundle；fixture 路由拦截同源 /api。
+          NEXT_PUBLIC_API_URL: /api
+          NEXT_PUBLIC_ASSISTANT_ID: agent
         run: pnpm build
         working-directory: web
       - name: Assemble standalone static assets

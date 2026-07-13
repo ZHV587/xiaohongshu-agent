@@ -25,6 +25,10 @@ test("CI wires each E2E suite to its own topology and installed browser", () => 
   assert.match(workflow, /web-ui-e2e:/);
   assert.match(workflow, /pnpm run test:e2e:ui/);
   assert.match(workflow, /pnpm run test:e2e:studio/);
+  assert.match(
+    workflow,
+    /- name: Build web application\s+env:\s+(?:#[^\n]*\s+)*NEXT_PUBLIC_API_URL: \/api\s+NEXT_PUBLIC_ASSISTANT_ID: agent\s+run: pnpm build/,
+  );
   assert.match(workflow, /cp -R \.next\/static \.next\/standalone\/\.next\/static/);
   assert.doesNotMatch(workflow, /pnpm exec playwright test 2>&1/);
   assert.doesNotMatch(commonConfig, /channel:\s*["']chrome["']/);
