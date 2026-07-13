@@ -120,6 +120,7 @@ create index if not exists idx_user_skill_publications_discoverable
 
 create table if not exists user_skill_audit_events (
   id uuid primary key default gen_random_uuid(),
+  event_order bigint generated always as identity,
   tenant_id text not null,
   owner_open_id text not null,
   skill_id uuid not null,
@@ -135,8 +136,14 @@ create table if not exists user_skill_audit_events (
   unique (tenant_id, owner_open_id, id)
 );
 
-create index if not exists idx_user_skill_audit_owner_recent
-  on user_skill_audit_events (tenant_id, owner_open_id, created_at desc, id desc);
+-- 旧部署中的审计表没有稳定的因果序号。identity 会为既有行完成回填，后续写入则按
+-- 数据库实际接收顺序递增；不能用事务级 now() 或随机 UUID 推断事件先后。
+alter table user_skill_audit_events
+  add column if not exists event_order bigint generated always as identity;
+
+drop index if exists idx_user_skill_audit_owner_recent;
+create index if not exists idx_user_skill_audit_owner_order
+  on user_skill_audit_events (tenant_id, owner_open_id, event_order desc);
 
 create table if not exists user_skill_revisions (
   tenant_id text not null,

@@ -490,6 +490,19 @@ def test_schema_declares_isolated_immutable_user_skill_contract():
     assert "before update or delete on user_skill_audit_events" in schema
     assert "foreign key (tenant_id, owner_open_id, skill_id, published_version)" in schema
     assert "where archived_at is null" in schema
+    assert "event_order bigint generated always as identity" in schema
+    assert (
+        "alter table user_skill_audit_events\n"
+        "  add column if not exists event_order bigint generated always as identity;"
+    ) in schema
+    assert (
+        "on user_skill_audit_events (tenant_id, owner_open_id, event_order desc)"
+        in schema
+    )
+    assert (
+        "on user_skill_audit_events (tenant_id, owner_open_id, created_at desc, id desc)"
+        not in schema
+    )
     assert "add column if not exists trigger_examples" in schema
     assert "add column if not exists non_trigger_examples" in schema
     assert "add column if not exists tags" in schema
@@ -663,6 +676,81 @@ def test_schema_is_idempotent(migrated_conn):
         "where table_schema=current_schema()"
     ).fetchall()
     assert {row[0] for row in views} == EXPECTED_VIEWS
+
+
+def test_schema_upgrades_legacy_user_skill_audit_order_idempotently(migrated_conn):
+    skill_id = migrated_conn.execute(
+        """
+        insert into user_skills
+          (tenant_id, owner_open_id, runtime_name, current_name, current_name_key)
+        values ('tenant-a', 'ou-owner', 'usr-legacy-audit', '历史 Skill', '历史 skill')
+        returning id
+        """
+    ).fetchone()[0]
+    migrated_conn.execute(
+        """
+        insert into user_skill_audit_events
+          (tenant_id, owner_open_id, skill_id, event_type, actor_open_id)
+        values
+          ('tenant-a', 'ou-owner', %s, 'created', 'ou-owner'),
+          ('tenant-a', 'ou-owner', %s, 'published', 'ou-owner')
+        """,
+        (skill_id, skill_id),
+    )
+
+    migrated_conn.execute("drop index idx_user_skill_audit_owner_order")
+    migrated_conn.execute("alter table user_skill_audit_events drop column event_order")
+    migrated_conn.execute(
+        """
+        create index idx_user_skill_audit_owner_recent
+        on user_skill_audit_events (tenant_id, owner_open_id, created_at desc, id desc)
+        """
+    )
+
+    db.run_migrations(migrated_conn)
+    db.run_migrations(migrated_conn)
+
+    column = migrated_conn.execute(
+        """
+        select identity_generation, is_nullable
+        from information_schema.columns
+        where table_schema = current_schema()
+          and table_name = 'user_skill_audit_events'
+          and column_name = 'event_order'
+        """
+    ).fetchone()
+    assert column == ("ALWAYS", "NO")
+
+    existing_orders = [
+        row[0]
+        for row in migrated_conn.execute(
+            "select event_order from user_skill_audit_events order by event_order"
+        ).fetchall()
+    ]
+    assert len(existing_orders) == 2
+    assert len(set(existing_orders)) == 2
+
+    next_order = migrated_conn.execute(
+        """
+        insert into user_skill_audit_events
+          (tenant_id, owner_open_id, skill_id, event_type, actor_open_id)
+        values ('tenant-a', 'ou-owner', %s, 'disabled', 'ou-owner')
+        returning event_order
+        """,
+        (skill_id,),
+    ).fetchone()[0]
+    assert next_order > max(existing_orders)
+
+    index_definition = migrated_conn.execute(
+        """
+        select indexdef
+        from pg_indexes
+        where schemaname = current_schema()
+          and indexname = 'idx_user_skill_audit_owner_order'
+        """
+    ).fetchone()[0].lower()
+    assert "(tenant_id, owner_open_id, event_order desc)" in index_definition
+    assert "created_at" not in index_definition
 
 
 def test_schema_removes_legacy_retrieval_evidence_identity_unique(migrated_conn):

@@ -195,6 +195,7 @@ class UserSkill:
 @dataclass(frozen=True)
 class UserSkillAuditEvent:
     id: str
+    event_order: int
     tenant_id: str
     owner_open_id: str
     skill_id: str

@@ -810,7 +810,7 @@ class UserSkillRepository(BaseRepository):
                     select *
                     from user_skill_audit_events
                     where tenant_id = %s and owner_open_id = %s and skill_id = %s
-                    order by created_at desc, id desc
+                    order by event_order desc
                     limit %s
                     """,
                     (tenant_id, owner_open_id, skill_id, limit),
@@ -1050,6 +1050,7 @@ class UserSkillRepository(BaseRepository):
     def _audit_from_row(row: dict) -> UserSkillAuditEvent:
         return UserSkillAuditEvent(
             id=str(row["id"]),
+            event_order=int(row["event_order"]),
             tenant_id=str(row["tenant_id"]),
             owner_open_id=str(row["owner_open_id"]),
             skill_id=str(row["skill_id"]),

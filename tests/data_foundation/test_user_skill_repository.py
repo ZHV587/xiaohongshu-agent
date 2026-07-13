@@ -200,9 +200,25 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
         )
     ) == 1
     assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 6
-    assert [event.event_type for event in repo.list_audit_events(
+    audit_events = repo.list_audit_events(
         tenant_id="tenant-a", owner_open_id="ou-owner", skill_id=skill.id
-    )] == ["archived", "rolled_back", "enabled", "disabled", "published", "version_created", "published", "created"]
+    )
+    assert [event.event_type for event in audit_events] == [
+        "archived",
+        "rolled_back",
+        "enabled",
+        "disabled",
+        "published",
+        "version_created",
+        "published",
+        "created",
+    ]
+    # create 返回后的读取开启了 fixture 的长事务，之后七个事件共享同一个 now()；
+    # 审计顺序必须由数据库生成的因果序号决定，不能退回随机 UUID 排序。
+    assert len({event.created_at for event in audit_events[:-1]}) == 1
+    assert [event.event_order for event in audit_events] == sorted(
+        (event.event_order for event in audit_events), reverse=True
+    )
 
 
 def test_all_reads_are_tenant_and_owner_scoped(migrated_conn):
