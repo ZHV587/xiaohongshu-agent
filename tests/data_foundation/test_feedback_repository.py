@@ -3,7 +3,32 @@ from psycopg.rows import dict_row
 
 from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.repositories.feedback import FeedbackRepository
-from data_foundation.models import Resource, RuntimeIdentityConfig
+from data_foundation.models import OutboxRequest, RuntimeIdentityConfig
+
+
+def _create_resource(
+    repo: ResourceRepository,
+    *,
+    actor: RuntimeIdentityConfig,
+    title: str,
+    content_text: str,
+    visibility: str = "private",
+    outbox_requests=None,
+    conn,
+):
+    return repo.upsert_resource(
+        tenant_id=actor.tenant_id,
+        actor_open_id=actor.open_id,
+        resource_type="xhs_copy",
+        title=title,
+        content_text=content_text,
+        content_json={},
+        status="active",
+        visibility=visibility,
+        owner_open_id=actor.open_id,
+        outbox_requests=outbox_requests,
+        conn=conn,
+    )
 
 
 @pytest.mark.parametrize(
@@ -64,51 +89,29 @@ def test_add_edge_cross_tenant_denied(migrated_conn):
     actor1 = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_1")
     actor2 = RuntimeIdentityConfig(tenant_id="tenant_2", open_id="user_2")
     
-    r1 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="T1 Resource",
-            summary=None,
-            content_text="Content 1",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
+    r1 = _create_resource(
+        res_repo,
         actor=actor1,
-        conn=migrated_conn
+        title="T1 Resource",
+        content_text="Content 1",
+        conn=migrated_conn,
     )
     
-    r2 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_2",
-            type="xhs_copy",
-            title="T2 Resource",
-            summary=None,
-            content_text="Content 2",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_2",
-            created_at=None,
-            updated_at=None
-        ),
+    r2 = _create_resource(
+        res_repo,
         actor=actor2,
-        conn=migrated_conn
+        title="T2 Resource",
+        content_text="Content 2",
+        conn=migrated_conn,
     )
     
     with pytest.raises(PermissionError, match="Both edge endpoints must belong to this tenant"):
         fb_repo.add_edge(
             tenant_id="tenant_1",
             source_resource_id=r1.id,
-            source_resource_version=1,
+            source_resource_version=r1.version,
             target_resource_id=r2.id,
-            target_resource_version=1,
+            target_resource_version=r2.version,
             edge_type="cross_edge",
             weight=1.0,
             conn=migrated_conn
@@ -120,42 +123,20 @@ def test_add_edge_inserts_correctly(migrated_conn):
     fb_repo = FeedbackRepository()
     actor = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_1")
     
-    r1 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Resource 1",
-            summary=None,
-            content_text="Content 1",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
+    r1 = _create_resource(
+        res_repo,
         actor=actor,
-        conn=migrated_conn
+        title="Resource 1",
+        content_text="Content 1",
+        conn=migrated_conn,
     )
     
-    r2 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Resource 2",
-            summary=None,
-            content_text="Content 2",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
+    r2 = _create_resource(
+        res_repo,
         actor=actor,
-        conn=migrated_conn
+        title="Resource 2",
+        content_text="Content 2",
+        conn=migrated_conn,
     )
     
     # Delete existing outbox messages for r1 to isolate
@@ -165,9 +146,9 @@ def test_add_edge_inserts_correctly(migrated_conn):
     fb_repo.add_edge(
         tenant_id="tenant_1",
         source_resource_id=r1.id,
-        source_resource_version=1,
+        source_resource_version=r1.version,
         target_resource_id=r2.id,
-        target_resource_version=1,
+        target_resource_version=r2.version,
         edge_type="related_to",
         weight=2.5,
         properties={"reason": "manual"},
@@ -182,12 +163,12 @@ def test_add_edge_inserts_correctly(migrated_conn):
         ).fetchone()
         assert edge is not None
         assert edge["weight"] == 2.5
-        assert edge["source_resource_version"] == 1
-        assert edge["target_resource_version"] == 1
+        assert edge["source_resource_version"] == r1.version
+        assert edge["target_resource_version"] == r2.version
         assert edge["properties"] == {
             "reason": "manual",
-            "source_resource_version": 1,
-            "target_resource_version": 1,
+            "source_resource_version": r1.version,
+            "target_resource_version": r2.version,
         }
         
         # Verify outbox
@@ -198,7 +179,10 @@ def test_add_edge_inserts_correctly(migrated_conn):
         assert len(outbox) == 1
         assert outbox[0]["topic"] == "graph_ingest"
         assert outbox[0]["event_id"] is None
-        assert outbox[0]["payload"] == {"resource_id": str(r1.id), "version": 1}
+        assert outbox[0]["payload"] == {
+            "resource_id": str(r1.id),
+            "version": r1.version,
+        }
         
         # Verify dedupe key —— 含边维度(target+edge_type),与 node-ingest key 区分(Q-2 修复)
         import hashlib
@@ -206,14 +190,14 @@ def test_add_edge_inserts_correctly(migrated_conn):
         expected_dedupe = hashlib.sha256(
             json.dumps(
                 [
-                    "tenant_1", str(r1.id), 1, "graph_ingest", "graph", "edge",
-                    "1", str(r2.id), "1", "related_to",
+                    "tenant_1", str(r1.id), r1.version, "graph_ingest", "graph", "edge",
+                    str(r1.version), str(r2.id), str(r2.version), "related_to",
                     2.5,
                     json.dumps(
                         {
                             "reason": "manual",
-                            "source_resource_version": 1,
-                            "target_resource_version": 1,
+                            "source_resource_version": r1.version,
+                            "target_resource_version": r2.version,
                         },
                         sort_keys=True,
                         ensure_ascii=False,
@@ -258,95 +242,52 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
         )
         
     # Create resource in tenant_1 (private)
-    r1 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="T1 Private Resource",
-            summary=None,
-            content_text="Content",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
+    r1 = _create_resource(
+        res_repo,
         actor=actor1,
-        conn=migrated_conn
+        title="T1 Private Resource",
+        content_text="Content",
+        conn=migrated_conn,
     )
     
     # Create resource in tenant_2 (private)
-    r2 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_2",
-            type="xhs_copy",
-            title="T2 Private Resource",
-            summary=None,
-            content_text="Content 2",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_2",
-            created_at=None,
-            updated_at=None
-        ),
+    r2 = _create_resource(
+        res_repo,
         actor=actor2,
-        conn=migrated_conn
+        title="T2 Private Resource",
+        content_text="Content 2",
+        conn=migrated_conn,
     )
     
     # 2. Source is unauthorized (actor2 trying to use tenant_1's private resource)
     with pytest.raises(PermissionError, match="Source resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r1.id,
-            source_version=1,
+            source_version=r1.version,
             target_id=r2.id,
-            target_version=1,
+            target_version=r2.version,
             edge_type="test",
             actor=actor2,
             conn=migrated_conn
         )
 
     # 3. Source is team visible in tenant_1: actor1 (user_1) owns it.
-    r_team = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="T1 Team Resource",
-            summary=None,
-            content_text="Content",
-            content_json={},
-            status="active",
-            visibility="team",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
+    r_team = _create_resource(
+        res_repo,
         actor=actor1,
-        conn=migrated_conn
+        title="T1 Team Resource",
+        content_text="Content",
+        visibility="team",
+        conn=migrated_conn,
     )
     
     # Create valid target in tenant_1 (private to actor1)
-    r_target = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Target",
-            summary=None,
-            content_text="Content",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
+    r_target = _create_resource(
+        res_repo,
         actor=actor1,
-        conn=migrated_conn
+        title="Target",
+        content_text="Content",
+        conn=migrated_conn,
     )
     
     # actor3 trying to create edge from r_team (owned by user_1) to r_target (private to user_1)
@@ -354,32 +295,21 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Source resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r_team.id,
-            source_version=1,
+            source_version=r_team.version,
             target_id=r_target.id,
-            target_version=1,
+            target_version=r_target.version,
             edge_type="test_team_edge",
             actor=actor3,
             conn=migrated_conn
         )
         
     # Create a resource owned by actor3
-    r_owned_by_user3 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Owned by User 3",
-            summary=None,
-            content_text="Content",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_3",
-            created_at=None,
-            updated_at=None
-        ),
+    r_owned_by_user3 = _create_resource(
+        res_repo,
         actor=actor3,
-        conn=migrated_conn
+        title="Owned by User 3",
+        content_text="Content",
+        conn=migrated_conn,
     )
     
     # actor3 trying to create edge from r_owned_by_user3 (write) to r_target (private to user_1, no read perm)
@@ -387,9 +317,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Target resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r_owned_by_user3.id,
-            source_version=1,
+            source_version=r_owned_by_user3.version,
             target_id=r_target.id,
-            target_version=1,
+            target_version=r_target.version,
             edge_type="test_edge",
             actor=actor3,
             conn=migrated_conn
@@ -399,9 +329,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     # This should succeed because actor3 has write permission on source, and read permission on target
     fb_repo.create_edge(
         source_id=r_owned_by_user3.id,
-        source_version=1,
+        source_version=r_owned_by_user3.version,
         target_id=r_team.id,
-        target_version=1,
+        target_version=r_team.version,
         edge_type="test_team_read_edge",
         actor=actor3,
         conn=migrated_conn
@@ -412,9 +342,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Target resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r_owned_by_user3.id,
-            source_version=1,
+            source_version=r_owned_by_user3.version,
             target_id=r2.id,
-            target_version=1,
+            target_version=r2.version,
             edge_type="test_invalid_target",
             actor=actor3,
             conn=migrated_conn
@@ -430,11 +360,13 @@ def test_add_edge_after_node_ingest_enqueues_distinct_task(migrated_conn):
     actor = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_1")
 
     def _mk(title):
-        return res_repo.upsert_resource(
-            Resource(id=None, tenant_id="tenant_1", type="xhs_copy", title=title, summary=None,
-                     content_text="x", content_json={}, version=None, status="active",
-                     visibility="private", owner_open_id="user_1", created_at=None, updated_at=None),
-            actor=actor, conn=migrated_conn,
+        return _create_resource(
+            res_repo,
+            actor=actor,
+            title=title,
+            content_text="x",
+            outbox_requests=[OutboxRequest("graph_ingest", ("graph",), {})],
+            conn=migrated_conn,
         )
     src, tgt = _mk("src"), _mk("tgt")
 
@@ -446,8 +378,8 @@ def test_add_edge_after_node_ingest_enqueues_distinct_task(migrated_conn):
         )
 
     fb_repo.add_edge(tenant_id="tenant_1", source_resource_id=src.id,
-                     source_resource_version=1, target_resource_id=tgt.id,
-                     target_resource_version=1,
+                     source_resource_version=src.version, target_resource_id=tgt.id,
+                     target_resource_version=tgt.version,
                      edge_type="measured_by", weight=1.0, conn=migrated_conn)
 
     with migrated_conn.cursor(row_factory=dict_row) as cur:
@@ -457,5 +389,5 @@ def test_add_edge_after_node_ingest_enqueues_distinct_task(migrated_conn):
         ).fetchall()
     # 必须有一条新的 pending(边任务),与已 succeeded 的 node 任务并存、dedupe_key 不同
     statuses = sorted(r["status"] for r in rows)
-    assert "pending" in statuses, f"加边未产生新任务,边会丢失:{statuses}"
-    assert len({r["dedupe_key"] for r in rows}) == len(rows), "边任务与节点任务 dedupe_key 撞了"
+    assert statuses == ["pending", "succeeded"]
+    assert len({r["dedupe_key"] for r in rows}) == 2

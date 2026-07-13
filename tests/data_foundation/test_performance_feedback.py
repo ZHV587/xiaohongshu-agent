@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 
+from data_foundation.creation_memory import save_generated_copy_resource
 from data_foundation.performance_feedback import (
     get_resource_performance_payload,
     save_performance_metric_resource,
 )
+from data_foundation.repositories.generated_copy import GeneratedCopyRepository
 from data_foundation.repositories.resource import ResourceRepository
 
 
@@ -46,6 +48,65 @@ def preference_memory(monkeypatch):
     memory = _MemoryPreferenceRepository()
     monkeypatch.setattr(preference_repository, "PreferenceRepository", lambda _conn: memory)
     return memory
+
+
+def _save_published_copy(
+    repo: ResourceRepository,
+    *,
+    actor_open_id: str,
+    title: str,
+    visibility: str = "team",
+):
+    source = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id=actor_open_id,
+        resource_type="xhs_note",
+        title=f"{title} 来源",
+        content_text=f"{title} 的参考素材",
+        visibility="team",
+        owner_open_id=actor_open_id,
+        outbox_requests=[],
+    )
+    saved = save_generated_copy_resource(
+        repo,
+        tenant_id="default",
+        actor_open_id=actor_open_id,
+        title=title,
+        body="正文",
+        tags=[],
+        evidence=[
+            {
+                "resource_id": source.id,
+                "resource_version": int(source.version),
+            }
+        ],
+    )
+    resource_id = saved["resource"]["resource_id"]
+    resource_version = saved["resource"]["resource_version"]
+    lifecycle = GeneratedCopyRepository(repo)
+    finalized = lifecycle.finalize_for_schedule(
+        tenant_id="default",
+        actor_open_id=actor_open_id,
+        resource_id=resource_id,
+        target_resource_version=resource_version,
+        expected_latest_resource_version=saved["resource"]["latest_resource_version"],
+        expected_state_version=saved["resource"]["state_version"],
+    )
+    lifecycle.mark_published(
+        tenant_id="default",
+        actor_open_id=actor_open_id,
+        resource_id=resource_id,
+    )
+    if visibility != "team":
+        repo.conn.execute(
+            "update resources set visibility = %s where tenant_id = 'default' and id = %s",
+            (visibility, resource_id),
+        )
+        repo.conn.commit()
+    return SimpleNamespace(
+        id=resource_id,
+        version=int(finalized.finalized_version),
+    )
 
 
 @dataclass
@@ -246,16 +307,10 @@ def test_get_resource_performance_payload_returns_metrics():
 
 def test_performance_metric_writes_real_resource_edges(migrated_conn):
     repo = ResourceRepository(migrated_conn)
-    target = repo.upsert_resource(
-        tenant_id="default",
+    target = _save_published_copy(
+        repo,
         actor_open_id="ou_user",
-        resource_type="generated_copy",
         title="露营别乱买",
-        summary="轻量露营",
-        content_text="正文",
-        content_json={},
-        visibility="team",
-        owner_open_id="ou_user",
     )
 
     saved = save_performance_metric_resource(
@@ -263,6 +318,7 @@ def test_performance_metric_writes_real_resource_edges(migrated_conn):
         tenant_id="default",
         actor_open_id="ou_user",
         target_resource_id=target.id,
+        target_resource_version=target.version,
         metrics={"likes": 10, "collects": 5, "views": 100},
         published_at="2026-06-20T08:00:00+00:00",
     )
@@ -275,21 +331,41 @@ def test_performance_metric_writes_real_resource_edges(migrated_conn):
 
     assert result["metrics"][0]["resource_id"] == saved["resource"]["resource_id"]
     assert result["metrics"][0]["score"] == 0.2
+    assert result["metrics"][0]["target_resource_version"] == target.version
+    assert migrated_conn.execute(
+        """
+        select source_resource_id::text, source_resource_version,
+               target_resource_id::text, target_resource_version, edge_type
+        from resource_edges
+        where tenant_id = 'default'
+          and source_resource_id = %s and source_resource_version = %s
+          and target_resource_id = %s and target_resource_version = %s
+          and edge_type = 'measured_by'
+        """,
+        (
+            target.id,
+            target.version,
+            saved["resource"]["resource_id"],
+            saved["resource"]["version"],
+        ),
+    ).fetchone() == (
+        target.id,
+        target.version,
+        saved["resource"]["resource_id"],
+        saved["resource"]["version"],
+        "measured_by",
+    )
 
 
 def test_non_owner_cannot_save_metric_for_private_target(migrated_conn):
     repo = ResourceRepository(migrated_conn)
-    target = repo.upsert_resource(
-        tenant_id="default",
+    target = _save_published_copy(
+        repo,
         actor_open_id="ou_owner",
-        resource_type="generated_copy",
         title="私有文案",
-        summary=None,
-        content_text="正文",
-        content_json={},
         visibility="private",
-        owner_open_id="ou_owner",
     )
+    baseline = repo.debug_counts()
 
     with pytest.raises(PermissionError):
         save_performance_metric_resource(
@@ -297,32 +373,26 @@ def test_non_owner_cannot_save_metric_for_private_target(migrated_conn):
             tenant_id="default",
             actor_open_id="ou_other",
             target_resource_id=target.id,
+            target_resource_version=target.version,
             metrics={"likes": 10},
         )
 
-    counts = repo.debug_counts()
-    assert counts["resources"] == 1
-    assert counts["resource_outbox"] == 0
+    assert repo.debug_counts() == baseline
 
 
 def test_get_resource_performance_filters_unreadable_metric(migrated_conn):
     repo = ResourceRepository(migrated_conn)
-    target = repo.upsert_resource(
-        tenant_id="default",
+    target = _save_published_copy(
+        repo,
         actor_open_id="ou_owner",
-        resource_type="generated_copy",
         title="团队文案",
-        summary=None,
-        content_text="正文",
-        content_json={},
-        visibility="team",
-        owner_open_id="ou_owner",
     )
     metric = save_performance_metric_resource(
         repo,
         tenant_id="default",
         actor_open_id="ou_owner",
         target_resource_id=target.id,
+        target_resource_version=target.version,
         metrics={"likes": 10},
     )
     repo.conn.execute(

@@ -2,7 +2,31 @@ import pytest
 
 from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.repositories.performance import PerformanceRepository
-from data_foundation.models import Resource, RuntimeIdentityConfig
+from data_foundation.models import RuntimeIdentityConfig
+
+
+def _create_resource(
+    repo: ResourceRepository,
+    *,
+    tenant_id: str,
+    actor_open_id: str,
+    title: str,
+    content_text: str,
+    visibility: str,
+    conn,
+):
+    return repo.upsert_resource(
+        tenant_id=tenant_id,
+        actor_open_id=actor_open_id,
+        resource_type="xhs_copy",
+        title=title,
+        content_text=content_text,
+        content_json={},
+        status="active",
+        visibility=visibility,
+        owner_open_id=actor_open_id,
+        conn=conn,
+    )
 
 
 def test_save_performance_calculates_weighted_score(migrated_conn):
@@ -12,23 +36,14 @@ def test_save_performance_calculates_weighted_score(migrated_conn):
     actor = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_1")
     
     # Create target resource
-    target = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="My target resource",
-            summary=None,
-            content_text="Some text",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
-        actor=actor,
-        conn=migrated_conn
+    target = _create_resource(
+        res_repo,
+        tenant_id=actor.tenant_id,
+        actor_open_id=actor.open_id,
+        title="My target resource",
+        content_text="Some text",
+        visibility="private",
+        conn=migrated_conn,
     )
     
     likes, comments, shares = 10, 5, 2
@@ -36,6 +51,7 @@ def test_save_performance_calculates_weighted_score(migrated_conn):
     
     score = perf_repo.save_performance(
         resource_id=target.id,
+        resource_version=int(target.version),
         likes=likes,
         comments=comments,
         shares=shares,
@@ -58,6 +74,7 @@ def test_save_performance_calculates_weighted_score(migrated_conn):
     assert row["title"] == "效果数据"
     assert row["weight"] == expected_score
     assert row["content_json"]["target_resource_id"] == str(target.id)
+    assert row["content_json"]["target_resource_version"] == int(target.version)
     assert row["content_json"]["metrics"] == {"likes": likes, "comments": comments, "shares": shares}
     assert row["content_json"]["score"] == expected_score
 
@@ -70,29 +87,21 @@ def test_save_performance_denied_without_write_permission(migrated_conn):
     actor2 = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_2")
     
     # Create private resource owned by user_1
-    target = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Private Resource",
-            summary=None,
-            content_text="Some text",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
-        actor=actor1,
-        conn=migrated_conn
+    target = _create_resource(
+        res_repo,
+        tenant_id=actor1.tenant_id,
+        actor_open_id=actor1.open_id,
+        title="Private Resource",
+        content_text="Some text",
+        visibility="private",
+        conn=migrated_conn,
     )
     
     # actor2 (user_2) has no write permission on target. Should raise PermissionError.
     with pytest.raises(PermissionError, match="is not writable by actor"):
         perf_repo.save_performance(
             resource_id=target.id,
+            resource_version=int(target.version),
             likes=10,
             comments=5,
             shares=2,
@@ -109,28 +118,20 @@ def test_performance_rows_filters_permissions(migrated_conn):
     actor2 = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_2")
     
     # Create target resource owned by user_1 (private)
-    target_private = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Private target",
-            summary=None,
-            content_text="Content",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
-        actor=actor1,
-        conn=migrated_conn
+    target_private = _create_resource(
+        res_repo,
+        tenant_id=actor1.tenant_id,
+        actor_open_id=actor1.open_id,
+        title="Private target",
+        content_text="Content",
+        visibility="private",
+        conn=migrated_conn,
     )
     
     # Save performance metrics for target_private using actor1
     perf_repo.save_performance(
         resource_id=target_private.id,
+        resource_version=int(target_private.version),
         likes=10,
         comments=5,
         shares=2,
@@ -157,27 +158,19 @@ def test_performance_rows_filters_permissions(migrated_conn):
     assert len(rows_actor2) == 0
     
     # Now try with a team visible resource
-    target_team = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Team target",
-            summary=None,
-            content_text="Content",
-            content_json={},
-            status="active",
-            visibility="team",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
-        actor=actor1,
-        conn=migrated_conn
+    target_team = _create_resource(
+        res_repo,
+        tenant_id=actor1.tenant_id,
+        actor_open_id=actor1.open_id,
+        title="Team target",
+        content_text="Content",
+        visibility="team",
+        conn=migrated_conn,
     )
     
     perf_repo.save_performance(
         resource_id=target_team.id,
+        resource_version=int(target_team.version),
         likes=20,
         comments=10,
         shares=5,
@@ -203,48 +196,31 @@ def test_bulk_performance_metrics(migrated_conn):
     actor2 = RuntimeIdentityConfig(tenant_id="tenant_1", open_id="user_2")
     
     # Create target 1 (private to user_1)
-    target1 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Target 1 Private",
-            summary=None,
-            content_text="Content 1",
-            content_json={},
-            status="active",
-            visibility="private",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
-        actor=actor1,
-        conn=migrated_conn
+    target1 = _create_resource(
+        res_repo,
+        tenant_id=actor1.tenant_id,
+        actor_open_id=actor1.open_id,
+        title="Target 1 Private",
+        content_text="Content 1",
+        visibility="private",
+        conn=migrated_conn,
     )
     
     # Create target 2 (team visible to user_1)
-    target2 = res_repo.upsert_resource(
-        Resource(
-            id=None,
-            tenant_id="tenant_1",
-            type="xhs_copy",
-            title="Target 2 Team",
-            summary=None,
-            content_text="Content 2",
-            content_json={},
-            status="active",
-            visibility="team",
-            owner_open_id="user_1",
-            created_at=None,
-            updated_at=None
-        ),
-        actor=actor1,
-        conn=migrated_conn
+    target2 = _create_resource(
+        res_repo,
+        tenant_id=actor1.tenant_id,
+        actor_open_id=actor1.open_id,
+        title="Target 2 Team",
+        content_text="Content 2",
+        visibility="team",
+        conn=migrated_conn,
     )
     
     # Save performance for target1
     perf_repo.save_performance(
         resource_id=target1.id,
+        resource_version=int(target1.version),
         likes=10,
         comments=5,
         shares=2,
@@ -255,6 +231,7 @@ def test_bulk_performance_metrics(migrated_conn):
     # Save performance for target2
     perf_repo.save_performance(
         resource_id=target2.id,
+        resource_version=int(target2.version),
         likes=20,
         comments=10,
         shares=5,
