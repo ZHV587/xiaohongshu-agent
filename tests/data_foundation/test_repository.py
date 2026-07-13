@@ -288,7 +288,8 @@ def test_upsert_identical_mapping_is_idempotent(migrated_conn):
 
 def _outbox_rows_for(migrated_conn, *, resource_id, topic):
     return migrated_conn.execute(
-        "select resource_id::text as rid, resource_version from resource_outbox "
+        "select resource_id::text as rid, resource_version, dedupe_key "
+        "from resource_outbox "
         "where resource_id = %s and topic = %s",
         (resource_id, topic),
     ).fetchall()
@@ -327,9 +328,8 @@ def test_add_edge_enqueues_graph_ingest_for_source_endpoint(migrated_conn):
     assert rows[0]["resource_version"] == doc.version
 
 
-def test_add_edge_graph_ingest_dedupes_with_existing(migrated_conn):
-    """source 自身已有 graph_ingest(同 version)时,add_edge 补的入队走 dedupe 去重,
-    不产生重复 graph_ingest 行。"""
+def test_add_edge_graph_ingest_uses_edge_specific_dedupe(migrated_conn):
+    """节点已入图后新增边仍需独立任务，否则已成功的节点任务会吞掉新边。"""
     repo = ResourceRepository(migrated_conn)
     src = repo.upsert_resource(
         tenant_id="default", actor_open_id="ou_owner", resource_type="topic",
@@ -343,14 +343,15 @@ def test_add_edge_graph_ingest_dedupes_with_existing(migrated_conn):
         owner_open_id="ou_owner",
         outbox_requests=[OutboxRequest("graph_ingest", ("graph",), {})],
     )
-    # src 已有 1 条 graph_ingest(version=1);加边后 add_edge 用同 dedupe_parts+同 version
     repo.add_edge(
         tenant_id="default", source_resource_id=src.id,
         source_resource_version=int(src.version), target_resource_id=tgt.id,
         target_resource_version=int(tgt.version), edge_type="derived_from", weight=1.0,
     )
     rows = _outbox_rows_for(migrated_conn, resource_id=src.id, topic="graph_ingest")
-    assert len(rows) == 1  # 去重,不是 2
+    assert len(rows) == 2
+    assert {row["resource_version"] for row in rows} == {src.version}
+    assert len({row["dedupe_key"] for row in rows}) == 2
 
 
 def test_first_sync_failure_is_persisted_as_unbound_event(migrated_conn):
@@ -553,6 +554,7 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
         content_json={"private": "resource-json-secret"},
         visibility="team",
         owner_open_id="ou_owner",
+        outbox_requests=[],
     )
     repo.upsert_resource(
         tenant_id="default",
@@ -563,6 +565,7 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
         content_json={},
         visibility="team",
         owner_open_id="ou_owner",
+        outbox_requests=[],
     )
     repo.upsert_resource(
         tenant_id="other-tenant",
@@ -573,6 +576,7 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
         content_json={},
         visibility="team",
         owner_open_id="ou_owner",
+        outbox_requests=[],
     )
     repo.upsert_resource(
         tenant_id="default",
@@ -583,6 +587,7 @@ def test_runtime_fact_aggregates_are_bounded_and_redacted(migrated_conn):
         content_json={},
         visibility="team",
         owner_open_id="ou_owner",
+        outbox_requests=[],
     )
 
     expired_source = migrated_conn.execute(

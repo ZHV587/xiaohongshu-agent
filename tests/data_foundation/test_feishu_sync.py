@@ -155,7 +155,14 @@ def test_sync_base_rows_upserts_records(migrated_conn):
     assert result == SyncResult(imported=2, errors=[])
     assert repo.debug_counts()["resources"] == 2
     assert repo.debug_counts()["resource_mappings"] == 2
-    assert repo.debug_counts()["resource_outbox"] == 4
+    assert repo.debug_counts()["resource_outbox"] == 2
+    outbox_topics = migrated_conn.execute(
+        "select topic from resource_outbox order by topic"
+    ).fetchall()
+    assert [row["topic"] for row in outbox_topics] == [
+        "knowledge_enrich",
+        "knowledge_enrich",
+    ]
 
     resource_id = migrated_conn.execute(
         """
@@ -219,7 +226,12 @@ def test_sync_wiki_documents_upserts_docs_without_direct_embedding_writes(migrat
     assert resource.content_json == {"space_id": "sp1", "obj_token": "doc1", "node_token": "wik1"}
 
     assert migrated_conn.execute("select count(*) as count from resource_embeddings").fetchone()["count"] == 0
-    assert migrated_conn.execute("select count(*) as count from resource_outbox").fetchone()["count"] == 2
+    initial_outbox = migrated_conn.execute(
+        "select topic, resource_version from resource_outbox order by resource_version"
+    ).fetchall()
+    assert [(row["topic"], row["resource_version"]) for row in initial_outbox] == [
+        ("knowledge_enrich", 1)
+    ]
 
     sync_wiki_documents(
         repo,
@@ -236,6 +248,13 @@ def test_sync_wiki_documents_upserts_docs_without_direct_embedding_writes(migrat
         ],
     )
     assert migrated_conn.execute("select count(*) as count from resource_embeddings").fetchone()["count"] == 0
+    changed_outbox = migrated_conn.execute(
+        "select topic, resource_version from resource_outbox order by resource_version"
+    ).fetchall()
+    assert [(row["topic"], row["resource_version"]) for row in changed_outbox] == [
+        ("knowledge_enrich", 1),
+        ("knowledge_enrich", 2),
+    ]
 
     mappings = migrated_conn.execute(
         """
