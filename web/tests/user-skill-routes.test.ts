@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { ApiError } from "../src/lib/server/authz";
 import {
+  createSkillRegistryGet,
   createUserSkillActionPost,
   createUserSkillDetailGet,
   createUserSkillsGet,
@@ -138,4 +139,35 @@ test("malformed BFF JSON is rejected without forwarding", async () => {
   assert.equal(response.headers.get("Cache-Control"), "no-store");
   assert.equal((await response.json()).code, "SKILL_INVALID_JSON");
   assert.equal(calls.length, 0);
+});
+
+test("Skill registry authenticates before forwarding and always returns no-store", async () => {
+  let forwarded = 0;
+  const denied = createSkillRegistryGet({
+    requireUser: async () => {
+      throw new ApiError(401, "Unauthorized");
+    },
+    forwardToInternalServer: (async () => {
+      forwarded += 1;
+      throw new Error("must not forward");
+    }) as any,
+  });
+  const rejected = await denied();
+  assert.equal(rejected.status, 401);
+  assert.equal(rejected.headers.get("Cache-Control"), "no-store");
+  assert.equal(forwarded, 0);
+
+  const calls: Call[] = [];
+  const response = await createSkillRegistryGet(deps(calls))();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(calls, [
+    {
+      path: "/_internal/user-skills/registry",
+      method: "GET",
+      openId: "ou-user",
+      body: undefined,
+      query: undefined,
+    },
+  ]);
 });

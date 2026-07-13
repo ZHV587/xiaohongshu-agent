@@ -80,6 +80,25 @@ export function createUserSkillsGet(deps: SkillRouteDeps) {
   };
 }
 
+export function createSkillRegistryGet(deps: SkillRouteDeps) {
+  return async function GET() {
+    try {
+      const user = await deps.requireUser();
+      return relay(
+        await deps.forwardToInternalServer(
+          "/_internal/user-skills/registry",
+          "GET",
+          user.openId,
+          undefined,
+          { isAdmin: user.isAdmin },
+        ),
+      );
+    } catch (error) {
+      return routeError(error);
+    }
+  };
+}
+
 function createDefinitionPost(deps: SkillRouteDeps, internalPath: string) {
   return async function POST(request: Request) {
     try {

@@ -15,6 +15,7 @@ from data_foundation.models import (
     SelectedUserSkillDocument,
     UserSkill,
     UserSkillAuditEvent,
+    UserSkillRegistryEntry,
     UserSkillVersion,
 )
 from data_foundation.repositories.base import BaseRepository
@@ -625,6 +626,55 @@ class UserSkillRepository(BaseRepository):
                 non_trigger_examples=list(row["non_trigger_examples"] or []),
                 tags=list(row["tags"] or []),
                 updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+    def list_published_registry_entries(
+        self,
+        *,
+        tenant_id: str,
+        owner_open_id: str,
+        conn: Optional[Connection] = None,
+    ) -> list[UserSkillRegistryEntry]:
+        """返回本人当前已发布版本的注册表投影，刻意不查询 Skill 正文。"""
+        tenant_id, owner_open_id, _ = self._validate_identity(
+            tenant_id, owner_open_id, owner_open_id
+        )
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                rows = cursor.execute(
+                    """
+                    select p.skill_id::text as skill_id,
+                           v.id::text as version_id,
+                           s.runtime_name,
+                           v.display_name,
+                           v.description,
+                           v.tags
+                    from user_skill_publications p
+                    join user_skills s
+                      on s.tenant_id = p.tenant_id
+                     and s.owner_open_id = p.owner_open_id
+                     and s.id = p.skill_id
+                    join user_skill_versions v
+                      on v.tenant_id = p.tenant_id
+                     and v.owner_open_id = p.owner_open_id
+                     and v.skill_id = p.skill_id
+                     and v.version = p.published_version
+                    where p.tenant_id = %s and p.owner_open_id = %s
+                      and p.status = 'published'
+                    order by lower(v.display_name), s.runtime_name
+                    """,
+                    (tenant_id, owner_open_id),
+                ).fetchall()
+        return [
+            UserSkillRegistryEntry(
+                skill_id=str(row["skill_id"]),
+                version_id=str(row["version_id"]),
+                runtime_name=str(row["runtime_name"]),
+                display_name=str(row["display_name"]),
+                description=str(row["description"]),
+                tags=list(row["tags"] or []),
             )
             for row in rows
         ]

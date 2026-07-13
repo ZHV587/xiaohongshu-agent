@@ -10,14 +10,18 @@ import { ThreadStateProvider } from "./thread/ThreadStateProvider";
 import { StudioProvider } from "./studio/StudioContext";
 import { StudioShell } from "./studio/StudioShell";
 import { WorkbenchShell } from "./workbench/WorkbenchShell";
+import { CapabilityRegistryProvider, CapabilityToolbox } from "./skills";
 
 export function AppShell() {
   const [mode] = useQueryState("mode");
   return (
     <ThreadStateProvider>
-      <StudioProvider>
-        {mode === "workbench" ? <WorkbenchShell /> : <StudioShell />}
-      </StudioProvider>
+      <CapabilityRegistryProvider>
+        <StudioProvider>
+          {mode === "workbench" ? <WorkbenchShell /> : <StudioShell />}
+        </StudioProvider>
+        <CapabilityToolbox />
+      </CapabilityRegistryProvider>
     </ThreadStateProvider>
   );
 }

@@ -264,6 +264,18 @@ def test_runtime_document_batch_returns_only_current_owner_published_versions(mi
         owner_open_id="ou-other",
     ) == []
 
+    registry = repo.list_published_registry_entries(
+        tenant_id="tenant-a", owner_open_id="ou-owner"
+    )
+    assert [(item.skill_id, item.version_id, item.runtime_name) for item in registry] == [
+        (published.id, published.latest_definition.id, published.runtime_name)
+    ]
+    assert registry[0].tags == published.latest_definition.tags
+    assert not hasattr(registry[0], "instructions_markdown")
+    assert repo.list_published_registry_entries(
+        tenant_id="tenant-a", owner_open_id="ou-other"
+    ) == []
+
 
 def test_selected_document_modes_enforce_current_publication_and_owner(migrated_conn):
     repo = UserSkillRepository(migrated_conn)

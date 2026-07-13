@@ -111,7 +111,7 @@ test("workbench starting point has a production entry and DS interaction afforda
   assertIncludes(
     workbench,
     [
-      "CommandPalette",
+      "useCapabilityRegistry",
       "RightCanvas",
       "FeishuSync",
       "Ctrl+P",
@@ -120,7 +120,7 @@ test("workbench starting point has a production entry and DS interaction afforda
       "var(--dur-slow)",
       "var(--dur-fly)",
       "xhs-fly-to-sync",
-      "setPaletteOpen",
+      "openToolbox",
     ],
     "WorkbenchShell",
   );
@@ -199,20 +199,24 @@ test("workbench feishu sync mirrors the DS sync cards and flip auth", () => {
   );
 });
 
-test("workbench command palette mirrors the DS searchable palette", () => {
+test("workbench uses the shared searchable capability toolbox", () => {
   const workbench = read("src", "components", "workbench", "WorkbenchShell.tsx");
+  const toolbox = read("src", "components", "skills", "CapabilityToolbox.tsx");
   assertIncludes(
-    workbench,
+    `${workbench}\n${toolbox}`,
     [
+      "useCapabilityRegistry",
+      "openToolbox",
       "Input",
-      "输入命令或搜索动作",
-      "ESC",
-      "无匹配命令",
+      "搜索能力名称或说明",
+      "系统内置能力",
+      "我的 Skill",
       "setQuery",
-      "commands.filter",
+      "filterCapabilities",
     ],
-    "Workbench CommandPalette",
+    "shared CapabilityToolbox",
   );
+  assert.doesNotMatch(workbench, /CommandPalette|setPaletteOpen|addEventListener\("keydown"/);
 });
 
 test("workbench conversation response mirrors DS ChatPane states", () => {
@@ -227,7 +231,7 @@ test("workbench conversation response mirrors DS ChatPane states", () => {
       "正在针对",
       "飞书同步协作",
       "✅ 已完成",
-      "润色工具箱",
+      "能力工具箱",
       "图片或 PDF",
       "Ctrl+P",
       "生成",

@@ -136,7 +136,7 @@ test("design-system desktop starting points have production parity tests", () =>
     "operations screen uses the fixed final page hosting",
     "workbench starting point has a production entry and DS interaction affordances",
     "workbench right canvas carries the DS bottom copy bar",
-    "workbench command palette mirrors the DS searchable palette",
+    "workbench uses the shared searchable capability toolbox",
     "workbench feishu sync mirrors the DS sync cards and flip auth",
     "workbench right canvas focuses on Feishu sync without mobile preview tabs",
     "production desktop removes mobile preview surfaces",

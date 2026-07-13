@@ -1,39 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { Avatar, Badge, Button, Card, Icon, IconButton, Input, Select, Textarea, ThinkingAura, TopicCard } from "@/components/ds";
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Avatar, Badge, Button, Card, Icon, IconButton, Select, Textarea, ThinkingAura, TopicCard } from "@/components/ds";
 import { useStudio } from "@/components/studio/useStudio";
 import { AdminConfigPanel } from "@/components/studio/AdminConfigPanel";
 import { useThreadOptional } from "@/components/thread/ThreadContext";
 import { getContentString } from "@/components/thread/utils";
 import { logout } from "@/lib/auth";
 import { useThreadsOptional } from "@/providers/thread-context";
+import { useCapabilityRegistry } from "@/components/skills";
 
 export function WorkbenchShell() {
   const { topics, timeline, actions, user } = useStudio();
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [flyKey, setFlyKey] = useState(0);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
-      } else if (event.key === "Escape") {
-        setPaletteOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const runCommand = (cmd: string) => {
-    setPaletteOpen(false);
-    if (cmd === "polish") actions.polish();
-    if (cmd === "shorten") actions.shorten();
-    if (cmd === "tags") actions.addTags();
-  };
 
   return (
     <div style={{ height: "100vh", width: "100vw", display: "flex", flexDirection: "column", overflow: "hidden", color: "var(--text-body)", fontFamily: "var(--font-sans)", background: "var(--background)", position: "relative" }}>
@@ -41,14 +21,13 @@ export function WorkbenchShell() {
       <WorkbenchTopBar onReauth={() => setScanned(false)} onFly={() => { setFlyKey((value) => value + 1); actions.syncFeishu(); }} />
       <main style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <WorkbenchSidebar onNew={actions.newChat} />
-        <ChatPane onOpenPalette={() => setPaletteOpen(true)} />
+        <ChatPane />
         <RightCanvas
           scanned={scanned}
           onScan={() => setScanned(true)}
         />
       </main>
       {flyKey > 0 && <span key={flyKey} className="xhs-fly-to-sync" style={{ position: "fixed", left: 152, bottom: 92, zIndex: 90, fontSize: 22, pointerEvents: "none", animation: "xhs-fly-to-sync var(--dur-fly) var(--ease-spring) both" }}>🍠</span>}
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onRun={runCommand} />
       <div style={{ position: "fixed", left: 16, bottom: 12, fontSize: 10, color: "var(--text-subtle)" }}>
         Workbench · {user.handle || user.name || "未命名账号"} · {topics.length} topics · {timeline.length} turns
       </div>
@@ -238,8 +217,9 @@ function WorkbenchTopBar({ onReauth, onFly }: { onReauth: () => void; onFly: () 
   );
 }
 
-function ChatPane({ onOpenPalette }: { onOpenPalette: () => void }) {
+function ChatPane() {
   const { timeline, topics, note, actions } = useStudio();
+  const { openToolbox } = useCapabilityRegistry();
   const [draft, setDraft] = useState("");
   const writing = timeline.some((item) => item.kind === "thinking" && !item.run.done);
   const selectedTopic = topics.find((topic) => topic.id === note.topicId);
@@ -260,7 +240,7 @@ function ChatPane({ onOpenPalette }: { onOpenPalette: () => void }) {
           <div style={{ margin: "auto", maxWidth: 520, display: "flex", flexDirection: "column", alignItems: "center", gap: 12, textAlign: "center", color: "var(--text-muted)" }}>
             <Avatar glyph="🍠" variant="agent" size={44} />
             <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "var(--text-lg)", color: "var(--text-body)" }}>三栏 Workbench 已就绪</div>
-            <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>左侧历史 · 中间对话 · 右侧飞书同步协作。按 Ctrl+P 打开润色命令面板。</p>
+            <p style={{ margin: 0, fontSize: "var(--text-sm)", lineHeight: "var(--leading-relaxed)" }}>左侧历史 · 中间对话 · 右侧飞书同步协作。按 Ctrl+P 打开能力工具箱。</p>
           </div>
         )}
         {timeline.map((item, index) => {
@@ -337,7 +317,7 @@ function ChatPane({ onOpenPalette }: { onOpenPalette: () => void }) {
           onKeyDown={handleComposerKeyDown}
           placeholder="继续追问，或让 🍠 调整选题方向 / 改写文案…"
           footer={<>
-            <button onClick={onOpenPalette} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}><kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd><span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>润色工具箱</span></button>
+            <button onClick={openToolbox} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}><kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd><span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>能力工具箱</span></button>
             <button type="button" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer", color: "var(--text-muted)", fontSize: "var(--text-xs)" }}><Icon name="paperclip" size={12} /> 图片或 PDF</button>
             <Button variant="primary" size="sm" rightIcon={<Icon name="send" size={14} />} onClick={sendDraft}>生成</Button>
           </>}
@@ -529,45 +509,6 @@ function KV({ k, v, muted, ok }: { k: string; v: string; muted?: boolean; ok?: b
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
       <span style={{ color: "var(--text-muted)" }}>{k}</span>
       <span style={{ fontWeight: 600, color: ok ? "var(--success)" : muted ? "var(--text-muted)" : "var(--text-body)", textAlign: "right" }}>{v}</span>
-    </div>
-  );
-}
-
-function CommandPalette({ open, onClose, onRun }: { open: boolean; onClose: () => void; onRun: (cmd: string) => void }) {
-  const commands = useMemo(() => [
-    { id: "polish", name: "润色语气", desc: "让正文更像小红书真人表达", icon: "sparkles", color: "var(--primary)" },
-    { id: "shorten", name: "一键瘦身", desc: "压缩啰嗦段落和重复表达", icon: "scissors", color: "var(--success)" },
-    { id: "tags", name: "补充话题标签", desc: "生成适配平台流量入口的话题", icon: "hash", color: "var(--topicblue-default)" },
-  ], []);
-  const [query, setQuery] = useState("");
-  const filteredCommands = commands.filter((command) => (command.name + command.desc).toLowerCase().includes(query.toLowerCase()));
-  if (!open) return null;
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,15,16,0.32)", zIndex: 100, display: "flex", justifyContent: "center", alignItems: "flex-start", paddingTop: 88 }}>
-      <div onClick={(event) => event.stopPropagation()} style={{ width: 500, maxWidth: "90vw", background: "var(--surface-card)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border-coral)", boxShadow: "var(--shadow-2xl)", overflow: "hidden" }}>
-        <div style={{ padding: 12, borderBottom: "1px solid var(--border)" }}>
-          <Input
-            autoFocus
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="输入命令或搜索动作..."
-            leadingIcon={<Icon name="search" size={16} />}
-            trailing={<kbd onClick={onClose} style={{ fontSize: 10, background: "var(--oats-dark)", border: "1px solid var(--border)", color: "var(--text-subtle)", padding: "1px 6px", borderRadius: 4, cursor: "pointer", fontFamily: "var(--font-mono)" }}>ESC</kbd>}
-          />
-        </div>
-        <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" }}>
-          {filteredCommands.map((command) => (
-            <button key={command.id} onClick={() => onRun(command.id)} style={{ display: "flex", alignItems: "center", gap: 10, border: "none", background: "transparent", borderRadius: "var(--radius-md)", padding: "10px 12px", cursor: "pointer", textAlign: "left", color: "var(--text-body)" }}>
-              <Icon name={command.icon} size={15} color={command.color} />
-              <span style={{ fontSize: "var(--text-xs)" }}>
-                <span style={{ fontWeight: 700, color: "var(--text-body)" }}>{command.name}</span>
-                <span style={{ color: "var(--text-subtle)", marginLeft: 8 }}>{command.desc}</span>
-              </span>
-            </button>
-          ))}
-          {filteredCommands.length === 0 && <div style={{ padding: 16, fontSize: "var(--text-xs)", color: "var(--text-subtle)", textAlign: "center" }}>无匹配命令</div>}
-        </div>
-      </div>
     </div>
   );
 }

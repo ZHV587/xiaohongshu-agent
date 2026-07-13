@@ -218,6 +218,18 @@ class PublishedUserSkillDocument:
 
 
 @dataclass(frozen=True)
+class UserSkillRegistryEntry:
+    """用户 Skill 注册表的最小只读投影，不承载正文。"""
+
+    skill_id: str
+    version_id: str
+    runtime_name: str
+    display_name: str
+    description: str
+    tags: list[str]
+
+
+@dataclass(frozen=True)
 class SelectedUserSkillDocument:
     skill_id: str
     runtime_name: str

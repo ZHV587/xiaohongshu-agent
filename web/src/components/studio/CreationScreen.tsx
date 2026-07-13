@@ -14,6 +14,7 @@ import type { Topic } from "@/components/studio/types";
 import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
 import { coverProxyUrl } from "@/lib/cover-image";
 import type { DiscoveryNote, AdoptionRow } from "@/lib/thinking-trace";
+import { useCapabilityRegistry } from "@/components/skills";
 
 const RESPONSE_LOADING_TEXT = "正在查素材和历史数据";
 const RESPONSE_ERROR_TEXT = "响应失败，请稍后重试";
@@ -352,6 +353,7 @@ function InterruptApprovalCard({
 
 function ChatColumn({ showTopics }: { showTopics: boolean }) {
   const { topics, evidence, timeline, trends, actions, interrupt, note } = useStudio();
+  const { openToolbox } = useCapabilityRegistry();
   const generating = note.status === "writing";
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -522,9 +524,9 @@ function ChatColumn({ showTopics }: { showTopics: boolean }) {
       <div style={{ padding: "14px 22px 16px", borderTop: "1px solid var(--border)", background: "var(--surface-card)", flexShrink: 0 }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <Textarea rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="比如：按职场穿搭出 3 个选题，要有依据…" footer={<>
-            <button onClick={() => actions.polish()} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}>
+            <button onClick={openToolbox} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "5px 9px", cursor: "pointer" }}>
               <kbd style={{ fontSize: 8, background: "var(--oats-light)", border: "1px solid var(--border)", padding: "1px 4px", borderRadius: 4, fontFamily: "var(--font-mono)" }}>Ctrl+P</kbd>
-              <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>润色工具箱</span>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>能力工具箱</span>
             </button>
             {generating ? (
               <Button variant="secondary" size="sm" leftIcon={<Icon name="circle" size={13} />} onClick={() => actions.stop()}>停止生成</Button>

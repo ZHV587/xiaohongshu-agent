@@ -20,6 +20,7 @@ from data_foundation.user_skill_service import (
     UserSkillCompiler,
     definition_from_version,
 )
+from data_foundation.user_skill_registry import build_skill_registry
 
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,21 @@ async def list_skills(request: Request) -> JSONResponse:
         return _handle_exception(exc)
 
 
+async def skill_registry(request: Request) -> JSONResponse:
+    """返回系统与本人已发布 Skill 的统一元数据清单，不返回任何 Skill 正文。"""
+    actor = _require_actor(request)
+    if isinstance(actor, JSONResponse):
+        return actor
+    try:
+        with _repository() as repo:
+            user_entries = repo.list_published_registry_entries(
+                tenant_id=default_tenant_id(), owner_open_id=actor.open_id
+            )
+        return _ok({"items": build_skill_registry(user_entries)})
+    except Exception as exc:  # noqa: BLE001
+        return _handle_exception(exc)
+
+
 async def create_skill(request: Request) -> JSONResponse:
     actor = _require_actor(request)
     if isinstance(actor, JSONResponse):
@@ -319,6 +335,7 @@ async def archive_skill(request: Request) -> JSONResponse:
 
 user_skill_routes = [
     Route("/internal/user-skills/validate", validate_skill, methods=["POST"]),
+    Route("/internal/user-skills/registry", skill_registry, methods=["GET"]),
     Route("/internal/user-skills", list_skills, methods=["GET"]),
     Route("/internal/user-skills/create", create_skill, methods=["POST"]),
     Route("/internal/user-skills/detail", skill_detail, methods=["GET"]),

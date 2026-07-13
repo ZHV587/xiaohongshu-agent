@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from data_foundation.models import UserSkill, UserSkillVersion
+from data_foundation.models import UserSkill, UserSkillRegistryEntry, UserSkillVersion
 from tests.data_foundation.asgi_client import ASGIClient
 
 
@@ -103,6 +103,19 @@ class FakeRepository:
     def get_catalog_revision(self, **kwargs):
         return 3
 
+    def list_published_registry_entries(self, **kwargs):
+        self.calls.append(("registry", kwargs))
+        return [
+            UserSkillRegistryEntry(
+                skill_id=self.skill.id,
+                version_id=self.skill.latest_definition.id,
+                runtime_name=self.skill.runtime_name,
+                display_name=self.skill.latest_definition.display_name,
+                description=self.skill.latest_definition.description,
+                tags=self.skill.latest_definition.tags,
+            )
+        ]
+
 
 def _patch_repo(monkeypatch, repo):
     import data_foundation.user_skill_api as api
@@ -167,6 +180,42 @@ def test_create_binds_owner_to_authenticated_user_and_returns_compiled_skill(mon
     assert call["owner_open_id"] == "ou-user"
     assert call["actor_open_id"] == "ou-user"
     assert call["trigger_examples"] == ["再短一点"]
+
+
+def test_registry_authenticates_scopes_owner_and_never_returns_skill_body(monkeypatch):
+    repo = FakeRepository()
+    _patch_repo(monkeypatch, repo)
+    import data_foundation.user_skill_api as api
+
+    monkeypatch.setattr(
+        api,
+        "build_skill_registry",
+        lambda entries: [
+            {
+                "skillId": entries[0].skill_id,
+                "versionId": entries[0].version_id,
+                "runtimeName": entries[0].runtime_name,
+                "displayName": entries[0].display_name,
+                "description": entries[0].description,
+                "tags": entries[0].tags,
+                "source": "user",
+                "readonly": False,
+            }
+        ],
+    )
+    client = _client(monkeypatch)
+    denied = client.get("/internal/user-skills/registry")
+    response = client.get("/internal/user-skills/registry", headers=_headers("ou-owner"))
+
+    assert denied.status_code == 401
+    assert denied.headers["Cache-Control"] == "no-store"
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    payload = response.json()
+    assert payload["items"][0]["versionId"] == repo.skill.latest_definition.id
+    assert "instructions" not in payload["items"][0]
+    assert "skillMd" not in payload["items"][0]
+    assert repo.calls[-1][1]["owner_open_id"] == "ou-owner"
 
 
 def test_list_detail_and_append_use_authenticated_owner_scope(monkeypatch):

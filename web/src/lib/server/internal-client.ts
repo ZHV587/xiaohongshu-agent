@@ -31,6 +31,7 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/studio/backfill": { path: "/internal/studio/backfill", method: "POST" },
   "/_internal/studio/pipeline-advance": { path: "/internal/studio/pipeline-advance", method: "POST" },
   "/_internal/user-skills/list": { path: "/internal/user-skills", method: "GET" },
+  "/_internal/user-skills/registry": { path: "/internal/user-skills/registry", method: "GET" },
   "/_internal/user-skills/validate": { path: "/internal/user-skills/validate", method: "POST" },
   "/_internal/user-skills/create": { path: "/internal/user-skills/create", method: "POST" },
   "/_internal/user-skills/detail": { path: "/internal/user-skills/detail", method: "GET" },
