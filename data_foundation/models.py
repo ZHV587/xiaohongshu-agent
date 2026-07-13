@@ -199,3 +199,19 @@ class UserSkillAuditEvent:
     skill_version: int | None
     payload: dict[str, Any]
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class PublishedUserSkillDocument:
+    """当前用户一个已发布 Skill 的只读运行时快照。"""
+
+    runtime_name: str
+    version_id: str
+    version: int
+    display_name: str
+    description: str
+    instructions_markdown: str
+    trigger_examples: list[str]
+    non_trigger_examples: list[str]
+    tags: list[str]
+    updated_at: datetime

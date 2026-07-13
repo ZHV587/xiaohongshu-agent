@@ -24,6 +24,8 @@ from deepagents.backends import (
     StoreBackend,
 )
 
+from data_foundation.user_skill_backend import PostgresUserSkillsBackend
+
 # __file__ 是 backends.py 的绝对路径,其所在目录即项目根——
 # 不随调用时的工作目录漂移,比 os.getcwd() 健壮。
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -56,12 +58,13 @@ def build_backend() -> CompositeBackend:
     skills_backend = FilesystemBackend(root_dir=skills_root, virtual_mode=True)
     team_memory = StoreBackend(namespace=lambda rt: ("xhs-team-memory",))
     user_memory = StoreBackend(namespace=_user_memory_namespace)
+    user_skills = PostgresUserSkillsBackend()
     return CompositeBackend(
         default=StateBackend(),
         routes={
             "/skills/": skills_backend,
+            "/user-skills/": user_skills,
             "/memories/": team_memory,
             "/user-memories/": user_memory,
         },
     )
-

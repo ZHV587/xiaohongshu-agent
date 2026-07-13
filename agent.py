@@ -26,6 +26,7 @@ from models import build_initial_placeholder_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents_executor import build_executor_subagents
 from data_foundation.agent_trace import TRACE_TOOL_STAGES, with_trace
+from data_foundation.user_skill_runtime import RevisionAwareSkillsMiddleware
 from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
 from tools.redfox_search import search_xhs_online
@@ -55,7 +56,7 @@ agent = create_deep_agent(
     model=initial_model,
     tools=assembled_tools,
     system_prompt=MAIN_SYSTEM_PROMPT,
-    skills=["/skills/"],
+    skills=None,
     subagents=build_executor_subagents(model_registry, initial_model, backend),
     backend=backend,
     interrupt_on={
@@ -75,6 +76,11 @@ agent = create_deep_agent(
     middleware=[
         build_retry_middleware(),
         FrontendStateMiddleware(),
+        RevisionAwareSkillsMiddleware(
+            backend=backend,
+            system_sources=[("/skills/", "系统")],
+            user_sources=[("/user-skills/", "我的")],
+        ),
         build_router_middleware(model_registry),
     ],
     memory=["/memories/team/AGENTS.md", "/user-memories/AGENTS.md"],

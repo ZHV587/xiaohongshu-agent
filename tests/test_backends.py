@@ -35,7 +35,12 @@ def test_build_backend_skills_content_readable():
 def test_build_backend_has_no_business_file_routes():
     """业务资产只能走数据库工具，不注册虚拟文件路由。"""
     backend = build_backend()
-    assert set(backend.routes) == {"/skills/", "/memories/", "/user-memories/"}
+    assert set(backend.routes) == {
+        "/skills/",
+        "/user-skills/",
+        "/memories/",
+        "/user-memories/",
+    }
     assert isinstance(backend.default, StateBackend)
 
 

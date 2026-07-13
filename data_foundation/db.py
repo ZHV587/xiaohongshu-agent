@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from importlib import resources
-from typing import Iterator
+from typing import Any, Iterator
 
 import psycopg
 from psycopg import Connection
@@ -41,8 +41,8 @@ def database_url() -> str:
     return url
 
 
-def connect(url: str | None = None) -> Connection:
-    return psycopg.connect(url or database_url(), row_factory=dict_row)
+def connect(url: str | None = None, **kwargs: Any) -> Connection:
+    return psycopg.connect(url or database_url(), row_factory=dict_row, **kwargs)
 
 
 def run_migrations(conn: Connection) -> None:

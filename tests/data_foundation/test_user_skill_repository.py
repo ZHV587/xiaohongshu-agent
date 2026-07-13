@@ -239,6 +239,32 @@ def test_all_reads_are_tenant_and_owner_scoped(migrated_conn):
         ) == 0
 
 
+def test_runtime_document_batch_returns_only_current_owner_published_versions(migrated_conn):
+    repo = UserSkillRepository(migrated_conn)
+    published = _create(repo, display_name="已发布流程")
+    draft = _create(repo, display_name="草稿流程")
+    repo.publish_version(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+        actor_open_id="ou-owner",
+        skill_id=published.id,
+    )
+
+    documents = repo.list_published_documents(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+    )
+    assert [(item.runtime_name, item.version) for item in documents] == [
+        (published.runtime_name, 1)
+    ]
+    assert documents[0].description == published.latest_definition.description
+    assert draft.runtime_name not in {item.runtime_name for item in documents}
+    assert repo.list_published_documents(
+        tenant_id="tenant-a",
+        owner_open_id="ou-other",
+    ) == []
+
+
 def test_rollback_accepts_only_previously_published_version_and_preserves_disabled(migrated_conn):
     repo = UserSkillRepository(migrated_conn)
     skill = _create(repo)
