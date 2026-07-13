@@ -142,8 +142,8 @@ def save_generated_copy_resource(
                     body=candidate["body"],
                     tags=candidate["tags"],
                     label=None if implicit_single_revision else candidate["label"],
-                    cover=candidate["cover"],
-                    note=candidate["note"],
+                    cover=None if implicit_single_revision else candidate["cover"],
+                    note=None if implicit_single_revision else candidate["note"],
                 )
                 current_resource_version = state.latest_resource_version
                 current_state_version = state.state_version

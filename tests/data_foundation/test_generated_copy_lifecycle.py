@@ -5,6 +5,7 @@ import pytest
 from data_foundation.creation_memory import save_generated_copy_resource
 from data_foundation.performance_feedback import save_performance_metric_resource
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
+from data_foundation.knowledge.service import KnowledgeService
 from data_foundation.repositories.generated_copy import (
     GeneratedCopyConflict,
     GeneratedCopyRepository,
@@ -562,10 +563,24 @@ def test_implicit_single_revision_inherits_selected_slot_and_exact_optional_fiel
     snapshot = repo.get_resource_version(
         "default", "ou_user", resource_id, version
     )
+    assert revised["resource"]["resource_id"] == resource_id
+    assert version == revised["resource"]["latest_resource_version"] == 4
     assert revised["resource"]["versions"][0]["label"] == "B"
     assert snapshot.content_json["variant_label"] == "B"
     assert snapshot.content_json["cover"] == "B cover"
     assert snapshot.content_json["note"] == "B note"
+    assert migrated_conn.execute(
+        """
+        select source_resource_id::text, source_resource_version,
+               target_resource_id::text, target_resource_version, edge_type
+        from resource_edges
+        where tenant_id = 'default'
+          and source_resource_id = %s and source_resource_version = %s
+          and target_resource_id = %s and target_resource_version = 2
+          and edge_type = 'revised_from'
+        """,
+        (resource_id, version, resource_id),
+    ).fetchone() == (resource_id, 4, resource_id, 2, "revised_from")
 
 
 def test_semantic_search_reads_adopted_snapshot_when_latest_is_an_unadopted_candidate(migrated_conn):
@@ -592,6 +607,30 @@ def test_semantic_search_reads_adopted_snapshot_when_latest_is_an_unadopted_cand
         resource_version=1,
         expected_state_version=1,
     )
+    qualified = KnowledgeService(migrated_conn).enrich_exact_version(
+        tenant_id="default",
+        resource_id=resource_id,
+        resource_version=1,
+    )
+    assert qualified.status == "qualified"
+    assert migrated_conn.execute(
+        """
+        select resource_id::text, resource_version
+        from current_knowledge_targets
+        where tenant_id = 'default' and resource_id = %s
+        """,
+        (resource_id,),
+    ).fetchone() == (resource_id, 1)
+    assert migrated_conn.execute(
+        """
+        select target_resource_id::text, target_resource_version
+        from resource_edges
+        where tenant_id = 'default'
+          and source_resource_id = %s and source_resource_version = 1
+          and edge_type = 'belongs_to_knowledge_base'
+        """,
+        (resource_id,),
+    ).fetchone() is not None
     embeddings = EmbeddingRepository(migrated_conn)
     index = embeddings.create_index(
         tenant_id="default",
@@ -615,6 +654,8 @@ def test_semantic_search_reads_adopted_snapshot_when_latest_is_an_unadopted_cand
         embedding_model="model-a",
         top_k=5,
     )
+    assert str(rows[0]["id"]) == resource_id
+    assert rows[0]["resource_version"] == 1
     assert rows[0]["title"] == "A 标题"
     assert rows[0]["content_text"] == "A 标题\n\nA 被采纳正文"
     assert "C 最新但未采纳" not in rows[0]["content_text"]

@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from data_foundation.graph import expand_graph
 from data_foundation.repositories.resource import ResourceRepository
 from data_foundation.creation_memory import (
     associate_ingested_resource,
@@ -327,6 +326,8 @@ def test_existing_resource_revision_requires_both_cas_tokens(monkeypatch):
             assert kwargs["expected_resource_version"] == 1
             assert kwargs["expected_state_version"] == 1
             assert kwargs["label"] is None
+            assert kwargs["cover"] is None
+            assert kwargs["note"] is None
             return type(
                 "State",
                 (),
@@ -659,18 +660,8 @@ def test_link_imitation_source_gated_and_guarded():
     assert repo.edges == []
 
 
-def test_creation_memory_writes_real_resource_edges(migrated_conn, monkeypatch):
-    from unittest.mock import MagicMock
-    
+def test_creation_memory_writes_real_resource_edges(migrated_conn):
     repo = ResourceRepository(migrated_conn)
-    fake_graph = MagicMock()
-    monkeypatch.setenv("XHS_FALKOR_URL", "redis://127.0.0.1:6379")
-    monkeypatch.setenv("XHS_FALKOR_GRAPH", "xhs")
-    monkeypatch.setattr(
-        "data_foundation.falkor_client.FalkorResourceGraph.from_config",
-        classmethod(lambda cls, cfg: fake_graph),
-    )
-
     source = repo.upsert_resource(
         tenant_id="default",
         actor_open_id="ou_user",
@@ -697,48 +688,55 @@ def test_creation_memory_writes_real_resource_edges(migrated_conn, monkeypatch):
             "summary": "清单型内容收藏高",
         }],
     )
-
-    fake_graph.expand.return_value = (
-        [
-            {"id": result["resource"]["resource_id"], "resource_version": result["resource"]["version"], "title": "露营别乱买", "type": "generated_copy"},
-            {"id": source.id, "resource_version": int(source.version), "title": "轻量露营样本", "type": "feishu_base_record"}
-        ],
-        [
-            {
-                "source": result["resource"]["resource_id"],
-                "source_resource_version": result["resource"]["version"],
-                "target": source.id,
-                "target_resource_version": int(source.version),
-                "edge_type": "derived_from",
-                "weight": 1.0,
-                "properties": {},
-            }
-        ]
+    resource_id = result["resource"]["resource_id"]
+    resource_version = result["resource"]["resource_version"]
+    edge = migrated_conn.execute(
+        """
+        select source_resource_id::text, source_resource_version,
+               target_resource_id::text, target_resource_version, edge_type
+        from resource_edges
+        where tenant_id = %s
+          and source_resource_id = %s
+          and source_resource_version = %s
+          and target_resource_id = %s
+          and target_resource_version = %s
+          and edge_type = 'derived_from'
+        """,
+        ("default", resource_id, resource_version, source.id, int(source.version)),
+    ).fetchone()
+    assert edge == (
+        resource_id,
+        resource_version,
+        source.id,
+        int(source.version),
+        "derived_from",
     )
 
-    graph = expand_graph(
-        repo,
+
+def test_creation_memory_rolls_back_when_valid_evidence_edge_write_fails(
+    migrated_conn, monkeypatch
+):
+    repo = ResourceRepository(migrated_conn)
+    source = repo.upsert_resource(
         tenant_id="default",
         actor_open_id="ou_user",
-        resource_ids=[result["resource"]["resource_id"]],
-        resource_versions=[result["resource"]["version"]],
-        edge_types=["derived_from"],
+        resource_type="xhs_note",
+        title="可读来源",
+        content_text="真实来源正文",
+        visibility="team",
+        owner_open_id="ou_user",
     )
+    baseline = repo.debug_counts()
+    baseline_edges = migrated_conn.execute(
+        "select count(*) from resource_edges"
+    ).fetchone()[0]
 
-    assert {node.resource_id for node in graph.nodes} == {
-        result["resource"]["resource_id"],
-        source.id,
-    }
-    assert [(edge.source_resource_id, edge.target_resource_id, edge.edge_type) for edge in graph.edges] == [
-        (result["resource"]["resource_id"], source.id, "derived_from")
-    ]
+    def reject_edge(**_kwargs):
+        raise ValueError("edge write failed")
 
+    monkeypatch.setattr(repo, "add_edge", reject_edge)
 
-
-def test_creation_memory_rolls_back_when_evidence_edge_is_invalid(migrated_conn):
-    repo = ResourceRepository(migrated_conn)
-
-    with pytest.raises((PermissionError, ValueError)):
+    with pytest.raises(ValueError, match="edge write failed"):
         save_generated_copy_resource(
             repo,
             tenant_id="default",
@@ -747,12 +745,15 @@ def test_creation_memory_rolls_back_when_evidence_edge_is_invalid(migrated_conn)
             body="这份清单够了",
             tags=["#露营"],
             evidence=[{
-                "resource_id": "00000000-0000-0000-0000-000000000000",
-                "resource_version": 1,
-                "summary": "不存在",
+                "resource_id": source.id,
+                "resource_version": int(source.version),
             }],
         )
 
     counts = repo.debug_counts()
-    assert counts["resources"] == 0
-    assert counts["resource_outbox"] == 0
+    assert counts["resources"] == baseline["resources"]
+    assert counts["resource_versions"] == baseline["resource_versions"]
+    assert counts["resource_outbox"] == baseline["resource_outbox"]
+    assert migrated_conn.execute(
+        "select count(*) from resource_edges"
+    ).fetchone()[0] == baseline_edges
