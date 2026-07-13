@@ -607,6 +607,20 @@ def test_semantic_search_reads_adopted_snapshot_when_latest_is_an_unadopted_cand
         resource_version=1,
         expected_state_version=1,
     )
+    # Adoption rebuilds the private preference profile first.  Its learned_from edge
+    # points into the adopted snapshot, but that profile is intentionally not sent to
+    # graph ingestion, so this incoming SQL edge cannot satisfy the snapshot's own
+    # no-island graph contract.
+    assert migrated_conn.execute(
+        """
+        select 1
+        from resource_edges
+        where tenant_id = 'default'
+          and target_resource_id = %s and target_resource_version = 1
+          and edge_type = 'learned_from'
+        """,
+        (resource_id,),
+    ).fetchone() is not None
     qualified = KnowledgeService(migrated_conn).enrich_exact_version(
         tenant_id="default",
         resource_id=resource_id,

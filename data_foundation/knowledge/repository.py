@@ -828,20 +828,21 @@ class KnowledgeRepository:
         )
 
     def _ensure_no_island(self, cur, *, snapshot: KnowledgeSnapshot) -> tuple[str, int, bool]:
+        # Graph ingestion is source-owned: GraphProcessor materializes only the exact
+        # snapshot's outgoing edges.  An incoming PostgreSQL edge therefore does not
+        # make this snapshot connected in FalkorDB (its source may intentionally never
+        # be graph-indexed, as with a private writing-preference profile).  Only an
+        # outgoing exact-version association satisfies the no-island invariant here.
         existing = cur.execute(
             """
             select 1 from resource_edges
             where tenant_id = %s
-              and (
-                (source_resource_id = %s and source_resource_version = %s)
-                or
-                (target_resource_id = %s and target_resource_version = %s)
-              )
+              and source_resource_id = %s
+              and source_resource_version = %s
             limit 1
             """,
             (
                 snapshot.tenant_id, snapshot.resource_id, snapshot.resource_version,
-                snapshot.resource_id, snapshot.resource_version,
             ),
         ).fetchone()
         if existing is not None or snapshot.resource_type == "knowledge_anchor":
