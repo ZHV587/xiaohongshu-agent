@@ -18,14 +18,10 @@ def patched_apply_migrations(conn):
     schema_sql = schema_sql.replace("create extension if not exists vector with schema public;", "")
     schema_sql = schema_sql.replace("embedding public.vector(1536) not null", "embedding double precision[] not null")
     schema_sql = schema_sql.replace("%s::public.vector", "%s::double precision[]")
-    # Remove the PL/pgSQL upgrade block
-    schema_sql = re.sub(
-        r"do\s+\$\$.*?end\s+\$\$;",
-        "",
-        schema_sql,
-        flags=re.IGNORECASE | re.DOTALL
-    )
-    # Remove the HNSW index creation statement
+    # Only the pgvector index statement is unsupported by vanilla Postgres.  The
+    # surrounding PL/pgSQL migration blocks use core PostgreSQL features and must
+    # still run, otherwise this fixture silently tests a different schema upgrade
+    # path from production.
     schema_sql = re.sub(
         r"create index if not exists idx_resource_embeddings_vector\s+on resource_embeddings using (ivfflat|hnsw)[^;]+;",
         "",
@@ -167,4 +163,3 @@ def migrated_conn(database_url: str):
     finally:
         with psycopg.connect(database_url, autocommit=True, row_factory=hybrid_row_factory) as admin:
             admin.execute(f'drop schema if exists "{schema}" cascade')
-
