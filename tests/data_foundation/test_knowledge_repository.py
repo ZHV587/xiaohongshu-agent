@@ -2,7 +2,10 @@ import inspect
 
 import pytest
 
-from data_foundation.knowledge.repository import KnowledgeRepository
+from data_foundation.knowledge.repository import (
+    KnowledgeRepository,
+    _represent_near_similarity,
+)
 from data_foundation.knowledge.service import KnowledgeService
 from data_foundation.repositories.resource import ResourceRepository
 
@@ -348,6 +351,16 @@ def test_near_family_creates_exact_variant_edge_and_retry_is_idempotent(migrated
     assert edge["properties"]["match_kind"] == "near"
     assert edge["properties"]["similarity"] == pytest.approx(float(edge["weight"]), abs=1e-6)
     assert edge["properties"]["evidence"] == "pg_trgm_similarity_gte_0.9"
+    state_score = migrated_conn.execute(
+        """
+        select (metadata->>'duplicate_similarity')::double precision as score
+        from knowledge_asset_states
+        where tenant_id = %s and resource_id = %s and resource_version = 1
+        """,
+        (variant.tenant_id, variant.id),
+    ).fetchone()["score"]
+    assert state_score == pytest.approx(float(edge["weight"]), abs=1e-6)
+    assert state_score < 1.0
     graph_jobs = migrated_conn.execute(
         """
         select count(*) as n from resource_outbox
@@ -357,6 +370,21 @@ def test_near_family_creates_exact_variant_edge_and_retry_is_idempotent(migrated
         (variant.tenant_id, variant.id),
     ).fetchone()["n"]
     assert graph_jobs == 1
+
+
+@pytest.mark.parametrize(
+    ("raw_score", "expected"),
+    [
+        (0.91, 0.91),
+        (0.999999, 0.999999),
+        (1.0, 0.999999),
+    ],
+)
+def test_near_similarity_representation_reserves_one_for_exact(raw_score, expected):
+    represented = _represent_near_similarity(raw_score)
+
+    assert represented == pytest.approx(expected)
+    assert represented < 1.0
 
 
 def test_near_family_candidate_recall_uses_trigram_index_operator():

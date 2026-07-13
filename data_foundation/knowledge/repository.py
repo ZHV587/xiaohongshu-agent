@@ -22,6 +22,12 @@ from data_foundation.preference_outbox import enqueue_preference_synthesis
 
 PIPELINE_VERSION = "knowledge-enrich-v1"
 ANCHOR_NAMESPACE = uuid.UUID("8b45980a-c51b-4ffd-9169-7db5b2848bc6")
+SIMILARITY_DECIMAL_PLACES = 6
+# pg_trgm returns ``real``.  For very long texts with only a tiny difference its
+# single-precision result can round up to 1.0 even though the strings are not
+# equal.  Edge metadata is represented to six decimal places, so reserve its
+# highest non-one value for near matches and keep 1.0 exclusive to exact matches.
+NEAR_DUPLICATE_SIMILARITY_CEILING = 0.999999
 SESSION_SNAPSHOT_KINDS = frozenset(
     {
         "workflow_state",
@@ -34,6 +40,10 @@ SESSION_SNAPSHOT_KINDS = frozenset(
         "migration_audit",
     }
 )
+
+
+def _represent_near_similarity(raw_score: float) -> float:
+    return min(float(raw_score), NEAR_DUPLICATE_SIMILARITY_CEILING)
 
 
 class KnowledgeRepository:
@@ -619,6 +629,11 @@ class KnowledgeRepository:
             ),
         ).fetchone()
         if existing is not None:
+            existing_similarity = existing["duplicate_similarity"]
+            if existing_similarity is not None:
+                existing_similarity = float(existing_similarity)
+                if existing["duplicate_kind"] == "near":
+                    existing_similarity = _represent_near_similarity(existing_similarity)
             return (
                 existing["family_id"],
                 existing["duplicate_kind"] or "singleton",
@@ -628,11 +643,7 @@ class KnowledgeRepository:
                     if existing["variant_resource_version"] is None
                     else int(existing["variant_resource_version"])
                 ),
-                (
-                    None
-                    if existing["duplicate_similarity"] is None
-                    else float(existing["duplicate_similarity"])
-                ),
+                existing_similarity,
             )
 
         readable_clause = """
@@ -736,7 +747,7 @@ class KnowledgeRepository:
             return (
                 near["family_id"], "near",
                 near["canonical_resource_id"], int(near["canonical_resource_version"]),
-                float(near["score"]),
+                _represent_near_similarity(float(near["score"])),
             )
 
         family = cur.execute(
@@ -769,7 +780,13 @@ class KnowledgeRepository:
             or canonical_resource_version is None
         ):
             return
-        score = 1.0 if duplicate_kind == "exact" else float(similarity or 0.9)
+        score = (
+            1.0
+            if duplicate_kind == "exact"
+            else _represent_near_similarity(
+                0.9 if similarity is None else float(similarity)
+            )
+        )
         evidence = (
             "normalized_sha256_equal"
             if duplicate_kind == "exact"
@@ -778,7 +795,7 @@ class KnowledgeRepository:
         properties = {
             "family_id": family_id,
             "match_kind": duplicate_kind,
-            "similarity": round(score, 6),
+            "similarity": round(score, SIMILARITY_DECIMAL_PLACES),
             "evidence": evidence,
             "strength": "strong",
             "system_generated": True,
