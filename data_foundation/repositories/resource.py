@@ -17,6 +17,9 @@ def hnsw_ef_search_width(top_k: int) -> int:
     return min(400, max(64, int(top_k) * 4))
 
 
+HNSW_ITERATIVE_SCAN_MODE = "strict_order"
+
+
 class ResourceRepository(BaseRepository):
     def upsert_resource(
         self,
@@ -1020,70 +1023,95 @@ class ResourceRepository(BaseRepository):
             raise ValueError("Embedding model is required")
         vector_literal = self._vector_literal(embedding)
         where_clause = self.readable_resource_where("r")
-        # HNSW 召回宽度 ef_search:pgvector 默认 40,当 top_k 上探到 100(工具层 5× over-fetch
-        # 的候选头寸)时,默认 40 会让候选池在近邻图上过早收敛、召回不足。按 top_k 放宽 ef_search
-        # (且 ef_search 需 ≥ limit),让候选真正取满再交给统一 RRF 精排 —— 直接提召回。
-        # 上限 400 兜住极端 top_k 的查询开销。连接非 autocommit,SET LOCAL 作用于本次隐式事务。
-        # 注意:该参数只对 HNSW 索引生效 —— schema.sql 的条件升级块负责 ivfflat→HNSW,
-        # 且 http_app 启动时显式跑迁移保证生产已升级(否则这里是 no-op 死代码)。
+        # pgvector 0.8.3 的过滤条件在 HNSW 扫描后裁决。默认非迭代扫描只看固定候选池，
+        # 租户、ACL、当前知识版本和模型过滤可能把候选大量淘汰，最终 LIMIT 因而取不满。
+        # strict_order 会在过滤后结果不足时继续扫描，同时保持严格距离顺序；ef_search 作为
+        # 初始候选宽度，也复用于 chunk 候选池，之后再按资源去重并交给统一 RRF 精排。
         ef_search = hnsw_ef_search_width(top_k)
         with self.connection_context(conn) as connection:
-            with connection.cursor(row_factory=dict_row) as cursor:
-                # 作为事务内首条语句设置,仅本事务生效,不污染连接池上后续查询。
-                cursor.execute(f"SET LOCAL hnsw.ef_search = {ef_search}")
-                rows = cursor.execute(
-                    f"""
-                    with candidates as (
-                      select r.id, r.tenant_id, r.type,
-                             coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
-                             r.summary, rv.content_text, rv.content_json,
-                             r.status, r.visibility, r.owner_open_id, r.created_at, r.updated_at,
-                             e.chunk_index, e.chunk_text,
-                             (
-                               select max(rm.external_updated_at)
-                               from resource_mappings rm
-                               where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
-                             ) as source_updated_at,
-                             1 - (e.embedding <=> %(vector)s::public.vector) as score,
-                             row_number() over (
-                               partition by r.id
-                               order by e.embedding <=> %(vector)s::public.vector, e.chunk_index
-                             ) as resource_rank
-                      from resource_embeddings e
-                      join embedding_indexes idx
-                        on idx.tenant_id = e.tenant_id
-                       and idx.id = e.embedding_index_id
-                       and idx.embedding_model = e.embedding_model
-                       and idx.chunker_version = e.chunker_version
-                       and idx.status = 'active'
-                      join resources r
-                        on r.tenant_id = e.tenant_id
-                       and r.id = e.resource_id
-                      join resource_versions rv
-                        on rv.tenant_id = e.tenant_id
-                       and rv.resource_id = e.resource_id
-                       and rv.version = e.resource_version
-                      join current_knowledge_targets target
-                        on target.tenant_id = e.tenant_id
-                       and target.resource_id = e.resource_id
-                       and target.resource_version = e.resource_version
-                      where e.embedding_model = %(embedding_model)s
-                        and {where_clause}
+            # 该查询只读。强制回滚的事务/保存点既让 autocommit 连接上的事务局部参数生效，
+            # 又保证复用调用方外层事务时参数在查询后立即恢复，不污染同连接的后续 SQL。
+            with connection.transaction(force_rollback=True):
+                with connection.cursor(row_factory=dict_row) as cursor:
+                    # set_config(..., true) 等价于 SET LOCAL，但值由 psycopg 参数绑定，
+                    # 不把动态 ef_search 或模式拼进 SQL。
+                    cursor.execute(
+                        """
+                        select set_config('hnsw.ef_search', %(ef_search)s, true),
+                               set_config('hnsw.iterative_scan', %(iterative_scan)s, true)
+                        """,
+                        {
+                            "ef_search": str(ef_search),
+                            "iterative_scan": HNSW_ITERATIVE_SCAN_MODE,
+                        },
                     )
-                    select * from candidates
-                    where resource_rank = 1
-                    order by score desc, updated_at desc
-                    limit %(top_k)s
-                    """,
-                    {
-                        "vector": vector_literal,
-                        "embedding_model": embedding_model,
-                        "top_k": top_k,
-                        "tenant_id": tenant_id,
-                        "actor_open_id": actor_open_id,
-                    },
-                ).fetchall()
-                return [dict(row) for row in rows]
+                    rows = cursor.execute(
+                        f"""
+                        with nearest_chunks as materialized (
+                          select r.id, r.tenant_id, r.type,
+                                 coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                                 r.summary, rv.content_text, rv.content_json,
+                                 r.status, r.visibility, r.owner_open_id,
+                                 r.created_at, r.updated_at,
+                                 rv.version as resource_version,
+                                 e.chunk_index, e.chunk_text,
+                                 (
+                                   select max(rm.external_updated_at)
+                                   from resource_mappings rm
+                                   where rm.resource_id = r.id
+                                     and rm.tenant_id = r.tenant_id
+                                 ) as source_updated_at,
+                                 e.embedding <=> %(vector)s::public.vector as distance
+                          from resource_embeddings e
+                          join embedding_indexes idx
+                            on idx.tenant_id = e.tenant_id
+                           and idx.id = e.embedding_index_id
+                           and idx.embedding_model = e.embedding_model
+                           and idx.chunker_version = e.chunker_version
+                           and idx.status = 'active'
+                          join resources r
+                            on r.tenant_id = e.tenant_id
+                           and r.id = e.resource_id
+                          join resource_versions rv
+                            on rv.tenant_id = e.tenant_id
+                           and rv.resource_id = e.resource_id
+                           and rv.version = e.resource_version
+                          join current_knowledge_targets target
+                            on target.tenant_id = e.tenant_id
+                           and target.resource_id = e.resource_id
+                           and target.resource_version = e.resource_version
+                          where e.embedding_model = %(embedding_model)s
+                            and {where_clause}
+                          order by e.embedding <=> %(vector)s::public.vector
+                          limit %(candidate_k)s
+                        ), ranked_resources as (
+                          select nearest_chunks.*,
+                                 row_number() over (
+                                   partition by id
+                                   order by distance, chunk_index
+                                 ) as resource_rank
+                          from nearest_chunks
+                        )
+                        select id, tenant_id, type, title, summary,
+                               content_text, content_json, status, visibility,
+                               owner_open_id, created_at, updated_at,
+                               resource_version, chunk_index, chunk_text,
+                               source_updated_at, 1 - distance as score
+                        from ranked_resources
+                        where resource_rank = 1
+                        order by distance, updated_at desc, id
+                        limit %(top_k)s
+                        """,
+                        {
+                            "vector": vector_literal,
+                            "embedding_model": embedding_model,
+                            "candidate_k": ef_search,
+                            "top_k": top_k,
+                            "tenant_id": tenant_id,
+                            "actor_open_id": actor_open_id,
+                        },
+                    ).fetchall()
+            return [dict(row) for row in rows]
 
     def active_embedding_index(self, tenant_id: str, conn: Optional[Connection] = None) -> Any:
         from data_foundation.embedding_repository import EmbeddingRepository

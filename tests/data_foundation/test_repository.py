@@ -94,12 +94,16 @@ def test_resource_repository_exposes_runtime_fact_aggregates():
 def test_semantic_rows_uses_schema_qualified_vector_cast_for_custom_search_paths():
     class _CapturingConnection:
         row_factory = None
+        autocommit = True
 
         def __init__(self):
             self.sql = ""
+            self.calls = []
+            self.force_rollback = None
 
         def execute(self, sql, params=None):
             self.sql = sql.lower()
+            self.calls.append((self.sql, params))
             return self
 
         def fetchall(self):
@@ -108,7 +112,8 @@ def test_semantic_rows_uses_schema_qualified_vector_cast_for_custom_search_paths
         def cursor(self, row_factory=None):
             return self
 
-        def transaction(self):
+        def transaction(self, *, force_rollback=False):
+            self.force_rollback = force_rollback
             return self
 
         def __enter__(self):
@@ -130,8 +135,58 @@ def test_semantic_rows_uses_schema_qualified_vector_cast_for_custom_search_paths
 
     assert "::public.vector" in conn.sql
     assert "::vector" not in conn.sql
+    assert "with nearest_chunks as materialized" in conn.sql
+    assert "order by e.embedding <=> %(vector)s::public.vector" in conn.sql
+    assert "limit %(candidate_k)s" in conn.sql
     assert "join current_knowledge_targets target" in conn.sql
     assert "target.resource_version = e.resource_version" in conn.sql
+    assert "rv.version as resource_version" in conn.sql
+    assert conn.force_rollback is True
+
+    config_sql, config_params = conn.calls[0]
+    assert "set_config('hnsw.ef_search', %(ef_search)s, true)" in config_sql
+    assert "set_config('hnsw.iterative_scan', %(iterative_scan)s, true)" in config_sql
+    assert config_params == {"ef_search": "64", "iterative_scan": "strict_order"}
+    _, search_params = conn.calls[1]
+    assert search_params["candidate_k"] == 64
+    assert search_params["top_k"] == 5
+    assert "default" not in config_sql
+    assert "ou_owner" not in config_sql
+
+
+def test_semantic_rows_restores_outer_hnsw_settings(migrated_conn):
+    migrated_conn.execute(
+        """
+        select set_config('hnsw.ef_search', '77', true),
+               set_config('hnsw.iterative_scan', 'relaxed_order', true)
+        """
+    )
+    before = migrated_conn.execute(
+        """
+        select current_setting('hnsw.ef_search') as ef_search,
+               current_setting('hnsw.iterative_scan') as iterative_scan
+        """
+    ).fetchone()
+
+    repo = ResourceRepository(migrated_conn)
+    assert repo.semantic_rows(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        embedding=[0.0] * 1536,
+        embedding_model="model-a",
+        top_k=5,
+    ) == []
+
+    after = migrated_conn.execute(
+        """
+        select current_setting('hnsw.ef_search') as ef_search,
+               current_setting('hnsw.iterative_scan') as iterative_scan
+        """
+    ).fetchone()
+    assert dict(after) == dict(before) == {
+        "ef_search": "77",
+        "iterative_scan": "relaxed_order",
+    }
 
 
 def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
