@@ -12,6 +12,11 @@ from psycopg.rows import dict_row
 
 
 DATA_FOUNDATION_TABLES = (
+    "user_skill_audit_events",
+    "user_skill_publications",
+    "user_skill_versions",
+    "user_skills",
+    "user_skill_revisions",
     "service_error_aggregates",
     "sync_runs",
     "service_executions",

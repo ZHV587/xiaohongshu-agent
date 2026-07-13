@@ -155,3 +155,44 @@ class RuntimeIdentityConfig:
     tenant_id: str
     open_id: str
 
+
+@dataclass(frozen=True)
+class UserSkillVersion:
+    id: str
+    tenant_id: str
+    owner_open_id: str
+    skill_id: str
+    version: int
+    display_name: str
+    description: str
+    instructions_markdown: str
+    content_hash: str
+    created_by_open_id: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class UserSkill:
+    id: str
+    tenant_id: str
+    owner_open_id: str
+    runtime_name: str
+    latest_version: int
+    status: str
+    published_version: int | None
+    created_at: datetime
+    updated_at: datetime
+    latest_definition: UserSkillVersion
+
+
+@dataclass(frozen=True)
+class UserSkillAuditEvent:
+    id: str
+    tenant_id: str
+    owner_open_id: str
+    skill_id: str
+    event_type: str
+    actor_open_id: str
+    skill_version: int | None
+    payload: dict[str, Any]
+    created_at: datetime

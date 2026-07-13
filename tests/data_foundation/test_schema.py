@@ -10,6 +10,11 @@ from data_foundation import db, models
 
 
 EXPECTED_TABLES = {
+    "user_skills",
+    "user_skill_versions",
+    "user_skill_publications",
+    "user_skill_audit_events",
+    "user_skill_revisions",
     "resources",
     "resource_type_counts",
     "resource_versions",
@@ -101,6 +106,23 @@ def test_schema_source_declares_clean_operational_contract():
     assert "current_version" not in schema
     assert "config_version int" not in schema
     assert "nulls not distinct" in schema
+
+
+def test_schema_declares_isolated_immutable_user_skill_contract():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+
+    assert "create table if not exists user_skills" in schema
+    assert "create table if not exists user_skill_versions" in schema
+    assert "create table if not exists user_skill_publications" in schema
+    assert "create table if not exists user_skill_audit_events" in schema
+    assert "create table if not exists user_skill_revisions" in schema
+    assert "references resources" not in schema.split("create table if not exists user_skills", 1)[1].split(
+        "create table if not exists resources", 1
+    )[0]
+    assert "before update or delete on user_skill_versions" in schema
+    assert "before update or delete on user_skill_audit_events" in schema
+    assert "foreign key (tenant_id, owner_open_id, skill_id, published_version)" in schema
+    assert "where archived_at is null" in schema
 
 
 def test_schema_source_enforces_tenant_scoped_resource_references():

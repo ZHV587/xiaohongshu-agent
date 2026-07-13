@@ -2,6 +2,125 @@ create extension if not exists pgcrypto;
 create extension if not exists vector with schema public;
 create extension if not exists pg_trgm with schema public;
 
+-- 用户自定义 Skill 是运行时配置，不是内容素材。它使用独立表保存，绝不进入
+-- resources/resource_outbox，因此不会被 Meilisearch、pgvector 或 FalkorDB 索引。
+create table if not exists user_skills (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  owner_open_id text not null,
+  runtime_name text not null check (runtime_name ~ '^usr-[a-z0-9-]+$'),
+  current_name text not null check (current_name <> ''),
+  current_name_key text not null check (current_name_key <> ''),
+  latest_version int not null default 1 check (latest_version > 0),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, owner_open_id, id),
+  unique (tenant_id, owner_open_id, runtime_name)
+);
+
+create index if not exists idx_user_skills_owner_recent
+  on user_skills (tenant_id, owner_open_id, updated_at desc, id desc);
+create unique index if not exists uq_user_skills_owner_active_name
+  on user_skills (tenant_id, owner_open_id, current_name_key)
+  where archived_at is null;
+
+create table if not exists user_skill_versions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  owner_open_id text not null,
+  skill_id uuid not null,
+  version int not null check (version > 0),
+  display_name text not null check (display_name <> ''),
+  description text not null check (description <> ''),
+  instructions_markdown text not null check (instructions_markdown <> ''),
+  content_hash text not null,
+  created_by_open_id text not null,
+  created_at timestamptz not null default now(),
+  foreign key (tenant_id, owner_open_id, skill_id)
+    references user_skills(tenant_id, owner_open_id, id) on delete cascade,
+  unique (tenant_id, owner_open_id, skill_id, version),
+  unique (tenant_id, owner_open_id, id)
+);
+
+create index if not exists idx_user_skill_versions_owner_recent
+  on user_skill_versions (tenant_id, owner_open_id, skill_id, version desc);
+
+create table if not exists user_skill_publications (
+  tenant_id text not null,
+  owner_open_id text not null,
+  skill_id uuid not null,
+  status text not null default 'draft'
+    check (status in ('draft', 'published', 'disabled', 'archived')),
+  published_version int,
+  published_at timestamptz,
+  disabled_at timestamptz,
+  archived_at timestamptz,
+  updated_by_open_id text not null,
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, owner_open_id, skill_id),
+  foreign key (tenant_id, owner_open_id, skill_id)
+    references user_skills(tenant_id, owner_open_id, id) on delete cascade,
+  foreign key (tenant_id, owner_open_id, skill_id, published_version)
+    references user_skill_versions(tenant_id, owner_open_id, skill_id, version),
+  check (
+    (status = 'draft' and published_version is null)
+    or (status in ('published', 'disabled') and published_version is not null)
+    or status = 'archived'
+  )
+);
+
+create index if not exists idx_user_skill_publications_discoverable
+  on user_skill_publications (tenant_id, owner_open_id, updated_at desc, skill_id)
+  where status = 'published';
+
+create table if not exists user_skill_audit_events (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  owner_open_id text not null,
+  skill_id uuid not null,
+  event_type text not null check (event_type <> ''),
+  actor_open_id text not null,
+  skill_version int,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  foreign key (tenant_id, owner_open_id, skill_id)
+    references user_skills(tenant_id, owner_open_id, id) on delete cascade,
+  foreign key (tenant_id, owner_open_id, skill_id, skill_version)
+    references user_skill_versions(tenant_id, owner_open_id, skill_id, version),
+  unique (tenant_id, owner_open_id, id)
+);
+
+create index if not exists idx_user_skill_audit_owner_recent
+  on user_skill_audit_events (tenant_id, owner_open_id, created_at desc, id desc);
+
+create table if not exists user_skill_revisions (
+  tenant_id text not null,
+  owner_open_id text not null,
+  revision bigint not null default 0 check (revision >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, owner_open_id)
+);
+
+-- Skill 版本和审计记录一旦写入只能追加。发布、回滚通过独立发布指针完成。
+create or replace function reject_user_skill_immutable_mutation()
+returns trigger as $$
+begin
+  raise exception '% rows are immutable; append a new row instead', tg_table_name
+    using errcode = '55000';
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_user_skill_versions_immutable on user_skill_versions;
+create trigger trg_user_skill_versions_immutable
+  before update or delete on user_skill_versions
+  for each row execute function reject_user_skill_immutable_mutation();
+
+drop trigger if exists trg_user_skill_audit_immutable on user_skill_audit_events;
+create trigger trg_user_skill_audit_immutable
+  before update or delete on user_skill_audit_events
+  for each row execute function reject_user_skill_immutable_mutation();
+
 create table if not exists resources (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
