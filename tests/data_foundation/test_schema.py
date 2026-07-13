@@ -44,6 +44,11 @@ EXPECTED_TABLES = {
     "service_executions",
     "service_error_aggregates",
 }
+EXPECTED_VIEWS = {
+    "base_current_knowledge_targets",
+    "qualified_knowledge_versions",
+    "current_knowledge_targets",
+}
 
 
 def _columns(conn, table: str) -> set[str]:
@@ -231,6 +236,14 @@ def test_meili_resource_version_backfill_requeues_or_inserts_once(migrated_conn)
         where tenant_id = 'tenant-reindex' and topic = 'meili_index'
         """
     ).fetchone()["n"] == 2
+    assert migrated_conn.execute(
+        """
+        select count(*) as n
+        from resource_outbox
+        where tenant_id = 'tenant-reindex' and topic = 'meili_index'
+          and status = 'succeeded'
+        """
+    ).fetchone()["n"] == 2
 
 
 def test_meili_hybrid_v2_backfill_requeues_each_current_target_once(migrated_conn):
@@ -411,16 +424,6 @@ def test_knowledge_gate_synchronously_classifies_legacy_targets_before_return(mi
         ).fetchall()
     }
     assert current_ids == {document.id, adopted.id}
-    assert migrated_conn.execute(
-        """
-        select count(*) as n
-        from resource_outbox
-        where tenant_id = 'tenant-reindex' and topic = 'meili_index'
-          and status = 'succeeded'
-        """
-    ).fetchone()["n"] == 2
-
-
 def test_generated_copy_schema_migrates_named_pointer_and_idempotency_constraints():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
     for name in (
@@ -637,17 +640,51 @@ def test_schema_enables_required_extensions(migrated_conn):
 
 def test_schema_creates_operational_tables(migrated_conn):
     rows = migrated_conn.execute(
-        "select table_name from information_schema.tables where table_schema=current_schema()"
+        "select table_name from information_schema.tables "
+        "where table_schema=current_schema() and table_type='BASE TABLE'"
     ).fetchall()
     assert {row[0] for row in rows} == EXPECTED_TABLES
+    views = migrated_conn.execute(
+        "select table_name from information_schema.views "
+        "where table_schema=current_schema()"
+    ).fetchall()
+    assert {row[0] for row in views} == EXPECTED_VIEWS
 
 
 def test_schema_is_idempotent(migrated_conn):
     db.run_migrations(migrated_conn)
     rows = migrated_conn.execute(
-        "select table_name from information_schema.tables where table_schema=current_schema()"
+        "select table_name from information_schema.tables "
+        "where table_schema=current_schema() and table_type='BASE TABLE'"
     ).fetchall()
     assert {row[0] for row in rows} == EXPECTED_TABLES
+    views = migrated_conn.execute(
+        "select table_name from information_schema.views "
+        "where table_schema=current_schema()"
+    ).fetchall()
+    assert {row[0] for row in views} == EXPECTED_VIEWS
+
+
+def test_schema_removes_legacy_retrieval_evidence_identity_unique(migrated_conn):
+    migrated_conn.execute(
+        """
+        alter table knowledge_retrieval_evidence_keys
+        add constraint legacy_retrieval_evidence_identity_unique
+        unique (tenant_id, resource_id, resource_version)
+        """
+    )
+
+    db.run_migrations(migrated_conn)
+
+    constraints = migrated_conn.execute(
+        """
+        select pg_get_constraintdef(oid) as definition
+        from pg_constraint
+        where conrelid = 'knowledge_retrieval_evidence_keys'::regclass
+          and contype = 'u'
+        """
+    ).fetchall()
+    assert constraints == []
 
 
 def test_user_skill_optional_routing_metadata_columns_are_json_arrays(migrated_conn):
@@ -1041,22 +1078,23 @@ def test_resource_content_trigram_index_supports_near_family_matching(migrated_c
 
 def test_embedding_dimension_and_source_type_constraints(migrated_conn):
     with pytest.raises(psycopg.errors.CheckViolation):
-        migrated_conn.execute(
-            """
-            insert into embedding_indexes
-              (tenant_id, embedding_model, config_version, dimensions, status)
-            values ('tenant-a', 'model', '2026-06-20T10:00:00Z-a1b2', 768, 'building')
-            """
-        )
-    migrated_conn.rollback()
+        with migrated_conn.transaction():
+            migrated_conn.execute(
+                """
+                insert into embedding_indexes
+                  (tenant_id, embedding_model, config_version, dimensions, status)
+                values ('tenant-a', 'model', '2026-06-20T10:00:00Z-a1b2', 768, 'building')
+                """
+            )
     with pytest.raises(psycopg.errors.CheckViolation):
-        migrated_conn.execute(
-            """
-            insert into sync_sources
-              (tenant_id, source_type, name, credentials, schedule_seconds)
-            values ('tenant-a', 'mysql_table', 'bad', '{}', 60)
-            """
-        )
+        with migrated_conn.transaction():
+            migrated_conn.execute(
+                """
+                insert into sync_sources
+                  (tenant_id, source_type, name, credentials, schedule_seconds)
+                values ('tenant-a', 'mysql_table', 'bad', '{}', 60)
+                """
+            )
 
 
 def test_reset_preserves_non_business_tables(migrated_conn):
@@ -1067,9 +1105,15 @@ def test_reset_preserves_non_business_tables(migrated_conn):
 
     assert migrated_conn.execute("select id from lark_uat_tokens").fetchone()[0] == "keep-me"
     rows = migrated_conn.execute(
-        "select table_name from information_schema.tables where table_schema=current_schema()"
+        "select table_name from information_schema.tables "
+        "where table_schema=current_schema() and table_type='BASE TABLE'"
     ).fetchall()
     assert {row[0] for row in rows} == EXPECTED_TABLES | {"lark_uat_tokens"}
+    views = migrated_conn.execute(
+        "select table_name from information_schema.views "
+        "where table_schema=current_schema()"
+    ).fetchall()
+    assert {row[0] for row in views} == EXPECTED_VIEWS
 
 
 def test_reset_refuses_to_damage_non_business_dependents(migrated_conn):

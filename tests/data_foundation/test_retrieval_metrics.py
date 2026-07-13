@@ -1344,6 +1344,8 @@ def test_reverse_rank_workers_use_fixed_evidence_lock_order(
 
 
 def test_outcomes_separate_explicit_adoption_schedule_and_censoring(migrated_conn) -> None:
+    from psycopg.types.json import Jsonb
+
     from data_foundation.creation_memory import save_generated_copy_resource
     from data_foundation.repositories.generated_copy import GeneratedCopyRepository
     from data_foundation.repositories.resource import ResourceRepository
@@ -1448,7 +1450,7 @@ def test_outcomes_separate_explicit_adoption_schedule_and_censoring(migrated_con
             tenant,
             explicit_id,
             actor,
-            explicit_event["payload"],
+            Jsonb(explicit_event["payload"]),
             old + timedelta(days=2),
         ),
     )

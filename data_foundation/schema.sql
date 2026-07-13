@@ -736,10 +736,41 @@ create table if not exists knowledge_retrieval_evidence_keys (
   first_verified_at timestamptz not null default now(),
   last_verified_at timestamptz not null default now(),
   primary key (tenant_id, evidence_key),
-  unique (tenant_id, resource_id, resource_version),
   foreign key (tenant_id, resource_id, resource_version)
     references resource_versions(tenant_id, resource_id, version) on delete cascade
 );
+
+-- Remove the legacy identity UNIQUE from already-migrated databases. The
+-- deterministic evidence key is the sole conflict arbiter; keeping a second unique
+-- constraint lets concurrent writers collide on an index their ON CONFLICT clause
+-- cannot arbitrate.
+do $$
+declare redundant_unique text;
+begin
+  for redundant_unique in
+    select conname
+    from pg_constraint
+    where conrelid = 'knowledge_retrieval_evidence_keys'::regclass
+      and contype = 'u'
+      and pg_get_constraintdef(oid)
+            = 'UNIQUE (tenant_id, resource_id, resource_version)'
+  loop
+    execute format(
+      'alter table knowledge_retrieval_evidence_keys drop constraint %I',
+      redundant_unique
+    );
+  end loop;
+end $$;
+
+-- The evidence fingerprint is deterministic for one exact tenant/resource/version.
+-- A second UNIQUE arbiter over the exact identity makes concurrent identical
+-- INSERT ... ON CONFLICT(evidence_key) statements race on the non-arbiter index.
+-- Keep this index non-unique: the application verifies the fingerprint mapping and
+-- the index still makes resource-version cascades and diagnostics efficient.
+create index if not exists idx_knowledge_retrieval_evidence_keys_resource
+  on knowledge_retrieval_evidence_keys (
+    tenant_id, resource_id, resource_version
+  );
 
 create table if not exists knowledge_retrieval_exposures (
   tenant_id text not null,
