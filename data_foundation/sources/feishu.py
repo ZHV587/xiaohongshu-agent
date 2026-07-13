@@ -9,6 +9,7 @@ from data_foundation.feishu_sync import sync_base_rows, sync_wiki_documents
 from data_foundation.sources.base import SourceContext, SourceLease, SourceSyncResult
 
 Loader = Callable[[SourceContext], dict[str, Any]]
+_SYNC_CHUNK_SIZE = 25
 
 
 class FeishuBaseSourceProcessor:
@@ -28,16 +29,30 @@ class FeishuBaseSourceProcessor:
 
         errors = list(payload.get("source_errors", []))
         rows = _valid_base_rows(payload, errors)
-        await lease.assert_owned()
-        result = sync_base_rows(
-            self.resource_repo,
-            tenant_id=context.source.tenant_id,
-            actor_open_id=context.actor_open_id,
-            app_token=str(payload.get("app_token") or context.source.config.get("app_token") or ""),
-            rows=rows,
-        )
-        errors.extend(result.errors)
-        return _source_result(read_count=len(rows), created_count=result.imported, errors=errors)
+        imported = 0
+        if not rows:
+            await lease.assert_owned()
+        for start in range(0, len(rows), _SYNC_CHUNK_SIZE):
+            await lease.assert_owned()
+            result = sync_base_rows(
+                self.resource_repo,
+                tenant_id=context.source.tenant_id,
+                actor_open_id=context.actor_open_id,
+                app_token=str(
+                    payload.get("app_token")
+                    or context.source.config.get("app_token")
+                    or ""
+                ),
+                rows=rows[start : start + _SYNC_CHUNK_SIZE],
+            )
+            imported += result.imported
+            errors.extend(result.errors)
+            # sync_base_rows is intentionally synchronous. Yield between bounded
+            # chunks so the scheduler timeout/cancellation can take effect, while the
+            # lease check above prevents an expired or revoked run from continuing to
+            # write hundreds of rows.
+            await asyncio.sleep(0)
+        return _source_result(read_count=len(rows), created_count=imported, errors=errors)
 
 
 class FeishuWikiSourceProcessor:
@@ -55,16 +70,28 @@ class FeishuWikiSourceProcessor:
 
         errors = list(payload.get("source_errors", []))
         documents = _valid_wiki_documents(payload, errors)
-        await lease.assert_owned()
-        result = sync_wiki_documents(
-            self.resource_repo,
-            tenant_id=context.source.tenant_id,
-            actor_open_id=context.actor_open_id,
-            space_id=str(payload.get("wiki_space_id") or context.source.config.get("wiki_space_id") or ""),
-            documents=documents,
+        imported = 0
+        if not documents:
+            await lease.assert_owned()
+        for start in range(0, len(documents), _SYNC_CHUNK_SIZE):
+            await lease.assert_owned()
+            result = sync_wiki_documents(
+                self.resource_repo,
+                tenant_id=context.source.tenant_id,
+                actor_open_id=context.actor_open_id,
+                space_id=str(
+                    payload.get("wiki_space_id")
+                    or context.source.config.get("wiki_space_id")
+                    or ""
+                ),
+                documents=documents[start : start + _SYNC_CHUNK_SIZE],
+            )
+            imported += result.imported
+            errors.extend(result.errors)
+            await asyncio.sleep(0)
+        return _source_result(
+            read_count=len(documents), created_count=imported, errors=errors
         )
-        errors.extend(result.errors)
-        return _source_result(read_count=len(documents), created_count=result.imported, errors=errors)
 
 
 def _valid_base_rows(payload: dict[str, Any], errors: list[str]) -> list[dict[str, Any]]:

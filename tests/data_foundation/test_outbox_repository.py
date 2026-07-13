@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from psycopg.errors import UndefinedColumn
+
 from data_foundation.outbox_repository import OutboxRepository
 
 
@@ -279,6 +282,39 @@ def test_fail_retries_then_dead_letters(migrated_conn):
         (item.id,),
     ).fetchone()
     assert dead == {"status": "dead", "has_dead_at": True}
+
+
+def test_fail_recovers_an_aborted_processor_transaction(migrated_conn):
+    repo = OutboxRepository(migrated_conn)
+    repo.enqueue(
+        tenant_id="tenant-a",
+        topic="meili_index",
+        dedupe_key="sql-failure",
+        payload={},
+    )
+    item = repo.lease_ready(
+        tenant_id="tenant-a",
+        topics=["meili_index"],
+        lease_owner="worker-a",
+        batch_size=1,
+        lease_seconds=30,
+    )[0]
+
+    with pytest.raises(UndefinedColumn):
+        migrated_conn.execute("select definitely_missing from resource_outbox")
+
+    assert repo.fail(
+        item_id=item.id,
+        tenant_id="tenant-a",
+        lease_owner="worker-a",
+        error_code="UndefinedColumn",
+        error_summary="processor query referenced a missing projection",
+    ) is True
+    row = migrated_conn.execute(
+        "select status, error_code from resource_outbox where id = %s",
+        (item.id,),
+    ).fetchone()
+    assert row == {"status": "retry", "error_code": "UndefinedColumn"}
 
 
 def test_renew_extends_only_owned_lease(migrated_conn):

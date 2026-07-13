@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from psycopg import Connection
+from psycopg.pq import TransactionStatus
 
 from data_foundation.db import transaction
 from data_foundation.models import OutboxItem
@@ -14,6 +15,11 @@ class OutboxRepository:
         # 连接在 db.connect() 已统一为 dict_row(单一事实源);不在此改写共享连接的
         # row_factory,避免污染其它共用该连接的组件(见 processors/meili.py 注释)。
         self.conn = conn
+
+    def _rollback_aborted_transaction(self) -> None:
+        """Return a processor-poisoned shared connection to a writable state."""
+        if self.conn.info.transaction_status == TransactionStatus.INERROR:
+            self.conn.rollback()
 
     def enqueue(
         self,
@@ -280,6 +286,13 @@ class OutboxRepository:
         error_summary: str,
         max_attempts: int = 8,
     ) -> bool:
+        # A processor can fail because one of its SQL statements failed. Psycopg then
+        # leaves the shared scheduler connection in INERROR until an explicit
+        # rollback; trying to persist the retry state on that connection would fail
+        # too and permanently degrade every later scheduler cycle. Preserve a valid
+        # caller transaction, but reset a processor-poisoned one before recording the
+        # durable retry/dead state.
+        self._rollback_aborted_transaction()
         cursor = self.conn.execute(
             """
             update resource_outbox
@@ -340,6 +353,10 @@ class OutboxRepository:
         lease_owner: str,
         reason_code: str,
     ) -> bool:
+        # Keep the permanent-failure path usable after a processor-side SQL error for
+        # the same reason as fail(): terminal-state persistence needs a clean
+        # transaction boundary.
+        self._rollback_aborted_transaction()
         cursor = self.conn.execute(
             """
             update resource_outbox

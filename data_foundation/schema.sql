@@ -948,7 +948,8 @@ select kas.tenant_id,
        kas.owner_open_id,
        kas.metadata,
        kas.qualified_at,
-       kas.indexed_at
+       kas.indexed_at,
+       kas.normalized_text
 from knowledge_asset_states kas
 join resources r
   on r.tenant_id = kas.tenant_id and r.id = kas.resource_id

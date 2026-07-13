@@ -565,16 +565,41 @@ class PreferenceLearningService:
                 actor_open_id=actor_open_id,
                 observation=observation,
             )
-            profile = (
-                self._rebuild_profile(tenant_id=tenant_id, actor_open_id=actor_open_id)
-                if rebuild_profile
-                else None
-            )
+            profile = None
+            if rebuild_profile:
+                if inserted:
+                    profile = self._rebuild_profile(
+                        tenant_id=tenant_id, actor_open_id=actor_open_id
+                    )
+                else:
+                    # An idempotent replay adds no evidence. Rebuilding anyway walks
+                    # the complete observation set and rewrites every learned_from
+                    # edge; a scheduled metrics replay therefore grows as O(N^2).
+                    # Return the existing pointer without creating graph work.
+                    state = self.preference_repo.get_profile_state(
+                        tenant_id=tenant_id, actor_open_id=actor_open_id
+                    )
+                    profile = (
+                        self._profile_result(state)
+                        if state is not None and state.get("profile_resource_id")
+                        else self._rebuild_profile(
+                            tenant_id=tenant_id, actor_open_id=actor_open_id
+                        )
+                    )
         return {
             "ok": True,
             "event_key": observation.event_key,
             "inserted": inserted,
             "profile": profile,
+        }
+
+    @staticmethod
+    def _profile_result(state: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "resource_id": str(state["profile_resource_id"]),
+            "resource_version": int(state["profile_resource_version"]),
+            "observation_count": int(state["observation_count"]),
+            "input_digest": str(state["input_digest"]),
         }
 
     def rebuild_profile(self, *, tenant_id: str, actor_open_id: str) -> dict[str, Any]:

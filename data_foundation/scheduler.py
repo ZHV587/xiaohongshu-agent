@@ -40,9 +40,9 @@ class SchedulerConfig:
     retention_batch_size: int = 100
     chunker_version: str = "v1"
     # 单个 source 同步 / 单批 outbox 处理的硬超时:防某租户飞书 HTTP 挂起冻结整轮 cycle。
-    # 超时后该租户记 failed,租约自然过期由 recover_expired/recover_stale_runs 回收,循环继续。
-    # 不变量:lease_seconds 必须 > 这两个 timeout(见上),保证慢任务不会中途丢租约。
-    source_timeout_seconds: float = 120.0
+    # 飞书全量源在生产规模下可超过 8 分钟；processor 按小批次主动续租并让出事件循环，
+    # 因此 source 超时覆盖完整正常批次，而 lease_seconds 只需覆盖相邻续租检查。
+    source_timeout_seconds: float = 600.0
     outbox_timeout_seconds: float = 120.0
 
 
@@ -301,20 +301,34 @@ class Scheduler:
                 tenant_id=tenant_id,
                 source_id=source.id,
             )
+            source_lease = _SourceLease(
+                self.source_repo,
+                source_id=source.id,
+                tenant_id=tenant_id,
+                lease_owner=lease_owner,
+                lease_seconds=self.config.lease_seconds,
+            )
             result = await asyncio.wait_for(
                 processor.sync(
                     SourceContext(source=public_source, secrets=secrets, actor_open_id=self.config.instance_id, as_bot=True),
-                    _SourceLease(
-                        self.source_repo,
-                        source_id=source.id,
-                        tenant_id=tenant_id,
-                        lease_owner=lease_owner,
-                        lease_seconds=self.config.lease_seconds,
-                    ),
+                    source_lease,
                 ),
                 timeout=self.config.source_timeout_seconds,
             )
-            self.source_repo.finish_run(
+            # The processor renews between bounded chunks. Require one final renewal
+            # and a successful source pointer update before claiming the run
+            # succeeded; silently ignoring a lost lease leaves next_run_at overdue and
+            # causes the same full source to run again immediately.
+            await source_lease.assert_owned()
+            if not self.source_repo.finish_source(
+                source.id,
+                tenant_id=tenant_id,
+                lease_owner=lease_owner,
+                cursor=result.cursor,
+                next_run_after_seconds=source.schedule_seconds,
+            ):
+                raise RuntimeError("SOURCE_LEASE_LOST")
+            if not self.source_repo.finish_run(
                 run_id,
                 tenant_id=tenant_id,
                 status=result.status,
@@ -326,14 +340,8 @@ class Scheduler:
                 failed_count=result.failed_count,
                 error_code=None,
                 error_summary="\n".join(result.errors) if result.errors else None,
-            )
-            self.source_repo.finish_source(
-                source.id,
-                tenant_id=tenant_id,
-                lease_owner=lease_owner,
-                cursor=result.cursor,
-                next_run_after_seconds=source.schedule_seconds,
-            )
+            ):
+                raise RuntimeError("SYNC_RUN_FINALIZE_FAILED")
             self.telemetry.finish_execution(
                 execution_id,
                 tenant_id=tenant_id,

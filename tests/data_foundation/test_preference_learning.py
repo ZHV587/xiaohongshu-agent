@@ -435,6 +435,7 @@ class _FakeResourceRepository:
         self.latest = {}
         self.writes = []
         self.edges = {}
+        self.edge_calls = []
 
     def unit_of_work(self):
         return nullcontext()
@@ -487,6 +488,7 @@ class _FakeResourceRepository:
         return resource
 
     def add_edge(self, **kwargs):
+        self.edge_calls.append(dict(kwargs))
         key = (
             kwargs["source_resource_id"],
             kwargs["source_resource_version"],
@@ -530,6 +532,8 @@ def test_service_rebuilds_private_profile_resource_and_exact_learned_from_edges(
     assert first["inserted"] is True and replay["inserted"] is False
     assert first["profile"]["resource_id"] == replay["profile"]["resource_id"]
     assert first["profile"]["resource_version"] == replay["profile"]["resource_version"] == 1
+    assert len(resources.writes) == 1
+    assert len(resources.edge_calls) == 1
     profile_write = next(
         write for write in resources.writes if write["resource_type"] == "writing_preference_profile"
     )
@@ -818,6 +822,57 @@ def test_real_lifecycle_feedback_and_metrics_automatically_rebuild_one_exact_pro
     )
     assert replay["inserted"] is False
     assert replay["profile"]["resource_version"] == state["profile_resource_version"]
+
+
+def test_identical_metric_replay_does_not_rebuild_profile_or_graph_edges(migrated_conn):
+    from data_foundation.performance_feedback import save_performance_metric_resource
+    from data_foundation.repositories.resource import ResourceRepository
+
+    repo = ResourceRepository(migrated_conn)
+    target = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou-owner",
+        resource_type="feishu_base_record",
+        title="稳定指标来源",
+        content_text="正文",
+        content_json={},
+        visibility="team",
+        owner_open_id="ou-owner",
+        outbox_requests=[],
+    )
+    kwargs = {
+        "tenant_id": "default",
+        "actor_open_id": "ou-owner",
+        "target_resource_id": str(target.id),
+        "target_resource_version": int(target.version),
+        "metrics": {"views": 1000, "likes": 120, "collects": 30},
+    }
+
+    first = save_performance_metric_resource(repo, **kwargs)
+    state = migrated_conn.execute(
+        "select profile_resource_id::text, profile_resource_version "
+        "from writing_profile_states where tenant_id='default' and owner_open_id='ou-owner'"
+    ).fetchone()
+    before = migrated_conn.execute(
+        "select count(*) from resource_outbox where topic='graph_ingest' "
+        "and resource_id=%s",
+        (state["profile_resource_id"],),
+    ).fetchone()[0]
+
+    replay = save_performance_metric_resource(repo, **kwargs)
+    after_state = migrated_conn.execute(
+        "select profile_resource_version from writing_profile_states "
+        "where tenant_id='default' and owner_open_id='ou-owner'"
+    ).fetchone()
+    after = migrated_conn.execute(
+        "select count(*) from resource_outbox where topic='graph_ingest' "
+        "and resource_id=%s",
+        (state["profile_resource_id"],),
+    ).fetchone()[0]
+
+    assert replay["resource"] == first["resource"]
+    assert after_state["profile_resource_version"] == state["profile_resource_version"]
+    assert after == before
 
 
 def test_lifecycle_preference_failure_rolls_back_state_and_event(migrated_conn, monkeypatch):

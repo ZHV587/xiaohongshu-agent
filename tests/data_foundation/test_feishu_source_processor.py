@@ -40,6 +40,13 @@ class RecordingLease(SourceLease):
         self.renewed += 1
 
 
+class LosingLease(RecordingLease):
+    async def assert_owned(self) -> None:
+        await super().assert_owned()
+        if self.renewed == 2:
+            raise RuntimeError("SOURCE_LEASE_LOST")
+
+
 def _resource() -> Resource:
     return Resource(
         id="resource-1",
@@ -124,6 +131,50 @@ async def test_feishu_base_source_uses_registered_identity_and_repository():
     assert lease.renewed == 1
     assert [upsert["mapping"]["system"] for upsert in repo.upserts] == ["feishu", "feishu"]
     assert repo.upserts[0]["mapping"]["external_id"] == "base-app:tbl:rec1"
+
+
+@pytest.mark.asyncio
+async def test_feishu_base_source_renews_lease_between_bounded_write_chunks():
+    repo = RecordingResourceRepository(_resource())
+    lease = RecordingLease()
+    rows = [
+        {
+            "record_id": f"rec-{index}",
+            "table_id": "tbl",
+            "fields": {"标题": f"标题 {index}", "正文": "正文"},
+        }
+        for index in range(51)
+    ]
+
+    result = await FeishuBaseSourceProcessor(
+        loader=lambda _context: {"app_token": "base-app", "sync_rows": rows},
+        resource_repo=repo,
+    ).sync(_context("feishu_base"), lease)
+
+    assert result.status == "succeeded"
+    assert result.created_count == 51
+    assert lease.renewed == 3
+
+
+@pytest.mark.asyncio
+async def test_feishu_base_source_stops_before_next_chunk_after_lease_loss():
+    repo = RecordingResourceRepository(_resource())
+    rows = [
+        {
+            "record_id": f"rec-{index}",
+            "table_id": "tbl",
+            "fields": {"标题": f"标题 {index}", "正文": "正文"},
+        }
+        for index in range(51)
+    ]
+
+    with pytest.raises(RuntimeError, match="SOURCE_LEASE_LOST"):
+        await FeishuBaseSourceProcessor(
+            loader=lambda _context: {"app_token": "base-app", "sync_rows": rows},
+            resource_repo=repo,
+        ).sync(_context("feishu_base"), LosingLease())
+
+    assert len(repo.upserts) == 25
 
 
 @pytest.mark.asyncio

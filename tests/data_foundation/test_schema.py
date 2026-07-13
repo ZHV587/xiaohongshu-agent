@@ -161,6 +161,15 @@ def test_knowledge_gate_cutover_is_synchronous_atomic_and_has_no_legacy_view_bra
     assert "backfilling" not in current_view
 
 
+def test_current_knowledge_view_projects_normalized_text_for_meili():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    qualified_view = schema.split(
+        "create or replace view qualified_knowledge_versions", 1
+    )[1].split("create or replace view base_current_knowledge_targets", 1)[0]
+
+    assert "kas.normalized_text" in qualified_view
+
+
 def test_meili_resource_version_backfill_is_once_only_and_uses_outbox():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
     assert "create table if not exists data_foundation_migrations" in schema
