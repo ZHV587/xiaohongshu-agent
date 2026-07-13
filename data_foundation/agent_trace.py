@@ -336,7 +336,10 @@ def emit_trace(
         writer = get_stream_writer()
     except RuntimeError:
         return
-    writer(event)
+    try:
+        writer(event)
+    except Exception as exc:  # noqa: BLE001 - trace streaming is best effort
+        logger.warning("trace stream emit failed: %s", type(exc).__name__)
 
 
 def _configurable_of(config: Any) -> dict[str, Any]:
@@ -504,15 +507,18 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
             if tool_obj.name == "retrieve_knowledge":
                 try:
                     from data_foundation.retrieval_metrics import (
-                        capture_retrieval_error,
+                        prepare_retrieval_error,
+                        submit_retrieval_metric,
                     )
 
-                    capture_retrieval_error(
+                    prepared = prepare_retrieval_error(
                         config=resolved_config,
                         trace_identity=identity,
                         tool_call_id=tool_call_id,
                         latency_ms=duration_ms,
                     )
+                    if prepared is not None:
+                        submit_retrieval_metric(prepared)
                 except Exception as metric_exc:  # noqa: BLE001
                     logger.warning(
                         "retrieval metric capture failed: %s",
@@ -540,15 +546,20 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
         emit_trace(completed)
         if tool_obj.name == "retrieve_knowledge":
             try:
-                from data_foundation.retrieval_metrics import capture_retrieval_result
+                from data_foundation.retrieval_metrics import (
+                    prepare_retrieval_result,
+                    submit_retrieval_metric,
+                )
 
-                capture_retrieval_result(
+                prepared = prepare_retrieval_result(
                     config=resolved_config,
                     trace_identity=identity,
                     tool_call_id=tool_call_id,
                     latency_ms=duration_ms,
                     result=result,
                 )
+                if prepared is not None:
+                    submit_retrieval_metric(prepared)
             except Exception as exc:  # noqa: BLE001 - metrics must not break retrieval
                 # Only the exception class is operationally useful.  Database/provider
                 # messages can contain DSNs, request payloads or credentials.

@@ -15,6 +15,7 @@ from data_foundation.config import runtime_embedding_snapshot
 from data_foundation.processors.embedding import embedding_config_from_snapshot
 from data_foundation.processors.registry import default_processor_registry
 from data_foundation.repositories.resource import ResourceRepository
+from data_foundation.repositories.retrieval_metrics import RetrievalMetricsRepository
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sources.base import SourceContext, SourceLease
 from data_foundation.sources.registry import default_source_registry
@@ -53,6 +54,7 @@ class CycleStats:
     recovered_sources: int = 0
     recovered_outbox: int = 0
     retention_deleted: int = 0
+    retrieval_retention_deleted: int = 0
     failed: int = 0
 
 
@@ -86,6 +88,7 @@ class Scheduler:
         self,
         *,
         telemetry,
+        retrieval_metrics,
         source_repo,
         outbox_repo,
         embedding_service,
@@ -97,6 +100,7 @@ class Scheduler:
         conn=None,
     ):
         self.telemetry = telemetry
+        self.retrieval_metrics = retrieval_metrics
         self.source_repo = source_repo
         self.outbox_repo = outbox_repo
         self.embedding_service = embedding_service
@@ -213,6 +217,10 @@ class Scheduler:
             older_than=datetime.now(timezone.utc) - timedelta(days=self.config.retention_days),
             limit=self.config.retention_batch_size,
         )
+        retrieval_retention_deleted = self.retrieval_metrics.delete_expired(
+            older_than=datetime.now(timezone.utc) - timedelta(days=self.config.retention_days),
+            limit=self.config.retention_batch_size,
+        )
         return CycleStats(
             tenants_visited=len(tenants),
             sources_processed=sources_processed,
@@ -220,6 +228,7 @@ class Scheduler:
             recovered_sources=recovered_sources,
             recovered_outbox=recovered_outbox,
             retention_deleted=retention_deleted,
+            retrieval_retention_deleted=retrieval_retention_deleted,
             failed=failed,
         )
 
@@ -450,6 +459,7 @@ def build_scheduler(config: SchedulerConfig | None = None) -> Scheduler:
     initial_runtime = runtime_factory()
     return Scheduler(
         telemetry=TelemetryRepository(conn),
+        retrieval_metrics=RetrievalMetricsRepository(conn),
         source_repo=SourceRepository(conn),
         outbox_repo=OutboxRepository(conn),
         embedding_service=initial_runtime.embedding_service,

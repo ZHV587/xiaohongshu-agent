@@ -13,6 +13,10 @@ from psycopg.rows import dict_row
 
 DATA_FOUNDATION_TABLES = (
     "data_foundation_migrations",
+    "knowledge_retrieval_exposures",
+    "knowledge_retrieval_runs",
+    "knowledge_retrieval_evidence_keys",
+    "agent_trace_events",
     "writing_profile_states",
     "preference_synthesis_events",
     "preference_synthesis_states",

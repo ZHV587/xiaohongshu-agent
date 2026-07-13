@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 
@@ -67,19 +68,57 @@ def actor_from_config(config: Any) -> str:
     raise PermissionError("Missing LangGraph user identity")
 
 
-def readable_resource_where(alias: str = "r") -> str:
+def _readable_resource_where(
+    alias: str,
+    *,
+    owner_match: str,
+    permission_match: str,
+) -> str:
+    if not re.fullmatch(r"[a-zA-Z0-9_]+", alias):
+        raise ValueError("Invalid alias")
     return f"""
     {alias}.tenant_id = %(tenant_id)s
     and (
-      {alias}.owner_open_id = %(actor_open_id)s
+      {owner_match}
       or {alias}.visibility = 'team'
       or exists (
         select 1 from resource_permissions rp
         where rp.resource_id = {alias}.id
           and rp.tenant_id = {alias}.tenant_id
           and rp.subject_type = 'user'
-          and rp.subject_id = %(actor_open_id)s
+          and {permission_match}
           and rp.permission in ('read', 'write', 'admin')
       )
     )
     """
+
+
+def readable_resource_where(alias: str = "r") -> str:
+    return _readable_resource_where(
+        alias,
+        owner_match=f"{alias}.owner_open_id = %(actor_open_id)s",
+        permission_match="rp.subject_id = %(actor_open_id)s",
+    )
+
+
+def readable_resource_by_actor_key_where(alias: str = "r") -> str:
+    """Use the same ACL rules when only the tenant-scoped actor digest is available."""
+
+    owner_key = (
+        f"encode(digest(concat({alias}.tenant_id, ':', {alias}.owner_open_id), "
+        "'sha256'), 'hex')"
+    )
+    permission_key = """
+    encode(
+      digest(concat(rp.tenant_id, ':', rp.subject_id), 'sha256'),
+      'hex'
+    ) = %(actor_key)s
+    """.strip()
+    return _readable_resource_where(
+        alias,
+        owner_match=(
+            f"{alias}.owner_open_id is not null and "
+            f"{owner_key} = %(actor_key)s"
+        ),
+        permission_match=permission_key,
+    )

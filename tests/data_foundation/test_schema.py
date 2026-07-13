@@ -11,6 +11,10 @@ from data_foundation import db, models
 
 EXPECTED_TABLES = {
     "data_foundation_migrations",
+    "agent_trace_events",
+    "knowledge_retrieval_runs",
+    "knowledge_retrieval_exposures",
+    "knowledge_retrieval_evidence_keys",
     "knowledge_families",
     "knowledge_asset_states",
     "knowledge_enrichments",

@@ -677,6 +677,102 @@ create index if not exists idx_agent_trace_run_recent
 create index if not exists idx_agent_trace_trace_recent
   on agent_trace_events (tenant_id, trace_id, created_at desc);
 
+-- Unified knowledge retrieval measurements deliberately have no JSON/text payload
+-- columns for a query, title, summary, document body or provider error. Correlation
+-- identifiers are irreversible SHA-256 keys. Exact identities are isolated in the
+-- internal tenant-scoped evidence-key map below, never in the metric fact tables.
+create table if not exists knowledge_retrieval_runs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  actor_key char(64) not null,
+  thread_key char(64),
+  run_key char(64) not null,
+  turn_key char(64) not null,
+  tool_call_key char(64) not null,
+  payload_key char(64) not null,
+  outcome text not null check (outcome in ('success', 'error')),
+  retrieval_mode text
+    check (retrieval_mode in (
+      'hybrid', 'semantic_only', 'keyword_only', 'insufficient_relevance'
+    )),
+  evidence_count int not null default 0 check (evidence_count >= 0),
+  engine_count int not null default 0 check (engine_count between 0 and 3),
+  degraded_engine_count int not null default 0
+    check (degraded_engine_count between 0 and 3),
+  latency_ms int not null default 0 check (latency_ms >= 0),
+  created_at timestamptz not null default now(),
+  unique (tenant_id, id),
+  unique (tenant_id, actor_key, tool_call_key),
+  constraint knowledge_retrieval_runs_outcome_mode_check check (
+    (outcome = 'success' and retrieval_mode is not null)
+    or (outcome = 'error' and retrieval_mode is null)
+  ),
+  constraint knowledge_retrieval_runs_error_shape_check check (
+    outcome <> 'error'
+    or (
+      evidence_count = 0 and engine_count = 0 and degraded_engine_count = 0
+    )
+  )
+);
+
+create index if not exists idx_knowledge_retrieval_runs_actor_recent
+  on knowledge_retrieval_runs (
+    tenant_id, actor_key, created_at desc, id desc
+  );
+create index if not exists idx_knowledge_retrieval_runs_turn
+  on knowledge_retrieval_runs (tenant_id, actor_key, turn_key, created_at desc);
+create index if not exists idx_knowledge_retrieval_runs_retention
+  on knowledge_retrieval_runs (created_at, id);
+
+-- evidence_key is a pseudonymous join key, not anonymized data. This internal map is
+-- the sole bridge back to an immutable resource version. It is populated only after
+-- a current-knowledge + actor ACL gate and gives aggregate queries indexed lookups
+-- instead of hashing every row in resource_versions.
+create table if not exists knowledge_retrieval_evidence_keys (
+  tenant_id text not null,
+  evidence_key char(64) not null,
+  resource_id uuid not null,
+  resource_version int not null check (resource_version > 0),
+  first_verified_at timestamptz not null default now(),
+  last_verified_at timestamptz not null default now(),
+  primary key (tenant_id, evidence_key),
+  unique (tenant_id, resource_id, resource_version),
+  foreign key (tenant_id, resource_id, resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade
+);
+
+create table if not exists knowledge_retrieval_exposures (
+  tenant_id text not null,
+  retrieval_run_id uuid not null,
+  evidence_key char(64) not null,
+  rank int not null check (rank > 0),
+  score double precision not null check (score between 0.0 and 1.0),
+  relevance double precision not null check (relevance between 0.0 and 1.0),
+  quality double precision not null check (quality between 0.0 and 1.0),
+  freshness double precision not null check (freshness between 0.0 and 1.0),
+  performance double precision not null check (performance between 0.0 and 1.0),
+  recalled_by_semantic boolean not null default false,
+  recalled_by_keyword boolean not null default false,
+  recalled_by_graph boolean not null default false,
+  created_at timestamptz not null default now(),
+  primary key (tenant_id, retrieval_run_id, evidence_key),
+  foreign key (tenant_id, retrieval_run_id)
+    references knowledge_retrieval_runs(tenant_id, id) on delete cascade,
+  foreign key (tenant_id, evidence_key)
+    references knowledge_retrieval_evidence_keys(tenant_id, evidence_key)
+    on delete cascade,
+  constraint knowledge_retrieval_exposures_source_check check (
+    recalled_by_semantic or recalled_by_keyword or recalled_by_graph
+  )
+);
+
+create index if not exists idx_knowledge_retrieval_exposures_fingerprint
+  on knowledge_retrieval_exposures (
+    tenant_id, evidence_key, created_at desc
+  );
+create index if not exists idx_knowledge_retrieval_exposures_run
+  on knowledge_retrieval_exposures (retrieval_run_id, evidence_key);
+
 create table if not exists resource_edges (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
@@ -1156,6 +1252,10 @@ alter table data_foundation_migrations
   add column if not exists status text not null default 'complete';
 alter table data_foundation_migrations
   add column if not exists completed_at timestamptz default now();
+
+insert into data_foundation_migrations (migration_key, status, completed_at)
+values ('20260713_retrieval_adoption_metrics_v1', 'complete', now())
+on conflict (migration_key) do nothing;
 
 -- 2026-07:历史 Meili 文档没有 resource_version。新检索契约会拒绝这些无法精确回表的
 -- 文档，因此升级时必须为每个当前可检索的精确版本做一次 outbox 重建：

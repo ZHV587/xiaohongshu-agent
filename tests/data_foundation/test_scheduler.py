@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -34,6 +35,16 @@ class FakeTelemetry:
 
     def aggregate_and_delete_old_errors(self, **kwargs):
         return 0
+
+
+@dataclass
+class FakeRetrievalMetrics:
+    deleted: int = 0
+    calls: list[dict] = field(default_factory=list)
+
+    def delete_expired(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.deleted
 
 
 @dataclass
@@ -191,8 +202,10 @@ def _source(source_id: str, tenant_id: str):
 @pytest.mark.asyncio
 async def test_empty_cycle_records_successful_execution():
     telemetry = FakeTelemetry()
+    retrieval_metrics = FakeRetrievalMetrics(deleted=3)
     scheduler = Scheduler(
         telemetry=telemetry,
+        retrieval_metrics=retrieval_metrics,
         source_repo=FakeSourceRepo(tenants=[]),
         outbox_repo=FakeOutboxRepo(),
         embedding_service=None,
@@ -205,6 +218,11 @@ async def test_empty_cycle_records_successful_execution():
     stats = await scheduler.run_cycle()
 
     assert stats.tenants_visited == 0
+    assert stats.retrieval_retention_deleted == 3
+    assert len(retrieval_metrics.calls) == 1
+    assert retrieval_metrics.calls[0]["limit"] == 100
+    retention_age = datetime.now(UTC) - retrieval_metrics.calls[0]["older_than"]
+    assert timedelta(days=89) < retention_age < timedelta(days=91)
     assert telemetry.starts == [{
         "component": "scheduler",
         "instance_id": "i1",
@@ -235,6 +253,7 @@ async def test_cycle_dispatches_one_batch_per_tenant_in_fair_order():
     source_processor = FakeSourceProcessor()
     scheduler = Scheduler(
         telemetry=telemetry,
+        retrieval_metrics=FakeRetrievalMetrics(),
         source_repo=source_repo,
         outbox_repo=outbox_repo,
         embedding_service=embedding_service,
@@ -280,6 +299,7 @@ async def test_cycle_processes_embedding_tenant_without_sync_source():
     embedding_service = FakeEmbeddingService(reconcile_tenants=["generated"])
     scheduler = Scheduler(
         telemetry=FakeTelemetry(),
+        retrieval_metrics=FakeRetrievalMetrics(),
         source_repo=FakeSourceRepo(tenants=[]),
         outbox_repo=FakeOutboxRepo(),
         embedding_service=embedding_service,
@@ -301,6 +321,7 @@ async def test_cycle_reserves_non_source_slot_when_due_sources_fill_limit():
     outbox_runner = FakeOutboxRunner()
     scheduler = Scheduler(
         telemetry=FakeTelemetry(),
+        retrieval_metrics=FakeRetrievalMetrics(),
         source_repo=FakeSourceRepo(tenants=["s1", "s2", "s3"]),
         outbox_repo=FakeOutboxRepo(),
         embedding_service=embedding_service,
@@ -326,6 +347,7 @@ async def test_cycle_deduplicates_tenants_across_work_categories():
     embedding_service = FakeEmbeddingService(reconcile_tenants=["shared"])
     scheduler = Scheduler(
         telemetry=FakeTelemetry(),
+        retrieval_metrics=FakeRetrievalMetrics(),
         source_repo=FakeSourceRepo(tenants=["shared"]),
         outbox_repo=FakeOutboxRepo(ready_tenants=["shared"]),
         embedding_service=embedding_service,
@@ -343,6 +365,7 @@ async def test_cycle_records_exception_instead_of_swallowing():
     telemetry = FakeTelemetry()
     scheduler = Scheduler(
         telemetry=telemetry,
+        retrieval_metrics=FakeRetrievalMetrics(),
         source_repo=FakeSourceRepo(tenants=["waiting"], leased={"waiting": None}),
         outbox_repo=FakeOutboxRepo(),
         embedding_service=FakeEmbeddingService(),
@@ -373,6 +396,7 @@ async def test_cycle_does_not_reconcile_or_unblock_disabled_processors():
     embedding_service = FakeEmbeddingService()
     scheduler = Scheduler(
         telemetry=FakeTelemetry(),
+        retrieval_metrics=FakeRetrievalMetrics(),
         source_repo=FakeSourceRepo(tenants=["waiting"], leased={"waiting": None}),
         outbox_repo=outbox_repo,
         embedding_service=embedding_service,
@@ -399,6 +423,7 @@ async def test_scheduler_refreshes_embedding_runtime_once_per_cycle():
     telemetry = FakeTelemetry()
     scheduler = Scheduler(
         telemetry=telemetry,
+        retrieval_metrics=FakeRetrievalMetrics(),
         source_repo=FakeSourceRepo(tenants=["waiting"], leased={"waiting": None}),
         outbox_repo=FakeOutboxRepo(),
         embedding_service=None,

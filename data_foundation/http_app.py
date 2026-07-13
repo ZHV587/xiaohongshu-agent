@@ -11,6 +11,10 @@ from starlette.routing import Route
 from config_center import latest_config_snapshot, project_config_to_env
 from data_foundation.internal_api import internal_routes
 from data_foundation.runtime_facts import create_runtime_snapshot, utc_now
+from data_foundation.retrieval_metrics import (
+    shutdown_retrieval_metric_dispatcher,
+    start_retrieval_metric_dispatcher,
+)
 from data_foundation.supervisor import build_supervisor
 from model_health import build_model_health_probe
 
@@ -83,6 +87,7 @@ async def lifespan(app: Starlette):
     # health_probe 会泄漏(try/finally 的 finally 只在 yield 后才覆盖,startup 抛错到不了 yield)。
     supervisor = None
     health_probe = None
+    metric_dispatcher_started = False
     try:
         # 启动即校验单进程不变量:>1 worker 会让 os.environ 冷启动对齐/模型池热重载在 worker
         # 间分裂。放在最前,误配立即失败而非带病运行。
@@ -90,6 +95,8 @@ async def lifespan(app: Starlette):
         # 迁移先于一切组件:supervisor/检索都假设 schema 与 schema.sql 一致。
         # 同步 psycopg 调用卸到线程,不阻塞事件循环(首次建 HNSW 索引可能要数十秒)。
         await asyncio.to_thread(_run_startup_migrations)
+        start_retrieval_metric_dispatcher()
+        metric_dispatcher_started = True
         supervisor = build_supervisor()
         await supervisor.start()
         runtime_snapshot = create_runtime_snapshot(supervisor)
@@ -109,7 +116,9 @@ async def lifespan(app: Starlette):
         health_probe = build_model_health_probe(model_registry)
         await health_probe.start()
     except BaseException:
-        # 回滚:已起的 health_probe 先停,再停 supervisor(顺序与正常 finally 一致)。
+        # 回滚:先停止指标接单并取消排队任务,再停 health_probe 与 supervisor。
+        if metric_dispatcher_started:
+            await asyncio.to_thread(shutdown_retrieval_metric_dispatcher, wait=True)
         if health_probe is not None:
             await health_probe.stop()
         if supervisor is not None:
@@ -122,12 +131,15 @@ async def lifespan(app: Starlette):
     try:
         yield {"supervisor": supervisor, "runtime_snapshot": runtime_snapshot}
     finally:
-        await health_probe.stop()
-        await supervisor.stop(grace_seconds=shutdown_grace_seconds())
-        runtime_snapshot.stop(observed_at=utc_now())
-        app.state.supervisor = None
-        app.state.runtime_snapshot = None
-        app.state.model_health_probe = None
+        try:
+            await asyncio.to_thread(shutdown_retrieval_metric_dispatcher, wait=True)
+        finally:
+            await health_probe.stop()
+            await supervisor.stop(grace_seconds=shutdown_grace_seconds())
+            runtime_snapshot.stop(observed_at=utc_now())
+            app.state.supervisor = None
+            app.state.runtime_snapshot = None
+            app.state.model_health_probe = None
 
 
 app = Starlette(routes=[Route("/ok", ok), *internal_routes], lifespan=lifespan)

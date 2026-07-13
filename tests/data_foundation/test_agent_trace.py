@@ -227,6 +227,34 @@ def test_emit_trace_noops_outside_langgraph_context(monkeypatch) -> None:
     emit_trace(event, persist=False)
 
 
+def test_emit_trace_isolates_stream_writer_failure_without_logging_secret(
+    monkeypatch, caplog
+) -> None:
+    secret = "token=trace-stream-private"
+
+    def failing_writer(_event):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(
+        "data_foundation.agent_trace.get_stream_writer",
+        lambda: failing_writer,
+    )
+    event = build_trace_event(
+        type="xhs.trace.run.started",
+        trace_id="trace-writer-failure",
+        run_id="run-writer-failure",
+        turn_id="turn-writer-failure",
+        label="开始处理",
+        visibility="user",
+        seq=1,
+    )
+
+    emit_trace(event, persist=False)
+
+    assert "RuntimeError" in caplog.text
+    assert secret not in caplog.text
+
+
 def test_trace_tool_wrapper_emits_started_and_completed(monkeypatch) -> None:
     from langchain_core.tools import tool
 

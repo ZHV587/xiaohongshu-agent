@@ -21,6 +21,7 @@ from data_foundation.performance_feedback import (
     get_resource_performance_payload,
     save_performance_metric_resource,
 )
+from data_foundation.retrieval_contract import retrieval_error
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sync_service import sync_feishu_sources
 from data_foundation.writing_teardown import save_writing_teardown_resource
@@ -110,7 +111,7 @@ def retrieve_knowledge(
             raise TypeError("limit must be an integer")
         selected_filters = RetrievalFilters.model_validate(filters or {})
     except (TypeError, ValueError, ValidationError):
-        return {"error": "INVALID_RETRIEVAL_REQUEST"}
+        return retrieval_error("INVALID_RETRIEVAL_REQUEST")
 
     try:
         with _repository() as repo:
@@ -123,10 +124,10 @@ def retrieve_knowledge(
                 filters=selected_filters,
             )
     except RetrievalSecurityGateError:
-        return {"error": "POSTGRES_KNOWLEDGE_GATE_FAILED"}
+        return retrieval_error("POSTGRES_KNOWLEDGE_GATE_FAILED")
     except Exception as exc:  # noqa: BLE001
         logger.warning("knowledge retrieval failed: %s", type(exc).__name__)
-        return {"error": "KNOWLEDGE_RETRIEVAL_FAILED"}
+        return retrieval_error("KNOWLEDGE_RETRIEVAL_FAILED")
     return package.model_dump(mode="json")
 
 

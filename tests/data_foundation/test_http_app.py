@@ -72,6 +72,16 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
             return True
 
     registry = FakeRegistry()
+    monkeypatch.setattr(
+        http_app,
+        "start_retrieval_metric_dispatcher",
+        lambda: events.append("metric_start"),
+    )
+    monkeypatch.setattr(
+        http_app,
+        "shutdown_retrieval_metric_dispatcher",
+        lambda *, wait: events.append(("metric_stop", wait)),
+    )
     monkeypatch.setenv("FEISHU_APP_ID", "seed")  # lifespan 投影会写 os.environ,setenv 以便 teardown 回滚
     monkeypatch.setattr(http_app, "_run_startup_migrations", lambda: None)  # lifespan 现在启动即迁移,单测不连真库
     monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
@@ -90,8 +100,15 @@ async def test_http_app_lifespan_starts_and_stops_supervisor(monkeypatch):
         assert state["supervisor"] is not None
         assert state["runtime_snapshot"].status == "running"
 
-    # 关停顺序:先停探测,再停 supervisor
-    assert events == ["start", "probe_start", "probe_stop", ("stop", 7)]
+    # 关停先停止指标接单/取消排队任务,再停探测与 supervisor。
+    assert events == [
+        "metric_start",
+        "start",
+        "probe_start",
+        ("metric_stop", True),
+        "probe_stop",
+        ("stop", 7),
+    ]
     assert state["runtime_snapshot"].status == "stopped"
     # 启动对齐确实 reload 了 config-center 快照(force 探测)
     assert registry.reloaded == [("v-start", True)]
@@ -134,6 +151,17 @@ async def test_http_app_lifespan_skips_align_when_no_snapshot(monkeypatch):
             return True
 
     registry = FakeRegistry()
+    metric_events = []
+    monkeypatch.setattr(
+        http_app,
+        "start_retrieval_metric_dispatcher",
+        lambda: metric_events.append("start"),
+    )
+    monkeypatch.setattr(
+        http_app,
+        "shutdown_retrieval_metric_dispatcher",
+        lambda *, wait: metric_events.append(("stop", wait)),
+    )
     monkeypatch.setattr(http_app, "_run_startup_migrations", lambda: None)  # lifespan 现在启动即迁移,单测不连真库
     monkeypatch.setattr(http_app, "build_supervisor", lambda: FakeSupervisor())
     monkeypatch.setattr(http_app, "_resolve_model_registry", lambda: registry)
@@ -144,3 +172,41 @@ async def test_http_app_lifespan_skips_align_when_no_snapshot(monkeypatch):
         assert http_app.app.state.supervisor.instance_id == "instance-2"
         assert http_app.app.state.runtime_snapshot.status == "running"
     assert registry.reloaded == []  # 无快照,不启动对齐
+    assert metric_events == ["start", ("stop", True)]
+
+
+@pytest.mark.asyncio
+async def test_http_app_startup_failure_shuts_down_metric_dispatcher(monkeypatch):
+    import data_foundation.http_app as http_app
+
+    events = []
+
+    class FailingSupervisor:
+        async def start(self):
+            raise RuntimeError("startup failed")
+
+        async def stop(self, *, grace_seconds):
+            events.append(("supervisor_stop", grace_seconds))
+
+    monkeypatch.setattr(http_app, "_run_startup_migrations", lambda: None)
+    monkeypatch.setattr(
+        http_app,
+        "start_retrieval_metric_dispatcher",
+        lambda: events.append("metric_start"),
+    )
+    monkeypatch.setattr(
+        http_app,
+        "shutdown_retrieval_metric_dispatcher",
+        lambda *, wait: events.append(("metric_stop", wait)),
+    )
+    monkeypatch.setattr(http_app, "build_supervisor", lambda: FailingSupervisor())
+    monkeypatch.setattr(http_app, "shutdown_grace_seconds", lambda: 3)
+
+    with pytest.raises(RuntimeError, match="startup failed"):
+        async with http_app.lifespan(http_app.app):
+            pass
+    assert events == [
+        "metric_start",
+        ("metric_stop", True),
+        ("supervisor_stop", 3),
+    ]
