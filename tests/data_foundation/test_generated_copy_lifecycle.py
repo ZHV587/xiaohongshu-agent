@@ -661,6 +661,13 @@ def test_semantic_search_reads_adopted_snapshot_when_latest_is_an_unadopted_cand
         resource_version=1,
         chunks=[VectorChunk(chunk_index=0, chunk_text="A 被采纳正文", embedding=vector)],
     ) == "stored"
+    # A building index is deliberately invisible to retrieval until every current
+    # knowledge target has been embedded and the index is atomically published.
+    # EmbeddingProcessor performs this handoff in production; this repository-level
+    # lifecycle test must perform the same handoff after storing its synthetic batch.
+    assert embeddings.active_index("default") is None
+    assert embeddings.activate_if_complete(index.id, tenant_id="default") is True
+    assert embeddings.active_index("default").id == index.id
     rows = repo.semantic_rows(
         tenant_id="default",
         actor_open_id="ou_user",
