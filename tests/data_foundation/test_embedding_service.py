@@ -179,17 +179,30 @@ def test_zero_resource_index_activates_immediately(migrated_conn):
     assert row["status"] == "active"
 
 
-def test_active_index_reconcile_enqueues_later_resources(migrated_conn):
+def test_active_index_reconcile_keeps_knowledge_enqueued_later_resource_idempotent(
+    migrated_conn,
+):
     service = _service(migrated_conn)
     initial = service.reconcile_tenant("tenant-a")
     assert initial.activated is True
 
     resource = _resource(migrated_conn, title="后来的文档")
+    queued = migrated_conn.execute(
+        """
+        select payload
+        from resource_outbox
+        where tenant_id = 'tenant-a' and topic = 'embedding_generate'
+          and payload->>'resource_id' = %s
+        """,
+        (resource.id,),
+    ).fetchone()
+    assert queued is not None
+    assert queued["payload"]["embedding_index_id"] == initial.embedding_index_id
     later = service.reconcile_tenant("tenant-a")
 
     assert later.embedding_index_id == initial.embedding_index_id
     assert later.activated is True
-    assert later.enqueued == 1
+    assert later.enqueued == 0
     row = migrated_conn.execute(
         """
         select payload
