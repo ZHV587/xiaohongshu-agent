@@ -34,6 +34,15 @@ create table if not exists user_skill_versions (
   display_name text not null check (display_name <> ''),
   description text not null check (description <> ''),
   instructions_markdown text not null check (instructions_markdown <> ''),
+  trigger_examples jsonb not null default '[]'::jsonb
+    constraint ck_user_skill_versions_trigger_examples_array
+    check (jsonb_typeof(trigger_examples) = 'array'),
+  non_trigger_examples jsonb not null default '[]'::jsonb
+    constraint ck_user_skill_versions_non_trigger_examples_array
+    check (jsonb_typeof(non_trigger_examples) = 'array'),
+  tags jsonb not null default '[]'::jsonb
+    constraint ck_user_skill_versions_tags_array
+    check (jsonb_typeof(tags) = 'array'),
   content_hash text not null,
   created_by_open_id text not null,
   created_at timestamptz not null default now(),
@@ -42,6 +51,41 @@ create table if not exists user_skill_versions (
   unique (tenant_id, owner_open_id, skill_id, version),
   unique (tenant_id, owner_open_id, id)
 );
+
+-- 既有部署的幂等升级；schema.sql 是启动迁移的唯一权威来源。
+alter table user_skill_versions
+  add column if not exists trigger_examples jsonb not null default '[]'::jsonb;
+alter table user_skill_versions
+  add column if not exists non_trigger_examples jsonb not null default '[]'::jsonb;
+alter table user_skill_versions
+  add column if not exists tags jsonb not null default '[]'::jsonb;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'user_skill_versions'::regclass
+      and conname = 'ck_user_skill_versions_trigger_examples_array'
+  ) then
+    alter table user_skill_versions add constraint ck_user_skill_versions_trigger_examples_array
+      check (jsonb_typeof(trigger_examples) = 'array');
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'user_skill_versions'::regclass
+      and conname = 'ck_user_skill_versions_non_trigger_examples_array'
+  ) then
+    alter table user_skill_versions add constraint ck_user_skill_versions_non_trigger_examples_array
+      check (jsonb_typeof(non_trigger_examples) = 'array');
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'user_skill_versions'::regclass
+      and conname = 'ck_user_skill_versions_tags_array'
+  ) then
+    alter table user_skill_versions add constraint ck_user_skill_versions_tags_array
+      check (jsonb_typeof(tags) = 'array');
+  end if;
+end $$;
 
 create index if not exists idx_user_skill_versions_owner_recent
   on user_skill_versions (tenant_id, owner_open_id, skill_id, version desc);

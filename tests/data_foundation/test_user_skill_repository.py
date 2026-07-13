@@ -116,6 +116,13 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
 ):
     repo = UserSkillRepository(migrated_conn)
     skill = _create(repo)
+    repo.publish_version(
+        tenant_id="tenant-a",
+        owner_open_id="ou-owner",
+        actor_open_id="ou-owner",
+        skill_id=skill.id,
+        version=1,
+    )
     skill = repo.append_version(
         tenant_id="tenant-a",
         owner_open_id="ou-owner",
@@ -133,7 +140,7 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
         skill_id=skill.id,
     )
     assert (published.status, published.published_version) == ("published", 2)
-    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 1
+    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 2
     assert repo.get_published_version(
         tenant_id="tenant-a", owner_open_id="ou-owner", skill_id=skill.id
     ).version == 2
@@ -146,7 +153,7 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
         skill_id=skill.id,
         version=2,
     )
-    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 1
+    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 2
 
     disabled = repo.disable_skill(
         tenant_id="tenant-a",
@@ -156,7 +163,7 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
     )
     assert disabled.status == "disabled"
     assert repo.list_published_versions(tenant_id="tenant-a", owner_open_id="ou-owner") == []
-    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 2
+    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 3
 
     enabled = repo.publish_version(
         tenant_id="tenant-a",
@@ -166,9 +173,9 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
         version=2,
     )
     assert enabled.status == "published"
-    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 3
+    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 4
 
-    rolled_back = repo.publish_version(
+    rolled_back = repo.rollback_version(
         tenant_id="tenant-a",
         owner_open_id="ou-owner",
         actor_open_id="ou-owner",
@@ -177,7 +184,7 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
     )
     assert rolled_back.latest_version == 2
     assert rolled_back.published_version == 1
-    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 4
+    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 5
 
     archived = repo.archive_skill(
         tenant_id="tenant-a",
@@ -192,10 +199,10 @@ def test_publish_disable_enable_rollback_archive_bump_revision_only_on_catalog_c
             tenant_id="tenant-a", owner_open_id="ou-owner", include_archived=True
         )
     ) == 1
-    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 5
+    assert repo.get_catalog_revision(tenant_id="tenant-a", owner_open_id="ou-owner") == 6
     assert [event.event_type for event in repo.list_audit_events(
         tenant_id="tenant-a", owner_open_id="ou-owner", skill_id=skill.id
-    )] == ["archived", "rolled_back", "enabled", "disabled", "published", "version_created", "created"]
+    )] == ["archived", "rolled_back", "enabled", "disabled", "published", "version_created", "published", "created"]
 
 
 def test_all_reads_are_tenant_and_owner_scoped(migrated_conn):
@@ -230,6 +237,41 @@ def test_all_reads_are_tenant_and_owner_scoped(migrated_conn):
         assert repo.get_catalog_revision(
             tenant_id=tenant_id, owner_open_id=owner_open_id
         ) == 0
+
+
+def test_rollback_accepts_only_previously_published_version_and_preserves_disabled(migrated_conn):
+    repo = UserSkillRepository(migrated_conn)
+    skill = _create(repo)
+    repo.publish_version(
+        tenant_id="tenant-a", owner_open_id="ou-owner", actor_open_id="ou-owner",
+        skill_id=skill.id, version=1,
+    )
+    repo.append_version(
+        tenant_id="tenant-a", owner_open_id="ou-owner", actor_open_id="ou-owner",
+        skill_id=skill.id, display_name="表达更犀利",
+        description="用户要求表达更直接、更有冲突感时使用",
+        instructions_markdown="从未发布的第二版",
+    )
+    with pytest.raises(ValueError, match="never published"):
+        repo.rollback_version(
+            tenant_id="tenant-a", owner_open_id="ou-owner", actor_open_id="ou-owner",
+            skill_id=skill.id, version=2,
+        )
+
+    repo.publish_version(
+        tenant_id="tenant-a", owner_open_id="ou-owner", actor_open_id="ou-owner",
+        skill_id=skill.id, version=2,
+    )
+    repo.disable_skill(
+        tenant_id="tenant-a", owner_open_id="ou-owner", actor_open_id="ou-owner",
+        skill_id=skill.id,
+    )
+    rolled_back = repo.rollback_version(
+        tenant_id="tenant-a", owner_open_id="ou-owner", actor_open_id="ou-owner",
+        skill_id=skill.id, version=1,
+    )
+    assert rolled_back.status == "disabled"
+    assert rolled_back.published_version == 1
 
 
 def test_normalized_name_is_unique_per_owner_until_archived(migrated_conn):

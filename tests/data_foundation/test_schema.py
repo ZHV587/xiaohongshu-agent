@@ -123,6 +123,9 @@ def test_schema_declares_isolated_immutable_user_skill_contract():
     assert "before update or delete on user_skill_audit_events" in schema
     assert "foreign key (tenant_id, owner_open_id, skill_id, published_version)" in schema
     assert "where archived_at is null" in schema
+    assert "add column if not exists trigger_examples" in schema
+    assert "add column if not exists non_trigger_examples" in schema
+    assert "add column if not exists tags" in schema
 
 
 def test_schema_source_enforces_tenant_scoped_resource_references():
@@ -281,6 +284,31 @@ def test_schema_is_idempotent(migrated_conn):
         "select table_name from information_schema.tables where table_schema=current_schema()"
     ).fetchall()
     assert {row[0] for row in rows} == EXPECTED_TABLES
+
+
+def test_user_skill_optional_routing_metadata_columns_are_json_arrays(migrated_conn):
+    columns = _columns(migrated_conn, "user_skill_versions")
+    assert {"trigger_examples", "non_trigger_examples", "tags"} <= columns
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrated_conn.execute(
+            """
+            insert into user_skills
+              (tenant_id, owner_open_id, runtime_name, current_name, current_name_key)
+            values ('t', 'o', 'usr-test-1', 'name', 'name') returning id
+            """
+        )
+        skill_id = migrated_conn.execute(
+            "select id from user_skills where tenant_id='t' and owner_open_id='o'"
+        ).fetchone()[0]
+        migrated_conn.execute(
+            """
+            insert into user_skill_versions
+              (tenant_id, owner_open_id, skill_id, version, display_name, description,
+               instructions_markdown, trigger_examples, content_hash, created_by_open_id)
+            values ('t', 'o', %s, 1, 'name', 'desc', 'body', '{}', 'hash', 'o')
+            """,
+            (skill_id,),
+        )
 
 
 def test_config_version_columns_are_text(migrated_conn):

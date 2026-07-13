@@ -35,6 +35,9 @@ class UserSkillRepository(BaseRepository):
         display_name: str,
         description: str,
         instructions_markdown: str,
+        trigger_examples: list[str] | None = None,
+        non_trigger_examples: list[str] | None = None,
+        tags: list[str] | None = None,
         conn: Optional[Connection] = None,
     ) -> UserSkill:
         tenant_id, owner_open_id, actor_open_id = self._validate_identity(
@@ -46,7 +49,13 @@ class UserSkillRepository(BaseRepository):
         skill_id = uuid.uuid4()
         version_id = uuid.uuid4()
         runtime_name = self._runtime_name(owner_open_id, skill_id)
-        content_hash = self._content_hash(display_name, description, instructions_markdown)
+        trigger_examples = list(trigger_examples or [])
+        non_trigger_examples = list(non_trigger_examples or [])
+        tags = list(tags or [])
+        content_hash = self._content_hash(
+            display_name, description, instructions_markdown,
+            trigger_examples, non_trigger_examples, tags,
+        )
 
         with self.connection_context(conn) as connection:
             with connection.transaction():
@@ -71,8 +80,10 @@ class UserSkillRepository(BaseRepository):
                         """
                         insert into user_skill_versions
                           (id, tenant_id, owner_open_id, skill_id, version, display_name,
-                           description, instructions_markdown, content_hash, created_by_open_id)
-                        values (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s)
+                           description, instructions_markdown, trigger_examples,
+                           non_trigger_examples, tags, content_hash, created_by_open_id)
+                        values (%s, %s, %s, %s, 1, %s, %s, %s, %s::jsonb,
+                                %s::jsonb, %s::jsonb, %s, %s)
                         """,
                         (
                             version_id,
@@ -82,6 +93,9 @@ class UserSkillRepository(BaseRepository):
                             display_name,
                             description,
                             instructions_markdown,
+                            json.dumps(trigger_examples, ensure_ascii=False),
+                            json.dumps(non_trigger_examples, ensure_ascii=False),
+                            json.dumps(tags, ensure_ascii=False),
                             content_hash,
                             actor_open_id,
                         ),
@@ -130,6 +144,9 @@ class UserSkillRepository(BaseRepository):
         display_name: str,
         description: str,
         instructions_markdown: str,
+        trigger_examples: list[str] | None = None,
+        non_trigger_examples: list[str] | None = None,
+        tags: list[str] | None = None,
         expected_latest_version: int | None = None,
         conn: Optional[Connection] = None,
     ) -> UserSkill:
@@ -140,7 +157,13 @@ class UserSkillRepository(BaseRepository):
             display_name, description, instructions_markdown
         )
         skill_id = self._validate_uuid(skill_id)
-        content_hash = self._content_hash(display_name, description, instructions_markdown)
+        trigger_examples = list(trigger_examples or [])
+        non_trigger_examples = list(non_trigger_examples or [])
+        tags = list(tags or [])
+        content_hash = self._content_hash(
+            display_name, description, instructions_markdown,
+            trigger_examples, non_trigger_examples, tags,
+        )
 
         with self.connection_context(conn) as connection:
             with connection.transaction():
@@ -176,8 +199,10 @@ class UserSkillRepository(BaseRepository):
                         """
                         insert into user_skill_versions
                           (tenant_id, owner_open_id, skill_id, version, display_name,
-                           description, instructions_markdown, content_hash, created_by_open_id)
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           description, instructions_markdown, trigger_examples,
+                           non_trigger_examples, tags, content_hash, created_by_open_id)
+                        values (%s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                                %s::jsonb, %s::jsonb, %s, %s)
                         """,
                         (
                             tenant_id,
@@ -187,6 +212,9 @@ class UserSkillRepository(BaseRepository):
                             display_name,
                             description,
                             instructions_markdown,
+                            json.dumps(trigger_examples, ensure_ascii=False),
+                            json.dumps(non_trigger_examples, ensure_ascii=False),
+                            json.dumps(tags, ensure_ascii=False),
                             content_hash,
                             actor_open_id,
                         ),
@@ -241,6 +269,10 @@ class UserSkillRepository(BaseRepository):
             tenant_id, owner_open_id, actor_open_id
         )
         skill_id = self._validate_uuid(skill_id)
+        if version is not None and (
+            isinstance(version, bool) or not isinstance(version, int) or version < 1
+        ):
+            raise ValueError("Publish version must be a positive integer")
 
         with self.connection_context(conn) as connection:
             with connection.transaction():
@@ -276,10 +308,13 @@ class UserSkillRepository(BaseRepository):
                             conn=connection,
                         )
 
+                    if previous_status == "disabled" and previous_version != target_version:
+                        raise ValueError("Enable the Skill before publishing another version")
+                    if previous_version is not None and target_version < int(previous_version):
+                        raise ValueError("Use rollback to select an older published version")
+
                     if previous_status == "disabled" and previous_version == target_version:
                         event_type = "enabled"
-                    elif previous_version is not None and target_version < int(previous_version):
-                        event_type = "rolled_back"
                     else:
                         event_type = "published"
 
@@ -335,6 +370,82 @@ class UserSkillRepository(BaseRepository):
             target_status="disabled",
             conn=conn,
         )
+
+    def rollback_version(
+        self,
+        *,
+        tenant_id: str,
+        owner_open_id: str,
+        actor_open_id: str,
+        skill_id: str,
+        version: int,
+        conn: Optional[Connection] = None,
+    ) -> UserSkill:
+        tenant_id, owner_open_id, actor_open_id = self._validate_identity(
+            tenant_id, owner_open_id, actor_open_id
+        )
+        skill_id = self._validate_uuid(skill_id)
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("Rollback version must be a positive integer")
+        with self.connection_context(conn) as connection:
+            with connection.transaction():
+                with connection.cursor(row_factory=dict_row) as cursor:
+                    head = self._lock_head(
+                        cursor,
+                        tenant_id=tenant_id,
+                        owner_open_id=owner_open_id,
+                        skill_id=skill_id,
+                    )
+                    if head["status"] not in {"published", "disabled"}:
+                        raise ValueError("Only published or disabled skills can be rolled back")
+                    if head["published_version"] == version:
+                        return self.get_skill(
+                            tenant_id=tenant_id, owner_open_id=owner_open_id,
+                            skill_id=skill_id, conn=connection,
+                        )
+                    previously_published = cursor.execute(
+                        """
+                        select 1 from user_skill_audit_events
+                        where tenant_id = %s and owner_open_id = %s and skill_id = %s
+                          and skill_version = %s
+                          and event_type in ('published', 'rolled_back', 'enabled')
+                        limit 1
+                        """,
+                        (tenant_id, owner_open_id, skill_id, version),
+                    ).fetchone()
+                    if not previously_published:
+                        raise ValueError("Rollback target was never published")
+                    previous_version = int(head["published_version"])
+                    cursor.execute(
+                        """
+                        update user_skill_publications
+                        set published_version = %s, updated_by_open_id = %s, updated_at = now()
+                        where tenant_id = %s and owner_open_id = %s and skill_id = %s
+                        """,
+                        (version, actor_open_id, tenant_id, owner_open_id, skill_id),
+                    )
+                    self._touch_skill(cursor, tenant_id, owner_open_id, skill_id)
+                    catalog_revision = self._bump_catalog_revision(
+                        cursor, tenant_id=tenant_id, owner_open_id=owner_open_id
+                    )
+                    self._append_audit(
+                        cursor,
+                        tenant_id=tenant_id,
+                        owner_open_id=owner_open_id,
+                        skill_id=skill_id,
+                        event_type="rolled_back",
+                        actor_open_id=actor_open_id,
+                        skill_version=version,
+                        payload={
+                            "previous_published_version": previous_version,
+                            "preserved_status": head["status"],
+                            "catalog_revision": catalog_revision,
+                        },
+                    )
+            return self.get_skill(
+                tenant_id=tenant_id, owner_open_id=owner_open_id,
+                skill_id=skill_id, conn=connection,
+            )
 
     def archive_skill(
         self,
@@ -458,6 +569,39 @@ class UserSkillRepository(BaseRepository):
                     order by p.updated_at desc, p.skill_id desc
                     """,
                     (tenant_id, owner_open_id),
+                ).fetchall()
+                return [self._version_from_row(row) for row in rows]
+
+    def list_versions(
+        self,
+        *,
+        tenant_id: str,
+        owner_open_id: str,
+        skill_id: str,
+        conn: Optional[Connection] = None,
+    ) -> list[UserSkillVersion]:
+        tenant_id, owner_open_id, _ = self._validate_identity(
+            tenant_id, owner_open_id, owner_open_id
+        )
+        skill_id = self._validate_uuid(skill_id)
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                exists = cursor.execute(
+                    """
+                    select 1 from user_skills
+                    where tenant_id = %s and owner_open_id = %s and id = %s
+                    """,
+                    (tenant_id, owner_open_id, skill_id),
+                ).fetchone()
+                if not exists:
+                    raise KeyError("Skill not found")
+                rows = cursor.execute(
+                    """
+                    select * from user_skill_versions
+                    where tenant_id = %s and owner_open_id = %s and skill_id = %s
+                    order by version desc
+                    """,
+                    (tenant_id, owner_open_id, skill_id),
                 ).fetchall()
                 return [self._version_from_row(row) for row in rows]
 
@@ -674,6 +818,7 @@ class UserSkillRepository(BaseRepository):
                    p.status, p.published_version,
                    v.id::text as version_id, v.version, v.display_name, v.description,
                    v.instructions_markdown, v.content_hash, v.created_by_open_id,
+                   v.trigger_examples, v.non_trigger_examples, v.tags,
                    v.created_at as version_created_at
             from user_skills s
             join user_skill_publications p
@@ -698,6 +843,9 @@ class UserSkillRepository(BaseRepository):
             display_name=str(row["display_name"]),
             description=str(row["description"]),
             instructions_markdown=str(row["instructions_markdown"]),
+            trigger_examples=list(row["trigger_examples"] or []),
+            non_trigger_examples=list(row["non_trigger_examples"] or []),
+            tags=list(row["tags"] or []),
             content_hash=str(row["content_hash"]),
             created_by_open_id=str(row["created_by_open_id"]),
             created_at=row["version_created_at"],
@@ -728,6 +876,9 @@ class UserSkillRepository(BaseRepository):
             display_name=str(row["display_name"]),
             description=str(row["description"]),
             instructions_markdown=str(row["instructions_markdown"]),
+            trigger_examples=list(row["trigger_examples"] or []),
+            non_trigger_examples=list(row["non_trigger_examples"] or []),
+            tags=list(row["tags"] or []),
             content_hash=str(row["content_hash"]),
             created_by_open_id=str(row["created_by_open_id"]),
             created_at=row["created_at"],
@@ -799,12 +950,22 @@ class UserSkillRepository(BaseRepository):
         return re.sub(r"\s+", " ", normalized).strip()
 
     @staticmethod
-    def _content_hash(display_name: str, description: str, instructions_markdown: str) -> str:
+    def _content_hash(
+        display_name: str,
+        description: str,
+        instructions_markdown: str,
+        trigger_examples: list[str] | None = None,
+        non_trigger_examples: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> str:
         canonical = json.dumps(
             {
                 "display_name": display_name,
                 "description": description,
                 "instructions_markdown": instructions_markdown,
+                "trigger_examples": list(trigger_examples or []),
+                "non_trigger_examples": list(non_trigger_examples or []),
+                "tags": list(tags or []),
             },
             sort_keys=True,
             ensure_ascii=False,

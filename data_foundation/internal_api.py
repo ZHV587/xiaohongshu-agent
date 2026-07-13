@@ -499,3 +499,7 @@ internal_routes = [
 from data_foundation.studio_api import studio_routes  # noqa: E402
 
 internal_routes.extend(studio_routes)
+
+from data_foundation.user_skill_api import user_skill_routes  # noqa: E402
+
+internal_routes.extend(user_skill_routes)

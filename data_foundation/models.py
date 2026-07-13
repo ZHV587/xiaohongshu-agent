@@ -166,6 +166,9 @@ class UserSkillVersion:
     display_name: str
     description: str
     instructions_markdown: str
+    trigger_examples: list[str]
+    non_trigger_examples: list[str]
+    tags: list[str]
     content_hash: str
     created_by_open_id: str
     created_at: datetime

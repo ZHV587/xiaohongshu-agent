@@ -30,6 +30,16 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/studio/schedule": { path: "/internal/studio/schedule", method: "POST" },
   "/_internal/studio/backfill": { path: "/internal/studio/backfill", method: "POST" },
   "/_internal/studio/pipeline-advance": { path: "/internal/studio/pipeline-advance", method: "POST" },
+  "/_internal/user-skills/list": { path: "/internal/user-skills", method: "GET" },
+  "/_internal/user-skills/validate": { path: "/internal/user-skills/validate", method: "POST" },
+  "/_internal/user-skills/create": { path: "/internal/user-skills/create", method: "POST" },
+  "/_internal/user-skills/detail": { path: "/internal/user-skills/detail", method: "GET" },
+  "/_internal/user-skills/version": { path: "/internal/user-skills/version", method: "POST" },
+  "/_internal/user-skills/publish": { path: "/internal/user-skills/publish", method: "POST" },
+  "/_internal/user-skills/rollback": { path: "/internal/user-skills/rollback", method: "POST" },
+  "/_internal/user-skills/enable": { path: "/internal/user-skills/enable", method: "POST" },
+  "/_internal/user-skills/disable": { path: "/internal/user-skills/disable", method: "POST" },
+  "/_internal/user-skills/archive": { path: "/internal/user-skills/archive", method: "POST" },
 };
 
 function jsonResponse(payload: Record<string, unknown>, status: number): Response {
