@@ -11,7 +11,7 @@ type SkillRouteDeps = {
   forwardToInternalServer: typeof forwardToInternalServer;
 };
 
-type SkillContext = { params: Promise<{ skillId: string }> | { skillId: string } };
+type SkillContext = { params: Promise<{ skillId: string }> };
 
 class SkillRequestError extends ApiError {
   constructor(
