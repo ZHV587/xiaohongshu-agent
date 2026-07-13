@@ -759,8 +759,6 @@ begin
     from pg_constraint
     where conrelid = 'knowledge_retrieval_evidence_keys'::regclass
       and contype = 'u'
-      and pg_get_constraintdef(oid)
-            = 'UNIQUE (tenant_id, resource_id, resource_version)'
   loop
     execute format(
       'alter table knowledge_retrieval_evidence_keys drop constraint %I',
