@@ -82,7 +82,7 @@ def adopt_online_notes(
     selected_notes: Annotated[
         list[dict[str, Any]] | None, InjectedState("selected_notes")
     ] = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """采纳用户在面板勾选的线上笔记:写数据库(权威)+ 同步飞书爆款采集库(镜像)。幂等。
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from data_foundation.agent_trace import (
     TraceLifecycleError,
@@ -253,6 +254,8 @@ def test_trace_tool_wrapper_emits_started_and_completed(monkeypatch) -> None:
     assert "职场穿搭" not in str(emitted[0]["safe_args"])
     assert "safe_result" not in emitted[1]
     assert emitted[1]["metrics"]["found_count"] == 3
+    assert emitted[0]["tool_call_id"].startswith("xhs-direct-")
+    assert emitted[1]["tool_call_id"] == emitted[0]["tool_call_id"]
     assert emitted[0]["seq"] < emitted[1]["seq"]
 
 
@@ -397,8 +400,8 @@ def test_trace_tool_uses_langgraph_config_turn_id(monkeypatch) -> None:
     assert all(event["trace_id"] == "run-x" for event in emitted)
 
 
-def test_trace_tool_prefers_explicit_config_when_it_carries_identity(monkeypatch) -> None:
-    """显式传入的 config 已带身份(turn_id/thread_id)时,以它为准,不被 contextvar 覆盖。"""
+def test_trace_tool_runtime_config_cannot_be_forged_by_explicit_config(monkeypatch) -> None:
+    """LangGraph context is server-owned and must also drive business-tool ACL."""
     from langchain_core.tools import tool
 
     from data_foundation.agent_trace import trace_tool
@@ -413,9 +416,103 @@ def test_trace_tool_prefers_explicit_config_when_it_carries_identity(monkeypatch
     @tool
     def sample_tool(query: str, config: "dict | None" = None) -> dict:
         """Search sample resources."""
-        return {"ok": True, "results": [1]}
+        return {
+            "ok": True,
+            "turn_id": config["configurable"]["turn_id"],
+            "results": [1],
+        }
 
     wrapped = trace_tool(sample_tool, stage_id="retrieve", label="按语义找相关素材")
-    wrapped.func("职场穿搭", config={"configurable": {"turn_id": "explicit-turn", "run_id": "explicit-run"}})
+    result = wrapped.func(
+        "职场穿搭",
+        config={
+            "configurable": {
+                "turn_id": "explicit-turn",
+                "run_id": "explicit-run",
+            }
+        },
+    )
 
-    assert all(event["turn_id"] == "explicit-turn" for event in emitted)
+    assert result["turn_id"] == "ctx-turn"
+    assert all(event["turn_id"] == "ctx-turn" for event in emitted)
+    assert all(event["run_id"] == "ctx-run" for event in emitted)
+
+
+def test_tool_schemas_hide_config_and_dynamic_trace_identity() -> None:
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+    from data_foundation.tools import data_foundation_tools
+    from tools.feishu_actions import feishu_action_tools
+    from tools.online_adopt import adopt_online_notes
+    from tools.redfox_search import search_xhs_online
+
+    for tool_obj in [
+        *data_foundation_tools,
+        *feishu_action_tools,
+        adopt_online_notes,
+        search_xhs_online,
+    ]:
+        public_schema = tool_obj.tool_call_schema.model_json_schema()
+        assert "config" not in public_schema.get("properties", {}), tool_obj.name
+
+    @tool
+    def sample_tool(query: str, config: RunnableConfig = None) -> dict:
+        """Search sample resources."""
+
+        return {"ok": True, "results": [query]}
+
+    wrapped = trace_tool(sample_tool, stage_id="retrieve", label="按语义找相关素材")
+    public_properties = wrapped.tool_call_schema.model_json_schema()["properties"]
+    validation_properties = wrapped.args_schema.model_json_schema()["properties"]
+    assert set(public_properties) == {"query"}
+    assert "xhs_trace_tool_call_id" in validation_properties
+
+
+def test_trace_tool_reuses_real_tool_call_id_and_separates_turns(monkeypatch) -> None:
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+
+    emitted = []
+    monkeypatch.setattr(
+        "data_foundation.agent_trace.emit_trace",
+        lambda event, **kwargs: emitted.append(event),
+    )
+
+    @tool
+    def sample_tool(query: str, config: RunnableConfig = None) -> dict:
+        """Search sample resources."""
+
+        return {"ok": True, "results": [query]}
+
+    wrapped = trace_tool(sample_tool, stage_id="retrieve", label="按语义找相关素材")
+    tool_call = {
+        "name": "sample_tool",
+        "args": {"query": "职场穿搭"},
+        "id": "provider-call-stable",
+        "type": "tool_call",
+    }
+    for turn_id in ("turn-a", "turn-a", "turn-b"):
+        wrapped.invoke(
+            tool_call,
+            config={
+                "configurable": {
+                    "thread_id": "thread-1",
+                    "run_id": f"run-{turn_id}",
+                    "turn_id": turn_id,
+                }
+            },
+        )
+
+    assert [event["tool_call_id"] for event in emitted] == [
+        "provider-call-stable"
+    ] * 6
+    assert [event["turn_id"] for event in emitted] == [
+        "turn-a",
+        "turn-a",
+        "turn-a",
+        "turn-a",
+        "turn-b",
+        "turn-b",
+    ]

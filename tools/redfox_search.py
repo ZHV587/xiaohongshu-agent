@@ -117,7 +117,7 @@ def search_xhs_online(
     keyword: str,
     days: int = 30,
     page_size: int = 20,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """实时搜索小红书线上热门笔记(红狐 API),返回结构化卡片列表用于面板展示。
 

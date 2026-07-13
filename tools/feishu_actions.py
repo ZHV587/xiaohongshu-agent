@@ -29,7 +29,7 @@ def sync_copy_to_feishu(
     title: str,
     content: str,
     tags: str | None = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Create a Feishu Base draft record for the generated Xiaohongshu copy."""
     if not title.strip() or not content.strip():
@@ -84,7 +84,7 @@ def send_review_notification(
     chat_id: str,
     title: str,
     content: str,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Send a Feishu group card asking reviewers to check a generated draft."""
     if not chat_id.strip() or not title.strip() or not content.strip():
@@ -132,7 +132,7 @@ def send_review_notification(
 def sync_topic_to_feishu(
     direction: str,
     topics: list[str],
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Create Feishu Base records for the generated Xiaohongshu topic suggestions."""
     if not direction.strip() or not topics:
@@ -198,7 +198,7 @@ def sync_diagnosis_to_feishu(
     project_name: str,
     title: str,
     content: str,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Create a Feishu Base record or document for account positioning and commercial diagnosis."""
     if not project_name.strip() or not content.strip():
@@ -298,7 +298,7 @@ DEFAULT_COLLECT_TABLE_ID = "tbl24vSVeLvz45ig"  # 🧲单篇采集库(§8 笔记�
 
 def create_online_note_record(
     note: dict[str, Any],
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """把一条线上笔记写入飞书爆款采集库(`FEISHU_BITABLE_COLLECT_TABLE_ID`)。
 
@@ -359,4 +359,3 @@ feishu_action_tools = [
     sync_topic_to_feishu,
     sync_diagnosis_to_feishu,
 ]
-

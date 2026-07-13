@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 @tool
-def search_local_note_cards(keyword: str, limit: int = 12, config: RunnableConfig | None = None) -> dict[str, Any]:
+def search_local_note_cards(keyword: str, limit: int = 12, config: RunnableConfig = None) -> dict[str, Any]:
     """检索本地已收录笔记，返回发现面板所需的封面、互动和标签卡片。
 
     本工具是独立的素材发现入口；统一知识证据只由 ``retrieve_knowledge`` 返回。
@@ -86,7 +86,7 @@ def retrieve_knowledge(
     query: str,
     limit: int = 10,
     filters: dict[str, Any] | None = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """统一检索当前可用的知识证据。
 
@@ -134,7 +134,7 @@ def retrieve_knowledge(
 def get_resource(
     resource_id: str,
     resource_version: int,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Read one exact resource snapshot after tenant and permission filtering.
 
@@ -181,7 +181,7 @@ def get_resource(
 @tool
 def get_generated_copy_lifecycle(
     resource_id: str,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Read exact generated-copy snapshots and current CAS tokens for a revision.
 
@@ -242,7 +242,7 @@ def get_generated_copy_lifecycle(
 
 
 @tool
-def get_writing_profile(config: RunnableConfig | None = None) -> dict[str, Any]:
+def get_writing_profile(config: RunnableConfig = None) -> dict[str, Any]:
     """Read the current actor's exact private writing-preference profile.
 
     The profile is loaded through ``writing_profile_states`` rather than general
@@ -259,7 +259,7 @@ def get_writing_profile(config: RunnableConfig | None = None) -> dict[str, Any]:
 
 
 @tool
-def get_data_foundation_status(config: RunnableConfig | None = None) -> dict[str, Any]:
+def get_data_foundation_status(config: RunnableConfig = None) -> dict[str, Any]:
     """Return Postgres data foundation resource, sync, and outbox status."""
     actor_from_config(config)
     with _repository() as repo:
@@ -268,7 +268,7 @@ def get_data_foundation_status(config: RunnableConfig | None = None) -> dict[str
 
 
 @tool
-def sync_feishu_resources(config: RunnableConfig | None = None) -> dict[str, Any]:
+def sync_feishu_resources(config: RunnableConfig = None) -> dict[str, Any]:
     """Trigger a manual Feishu resource sync for the current user."""
     actor = actor_from_config(config)
     with _repository() as repo:
@@ -288,7 +288,7 @@ def save_generated_topic(
     selected_topic: Annotated[
         dict[str, Any] | None, InjectedState("selected_topic")
     ] = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """持久化用户选定的那一个选题到 Postgres 数据底座(只存选中的)。
 
@@ -336,7 +336,7 @@ def save_generated_copy(
     evidence: list[dict[str, Any]] | None = None,
     reference_resource_id: str | None = None,
     reference_resource_version: int | None = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation.
 
@@ -383,7 +383,7 @@ def save_user_feedback(
     target_resource_version: int | None = None,
     feedback_type: str = "user_feedback",
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Persist user feedback or a revision request into the shared Postgres data foundation."""
     actor = actor_from_config(config)
@@ -419,7 +419,7 @@ def save_writing_teardown(
     success_factors: list[str],
     style_tags: list[str],
     quality: float,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """保存一份小红书文案拆解，并精确关联到真实来源版本。
 
@@ -452,7 +452,7 @@ def save_performance_metric(
     published_at: str | None = None,
     channel: str = "xiaohongshu",
     note_url: str | None = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Persist post-publish performance metrics for a generated or source content resource."""
     actor = actor_from_config(config)
@@ -473,7 +473,7 @@ def save_performance_metric(
 @tool
 def get_resource_performance(
     resource_id: str,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Read post-publish performance metrics linked to a readable resource."""
     actor = actor_from_config(config)
@@ -490,7 +490,7 @@ def get_resource_performance(
 def get_operations_data(
     view: str,
     account: str | None = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """读取账号运营数据(只读,与运营看板 UI 同源、同鉴权)。
 
@@ -547,7 +547,7 @@ def save_session_snapshot(
         "migration_audit",
     ],
     metadata: dict[str, Any] | None = None,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Persist an exact owner-scoped workflow checkpoint in Postgres.
 
@@ -593,7 +593,7 @@ def save_session_snapshot(
 def get_session_snapshots(
     project_name: str | None = None,
     limit: int = 10,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Restore the current actor's exact workflow checkpoints, including unconfirmed ones."""
     actor = actor_from_config(config)
@@ -627,7 +627,7 @@ def get_session_snapshots(
 def confirm_session_snapshot(
     resource_id: str,
     resource_version: int,
-    config: RunnableConfig | None = None,
+    config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Promote one exact checkpoint to strategy knowledge after explicit user confirmation.
 

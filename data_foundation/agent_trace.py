@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
 import hashlib
 import json
+import logging
 import re
 import threading
+import time
 import uuid
-from typing import Any
+from typing import Annotated, Any
+
+from langchain_core.tools import InjectedToolCallId
+from pydantic import create_model
 
 
 SENSITIVE_KEY_MARKERS = (
@@ -117,6 +123,8 @@ class TraceSequencer:
 
 
 _GLOBAL_SEQUENCER = TraceSequencer()
+logger = logging.getLogger(__name__)
+_TRACE_TOOL_CALL_ID_ARG = "xhs_trace_tool_call_id"
 
 
 def _sensitive_key(key: Any) -> bool:
@@ -343,7 +351,7 @@ def _configurable_of(config: Any) -> dict[str, Any]:
 def _resolve_config(config: Any) -> Any:
     """解析本轮真实 config。
 
-    根因(历史踩坑):被 trace 包装的工具签名是 `config: RunnableConfig | None = None`,
+    根因(历史踩坑):被 trace 包装的工具曾把 config 标成 Optional RunnableConfig,
     而 langchain 的 `_get_runnable_config_param` 只认**裸** `RunnableConfig`,Optional(Union)一律
     检测不到 → `StructuredTool._run` 根本不注入 config → 传进包装器的 config 恒为 None →
     `_config_identity(None)` 每次伪造一套新 `run_id/trace_id/turn_id`,turn_id 永远 ≠ 前端写入的
@@ -353,18 +361,13 @@ def _resolve_config(config: Any) -> Any:
     turn_id 在这里),它不依赖工具签名注入,子图(子代理)里同样继承同一 configurable;
     仅当 contextvar 不可用(非 langgraph 运行上下文,如单测直调)时才回退到显式传入的 config。
     """
-    explicit_conf = _configurable_of(config)
-    if explicit_conf.get("turn_id") or explicit_conf.get("thread_id"):
-        return config
     try:
         from langgraph.config import get_config
 
         runtime_config = get_config()
-    except Exception:
+    except RuntimeError:
         return config
-    if _configurable_of(runtime_config):
-        return runtime_config
-    return config
+    return runtime_config
 
 
 def _config_identity(config: Any) -> dict[str, str | None]:
@@ -413,22 +416,51 @@ def _metrics_from_result(result: Any) -> dict[str, Any]:
     return metrics
 
 
+def _inject_trace_tool_call_id(tool_obj: Any) -> None:
+    """Extend the validation schema with one runtime-only ToolCall identity field."""
+
+    args_schema = tool_obj.args_schema
+    if not isinstance(args_schema, type):
+        raise TypeError(f"traced tool {tool_obj.name!r} requires a Pydantic args schema")
+    fields = getattr(args_schema, "model_fields", {})
+    if _TRACE_TOOL_CALL_ID_ARG in fields:
+        raise ValueError(
+            f"traced tool {tool_obj.name!r} reserves {_TRACE_TOOL_CALL_ID_ARG!r}"
+        )
+    tool_obj.args_schema = create_model(
+        f"{args_schema.__name__}WithTraceToolCallId",
+        __base__=args_schema,
+        **{
+            _TRACE_TOOL_CALL_ID_ARG: (
+                Annotated[str, InjectedToolCallId],
+                "",
+            )
+        },
+    )
+
+
 def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
     if getattr(tool_obj, "_xhs_trace_wrapped", False):
         return tool_obj
 
     original = tool_obj.func
+    _inject_trace_tool_call_id(tool_obj)
 
+    @wraps(original)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        # 本轮真实身份优先取自 langgraph get_config() contextvar(前端写入的 turn_id 在此),
-        # 不依赖 config 是否被注入进 kwargs(Optional 注解会让 langchain 漏注入)。
+        injected_tool_call_id = kwargs.pop(_TRACE_TOOL_CALL_ID_ARG, None)
         resolved_config = _resolve_config(kwargs.get("config"))
         identity = _config_identity(resolved_config)
-        # 把解析到的真实 config 回填给原始工具:原始工具用它做租户/actor 解析。
-        # 仅当调用方未显式带 config(或带的是空 config)时才覆盖,避免踩掉显式传参。
-        if resolved_config is not None and not _configurable_of(kwargs.get("config")):
+        # Runtime context is server-owned.  Always pass it to the business tool so an
+        # explicitly supplied config cannot split trace identity from tenant/actor ACL.
+        if resolved_config is not None:
             kwargs = {**kwargs, "config": resolved_config}
-        tool_call_id = f"xhs-tool-{uuid.uuid4().hex}"
+        tool_call_id = (
+            injected_tool_call_id.strip()
+            if isinstance(injected_tool_call_id, str)
+            and injected_tool_call_id.strip()
+            else f"xhs-direct-{uuid.uuid4().hex}"
+        )
         started = build_trace_event(
             type="xhs.trace.tool.started",
             stage_id=stage_id,
@@ -448,9 +480,13 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
             **identity,
         )
         emit_trace(started)
+        monotonic_started = time.perf_counter()
         try:
             result = original(*args, **kwargs)
         except Exception as exc:
+            duration_ms = max(
+                0, round((time.perf_counter() - monotonic_started) * 1000)
+            )
             failed = build_trace_event(
                 type="xhs.trace.tool.failed",
                 stage_id=stage_id,
@@ -460,11 +496,31 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
                 visibility="user",
                 sequencer=_GLOBAL_SEQUENCER,
                 parent_id=started["event_id"],
+                duration_ms=duration_ms,
                 error=sanitize_exception(exc),
                 **identity,
             )
             emit_trace(failed)
+            if tool_obj.name == "retrieve_knowledge":
+                try:
+                    from data_foundation.retrieval_metrics import (
+                        capture_retrieval_error,
+                    )
+
+                    capture_retrieval_error(
+                        config=resolved_config,
+                        trace_identity=identity,
+                        tool_call_id=tool_call_id,
+                        latency_ms=duration_ms,
+                    )
+                except Exception as metric_exc:  # noqa: BLE001
+                    logger.warning(
+                        "retrieval metric capture failed: %s",
+                        type(metric_exc).__name__,
+                    )
             raise
+
+        duration_ms = max(0, round((time.perf_counter() - monotonic_started) * 1000))
 
         completed = build_trace_event(
             type="xhs.trace.tool.completed",
@@ -475,12 +531,30 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
             visibility="user",
             sequencer=_GLOBAL_SEQUENCER,
             parent_id=started["event_id"],
+            duration_ms=duration_ms,
             metrics=_metrics_from_result(result),
             # 工具返回结构不受统一契约约束，无法证明未来嵌套字段和值都安全。前端只需
             # 结构化 metrics 呈现结果，因此 trace 不记录任意 raw safe_result。
             **identity,
         )
         emit_trace(completed)
+        if tool_obj.name == "retrieve_knowledge":
+            try:
+                from data_foundation.retrieval_metrics import capture_retrieval_result
+
+                capture_retrieval_result(
+                    config=resolved_config,
+                    trace_identity=identity,
+                    tool_call_id=tool_call_id,
+                    latency_ms=duration_ms,
+                    result=result,
+                )
+            except Exception as exc:  # noqa: BLE001 - metrics must not break retrieval
+                # Only the exception class is operationally useful.  Database/provider
+                # messages can contain DSNs, request payloads or credentials.
+                logger.warning(
+                    "retrieval metric capture failed: %s", type(exc).__name__
+                )
         return result
 
     tool_obj.func = wrapped
