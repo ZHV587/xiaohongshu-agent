@@ -30,12 +30,17 @@ export function createBackfillPost(deps: BackfillRouteDeps) {
       if (typeof metrics !== "object" || metrics === null || Array.isArray(metrics)) {
         return jsonNoStore({ ok: false, error: "missing field 'metrics'" }, { status: 400 });
       }
+      const resourceVersion = body.resourceVersion;
+      if (resourceVersion != null && (!Number.isInteger(resourceVersion) || Number(resourceVersion) <= 0)) {
+        return jsonNoStore({ ok: false, error: "'resourceVersion' must be a positive integer" }, { status: 400 });
+      }
       const response = await deps.forwardToInternalServer(
         "/_internal/studio/backfill",
         "POST",
         user.openId,
         {
           resourceId,
+          resourceVersion,
           metrics,
           publishedAt: body.publishedAt,
           link: body.link ?? body.noteUrl,

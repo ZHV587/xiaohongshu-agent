@@ -256,6 +256,159 @@ create index if not exists idx_resource_versions_tenant_recent
 create index if not exists idx_resource_versions_resource_recent
   on resource_versions (resource_id, created_at desc);
 
+-- AI 文案在整个创作/发布周期内只有一个稳定 resources.id。候选、用户修订、采纳稿和
+-- 排期定稿都复用 resource_versions 的不可变快照；本表只保存各阶段的精确版本指针。
+-- state_version 是前端写操作的乐观并发令牌，禁止两个标签页静默覆盖彼此的选择/修订。
+create table if not exists generated_copy_states (
+  tenant_id text not null,
+  resource_id uuid not null,
+  owner_open_id text not null,
+  origin_turn_id text,
+  lifecycle_status text not null default 'candidate'
+    check (lifecycle_status in ('candidate', 'selected', 'adopted', 'finalized', 'published', 'measured')),
+  selected_version int,
+  selected_label text,
+  adopted_version int,
+  finalized_version int,
+  published_version int,
+  knowledge_target_version int,
+  finalize_request_id text,
+  finalize_draft_hash text,
+  finalize_base_version int,
+  state_version int not null default 1 check (state_version > 0),
+  updated_by_open_id text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, resource_id),
+  foreign key (tenant_id, resource_id)
+    references resources(tenant_id, id) on delete cascade,
+  foreign key (tenant_id, resource_id, selected_version)
+    references resource_versions(tenant_id, resource_id, version),
+  foreign key (tenant_id, resource_id, adopted_version)
+    references resource_versions(tenant_id, resource_id, version),
+  foreign key (tenant_id, resource_id, finalized_version)
+    references resource_versions(tenant_id, resource_id, version),
+  foreign key (tenant_id, resource_id, published_version)
+    references resource_versions(tenant_id, resource_id, version),
+  constraint generated_copy_states_knowledge_target_version_fkey
+  foreign key (tenant_id, resource_id, knowledge_target_version)
+    references resource_versions(tenant_id, resource_id, version),
+  check (lifecycle_status = 'candidate' or selected_version is not null),
+  constraint generated_copy_states_selected_pointer_pair_check check (
+    (selected_version is null and selected_label is null)
+    or (selected_version is not null and selected_label is not null)
+  ),
+  check (lifecycle_status not in ('adopted', 'finalized', 'published', 'measured') or adopted_version is not null),
+  check (lifecycle_status not in ('finalized', 'published', 'measured') or finalized_version is not null),
+  check (lifecycle_status not in ('published', 'measured') or published_version is not null),
+  constraint generated_copy_states_finalize_idempotency_pair_check check (
+    (finalize_request_id is null and finalize_draft_hash is null and finalize_base_version is null)
+    or
+    (finalize_request_id is not null and finalize_draft_hash is not null and finalize_base_version is not null)
+  )
+);
+
+alter table generated_copy_states
+  add column if not exists knowledge_target_version int;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'generated_copy_states'::regclass
+      and conname = 'generated_copy_states_knowledge_target_version_fkey'
+  ) then
+    alter table generated_copy_states
+      add constraint generated_copy_states_knowledge_target_version_fkey
+      foreign key (tenant_id, resource_id, knowledge_target_version)
+      references resource_versions(tenant_id, resource_id, version);
+  end if;
+end $$;
+
+alter table generated_copy_states add column if not exists owner_open_id text;
+alter table generated_copy_states add column if not exists origin_turn_id text;
+alter table generated_copy_states add column if not exists finalize_request_id text;
+alter table generated_copy_states add column if not exists finalize_draft_hash text;
+alter table generated_copy_states add column if not exists finalize_base_version int;
+update generated_copy_states s
+set owner_open_id = coalesce(r.owner_open_id, s.updated_by_open_id, 'system')
+from resources r
+where r.tenant_id = s.tenant_id and r.id = s.resource_id and s.owner_open_id is null;
+update generated_copy_states s
+set selected_label = coalesce(
+  nullif(rv.content_json->>'variant_label', ''),
+  'V' || s.selected_version::text
+)
+from resource_versions rv
+where rv.tenant_id = s.tenant_id
+  and rv.resource_id = s.resource_id
+  and rv.version = s.selected_version
+  and s.selected_version is not null
+  and s.selected_label is null;
+-- Partial idempotency tuples cannot be safely replayed.  Clear only malformed legacy
+-- tuples before enforcing the all-null/all-present invariant.
+update generated_copy_states
+set finalize_request_id = null,
+    finalize_draft_hash = null,
+    finalize_base_version = null
+where num_nonnulls(finalize_request_id, finalize_draft_hash, finalize_base_version) not in (0, 3);
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'generated_copy_states'::regclass
+      and conname = 'generated_copy_states_selected_pointer_pair_check'
+  ) then
+    alter table generated_copy_states
+      add constraint generated_copy_states_selected_pointer_pair_check check (
+        (selected_version is null and selected_label is null)
+        or (selected_version is not null and selected_label is not null)
+      ) not valid;
+    alter table generated_copy_states
+      validate constraint generated_copy_states_selected_pointer_pair_check;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'generated_copy_states'::regclass
+      and conname = 'generated_copy_states_finalize_idempotency_pair_check'
+  ) then
+    alter table generated_copy_states
+      add constraint generated_copy_states_finalize_idempotency_pair_check check (
+        (finalize_request_id is null and finalize_draft_hash is null and finalize_base_version is null)
+        or
+        (finalize_request_id is not null and finalize_draft_hash is not null and finalize_base_version is not null)
+      ) not valid;
+    alter table generated_copy_states
+      validate constraint generated_copy_states_finalize_idempotency_pair_check;
+  end if;
+end $$;
+alter table generated_copy_states alter column owner_open_id set not null;
+create index if not exists idx_generated_copy_states_owner_stage
+  on generated_copy_states (tenant_id, owner_open_id, lifecycle_status, updated_at desc);
+create unique index if not exists uq_generated_copy_states_origin_turn
+  on generated_copy_states (tenant_id, owner_open_id, origin_turn_id)
+  where origin_turn_id is not null;
+create unique index if not exists uq_generated_copy_states_finalize_request
+  on generated_copy_states (tenant_id, owner_open_id, finalize_request_id)
+  where finalize_request_id is not null;
+
+-- 既有 generated_copy 在升级时以最新不可变版本初始化为候选；不推断「采纳」语义，避免
+-- 把历史草稿误当高质量知识。之后必须由用户明确采纳或排期定稿才能进入检索。
+insert into generated_copy_states (
+  tenant_id, resource_id, owner_open_id, lifecycle_status, selected_version, selected_label,
+  state_version, updated_by_open_id
+)
+select r.tenant_id, r.id, coalesce(r.owner_open_id, 'system'), 'candidate', max(rv.version),
+       coalesce(
+         (array_agg(nullif(rv.content_json->>'variant_label', '') order by rv.version desc))[1],
+         'V' || max(rv.version)::text
+       ),
+       1, coalesce(r.owner_open_id, 'system')
+from resources r
+join resource_versions rv on rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+where r.type = 'generated_copy'
+group by r.tenant_id, r.id, r.owner_open_id
+on conflict (tenant_id, resource_id) do nothing;
+
 create table if not exists resource_events (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
@@ -600,6 +753,99 @@ create trigger trg_resource_outbox_notify_update
   for each row
   when (new.status = 'pending' and old.status <> 'pending')
   execute function notify_resource_outbox_insert();
+
+-- 运行期外部索引迁移账本。与结构 DDL 放在同一数据库事务中，保证一次性重建任务要么
+-- 全部进入 outbox、要么连迁移标记一起回滚；服务重启不会重复全表扫描或重复投递。
+create table if not exists data_foundation_migrations (
+  migration_key text primary key,
+  applied_at timestamptz not null default now()
+);
+
+-- 2026-07:历史 Meili 文档没有 resource_version。新检索契约会拒绝这些无法精确回表的
+-- 文档，因此升级时必须为每个当前可检索的精确版本做一次 outbox 重建：
+-- 1) 已有 succeeded 当前版本任务直接复位 pending；2) 没有可复位任务时补一条迁移任务。
+-- generated_copy 只重建用户已明确采纳的 knowledge_target_version，候选稿仍不进入检索。
+with claimed as (
+  insert into data_foundation_migrations (migration_key)
+  values ('20260713_meili_resource_version_v1')
+  on conflict (migration_key) do nothing
+  returning migration_key
+),
+targets as materialized (
+  select r.tenant_id,
+         r.id as resource_id,
+         case
+           when r.type = 'generated_copy' then gcs.knowledge_target_version
+           else (
+             select max(rv.version)
+             from resource_versions rv
+             where rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+           )
+         end as resource_version
+  from claimed
+  join resources r on true
+  left join generated_copy_states gcs
+    on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+),
+eligible_targets as materialized (
+  select * from targets where resource_version is not null
+),
+requeued as (
+  update resource_outbox ro
+  set status = 'pending',
+      next_attempt_at = now(),
+      attempts = 0,
+      lease_owner = null,
+      lease_expires_at = null,
+      error_code = null,
+      error_summary = null,
+      dead_at = null,
+      updated_at = now()
+  from eligible_targets target
+  where ro.tenant_id = target.tenant_id
+    and ro.resource_id = target.resource_id
+    and ro.resource_version = target.resource_version
+    and ro.topic = 'meili_index'
+    and ro.status = 'succeeded'
+  returning ro.tenant_id, ro.resource_id, ro.resource_version
+)
+insert into resource_outbox (
+  tenant_id, resource_id, resource_version, topic, dedupe_key, payload
+)
+select target.tenant_id,
+       target.resource_id,
+       target.resource_version,
+       'meili_index',
+       encode(
+         digest(
+           concat_ws(
+             '|', 'meili-resource-version-v1', target.tenant_id,
+             target.resource_id::text, target.resource_version::text
+           ),
+           'sha256'
+         ),
+         'hex'
+       ),
+       jsonb_build_object(
+         'resource_id', target.resource_id::text,
+         'version', target.resource_version
+       )
+from eligible_targets target
+where not exists (
+  select 1 from requeued done
+  where done.tenant_id = target.tenant_id
+    and done.resource_id = target.resource_id
+    and done.resource_version = target.resource_version
+)
+and not exists (
+  select 1 from resource_outbox active
+  where active.tenant_id = target.tenant_id
+    and active.resource_id = target.resource_id
+    and active.resource_version = target.resource_version
+    and active.topic = 'meili_index'
+    and active.status in ('pending', 'retry', 'processing', 'blocked')
+)
+on conflict (tenant_id, dedupe_key) do nothing;
 
 create table if not exists service_error_aggregates (
   id uuid primary key default gen_random_uuid(),

@@ -42,10 +42,10 @@ test("chooseTopic 从 evidence[topic.id] 取真实 resource_id,不编造", () =>
   assert.match(body, /indexed_at:\s*it\.indexed_at/);
 });
 
-test("chooseTopic 依赖数组包含 evidence/versions/topicId(闭包拿到最新依据/文案/绑定选题)", () => {
+test("chooseTopic 依赖数组包含本地编辑状态/evidence/versions/topicId(闭包拿到最新依据/文案/绑定选题)", () => {
   const body = chooseTopicBody();
   // 依赖需含 topicId:守卫要按"是否同一选题"判定,闭包必须读到当前绑定的 topicId,否则读旧值误判。
-  assert.match(body, /\[setSection,\s*t,\s*evidence,\s*versions,\s*topicId\]/);
+  assert.match(body, /\[setLocalEditState,\s*setSection,\s*t,\s*evidence,\s*versions,\s*topicId\]/);
 });
 
 test("chooseTopic 守卫按选题区分:只在重进同一选题且已有内容时不重跑", () => {

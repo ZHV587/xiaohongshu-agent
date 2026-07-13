@@ -43,7 +43,7 @@ def _conn_returning(row):
 def test_process_upserts_resource_document():
     conn = _conn_returning({
         "id": "r1", "tenant_id": "default", "type": "feishu_base_record",
-        "title": "减脂笔记", "summary": None, "content_text": "正文"})
+        "title": "减脂笔记", "summary": None, "content_text": "正文", "resource_version": 1})
     index = MagicMock()
     p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
     result = asyncio.run(p.process(_item({"resource_id": "r1", "version": 1}), _Lease()))
@@ -52,6 +52,7 @@ def test_process_upserts_resource_document():
     assert doc["resource_id"] == "r1"
     assert doc["title"] == "减脂笔记"
     assert doc["tenant_id"] == "default"
+    assert doc["resource_version"] == 1
 
 
 def test_process_missing_resource_id_is_permanent():
@@ -79,7 +80,7 @@ def test_process_deletes_document_when_resource_gone():
 def test_process_ensures_index_settings_once_before_upsert():
     conn = _conn_returning({
         "id": "r1", "tenant_id": "default", "type": "feishu_base_record",
-        "title": "t", "summary": None, "content_text": "body"})
+        "title": "t", "summary": None, "content_text": "body", "resource_version": 1})
     index = MagicMock()
     p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
     # 两次 process:ensure_index 只应调用一次(实例级幂等),每次都 upsert
@@ -87,3 +88,23 @@ def test_process_ensures_index_settings_once_before_upsert():
     asyncio.run(p.process(_item({"resource_id": "r1", "version": 1}), _Lease()))
     assert index.ensure_index.call_count == 1
     assert index.upsert.call_count == 2
+
+
+def test_process_supersedes_stale_or_candidate_version_without_deleting_current_document():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.execute.return_value.fetchone.side_effect = [None, {"exists": 1}]
+    index = MagicMock()
+    processor = MeiliProcessor(
+        conn=conn,
+        index=index,
+        config=MeiliConfig(state="enabled", url="u", api_key="k"),
+    )
+
+    result = asyncio.run(
+        processor.process(_item({"resource_id": "r1", "version": 1}), _Lease())
+    )
+
+    assert result.status == "superseded"
+    index.delete.assert_not_called()
+    index.upsert.assert_not_called()

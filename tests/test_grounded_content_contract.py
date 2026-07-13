@@ -13,6 +13,8 @@
 故本测试按"各司其职"断言:检索口径只校验 prompt §6,差异化工作流只校验 SKILL.md,
 不再要求 SKILL.md 自含全套检索口径(那是改造前的双份维护,已废除)。
 """
+import json
+import re
 from pathlib import Path
 
 from prompts import MAIN_SYSTEM_PROMPT
@@ -122,6 +124,33 @@ def test_xhs_copy_documents_multi_version_contract():
     assert "顶层仍保留" in copy_block and "省略 `versions`" in copy_block
     # 前端按 label 映射 A/B/C 选择器
     assert '"A"' in copy_block and '"B"' in copy_block
+
+
+def test_xhs_imitation_saves_before_emission_and_carries_exact_lifecycle_identity():
+    """仿写不能只继承全局口号:最接近输出的局部契约必须完整规定先保存、再回填身份。"""
+    section_start = MAIN_SYSTEM_PROMPT.index("**子代理报告 → `xhs_imitation`")
+    section_end = MAIN_SYSTEM_PROMPT.index("**`xhs_panel`", section_start)
+    imitation_section = MAIN_SYSTEM_PROMPT[section_start:section_end]
+
+    # 保存顺序与输入必须在仿写局部契约内明确,避免模型被就近示例引导成先输出后落库。
+    assert imitation_section.index("save_generated_copy") < imitation_section.index("保存成功后")
+    assert "完整 A/B/C `versions`" in imitation_section
+    assert "真实 `reference_resource_id`" in imitation_section
+    assert "唯一来源" in imitation_section and "禁止从 `ImitationReport` 推导" in imitation_section
+    assert "保存失败时不得输出带伪造身份" in imitation_section
+
+    # 示例本身就是前端/模型会照抄的契约,必须可解析且携带完整稳定身份。
+    match = re.search(r"```xhs_imitation\s*\n(.*?)\n```", imitation_section, re.DOTALL)
+    assert match is not None, "缺少 xhs_imitation JSON 示例"
+    payload = json.loads(match.group(1))
+
+    for field in ("resource_id", "resource_version", "latest_resource_version", "state_version"):
+        assert field in payload, f"xhs_imitation 顶层缺少生命周期字段 {field}"
+    assert payload["reference_resource_id"]
+    assert [version["label"] for version in payload["versions"]] == ["A", "B", "C"]
+    assert [version["resource_version"] for version in payload["versions"]] == [1, 2, 3]
+    assert payload["resource_version"] == payload["versions"][0]["resource_version"]
+    assert payload["latest_resource_version"] == payload["versions"][-1]["resource_version"]
 
 
 def test_prompt_forbids_fabricating_source_freshness():

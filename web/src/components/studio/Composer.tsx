@@ -162,11 +162,14 @@ export function CopyDoctor({ checks, score }: { checks: CheckResult[]; score: nu
 // 定稿 → 排期 bar。remaining=未通过的体检项数(可选):60-79 分时做「临界引导」,
 // 告诉用户"就差 N 项达标就能定稿",把注意力引到差的那几项而不是干看分数。
 export function ScheduleBar({ score, status, remaining }: { score: number; status: StudioNote["status"]; remaining?: number }) {
-  const { month, setSection, actions } = useStudio();
+  const { month, note, selectedAccount, copyLifecycleStatus, setSection, actions } = useStudio();
   const [picking, setPicking] = useState(false);
   const ready = score >= 80;
   const nearReady = !ready && score >= 60;
   const scheduled = status === "scheduled";
+  const exactVersion = note.versions?.[note.activeVersion]?.resourceVersion;
+  const traceable = Boolean(note.resourceId && exactVersion && copyLifecycleStatus === "ready");
+  const schedulingReady = ready && traceable && Boolean(selectedAccount);
 
   return (
     <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8, position: "sticky", bottom: 0, background: "var(--surface-card)" }}>
@@ -201,7 +204,15 @@ export function ScheduleBar({ score, status, remaining }: { score: number; statu
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 11, color: nearReady ? "var(--primary)" : "var(--text-subtle)", fontWeight: nearReady ? 700 : 400, flex: 1 }}>
             {ready
-              ? "体检达标，可以定稿啦 🎉"
+              ? !note.resourceId
+                ? "这篇旧稿没有后端资源标识，不能安全排期"
+                : !exactVersion
+                  ? "当前草稿缺少精确版本号，不能用其他版本代替排期"
+                  : copyLifecycleStatus !== "ready"
+                    ? "正在确认文案版本状态…"
+                    : !selectedAccount
+                      ? "体检已达标，请先选择发布账号"
+                      : "体检达标，可以定稿啦 🎉"
               : nearReady && remaining
                 ? `就差 ${remaining} 项达标就能定稿,再改改这几项 →`
                 : `体检 ${score} 分，建议 ≥80 再发`}
@@ -209,7 +220,7 @@ export function ScheduleBar({ score, status, remaining }: { score: number; statu
           <Button variant="secondary" size="sm" leftIcon={<Icon name="cloud-upload" size={13} />} onClick={actions.syncFeishu}>
             同步飞书
           </Button>
-          <Button variant="primary" size="sm" leftIcon={<Icon name="calendar-check" size={13} />} onClick={() => setPicking(true)} disabled={!ready}>
+          <Button variant="primary" size="sm" leftIcon={<Icon name="calendar-check" size={13} />} onClick={() => setPicking(true)} disabled={!schedulingReady}>
             定稿并排期
           </Button>
         </div>

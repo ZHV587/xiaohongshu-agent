@@ -292,8 +292,8 @@ def test_write_endpoints_reject_missing_internal_key(monkeypatch):
 
 def test_schedule_missing_field_returns_400(monkeypatch):
     client = _client(monkeypatch)
-    base = {"resourceId": "11111111-1111-1111-1111-111111111111", "date": "2026-02-12", "time": "19:00", "account": "acc_1"}
-    for field in ("resourceId", "date", "time", "account"):
+    base = {"resourceId": "11111111-1111-1111-1111-111111111111", "targetResourceVersion": 1, "expectedLatestResourceVersion": 1, "expectedStateVersion": 1, "date": "2026-02-12", "time": "19:00", "account": "acc_1"}
+    for field in ("resourceId", "targetResourceVersion", "expectedLatestResourceVersion", "expectedStateVersion", "date", "time", "account"):
         body = dict(base)
         body.pop(field)
         response = client.post("/internal/studio/schedule", headers=_user_headers(), json=body)
@@ -305,18 +305,18 @@ def test_schedule_success_returns_scheduled_item(monkeypatch):
     client = _client(monkeypatch)
     captured = {}
 
-    def _fake(*, tenant_id, actor_open_id, resource_id, date, time, account):
+    def _fake(*, tenant_id, actor_open_id, resource_id, target_resource_version, expected_latest_resource_version, expected_state_version, date, time, account, final_draft=None, request_id=None):
         captured.update(
             tenant_id=tenant_id, actor_open_id=actor_open_id, resource_id=resource_id,
             date=date, time=time, account=account,
         )
-        return {"date": 12, "item": {"t": "露营避坑", "time": time, "tone": "coral", "acct": account}}
+        return {"date": 12, "item": {"t": "露营避坑", "time": time, "tone": "coral", "acct": account}, "resourceVersion": target_resource_version, "stateVersion": 2}
 
     _patch_persist(monkeypatch, "_persist_schedule", _fake)
     response = client.post(
         "/internal/studio/schedule",
         headers=_user_headers(open_id="ou_alice"),
-        json={"resourceId": " 11111111-1111-1111-1111-111111111111 ", "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
+        json={"resourceId": " 11111111-1111-1111-1111-111111111111 ", "targetResourceVersion": 1, "expectedLatestResourceVersion": 1, "expectedStateVersion": 1, "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
     )
     assert response.status_code == 200
     payload = response.json()
@@ -324,10 +324,51 @@ def test_schedule_success_returns_scheduled_item(monkeypatch):
     assert payload["scheduled"] == {
         "date": 12,
         "item": {"t": "露营避坑", "time": "19:00", "tone": "coral", "acct": "acc_1"},
+        "resourceVersion": 1,
+        "stateVersion": 2,
     }
     # handler 转发前 strip,落库收到去空白后的 resourceId 与登录身份
     assert captured["resource_id"] == "11111111-1111-1111-1111-111111111111"
     assert captured["actor_open_id"] == "ou_alice"
+
+
+def test_schedule_final_draft_requires_and_forwards_stable_request_id(monkeypatch):
+    client = _client(monkeypatch)
+    body = {
+        "resourceId": "11111111-1111-1111-1111-111111111111",
+        "targetResourceVersion": 1,
+        "expectedLatestResourceVersion": 1,
+        "expectedStateVersion": 1,
+        "date": "2026-02-12",
+        "time": "19:00",
+        "account": "acc_1",
+        "finalDraft": {"title": "Final", "body": "Body", "tags": []},
+    }
+    missing = client.post(
+        "/internal/studio/schedule", headers=_user_headers(), json=body
+    )
+    assert missing.status_code == 400
+    assert "requestId" in missing.json()["error"]
+
+    captured = {}
+
+    def _fake(**kwargs):
+        captured.update(kwargs)
+        return {
+            "date": 12,
+            "item": {"t": "Final", "time": "19:00", "tone": "coral", "acct": "acc_1"},
+            "resourceVersion": 2,
+            "stateVersion": 2,
+        }
+
+    _patch_persist(monkeypatch, "_persist_schedule", _fake)
+    body["requestId"] = "stable-schedule-attempt-1"
+    response = client.post(
+        "/internal/studio/schedule", headers=_user_headers(), json=body
+    )
+    assert response.status_code == 200
+    assert captured["request_id"] == "stable-schedule-attempt-1"
+    assert captured["final_draft"] == body["finalDraft"]
 
 
 def test_schedule_persist_failure_returns_500_without_leak(monkeypatch):
@@ -340,7 +381,7 @@ def test_schedule_persist_failure_returns_500_without_leak(monkeypatch):
     response = client.post(
         "/internal/studio/schedule",
         headers=_user_headers(),
-        json={"resourceId": "11111111-1111-1111-1111-111111111111", "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
+        json={"resourceId": "11111111-1111-1111-1111-111111111111", "targetResourceVersion": 1, "expectedLatestResourceVersion": 1, "expectedStateVersion": 1, "date": "2026-02-12", "time": "19:00", "account": "acc_1"},
     )
     # 落库失败整体失败(前端据此回滚乐观更新),不回带异常细节
     assert response.status_code == 500
@@ -390,7 +431,7 @@ def test_write_endpoints_reject_malformed_resource_id_returns_400(monkeypatch):
     client = _client(monkeypatch)
     cases = (
         ("/internal/studio/backfill", {"resourceId": "not-a-uuid", "metrics": {"likes": 1}}),
-        ("/internal/studio/schedule", {"resourceId": "not-a-uuid", "date": "2026-02-12", "time": "19:00", "account": "acc_1"}),
+        ("/internal/studio/schedule", {"resourceId": "not-a-uuid", "targetResourceVersion": 1, "expectedLatestResourceVersion": 1, "expectedStateVersion": 1, "date": "2026-02-12", "time": "19:00", "account": "acc_1"}),
         ("/internal/studio/pipeline-advance", {"resourceId": "not-a-uuid", "toStage": "measured"}),
     )
     for path, body in cases:
@@ -403,9 +444,9 @@ def test_backfill_success_returns_score(monkeypatch):
     client = _client(monkeypatch)
     captured = {}
 
-    def _fake(*, tenant_id, actor_open_id, resource_id, metrics, published_at=None, note_url=None):
+    def _fake(*, tenant_id, actor_open_id, resource_id, metrics, published_at=None, note_url=None, target_resource_version=None):
         captured.update(resource_id=resource_id, metrics=metrics, note_url=note_url)
-        return {"score": 0.42}
+        return {"score": 0.42, "target_resource_version": 3}
 
     _patch_persist(monkeypatch, "_persist_backfill", _fake)
     response = client.post(
@@ -419,7 +460,7 @@ def test_backfill_success_returns_score(monkeypatch):
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload == {"ok": True, "score": 0.42}
+    assert payload == {"ok": True, "score": 0.42, "resourceVersion": 3}
     assert captured["metrics"] == {"views": 12000, "likes": 1240, "collects": 340}
     assert captured["note_url"] == "https://xhslink/abc"
 
@@ -491,6 +532,112 @@ def test_pipeline_advance_success_returns_stage(monkeypatch):
     assert captured == {"resource_id": "11111111-1111-1111-1111-111111111111", "to_stage": "published", "link": "https://xhslink/abc"}
 
 
+def test_copy_lifecycle_select_returns_exact_version_and_state_token(monkeypatch):
+    from types import SimpleNamespace
+    import data_foundation.studio_api as studio_api
+
+    client = _client(monkeypatch)
+
+    @contextmanager
+    def _repo():
+        yield object()
+
+    class _Lifecycle:
+        def __init__(self, _repo):
+            pass
+
+        def select_version(self, **kwargs):
+            assert kwargs["resource_version"] == 2
+            assert kwargs["expected_state_version"] == 3
+            return SimpleNamespace(
+                resource_id=kwargs["resource_id"], lifecycle_status="selected",
+                selected_version=2, selected_label="B", adopted_version=None,
+                finalized_version=None, published_version=None,
+                knowledge_target_version=None, latest_resource_version=3, state_version=4,
+            )
+
+        def list_versions(self, **_kwargs):
+            return [
+                {
+                    "resourceVersion": 2,
+                    "label": "B",
+                    "title": "B title",
+                    "body": "B body",
+                    "tags": [],
+                    "cover": "",
+                    "note": "",
+                }
+            ]
+
+    monkeypatch.setattr(studio_api, "_repository", _repo)
+    monkeypatch.setattr(studio_api, "GeneratedCopyRepository", _Lifecycle)
+    response = client.post(
+        "/internal/studio/copies/select",
+        headers=_user_headers(),
+        json={
+            "resourceId": "11111111-1111-1111-1111-111111111111",
+            "resourceVersion": 2,
+            "expectedStateVersion": 3,
+            "label": "B",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["lifecycle"] == {
+        "resourceId": "11111111-1111-1111-1111-111111111111",
+        "status": "selected",
+        "selectedVersion": 2,
+        "selectedLabel": "B",
+        "adoptedVersion": None,
+        "finalizedVersion": None,
+        "publishedVersion": None,
+        "knowledgeTargetVersion": None,
+        "latestResourceVersion": 3,
+        "stateVersion": 4,
+        "versions": [
+            {
+                "resourceVersion": 2,
+                "label": "B",
+                "title": "B title",
+                "body": "B body",
+                "tags": [],
+                "cover": "",
+                "note": "",
+            }
+        ],
+    }
+
+
+def test_copy_lifecycle_stale_write_returns_409(monkeypatch):
+    import data_foundation.studio_api as studio_api
+
+    client = _client(monkeypatch)
+
+    @contextmanager
+    def _repo():
+        yield object()
+
+    class _Lifecycle:
+        def __init__(self, _repo):
+            pass
+
+        def adopt_version(self, **_kwargs):
+            raise studio_api.GeneratedCopyConflict("state version changed")
+
+    monkeypatch.setattr(studio_api, "_repository", _repo)
+    monkeypatch.setattr(studio_api, "GeneratedCopyRepository", _Lifecycle)
+    response = client.post(
+        "/internal/studio/copies/adopt",
+        headers=_user_headers(),
+        json={
+            "resourceId": "11111111-1111-1111-1111-111111111111",
+            "resourceVersion": 2,
+            "expectedStateVersion": 1,
+        },
+    )
+    assert response.status_code == 409
+    assert "state version changed" in response.json()["error"]
+
+
 # ── 写路径落库逻辑(fake 仓储跑真实代码路径,无 DB);断言写入的 content_json/边 ──
 # ── 与 Epic 5 GET 的读取口径(_load_schedule_items / _load_pipeline)逐字段对齐(读写自洽)──
 
@@ -526,8 +673,11 @@ class _FakeRepo:
     def get_resource(self, tenant_id, actor_open_id, resource_id):
         return self._resources.get(resource_id)
 
+    def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
+        return self._resources.get(resource_id)
+
     def writable_resource_metadata(self, *, tenant_id, actor_open_id, resource_id):
-        return {"visibility": "team", "owner_open_id": actor_open_id}
+        return {"type": "performance_metric", "version": 1, "visibility": "team", "owner_open_id": actor_open_id}
 
     def find_performance_metric_id(self, *, tenant_id, target_resource_id):
         return self._metric_id
@@ -553,6 +703,20 @@ def _use_fake_repo(monkeypatch, repo):
         yield repo
 
     monkeypatch.setattr(studio_api, "_repository", _fake_repository)
+    class _FakeLifecycle:
+        def __init__(self, resource_repo):
+            self.resource_repo = resource_repo
+
+        def finalize_for_schedule(self, **kwargs):
+            return type("State", (), {
+                "finalized_version": kwargs["target_resource_version"],
+                "state_version": kwargs["expected_state_version"] + 1,
+            })()
+
+        def mark_published(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(studio_api, "GeneratedCopyRepository", _FakeLifecycle)
     monkeypatch.setattr(studio_api, "_best_effort_feishu_draft", lambda *a, **k: None)
     monkeypatch.setattr(studio_api, "_best_effort_feishu_metrics", lambda *a, **k: None)
 
@@ -564,10 +728,12 @@ def test_persist_schedule_writes_scheduled_metric_and_edge(monkeypatch):
     _use_fake_repo(monkeypatch, repo)
     result = _persist_schedule(
         tenant_id="default", actor_open_id="ou_user", resource_id="res_1",
+        target_resource_version=1, expected_latest_resource_version=1,
+        expected_state_version=1,
         date="2026-02-12", time="19:00", account="acc_1",
     )
     # 返回 calendar 排期项(日历 GET 按 day 分组渲染)
-    assert result == {"date": 12, "item": {"t": "露营避坑", "time": "19:00", "tone": "coral", "acct": "acc_1"}}
+    assert result == {"date": 12, "item": {"t": "露营避坑", "time": "19:00", "tone": "coral", "acct": "acc_1"}, "resourceVersion": 1, "stateVersion": 2}
     content = repo.upserts[0]["content_json"]
     # 与 _load_schedule_items 读取口径对齐:scheduled_date/scheduled_time/account/stage
     assert content["scheduled_date"] == "2026-02-12"
@@ -575,6 +741,7 @@ def test_persist_schedule_writes_scheduled_metric_and_edge(monkeypatch):
     assert content["account"] == "acc_1"
     assert content["stage"] == "scheduled"
     assert content["target_resource_id"] == "res_1"
+    assert content["target_resource_version"] == 1
     assert repo.upserts[0]["resource_type"] == "performance_metric"
     # measured_by 边:source=源 generated_copy,target=排期 performance_metric(GET 经此边回读标题)
     edge = repo.edges[0]
@@ -593,12 +760,47 @@ def test_persist_schedule_not_downgrade_published_stage(monkeypatch):
     _use_fake_repo(monkeypatch, repo)
     _persist_schedule(
         tenant_id="default", actor_open_id="ou_user", resource_id="res_1",
+        target_resource_version=1, expected_latest_resource_version=1,
+        expected_state_version=1,
         date="2026-03-01", time="20:00", account="acc_1",
     )
     content = repo.upserts[0]["content_json"]
     # 已进入 published 的条目重排期只刷新排期元数据,不回退 stage(单向状态机)
     assert content["stage"] == "published"
     assert content["scheduled_date"] == "2026-03-01"
+
+
+def test_schedule_and_feishu_use_finalized_snapshot_not_latest_candidate(monkeypatch):
+    from data_foundation.studio_api import _persist_schedule
+    import data_foundation.studio_api as studio_api
+
+    latest = _FakeResource("res_1", title="C 未采纳标题", content_text="C 未采纳正文")
+    finalized = _FakeResource("res_1", title="A 定稿标题", content_text="A 定稿正文")
+    repo = _FakeRepo(resources={"res_1": latest})
+    repo.get_resource_version = lambda tenant_id, actor_open_id, resource_id, resource_version: finalized
+    _use_fake_repo(monkeypatch, repo)
+    synced = {}
+    monkeypatch.setattr(
+        studio_api,
+        "_best_effort_feishu_draft",
+        lambda actor_open_id, **kwargs: synced.update(kwargs),
+    )
+
+    result = _persist_schedule(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id="res_1",
+        target_resource_version=1,
+        expected_latest_resource_version=1,
+        expected_state_version=1,
+        date="2026-02-12",
+        time="19:00",
+        account="acc_1",
+    )
+
+    assert result["item"]["t"] == "A 定稿标题"
+    assert repo.upserts[0]["title"].endswith("A 定稿标题")
+    assert synced == {"title": "A 定稿标题", "content": "A 定稿正文"}
 
 
 def test_persist_pipeline_stage_allows_forward_transitions(monkeypatch):
@@ -608,7 +810,7 @@ def test_persist_pipeline_stage_allows_forward_transitions(monkeypatch):
     repo = _FakeRepo(
         resources={"res_1": _FakeResource("res_1", title="待发布稿")},
         metric_id="m1",
-        metric_content={"stage": "scheduled", "account": "acc_1"},
+        metric_content={"stage": "scheduled", "account": "acc_1", "target_resource_version": 1},
     )
     _use_fake_repo(monkeypatch, repo)
     result = _persist_pipeline_stage(
@@ -625,7 +827,7 @@ def test_persist_pipeline_stage_allows_forward_transitions(monkeypatch):
     repo2 = _FakeRepo(
         resources={"res_2": _FakeResource("res_2", title="已发布稿")},
         metric_id="m2",
-        metric_content={"stage": "published", "note_url": "https://xhslink/keep"},
+        metric_content={"stage": "published", "note_url": "https://xhslink/keep", "target_resource_version": 1},
     )
     _use_fake_repo(monkeypatch, repo2)
     result2 = _persist_pipeline_stage(
@@ -635,6 +837,58 @@ def test_persist_pipeline_stage_allows_forward_transitions(monkeypatch):
     content2 = repo2.upserts[0]["content_json"]
     assert content2["stage"] == "measured"
     assert content2["note_url"] == "https://xhslink/keep"  # 保留既有回链
+
+
+def test_publish_and_performance_notifications_use_bound_resource_version(monkeypatch):
+    from data_foundation.studio_api import _persist_backfill, _persist_pipeline_stage
+    import data_foundation.studio_api as studio_api
+
+    latest = _FakeResource("res_1", title="C 最新候选", content_text="C 正文")
+    exact = _FakeResource("res_1", title="A 已定稿", content_text="A 正文")
+    repo = _FakeRepo(
+        resources={"res_1": latest},
+        metric_id="m1",
+        metric_content={
+            "stage": "scheduled",
+            "target_resource_version": 1,
+            "account": "acc_1",
+        },
+    )
+    repo.get_resource_version = lambda tenant_id, actor_open_id, resource_id, resource_version: exact
+    _use_fake_repo(monkeypatch, repo)
+    draft_sync = {}
+    metrics_sync = {}
+    monkeypatch.setattr(
+        studio_api,
+        "_best_effort_feishu_draft",
+        lambda actor_open_id, **kwargs: draft_sync.update(kwargs),
+    )
+    _persist_pipeline_stage(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id="res_1",
+        to_stage="published",
+        link="https://xhslink/a",
+    )
+    assert repo.upserts[-1]["title"] == "published · A 已定稿"
+    assert draft_sync == {"title": "A 已定稿", "content": "A 正文"}
+
+    # 回填重新使用一个已发布 metric，通知标题仍取 target_resource_version=1。
+    repo._resources["m1"].content_json["stage"] = "published"
+    repo._resources["m1"].content_json["target_resource_version"] = 1
+    monkeypatch.setattr(
+        studio_api,
+        "_best_effort_feishu_metrics",
+        lambda actor_open_id, **kwargs: metrics_sync.update(kwargs),
+    )
+    _persist_backfill(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id="res_1",
+        target_resource_version=1,
+        metrics={"likes": 10},
+    )
+    assert metrics_sync["title"] == "A 已定稿"
 
 
 def test_persist_pipeline_stage_rejects_reverse_skip_and_no_start(monkeypatch):

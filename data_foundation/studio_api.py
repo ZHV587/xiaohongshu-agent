@@ -50,6 +50,10 @@ from data_foundation.operations import (
 from data_foundation.outbox_requests import default_write_requests
 from data_foundation.performance_feedback import MEASURED_BY_EDGE, save_performance_metric_resource
 from data_foundation.permissions import default_tenant_id
+from data_foundation.repositories.generated_copy import (
+    GeneratedCopyConflict,
+    GeneratedCopyRepository,
+)
 from data_foundation.studio_shared import (
     day_of_month,
     derive_stage,
@@ -190,6 +194,28 @@ def _is_uuid(value: object) -> bool:
         return False
 
 
+def _positive_int(value: object, *, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"'{field}' must be a positive integer")
+    return value
+
+
+def _lifecycle_payload(state, versions: list[dict]) -> dict:
+    return {
+        "resourceId": state.resource_id,
+        "status": state.lifecycle_status,
+        "selectedVersion": state.selected_version,
+        "selectedLabel": state.selected_label,
+        "adoptedVersion": state.adopted_version,
+        "finalizedVersion": state.finalized_version,
+        "publishedVersion": state.published_version,
+        "knowledgeTargetVersion": state.knowledge_target_version,
+        "latestResourceVersion": state.latest_resource_version,
+        "stateVersion": state.state_version,
+        "versions": versions,
+    }
+
+
 # ── 写路径:落库 helper(真实数据,复用既有仓储/落库范式;与飞书同步分离失败域) ──
 
 
@@ -239,7 +265,18 @@ def _best_effort_feishu_metrics(
 
 
 def _persist_schedule(
-    *, tenant_id: str, actor_open_id: str, resource_id: str, date: str, time: str, account: str
+    *,
+    tenant_id: str,
+    actor_open_id: str,
+    resource_id: str,
+    target_resource_version: int,
+    expected_latest_resource_version: int,
+    expected_state_version: int,
+    date: str,
+    time: str,
+    account: str,
+    final_draft: dict | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """排期落库:把 generated_copy 落为 stage='scheduled' 的 performance_metric(measured_by 边)。
 
@@ -252,14 +289,29 @@ def _persist_schedule(
     if day is None:
         raise ValueError("date must be in 'YYYY-MM-DD' format")
     with _repository() as repo:
-        target = repo.get_resource(tenant_id, actor_open_id, resource_id)
-        if target is None:
-            raise PermissionError("target resource not found or not readable")
-        meta = repo.writable_resource_metadata(
-            tenant_id=tenant_id, actor_open_id=actor_open_id, resource_id=resource_id
-        )
-        title = target.title or "未命名笔记"
         with repo.unit_of_work():
+            lifecycle = GeneratedCopyRepository(repo).finalize_for_schedule(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                target_resource_version=target_resource_version,
+                expected_latest_resource_version=expected_latest_resource_version,
+                expected_state_version=expected_state_version,
+                final_draft=final_draft,
+                request_id=request_id,
+            )
+            target = repo.get_resource_version(
+                tenant_id,
+                actor_open_id,
+                resource_id,
+                int(lifecycle.finalized_version),
+            )
+            if target is None:
+                raise PermissionError("target resource not found or not readable")
+            meta = repo.writable_resource_metadata(
+                tenant_id=tenant_id, actor_open_id=actor_open_id, resource_id=resource_id
+            )
+            title = target.title or "未命名笔记"
             existing_id = repo.find_performance_metric_id(
                 tenant_id=tenant_id, target_resource_id=resource_id
             )
@@ -269,6 +321,7 @@ def _persist_schedule(
             content.update(
                 {
                     "target_resource_id": resource_id,
+                    "target_resource_version": lifecycle.finalized_version,
                     "scheduled_date": date,
                     "scheduled_time": time,
                     "account": account,
@@ -302,6 +355,8 @@ def _persist_schedule(
     return {
         "date": day,
         "item": {"t": title, "time": time, "tone": "coral", "acct": account},
+        "resourceVersion": lifecycle.finalized_version,
+        "stateVersion": lifecycle.state_version,
     }
 
 
@@ -313,6 +368,7 @@ def _persist_backfill(
     metrics: dict,
     published_at: str | None = None,
     note_url: str | None = None,
+    target_resource_version: int | None = None,
 ) -> dict:
     """回填落库:复用 save_performance_metric_resource(幂等 upsert + measured_by 边 + _clean_metrics
     校验 + score)。非数值/负值经 _clean_metrics 抛 ValueError → 上层 400。
@@ -322,14 +378,33 @@ def _persist_backfill(
     使发布管线/日历 GET 在回填后仍读出归属与回链(端到端自洽)。
     """
     with _repository() as repo:
+        target_meta = repo.writable_resource_metadata(
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            resource_id=resource_id,
+        )
+        if target_meta.get("type") == "generated_copy":
+            lifecycle_repo = GeneratedCopyRepository(repo)
+            attributed_version = lifecycle_repo.attributable_version(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                requested_version=target_resource_version,
+            )
+        else:
+            attributed_version = target_resource_version or int(target_meta["version"])
         existing_id = repo.find_performance_metric_id(
             tenant_id=tenant_id, target_resource_id=resource_id
         )
         prior = existing_metric_content(
             repo, tenant_id=tenant_id, actor_open_id=actor_open_id, metric_id=existing_id
         )
-        target = repo.get_resource(tenant_id, actor_open_id, resource_id)
-        title = target.title if target is not None else resource_id
+        attributed_target = repo.get_resource_version(
+            tenant_id, actor_open_id, resource_id, int(attributed_version)
+        )
+        if attributed_target is None:
+            raise PermissionError("target resource version not found or not readable")
+        title = attributed_target.title
         # stage/account/scheduled_* 与回链经 extra_content 在同一事务内一次写入(原子):
         # 回填即「已测量」→ stage=measured;保留排期归属与既有回链(note_url),避免回填后
         # 该条在发布管线里因 measured 无 link 被静默剔除(_load_pipeline 对 measured 要求非空 link)。
@@ -339,6 +414,7 @@ def _persist_backfill(
             if prior.get(key)
         }
         carryover["stage"] = "measured"
+        carryover["target_resource_version"] = attributed_version
         result = save_performance_metric_resource(
             repo,
             tenant_id=tenant_id,
@@ -349,11 +425,12 @@ def _persist_backfill(
             note_url=note_url or prior.get("note_url"),
             channel=prior.get("channel") or "xiaohongshu",
             extra_content=carryover,
+            target_resource_version=attributed_version,
         )
     _best_effort_feishu_metrics(
         actor_open_id, title=title, metrics=metrics, note_url=note_url or prior.get("note_url")
     )
-    return {"score": result["score"]}
+    return {"score": result["score"], "target_resource_version": attributed_version}
 
 
 def _persist_pipeline_stage(
@@ -379,8 +456,15 @@ def _persist_pipeline_stage(
         current = derive_stage(content) or "scheduled"
         if (current, to_stage) not in _ALLOWED_TRANSITIONS:
             raise _StageConflict(f"cannot advance from '{current}' to '{to_stage}'")
-        target = repo.get_resource(tenant_id, actor_open_id, resource_id)
-        title = target.title if target is not None else resource_id
+        target_version = content.get("target_resource_version")
+        if not isinstance(target_version, int) or isinstance(target_version, bool) or target_version <= 0:
+            raise _StageConflict("pipeline item has no exact target resource version")
+        target = repo.get_resource_version(
+            tenant_id, actor_open_id, resource_id, target_version
+        )
+        if target is None:
+            raise PermissionError("target resource version not found or not readable")
+        title = target.title
         with repo.unit_of_work():
             content["target_resource_id"] = resource_id
             if to_stage == "published":
@@ -406,11 +490,134 @@ def _persist_pipeline_stage(
                 edge_type=MEASURED_BY_EDGE,
                 weight=float(content.get("score") or 0.0),
             )
+            if to_stage == "published":
+                GeneratedCopyRepository(repo).mark_published(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=resource_id,
+                )
     if to_stage == "published":
         _best_effort_feishu_draft(
             actor_open_id, title=title, content=(target.content_text if target else "") or ""
         )
     return {"stage": to_stage}
+
+
+async def internal_studio_copy_lifecycle(request: Request) -> JSONResponse:
+    """读取单一 generated_copy 的版本指针与乐观并发令牌。"""
+    from data_foundation.internal_api import _json_error, _json_ok, require_user
+
+    actor = require_user(request)
+    if isinstance(actor, JSONResponse):
+        return actor
+    resource_id = str(request.path_params.get("resource_id") or "").strip()
+    if not _is_uuid(resource_id):
+        return _json_error(400, "Bad Request: 'resourceId' must be a valid uuid")
+    try:
+        with _repository() as repo:
+            lifecycle = GeneratedCopyRepository(repo)
+            state = lifecycle.get_state(
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor.open_id,
+                resource_id=resource_id,
+            )
+            versions = lifecycle.list_versions(
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor.open_id,
+                resource_id=resource_id,
+            )
+    except PermissionError:
+        return _json_error(403, "Forbidden: resource is not writable")
+    except ValueError as exc:
+        return _json_error(404, f"Not Found: {exc}")
+    except Exception:  # noqa: BLE001
+        logger.warning("studio_copy_lifecycle_read_failed")
+        return _json_error(500, "Copy lifecycle read failed")
+    return _json_ok({"ok": True, "lifecycle": _lifecycle_payload(state, versions)})
+
+
+async def _copy_lifecycle_write(request: Request, action: str) -> JSONResponse:
+    from data_foundation.internal_api import _json_error, _json_ok, require_user
+
+    actor = require_user(request)
+    if isinstance(actor, JSONResponse):
+        return actor
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return _json_error(400, "Bad Request: invalid JSON body")
+    if not isinstance(body, dict):
+        return _json_error(400, "Bad Request: body must be an object")
+    if not _is_uuid(body.get("resourceId")):
+        return _json_error(400, "Bad Request: 'resourceId' must be a valid uuid")
+    try:
+        resource_id = str(body["resourceId"]).strip()
+        expected_state_version = _positive_int(
+            body.get("expectedStateVersion"), field="expectedStateVersion"
+        )
+        with _repository() as repo:
+            lifecycle = GeneratedCopyRepository(repo)
+            common = {
+                "tenant_id": default_tenant_id(),
+                "actor_open_id": actor.open_id,
+                "resource_id": resource_id,
+                "expected_state_version": expected_state_version,
+            }
+            if action == "select":
+                state = lifecycle.select_version(
+                    **common,
+                    resource_version=_positive_int(body.get("resourceVersion"), field="resourceVersion"),
+                    label=body.get("label"),
+                )
+            elif action == "revision":
+                if not isinstance(body.get("tags"), list):
+                    raise ValueError("'tags' must be an array")
+                state = lifecycle.save_revision(
+                    **common,
+                    expected_resource_version=_positive_int(
+                        body.get("expectedResourceVersion"), field="expectedResourceVersion"
+                    ),
+                    title=body.get("title"),
+                    body=body.get("body"),
+                    tags=body["tags"],
+                    label=body.get("label"),
+                    cover=body.get("cover"),
+                    note=body.get("note"),
+                )
+            elif action == "adopt":
+                state = lifecycle.adopt_version(
+                    **common,
+                    resource_version=_positive_int(body.get("resourceVersion"), field="resourceVersion"),
+                )
+            else:  # pragma: no cover - 路由表固定 action
+                raise ValueError("unsupported lifecycle action")
+            versions = lifecycle.list_versions(
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor.open_id,
+                resource_id=resource_id,
+            )
+    except GeneratedCopyConflict as exc:
+        return _json_error(409, f"Conflict: {exc}")
+    except ValueError as exc:
+        return _json_error(400, f"Bad Request: {exc}")
+    except PermissionError:
+        return _json_error(403, "Forbidden: resource is not writable")
+    except Exception:  # noqa: BLE001
+        logger.warning("studio_copy_lifecycle_write_failed action=%s", action)
+        return _json_error(500, "Copy lifecycle write failed")
+    return _json_ok({"ok": True, "lifecycle": _lifecycle_payload(state, versions)})
+
+
+async def internal_studio_copy_select(request: Request) -> JSONResponse:
+    return await _copy_lifecycle_write(request, "select")
+
+
+async def internal_studio_copy_revision(request: Request) -> JSONResponse:
+    return await _copy_lifecycle_write(request, "revision")
+
+
+async def internal_studio_copy_adopt(request: Request) -> JSONResponse:
+    return await _copy_lifecycle_write(request, "adopt")
 
 
 async def internal_studio_schedule(request: Request) -> JSONResponse:
@@ -431,20 +638,55 @@ async def internal_studio_schedule(request: Request) -> JSONResponse:
         return _json_error(400, "Bad Request: invalid JSON body")
     if not isinstance(body, dict):
         return _json_error(400, "Bad Request: body must be an object")
-    missing = _require_fields(body, ("resourceId", "date", "time", "account"))
+    missing = _require_fields(
+        body,
+        (
+            "resourceId",
+            "targetResourceVersion",
+            "expectedLatestResourceVersion",
+            "expectedStateVersion",
+            "date",
+            "time",
+            "account",
+        ),
+    )
     if missing is not None:
         return _json_error(400, f"Bad Request: missing field '{missing}'")
     if not _is_uuid(body.get("resourceId")):
         return _json_error(400, "Bad Request: 'resourceId' must be a valid uuid")
     try:
+        target_resource_version = _positive_int(
+            body.get("targetResourceVersion"), field="targetResourceVersion"
+        )
+        expected_latest_resource_version = _positive_int(
+            body.get("expectedLatestResourceVersion"), field="expectedLatestResourceVersion"
+        )
+        expected_state_version = _positive_int(
+            body.get("expectedStateVersion"), field="expectedStateVersion"
+        )
+        final_draft = body.get("finalDraft")
+        if final_draft is not None and not isinstance(final_draft, dict):
+            raise ValueError("'finalDraft' must be an object")
+        request_id = body.get("requestId")
+        if final_draft is not None and (
+            not isinstance(request_id, str) or not request_id.strip()
+        ):
+            raise ValueError("'requestId' is required when 'finalDraft' is provided")
         scheduled = _persist_schedule(
             tenant_id=default_tenant_id(),
             actor_open_id=actor.open_id,
             resource_id=str(body["resourceId"]).strip(),
+            target_resource_version=target_resource_version,
+            expected_latest_resource_version=expected_latest_resource_version,
+            expected_state_version=expected_state_version,
             date=str(body["date"]).strip(),
             time=str(body["time"]).strip(),
             account=str(body["account"]).strip(),
+            final_draft=final_draft,
+            request_id=request_id.strip() if isinstance(request_id, str) else None,
         )
+    except GeneratedCopyConflict as exc:
+        return _json_error(409, f"Conflict: {exc}")
     except ValueError as exc:
         return _json_error(400, f"Bad Request: {exc}")
     except PermissionError:
@@ -488,7 +730,14 @@ async def internal_studio_backfill(request: Request) -> JSONResponse:
             metrics=body["metrics"],
             published_at=body.get("publishedAt"),
             note_url=body.get("link") or body.get("noteUrl"),
+            target_resource_version=(
+                _positive_int(body.get("resourceVersion"), field="resourceVersion")
+                if body.get("resourceVersion") is not None
+                else None
+            ),
         )
+    except GeneratedCopyConflict as exc:
+        return _json_error(409, f"Conflict: {exc}")
     except ValueError as exc:
         # _clean_metrics 对非数值/负值/空指标抛 ValueError(需求 15.3)。
         return _json_error(400, f"Bad Request: {exc}")
@@ -497,7 +746,13 @@ async def internal_studio_backfill(request: Request) -> JSONResponse:
     except Exception:  # noqa: BLE001
         logger.warning("studio_backfill_persist_failed")
         return _json_error(500, "Backfill persistence failed")
-    return _json_ok({"ok": True, "score": result["score"]})
+    return _json_ok(
+        {
+            "ok": True,
+            "score": result["score"],
+            "resourceVersion": result["target_resource_version"],
+        }
+    )
 
 
 async def internal_studio_pipeline_advance(request: Request) -> JSONResponse:
@@ -536,7 +791,7 @@ async def internal_studio_pipeline_advance(request: Request) -> JSONResponse:
             to_stage=to_stage,
             link=link if isinstance(link, str) else None,
         )
-    except _StageConflict as exc:
+    except (_StageConflict, GeneratedCopyConflict) as exc:
         return _json_error(409, f"Conflict: {exc}")
     except ValueError as exc:
         return _json_error(400, f"Bad Request: {exc}")
@@ -556,6 +811,14 @@ studio_routes = [
     Route("/internal/studio/pipeline", internal_studio_pipeline, methods=["GET"]),
     Route("/internal/studio/recents", internal_studio_recents, methods=["GET"]),
     Route("/internal/studio/trends", internal_studio_trends, methods=["GET"]),
+    Route(
+        "/internal/studio/copies/{resource_id}/lifecycle",
+        internal_studio_copy_lifecycle,
+        methods=["GET"],
+    ),
+    Route("/internal/studio/copies/select", internal_studio_copy_select, methods=["POST"]),
+    Route("/internal/studio/copies/revision", internal_studio_copy_revision, methods=["POST"]),
+    Route("/internal/studio/copies/adopt", internal_studio_copy_adopt, methods=["POST"]),
     Route("/internal/studio/schedule", internal_studio_schedule, methods=["POST"]),
     Route("/internal/studio/backfill", internal_studio_backfill, methods=["POST"]),
     Route(

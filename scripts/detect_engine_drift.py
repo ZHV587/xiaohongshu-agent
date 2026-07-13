@@ -33,21 +33,44 @@ from data_foundation.index_drift import TOPIC_GRAPH, TOPIC_MEILI, detect_index_d
 from data_foundation.outbox_repository import OutboxRepository
 
 
-def _expected_by_tenant(conn) -> dict[str, int]:
+def _expected_by_topic(conn) -> dict[str, dict[str, int]]:
     rows = conn.execute(
-        "select tenant_id, count(*) as n from resources group by tenant_id"
+        """
+        select r.tenant_id,
+               count(*) as graph_n,
+               count(*) filter (
+                 where r.type <> 'generated_copy'
+                    or gcs.knowledge_target_version is not null
+               ) as meili_n
+        from resources r
+        left join generated_copy_states gcs
+          on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+        group by r.tenant_id
+        """
     ).fetchall()
-    return {row["tenant_id"]: int(row["n"]) for row in rows}
+    return {
+        TOPIC_GRAPH: {row["tenant_id"]: int(row["graph_n"]) for row in rows},
+        TOPIC_MEILI: {row["tenant_id"]: int(row["meili_n"]) for row in rows},
+    }
 
 
-def _meili_counts(tenants: list[str]) -> dict[str, int] | None:
+def _meili_counts(tenants: list[str]) -> tuple[dict[str, int], dict[str, int]] | None:
     cfg = meili_config_from_env()
     if cfg.state != "enabled":
         return None  # 引擎未启用:跳过该 topic 的对账
     from data_foundation.meili_client import MeiliResourceIndex
 
     index = MeiliResourceIndex.from_config(cfg)
-    return {t: index.count(tenant_id=t) for t in tenants}
+    # resource_version 是本次精确版本回表的硬契约。先等待 filterable settings
+    # 生效，再按租户同时数总文档和版本完整文档；漂移口径使用后者。
+    index.ensure_index()
+    usable: dict[str, int] = {}
+    malformed: dict[str, int] = {}
+    for tenant_id in tenants:
+        audit = index.audit_tenant(tenant_id=tenant_id)
+        usable[tenant_id] = audit.versioned_documents
+        malformed[tenant_id] = audit.malformed_documents
+    return usable, malformed
 
 
 def _falkor_counts(tenants: list[str]) -> dict[str, int] | None:
@@ -70,17 +93,21 @@ def main() -> int:
 
     conn = connect()
     try:
-        expected = _expected_by_tenant(conn)
-        tenants = sorted(expected)
+        expected = _expected_by_topic(conn)
+        tenants = sorted(
+            set(expected.get(TOPIC_GRAPH, {})) | set(expected.get(TOPIC_MEILI, {}))
+        )
         outbox = OutboxRepository(conn)
         pending = outbox.pending_counts_by_topic(topics=[TOPIC_MEILI, TOPIC_GRAPH])
 
         engine_actual: dict[str, dict[str, int]] = {}
         skipped: list[str] = []
-        meili = _meili_counts(tenants)
-        if meili is None:
+        meili_audit = _meili_counts(tenants)
+        meili_malformed: dict[str, int] = {}
+        if meili_audit is None:
             skipped.append(TOPIC_MEILI)
         else:
+            meili, meili_malformed = meili_audit
             engine_actual[TOPIC_MEILI] = meili
         falkor = _falkor_counts(tenants)
         if falkor is None:
@@ -89,13 +116,19 @@ def main() -> int:
             engine_actual[TOPIC_GRAPH] = falkor
 
         drift = detect_index_drift(
-            expected_by_tenant=expected,
+            expected_by_topic=expected,
             engine_actual=engine_actual,
             engine_pending=pending,
         )
 
         if skipped:
             print(f"跳过未启用引擎的 topic:{skipped}")
+        for tenant_id, malformed in sorted(meili_malformed.items()):
+            if malformed > 0:
+                print(
+                    f"Meili 版本字段缺失: tenant={tenant_id} "
+                    f"malformed_documents={malformed}"
+                )
         if not drift:
             print("对账通过:未检测到引擎数据丢失(已计入在途任务)。")
             return 0

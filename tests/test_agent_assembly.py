@@ -179,6 +179,7 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
         "semantic_search_resources",
         "graph_expand",
         "get_resource",
+        "get_generated_copy_lifecycle",
         "get_data_foundation_status",
         "sync_feishu_resources",
         "save_generated_topic",

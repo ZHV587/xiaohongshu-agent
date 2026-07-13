@@ -160,11 +160,11 @@ description: |
 - 信息密度：有没有废话、套话、空泛形容？(1-10)
 - 钩子力：标题和开头能不能勾住人往下看？(1-10)
 
-**改写产出只展示，不自动落库**：把去腔改写后的文案呈现给用户。质检/润色是加工环节，**绝不在改写完成后擅自调 `save_generated_copy`/`sync_copy_to_feishu`**——那会未经确认就落库、还会与原文案重复入库（违背"用户确认才落库"铁律）。
+**改写产出先冷存、绝不擅自同步**：把去腔改写后的完整候选按主控 §4 调 `save_generated_copy` 冷存为同一 stable resource 的新版本；候选无 knowledge target，不进入知识检索。此动作不等于采纳，**绝不在用户确认前调 `sync_copy_to_feishu`**，也不得另建重复文案。
 
 **用户确认保存后才落库**：当用户对改写结果发出"保存""确定""存档""同步"等明确指令，按主控 system prompt §4《存储路由与权威性》落库——先写数据库、成功后同步飞书，飞书写经 HITL 人工确认：
-- 若是对**已落库**文案的润色（上下文有该文案 `resource_id`）：`save_generated_copy` 以同一 `resource_id` 覆盖更新，再 `sync_copy_to_feishu`，不新建记录。
-- 若是对**尚未落库**的新文案润色：`save_generated_copy` 落库取得 `resource_id`，再 `sync_copy_to_feishu`。
+- 若是对**已有 stable resource** 的润色：走版本修订接口在同一 `resource_id` 追加不可变版本；必须携带 `latest_resource_version` 与 `state_version` 双 CAS 令牌。上下文缺任一令牌或返回冲突时，先调 `get_generated_copy_lifecycle(resource_id)` 读取 owner ACL 下的 exact snapshots 和最新令牌，再基于返回事实重试；不得猜版本、不得静默追写。用户确认后采纳该精确版本，再 `sync_copy_to_feishu`，不新建记录、不覆盖历史。
+- 若是首次生成的新文案：展示前已由主控 `save_generated_copy` 冷存并取得 `resource_id`；确认时只推进采纳指针并同步，不重复落库。
 
 ---
 

@@ -30,6 +30,9 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/studio/schedule": { path: "/internal/studio/schedule", method: "POST" },
   "/_internal/studio/backfill": { path: "/internal/studio/backfill", method: "POST" },
   "/_internal/studio/pipeline-advance": { path: "/internal/studio/pipeline-advance", method: "POST" },
+  "/_internal/studio/copies/select": { path: "/internal/studio/copies/select", method: "POST" },
+  "/_internal/studio/copies/revision": { path: "/internal/studio/copies/revision", method: "POST" },
+  "/_internal/studio/copies/adopt": { path: "/internal/studio/copies/adopt", method: "POST" },
   "/_internal/user-skills/list": { path: "/internal/user-skills", method: "GET" },
   "/_internal/user-skills/registry": { path: "/internal/user-skills/registry", method: "GET" },
   "/_internal/user-skills/validate": { path: "/internal/user-skills/validate", method: "POST" },
@@ -42,6 +45,29 @@ const internalPathMap: Record<string, InternalRoute> = {
   "/_internal/user-skills/disable": { path: "/internal/user-skills/disable", method: "POST" },
   "/_internal/user-skills/archive": { path: "/internal/user-skills/archive", method: "POST" },
 };
+
+const STUDIO_COPY_LIFECYCLE_PATH = /^\/_internal\/studio\/copies\/([^/]+)\/lifecycle$/;
+
+/** 固定路由之外只开放 generated_copy lifecycle 这一条受约束的动态内部路径。 */
+function resolveInternalRoute(pathName: string): InternalRoute | undefined {
+  const fixed = internalPathMap[pathName];
+  if (fixed) return fixed;
+  const match = STUDIO_COPY_LIFECYCLE_PATH.exec(pathName);
+  if (!match) return undefined;
+  let resourceId: string;
+  try {
+    resourceId = decodeURIComponent(match[1]);
+  } catch {
+    return undefined;
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(resourceId)) {
+    return undefined;
+  }
+  return {
+    path: `/internal/studio/copies/${encodeURIComponent(resourceId)}/lifecycle`,
+    method: "GET",
+  };
+}
 
 function jsonResponse(payload: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(payload), {
@@ -138,7 +164,7 @@ export async function forwardToInternalServer(
   // 向后兼容:既有调用不传则不附加任何 query。仅保留非空字符串值。
   query?: Record<string, string | undefined>
 ): Promise<Response> {
-  const route = internalPathMap[pathName];
+  const route = resolveInternalRoute(pathName);
   if (!route) {
     return jsonResponse({ error: `Unknown internal path: ${pathName}` }, 404);
   }

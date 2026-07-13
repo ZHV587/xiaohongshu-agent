@@ -164,3 +164,35 @@ def test_upsert_resource_tenant_isolation(migrated_conn):
             owner_open_id="user_2",
             conn=migrated_conn,
         )
+
+
+def test_get_resource_version_uses_snapshot_and_acl(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+    first = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_type="generated_copy",
+        title="A 标题",
+        content_text="A 正文",
+        content_json={"title": "A 标题", "body": "A 正文"},
+        visibility="private",
+        owner_open_id="ou_owner",
+    )
+    repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_id=first.id,
+        resource_type="generated_copy",
+        title="C 最新标题",
+        content_text="C 最新正文",
+        content_json={"title": "C 最新标题", "body": "C 最新正文"},
+        visibility="private",
+        owner_open_id="ou_owner",
+    )
+
+    snapshot = repo.get_resource_version("default", "ou_owner", first.id, 1)
+    assert snapshot is not None
+    assert snapshot.title == "A 标题"
+    assert snapshot.content_text == "A 正文"
+    assert snapshot.version == 1
+    assert repo.get_resource_version("default", "ou_other", first.id, 1) is None

@@ -56,7 +56,7 @@ class RecordingRepository:
 
     def writable_resource_metadata(self, **kwargs):
         self.writable_kwargs = kwargs
-        return {"visibility": "team", "owner_open_id": kwargs["actor_open_id"]}
+        return {"type": "xhs_online_note", "version": 1, "visibility": "team", "owner_open_id": kwargs["actor_open_id"]}
 
     def find_performance_metric_id(self, **kwargs):
         return None
@@ -340,7 +340,8 @@ def test_search_resources_integrates_ranking_fields(monkeypatch):
         return {rid: [{"metrics": {"likes": 100}}] for rid in resource_ids}
     repo.bulk_performance_metrics = _bulk_perf
 
-    def _readable_rows(tenant_id, actor_open_id, resource_ids):
+    def _readable_rows(tenant_id, actor_open_id, resource_ids, resource_versions):
+        assert resource_versions == [1]
         return [
             {
                 "id": rid,
@@ -365,7 +366,7 @@ def test_search_resources_integrates_ranking_fields(monkeypatch):
         def from_config(cls, cfg):
             return cls()
         def search(self, query, tenant_id, limit):
-            return [("res-1", 0.8)]
+            return [("res-1", 0.8, 1)]
         def ensure_index(self):
             pass
 
@@ -386,7 +387,8 @@ def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
 
     repo = RecordingRepository()
 
-    def _readable_rows(tenant_id, actor_open_id, resource_ids):
+    def _readable_rows(tenant_id, actor_open_id, resource_ids, resource_versions):
+        assert resource_versions == [1]
         return [
             {
                 "id": "res-1",
@@ -421,7 +423,7 @@ def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
         def from_config(cls, cfg):
             return cls()
         def search(self, query, tenant_id, limit):
-            return [("res-1", 0.8)]
+            return [("res-1", 0.8, 1)]
 
     import data_foundation.meili_client as meili_client
     monkeypatch.setattr(meili_client, "MeiliResourceIndex", MockIndex)
@@ -438,3 +440,69 @@ def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
     assert card["tags"] == ["护肤", "秋冬"]
     assert card["source"] == "local"
     assert card["already_local"] is True
+
+
+def test_get_generated_copy_lifecycle_returns_exact_snapshots_and_cas_tokens(monkeypatch):
+    from data_foundation import tools as df_tools
+    import data_foundation.repositories.generated_copy as lifecycle_module
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    class _Lifecycle:
+        def __init__(self, resource_repo):
+            assert resource_repo is repo
+
+        def get_state(self, **kwargs):
+            assert kwargs["actor_open_id"] == "ou_user"
+            return type(
+                "State",
+                (),
+                {
+                    "resource_id": kwargs["resource_id"],
+                    "lifecycle_status": "selected",
+                    "selected_version": 2,
+                    "selected_label": "A",
+                    "adopted_version": None,
+                    "finalized_version": None,
+                    "published_version": None,
+                    "knowledge_target_version": None,
+                    "latest_resource_version": 2,
+                    "state_version": 4,
+                },
+            )()
+
+        def list_versions(self, **_kwargs):
+            return [
+                {
+                    "resourceVersion": 2,
+                    "label": "A",
+                    "title": "Exact title",
+                    "body": "Exact body",
+                    "tags": ["#exact"],
+                    "cover": "cover",
+                    "note": "note",
+                }
+            ]
+
+    monkeypatch.setattr(lifecycle_module, "GeneratedCopyRepository", _Lifecycle)
+    result = df_tools.get_generated_copy_lifecycle.func(
+        "11111111-1111-1111-1111-111111111111",
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    lifecycle = result["lifecycle"]
+    assert lifecycle["latest_resource_version"] == 2
+    assert lifecycle["state_version"] == 4
+    assert lifecycle["versions"] == [
+        {
+            "resource_version": 2,
+            "label": "A",
+            "title": "Exact title",
+            "body": "Exact body",
+            "tags": ["#exact"],
+            "cover": "cover",
+            "note": "note",
+        }
+    ]

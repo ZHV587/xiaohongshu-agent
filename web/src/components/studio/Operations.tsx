@@ -3,7 +3,7 @@
 // 账号运营 screen — 数据看板 · 选题库/爆款拆解 · 内容日历/排期 · 数据回填.
 
 import { useRef, useState, type CSSProperties } from "react";
-import { Badge, Button, Card, Icon, Input, StatCard, type BadgeProps } from "@/components/ds";
+import { Badge, Button, Card, Icon, Input, Select, StatCard, type BadgeProps } from "@/components/ds";
 import { Eyebrow, PanelHead } from "@/components/studio/ui";
 import { useStudio } from "@/components/studio/useStudio";
 import { WEEKDAYS } from "@/components/studio/types";
@@ -141,12 +141,16 @@ interface DashboardBodyProps {
 function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
   const { dashboard, user, loadState } = useStudio();
   const backfillRef = useRef<HTMLElement>(null);
-  const focusBackfill = () => {
+  const [backfillTargetKey, setBackfillTargetKey] = useState("");
+  const focusBackfill = (target?: PublishItem) => {
+    if (target?.resourceId && target.resourceVersion) {
+      setBackfillTargetKey(`${target.resourceId}@${target.resourceVersion}`);
+    }
     const node = backfillRef.current;
     if (!node) return;
     node.scrollIntoView({ behavior: "smooth", block: "start" });
-    // 聚焦回填表单首个可编辑输入,产生真实可观察结果(而非「示意」toast)。
-    node.querySelector<HTMLElement>("input, textarea, [contenteditable]")?.focus();
+    // 先聚焦目标选择；从发布卡进入时已预选精确版本，再继续填写表现。
+    node.querySelector<HTMLElement>("select, input, textarea, [contenteditable]")?.focus();
   };
   const acct = account || { handle: user.handle, fans: user.fans, niche: "" };
   return (
@@ -158,7 +162,7 @@ function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
             <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 3 }}>粉丝 {acct.fans}{acct.niche ? ` · ${acct.niche}` : ""} · 近 7 天 · 数据底座 / 飞书同步</div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="primary" size="sm" leftIcon={<Icon name="pencil" size={13} />} onClick={focusBackfill}>数据回填</Button>
+            <Button variant="primary" size="sm" leftIcon={<Icon name="pencil" size={13} />} onClick={() => focusBackfill()}>数据回填</Button>
           </div>
         </div>
       )}
@@ -180,8 +184,8 @@ function DashboardBody({ dense = false, account = null }: DashboardBodyProps) {
       <LibrarySection />
       <CalendarSection accountFilter={account ? account.initial : null} />
 
-      {!dense && <PipelineSection account={account} />}
-      {!dense && <BackfillSection sectionRef={backfillRef} />}
+      {!dense && <PipelineSection account={account} onBackfill={focusBackfill} />}
+      {!dense && <BackfillSection sectionRef={backfillRef} targetKey={backfillTargetKey} onTargetChange={setBackfillTargetKey} />}
     </div>
   );
 }
@@ -285,14 +289,56 @@ function CalendarSection({ accountFilter = null }: CalendarSectionProps) {
 }
 
 // 数据回填
-function BackfillSection({ sectionRef }: { sectionRef?: React.Ref<HTMLElement> }) {
-  const { actions } = useStudio();
+function BackfillSection({
+  sectionRef,
+  targetKey,
+  onTargetChange,
+}: {
+  sectionRef?: React.Ref<HTMLElement>;
+  targetKey: string;
+  onTargetChange: (value: string) => void;
+}) {
+  const { actions, publishQueue, loadState } = useStudio();
   const [vals, setVals] = useState<{ views: string; likes: string; saves: string; comments: string }>({ views: "", likes: "", saves: "", comments: "" });
   const set = (k: "views" | "likes" | "saves" | "comments") => (v: string) => setVals((p) => ({ ...p, [k]: v }));
+  const eligible = publishQueue.filter(
+    (item) => item.stage === "published" && Boolean(item.resourceId) && Number.isInteger(item.resourceVersion) && Number(item.resourceVersion) > 0,
+  );
+  const keyOf = (item: PublishItem) => `${item.resourceId}@${item.resourceVersion}`;
+  const target = eligible.find((item) => keyOf(item) === targetKey);
+  const untraceableCount = publishQueue.filter(
+    (item) => item.stage === "published" && (!item.resourceId || !Number.isInteger(item.resourceVersion) || Number(item.resourceVersion) <= 0),
+  ).length;
   return (
     <section ref={sectionRef} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <PanelHead icon="clipboard-pen" title="数据回填" sub="发布后录入真实表现，沉淀回飞书 → 训练下一轮选题" right={<Badge tone="info">效果反馈闭环</Badge>} />
       <Card padding="md">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) auto", gap: 10, alignItems: "end", marginBottom: 12 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-body)" }}>选择已发布文案</span>
+            <Select
+              aria-label="选择回填目标文案"
+              value={target ? targetKey : ""}
+              onChange={(event) => onTargetChange(event.target.value)}
+              disabled={loadState.pipeline === "loading" || eligible.length === 0}
+            >
+              <option value="">{eligible.length ? "请选择精确发布版本" : "暂无可回填的已发布文案"}</option>
+              {eligible.map((item) => (
+                <option key={keyOf(item)} value={keyOf(item)}>
+                  {item.title} · {item.acct || "未分配账号"} · v{item.resourceVersion}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <span style={{ fontSize: 10, color: "var(--text-subtle)", paddingBottom: 8 }}>
+            {target ? `表现将归因到 v${target.resourceVersion}` : "必须先指定发布条目，不能沿用当前编辑器文案"}
+          </span>
+        </div>
+        {untraceableCount > 0 && (
+          <div style={{ fontSize: 10, color: "var(--warning)", marginBottom: 10 }}>
+            有 {untraceableCount} 条已发布记录缺少精确版本，已禁止选择；请先修复发布记录。
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
           <StatCard label="实际浏览量" value={vals.views} editable onValueChange={set("views")} />
           <StatCard label="点赞" value={vals.likes} editable onValueChange={set("likes")} tone="coral" />
@@ -300,7 +346,15 @@ function BackfillSection({ sectionRef }: { sectionRef?: React.Ref<HTMLElement> }
           <StatCard label="评论" value={vals.comments} editable onValueChange={set("comments")} />
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <Button variant="primary" size="sm" leftIcon={<Icon name="cloud-upload" size={13} />} onClick={() => actions.backfillSave({ views: vals.views, likes: vals.likes, collects: vals.saves, comments: vals.comments })}>保存并同步飞书</Button>
+          <Button
+            variant="primary"
+            size="sm"
+            leftIcon={<Icon name="cloud-upload" size={13} />}
+            disabled={!target}
+            onClick={() => target && actions.backfillSave(target, { views: vals.views, likes: vals.likes, collects: vals.saves, comments: vals.comments })}
+          >
+            保存并同步飞书
+          </Button>
         </div>
       </Card>
     </section>
@@ -313,10 +367,12 @@ function PipelineItemCard({
   item,
   stage,
   onAdvance,
+  onBackfill,
 }: {
   item: PublishItem;
   stage: PublishStage;
   onAdvance: (item: PublishItem, toStage: PublishStage, linkInput?: string) => void;
+  onBackfill: (item: PublishItem) => void;
 }) {
   const [linking, setLinking] = useState(false);
   const [linkDraft, setLinkDraft] = useState("");
@@ -364,7 +420,17 @@ function PipelineItemCard({
         </div>
       )}
       {stage === "published" && (
-        <Button variant="soft" size="sm" block style={{ marginTop: 6 }} leftIcon={<Icon name="clipboard-pen" size={11} />} onClick={() => onAdvance(item, "measured")}>回填数据</Button>
+        <Button
+          variant="soft"
+          size="sm"
+          block
+          style={{ marginTop: 6 }}
+          leftIcon={<Icon name="clipboard-pen" size={11} />}
+          disabled={!item.resourceId || !item.resourceVersion}
+          onClick={() => onBackfill(item)}
+        >
+          选择此版本回填
+        </Button>
       )}
     </div>
   );
@@ -373,9 +439,10 @@ function PipelineItemCard({
 // 发布管线 · 回链闭环（待发布 → 已发布·回链 → 已回填）
 interface PublishPipelineProps {
   account?: Account | null;
+  onBackfill: (item: PublishItem) => void;
 }
 
-function PipelineSection({ account }: PublishPipelineProps) {
+function PipelineSection({ account, onBackfill }: PublishPipelineProps) {
   const { publishQueue, actions, loadState } = useStudio();
   // 队列已由后端按 selectedAccount 维度过滤，此处直接按 stage 分列渲染。
   void account;
@@ -402,7 +469,7 @@ function PipelineSection({ account }: PublishPipelineProps) {
               <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                 {items.length === 0 && <span style={{ fontSize: 10, color: "var(--text-subtle)" }}>—</span>}
                 {items.map((it) => (
-                  <PipelineItemCard key={it.id} item={it} stage={st.key} onAdvance={actions.advanceStage} />
+                  <PipelineItemCard key={it.id} item={it} stage={st.key} onAdvance={actions.advanceStage} onBackfill={onBackfill} />
                 ))}
               </div>
             </Card>

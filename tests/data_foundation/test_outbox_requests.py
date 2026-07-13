@@ -8,6 +8,7 @@ from data_foundation.outbox_requests import (
     default_write_requests,
     embedding_request,
 )
+from data_foundation.repositories.resource import ResourceRepository
 
 
 def _resource() -> Resource:
@@ -47,3 +48,36 @@ def test_embedding_request_requires_explicit_index_profile():
         "embedding_index_id": "idx-1",
         "chunker_version": CHUNKER_VERSION,
     }
+
+
+def test_lifecycle_outbox_dedupe_includes_transition_event_only_when_requested():
+    class _Cursor:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params):
+            self.calls.append((sql, params))
+
+    repo = ResourceRepository()
+    cursor = _Cursor()
+    common = dict(
+        tenant_id="tenant-a",
+        resource_id="11111111-1111-1111-1111-111111111111",
+        version=1,
+        requests=default_write_requests(),
+        cursor=cursor,
+    )
+    repo._enqueue_outbox(**common, event_id="event-v1-first", dedupe_event=True)
+    first_transition = [call[1][5] for call in cursor.calls]
+    cursor.calls.clear()
+    repo._enqueue_outbox(**common, event_id="event-v1-again", dedupe_event=True)
+    second_transition = [call[1][5] for call in cursor.calls]
+    assert first_transition != second_transition
+
+    cursor.calls.clear()
+    repo._enqueue_outbox(**common, event_id="ordinary-event-a")
+    ordinary_first = [call[1][5] for call in cursor.calls]
+    cursor.calls.clear()
+    repo._enqueue_outbox(**common, event_id="ordinary-event-b")
+    ordinary_second = [call[1][5] for call in cursor.calls]
+    assert ordinary_first == ordinary_second

@@ -3,6 +3,7 @@ from data_foundation.repositories.feedback import FeedbackRepository
 from data_foundation.repositories.performance import PerformanceRepository
 from data_foundation.repositories.telemetry import TelemetryRepository
 from data_foundation.repositories.user_skill import UserSkillRepository
+from data_foundation.repositories.generated_copy import GeneratedCopyRepository
 
 resource_repo = ResourceRepository()
 feedback_repo = FeedbackRepository()
@@ -21,4 +22,5 @@ __all__ = [
     "PerformanceRepository",
     "TelemetryRepository",
     "UserSkillRepository",
+    "GeneratedCopyRepository",
 ]

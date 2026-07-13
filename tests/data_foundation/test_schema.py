@@ -10,6 +10,7 @@ from data_foundation import db, models
 
 
 EXPECTED_TABLES = {
+    "data_foundation_migrations",
     "user_skills",
     "user_skill_versions",
     "user_skill_publications",
@@ -18,6 +19,7 @@ EXPECTED_TABLES = {
     "resources",
     "resource_type_counts",
     "resource_versions",
+    "generated_copy_states",
     "resource_events",
     "resource_mappings",
     "resource_permissions",
@@ -90,6 +92,113 @@ def test_schema_sql_is_packaged_for_installed_deployments():
     assert "schema.sql" in package_data["data_foundation"]
 
 
+def test_meili_resource_version_backfill_is_once_only_and_uses_outbox():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    assert "create table if not exists data_foundation_migrations" in schema
+    assert "20260713_meili_resource_version_v1" in schema
+    assert "and ro.status = 'succeeded'" in schema
+    assert "set status = 'pending'" in schema
+    assert "jsonb_build_object(" in schema
+    assert "'resource_id', target.resource_id::text" in schema
+    assert "'version', target.resource_version" in schema
+    assert "when r.type = 'generated_copy' then gcs.knowledge_target_version" in schema
+
+
+def test_meili_resource_version_backfill_requeues_or_inserts_once(migrated_conn):
+    # The fixture migrated an empty schema, so remove the marker to simulate an
+    # existing deployment upgrading after resources and legacy outbox rows exist.
+    migrated_conn.execute(
+        "delete from data_foundation_migrations "
+        "where migration_key = '20260713_meili_resource_version_v1'"
+    )
+    requeued_id, _ = _insert_resource_version(migrated_conn, "tenant-reindex")
+    inserted_id, _ = _insert_resource_version(migrated_conn, "tenant-reindex")
+    legacy_outbox_id = migrated_conn.execute(
+        """
+        insert into resource_outbox (
+          tenant_id, resource_id, resource_version, topic, dedupe_key, payload, status
+        ) values (
+          'tenant-reindex', %s, 1, 'meili_index', 'legacy-meili-task',
+          jsonb_build_object('resource_id', %s::text, 'version', 1), 'succeeded'
+        ) returning id
+        """,
+        (requeued_id, requeued_id),
+    ).fetchone()[0]
+
+    db.run_migrations(migrated_conn)
+
+    rows = migrated_conn.execute(
+        """
+        select resource_id::text, resource_version, status, payload
+        from resource_outbox
+        where tenant_id = 'tenant-reindex' and topic = 'meili_index'
+        order by resource_id
+        """
+    ).fetchall()
+    assert len(rows) == 2
+    assert {row["resource_id"] for row in rows} == {requeued_id, inserted_id}
+    assert all(row["resource_version"] == 1 and row["status"] == "pending" for row in rows)
+    assert all(int(row["payload"]["version"]) == 1 for row in rows)
+    assert migrated_conn.execute(
+        "select status from resource_outbox where id = %s", (legacy_outbox_id,)
+    ).fetchone()["status"] == "pending"
+
+    # A later startup must not scan/requeue the same migration again.
+    migrated_conn.execute(
+        "update resource_outbox set status = 'succeeded' "
+        "where tenant_id = 'tenant-reindex' and topic = 'meili_index'"
+    )
+    db.run_migrations(migrated_conn)
+    assert migrated_conn.execute(
+        """
+        select count(*) as n
+        from resource_outbox
+        where tenant_id = 'tenant-reindex' and topic = 'meili_index'
+        """
+    ).fetchone()["n"] == 2
+    assert migrated_conn.execute(
+        """
+        select count(*) as n
+        from resource_outbox
+        where tenant_id = 'tenant-reindex' and topic = 'meili_index'
+          and status = 'succeeded'
+        """
+    ).fetchone()["n"] == 2
+
+
+def test_generated_copy_schema_migrates_named_pointer_and_idempotency_constraints():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    for name in (
+        "generated_copy_states_selected_pointer_pair_check",
+        "generated_copy_states_finalize_idempotency_pair_check",
+    ):
+        assert f"constraint {name}" in schema
+        assert f"conname = '{name}'" in schema
+        assert f"validate constraint {name}" in schema
+    assert "num_nonnulls(finalize_request_id, finalize_draft_hash, finalize_base_version)" in schema
+    assert "uq_generated_copy_states_finalize_request" in schema
+
+
+def test_generated_copy_schema_has_finalize_columns_and_constraints_after_migration(migrated_conn):
+    assert {
+        "selected_version",
+        "selected_label",
+        "finalize_request_id",
+        "finalize_draft_hash",
+        "finalize_base_version",
+    } <= _columns(migrated_conn, "generated_copy_states")
+    rows = migrated_conn.execute(
+        """
+        select conname
+        from pg_constraint
+        where conrelid = 'generated_copy_states'::regclass
+        """
+    ).fetchall()
+    names = {row[0] for row in rows}
+    assert "generated_copy_states_selected_pointer_pair_check" in names
+    assert "generated_copy_states_finalize_idempotency_pair_check" in names
+
+
 def test_schema_source_declares_clean_operational_contract():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
 
@@ -132,7 +241,7 @@ def test_schema_source_enforces_tenant_scoped_resource_references():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
 
     assert "foreign key (tenant_id, resource_id)\n    references resources(tenant_id, id)" in schema
-    assert schema.count("foreign key (tenant_id, resource_id)\n    references resources(tenant_id, id)") == 4
+    assert schema.count("foreign key (tenant_id, resource_id)\n    references resources(tenant_id, id)") == 5
     assert "foreign key (tenant_id, source_resource_id)\n    references resources(tenant_id, id)" in schema
     assert "foreign key (tenant_id, target_resource_id)\n    references resources(tenant_id, id)" in schema
     assert "foreign key (tenant_id, event_id)\n    references resource_events(tenant_id, id)" in schema

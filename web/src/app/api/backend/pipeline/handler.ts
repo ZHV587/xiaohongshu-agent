@@ -60,7 +60,7 @@ export function createPipelinePost(deps: PipelineRouteDeps) {
         "/_internal/studio/pipeline-advance",
         "POST",
         user.openId,
-        { resourceId, toStage, link },
+        { resourceId, resourceVersion: body.resourceVersion, toStage, link },
         { isAdmin: user.isAdmin },
       );
       const payload = await response.json();

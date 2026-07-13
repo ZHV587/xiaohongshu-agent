@@ -36,7 +36,10 @@ import {
   applyOptimisticSchedule,
   canAdvanceStage,
   deriveInitial,
+  copyLifecycleSnapshot,
   mapVersions,
+  mapLifecycleVersions,
+  parseCopyLifecycle,
   rollbackSchedule,
   validateBackfillMetrics,
   type DraftVersionInput,
@@ -44,14 +47,17 @@ import {
 import type {
   Account,
   CalendarDay,
+  CopyLifecycle,
   DashboardStat,
   DetailTarget,
+  DraftVersion,
   EvidenceBundle,
   EvidenceItem,
   LibraryItem,
   MonthInfo,
   PublishItem,
   PublishStage,
+  ScheduleVersionContract,
   SelectedEvidence,
   StudioImitation,
   StudioNote,
@@ -115,11 +121,15 @@ export interface StudioStore {
   // account 维度 + 每 collection 加载态（真实数据驱动空态/错误态）
   selectedAccount: string | null;
   setSelectedAccount: (id: string | null) => void;
+  /** 当前 generated_copy 的后端权威生命周期；未加载/旧稿缺 ID 时为 null。 */
+  copyLifecycle: CopyLifecycle | null;
+  copyLifecycleStatus: LoadStatus;
   loadState: StudioLoadState;
   actions: {
     setSection: (s: StudioSection) => void;
     chooseTopic: (topic: Topic) => void;
     setVersion: (v: VersionId) => void;
+    adoptVersion: (v: VersionId) => void;
     updateField: (field: keyof StudioNote, value: unknown) => void;
     addTag: (tag: string) => void;
     removeTag: (tag: string) => void;
@@ -128,7 +138,7 @@ export interface StudioStore {
     addTags: () => void;
     schedule: (date: number) => void;
     syncFeishu: () => void;
-    backfillSave: (metrics?: Record<string, unknown>) => void;
+    backfillSave: (target: PublishItem, metrics?: Record<string, unknown>) => void;
     advanceStage: (item: PublishItem, toStage: PublishStage, linkInput?: string) => void;
     reuse: (topicId: number) => void;
     newChat: () => void;
@@ -193,6 +203,16 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+function positiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+class StudioWriteError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 export function StudioProvider({ children }: { children: ReactNode }) {
   const t = useThread();
   const { presentationsByTurnId } = useTraceContext();
@@ -206,6 +226,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [cover, setCover] = useState("");
   const [scheduled, setScheduled] = useState(false);
   const [activeVersion, setActiveVersion] = useState<VersionId>("A");
+  const [copyLifecycle, setCopyLifecycle] = useState<CopyLifecycle | null>(null);
+  const [copyLifecycleStatus, setCopyLifecycleStatus] = useState<LoadStatus>("idle");
+  // 用户修订会生成新的不可变 resource_version；流里的原始 xhs_copy 不会被改写，故按
+  // A/B/C 保存后端确认后的修订快照，后续采纳/排期始终使用精确版本与对应内容。
+  const [revisionSnapshots, setRevisionSnapshots] = useState<Partial<Record<VersionId, DraftVersion>>>({});
+  const lifecycleWriteBusyRef = useRef(false);
+  const dirtyScheduleAttemptRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
+  const [hasLocalEdits, setHasLocalEdits] = useState(false);
+  const localEditsRef = useRef(false);
   // 创作意图开关:右栏是否切成深度编辑器,只由「点选题起稿 / 点仿写」显式置真
   // (chooseTopic/imitate),newChat/切到无记录会话复位。绝不看 t.isLoading —— 否则纯搜索
   // /出选题(也在跑流)会误把右栏从「参考素材栏」翻成编辑器,即用户报的「搜索就弹创作 UI」bug。
@@ -331,6 +360,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setActiveVersion(snap.activeVersion);
         setCreationMode(snap.creationMode);
         setScheduled(snap.scheduled);
+        setHasLocalEdits(snap.hasLocalEdits);
+        localEditsRef.current = snap.hasLocalEdits;
       } else if (prev !== undefined) {
         // 切到一个无 overlay 记录的会话 → 重置默认,避免与上一会话串台。
         setTopicId(null);
@@ -342,6 +373,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         // scheduled 同样按会话隔离复位:否则会话 A 排期成功后切到会话 B,editing 派生仍为 true,
         // 右栏误弹深度编辑器(「没点选题/仿写也弹创作 UI」的残留形态)。
         setScheduled(false);
+        setHasLocalEdits(false);
+        localEditsRef.current = false;
       }
     });
   }, [t.threadId]);
@@ -360,8 +393,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       activeVersion,
       creationMode,
       scheduled,
+      hasLocalEdits,
     });
-  }, [t.threadId, topicId, kw, tags, cover, activeVersion, creationMode, scheduled]);
+  }, [t.threadId, topicId, kw, tags, cover, activeVersion, creationMode, scheduled, hasLocalEdits]);
 
   const setSection = useCallback((s: StudioSection) => void setSectionRaw(s), [setSectionRaw]);
   // 白名单校验:URL ?section=任意值 不应被透传(消费组件 switch 不中会渲染空白)。
@@ -386,6 +420,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   // ── multi-version draft + its backend resource id parsed from the live stream ──
   const { versions, copyResourceId, process, imitation } = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
+  const visibleVersions = useMemo<Partial<Versions> | null>(() => {
+    // lifecycle 一旦就绪，UI 只展示后端 exact snapshots；绝不再把流里的旧 A/B/C
+    // 与已修订版本混合。加载失败时流版本仅供只读预览，所有写动作仍被状态闸门禁用。
+    if (copyLifecycle) {
+      return Object.keys(revisionSnapshots).length ? revisionSnapshots : null;
+    }
+    if (!versions && Object.keys(revisionSnapshots).length === 0) return null;
+    return { ...(versions ?? {}), ...revisionSnapshots };
+  }, [copyLifecycle, versions, revisionSnapshots]);
 
   const note: StudioNote = useMemo(
     () => ({
@@ -397,10 +440,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       cover,
       status,
       activeVersion,
-      versions,
+      versions: visibleVersions,
       process,
+      resourceId: copyResourceId,
     }),
-    [topicId, kw, t.draftTitle, t.draftContent, tags, cover, status, activeVersion, versions, process],
+    [topicId, kw, t.draftTitle, t.draftContent, tags, cover, status, activeVersion, visibleVersions, process, copyResourceId],
   );
 
   // ── topics & evidence parsed from the LIVE stream (rich fields, no mock) ──
@@ -489,6 +533,85 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [timeline]);
 
   const showToast = useCallback((msg: string) => toast(msg), []);
+  const setCanonicalTitle = t.setDraftTitle;
+  const setCanonicalBody = t.setDraftContent;
+  const setLocalEditState = useCallback((dirty: boolean) => {
+    // 响应丢失后的同稿重试必须复用幂等键；只有用户再次编辑才废弃上一次尝试。
+    if (dirty) dirtyScheduleAttemptRef.current = null;
+    localEditsRef.current = dirty;
+    setHasLocalEdits(dirty);
+  }, []);
+
+  const applyAuthoritativeLifecycle = useCallback((lifecycle: CopyLifecycle) => {
+    const authoritativeVersions = mapLifecycleVersions(lifecycle);
+    const selectedSnapshot = copyLifecycleSnapshot(lifecycle, lifecycle.selectedVersion);
+    const selectedEntry = (Object.entries(authoritativeVersions) as Array<[VersionId, DraftVersion]>).find(
+      ([, snapshot]) => snapshot.resourceVersion === lifecycle.selectedVersion,
+    );
+    setCopyLifecycle(lifecycle);
+    setRevisionSnapshots(authoritativeVersions);
+    setCopyLifecycleStatus(lifecycle.selectedVersion == null || selectedEntry ? "ready" : "error");
+    // 本地未保存编辑优先：权威状态/快照照常更新，但画布只在干净时切到 selected exact snapshot。
+    if (!localEditsRef.current && selectedSnapshot) {
+      if (selectedEntry) setActiveVersion(selectedEntry[0]);
+      setCanonicalTitle(selectedSnapshot.title);
+      setCanonicalBody(selectedSnapshot.body);
+      setTags([...selectedSnapshot.tags]);
+      setCover(selectedSnapshot.cover);
+      setLocalEditState(false);
+    }
+  }, [setCanonicalBody, setCanonicalTitle, setLocalEditState]);
+
+  const requestCopyLifecycle = useCallback(async (resourceId: string, signal?: AbortSignal): Promise<CopyLifecycle> => {
+    const res = await fetch(`/api/backend/copies/${encodeURIComponent(resourceId)}/lifecycle`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal,
+    });
+    const payload = await res.json().catch(() => null);
+    const lifecycle = parseCopyLifecycle(payload?.lifecycle);
+    if (!res.ok || payload?.ok === false || !lifecycle) {
+      throw new Error(payload?.error || `版本状态加载失败（${res.status}）`);
+    }
+    if (lifecycle.resourceId !== resourceId) throw new Error("版本状态与当前文案不匹配");
+    return lifecycle;
+  }, []);
+
+  // xhs_copy 只提供 ID/精确候选版本；selected/adopted/stateVersion 一律回读后端权威状态。
+  useEffect(() => {
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      setCopyLifecycle(null);
+      setRevisionSnapshots({});
+      setCopyLifecycleStatus(copyResourceId ? "loading" : "idle");
+    });
+    if (!copyResourceId) return () => controller.abort();
+    void requestCopyLifecycle(copyResourceId, controller.signal)
+      .then((lifecycle) => {
+        if (controller.signal.aborted) return;
+        applyAuthoritativeLifecycle(lifecycle);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+        setCopyLifecycle(null);
+        setCopyLifecycleStatus("error");
+      });
+    return () => controller.abort();
+  }, [applyAuthoritativeLifecycle, copyResourceId, requestCopyLifecycle]);
+
+  const refreshCopyLifecycle = useCallback(async (): Promise<CopyLifecycle | null> => {
+    if (!copyResourceId) return null;
+    setCopyLifecycleStatus("loading");
+    try {
+      const lifecycle = await requestCopyLifecycle(copyResourceId);
+      applyAuthoritativeLifecycle(lifecycle);
+      return lifecycle;
+    } catch {
+      setCopyLifecycle(null);
+      setCopyLifecycleStatus("error");
+      return null;
+    }
+  }, [applyAuthoritativeLifecycle, copyResourceId, requestCopyLifecycle]);
 
   const chooseTopic = useCallback(
     (topic: Topic) => {
@@ -497,7 +620,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setTopicId(topic.id);
       setKw(topic.kw);
       setActiveRecent(topic.id);
-      setActiveVersion("A");
       setSection("create");
       // 显式进入创作态:右栏此刻起变深度编辑器(区别于搜索/出选题只更新对话与素材栏)。
       setCreationMode(true);
@@ -512,11 +634,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const sameTopicAsLoaded = topicId === topic.id;
       const alreadyHasCopy = Boolean(t.draftTitle.trim() || t.draftContent.trim() || versions);
       if (sameTopicAsLoaded && alreadyHasCopy) return;
+      setActiveVersion("A");
 
       // 换了不同选题 → 先清掉上一个选题的残留草稿(标题/正文/标签/封面),避免新选题生成期间
       // 编辑器还显示上一个选题的旧文案。清空后 status 进 writing → 显示"正在生成",B 的文案流
       // 到后由 parseCopyFromMessages 取最新块填入,与选题 B 对齐。
       if (!sameTopicAsLoaded) {
+        setLocalEditState(false);
         t.setDraftTitle("");
         t.setDraftContent("");
         setTags([]);
@@ -541,7 +665,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         selected_topic: { topic: topic.title, evidence: selectedEvidence },
       });
     },
-    [setSection, t, evidence, versions, topicId],
+    [setLocalEditState, setSection, t, evidence, versions, topicId],
   );
 
   // 采纳用户在发现卡勾选的笔记:经官方 state-update 通道把 selected_notes 直传 graph
@@ -626,6 +750,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setSection("create");
       // 仿写同样是显式创作意图:右栏切成编辑器(顶部仿写拆解横幅 + 下方成品)。
       setCreationMode(true);
+      setLocalEditState(false);
       // 先清掉上一次创作/仿写的残留草稿(标题/正文/标签/封面)。仿写每次都是全新成品,无「重进
       // 同一篇不重跑」的场景 —— 不清会在新仿写流出前一直显示上一篇的旧正文(与 chooseTopic 换选题
       // 同类的「新意图显示旧内容」泄漏;配合 useThreadDraftState 的 `_new` 槽守卫一并根治)。
@@ -646,50 +771,231 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         });
       }
     },
-    [setSection, t],
+    [setLocalEditState, setSection, t],
   );
   // 注:setTags/setCover 是 useState setter,恒稳定(React 保证),无需列入 imitate 依赖;
   // t 已在依赖内(其 setDraft* 亦稳定)。此处保持与 chooseTopic 同样的依赖口径。
 
   const updateField = useCallback(
     (field: keyof StudioNote, value: unknown) => {
+      setLocalEditState(true);
       if (field === "title") t.setDraftTitle(String(value));
       else if (field === "body") t.setDraftContent(String(value));
       else if (field === "cover") setCover(String(value));
       else if (field === "kw") setKw(String(value));
       else if (field === "tags") setTags(value as string[]);
     },
-    [t],
+    [setLocalEditState, t],
   );
 
-  const addTag = useCallback((tag: string) => setTags((prev) => (prev.includes(tag) ? prev : [...prev, tag].slice(0, 10))), []);
-  const removeTag = useCallback((tag: string) => setTags((prev) => prev.filter((x) => x !== tag)), []);
+  const addTag = useCallback((tag: string) => {
+    setLocalEditState(true);
+    setTags((previous) => previous.includes(tag) ? previous : [...previous, tag].slice(0, 10));
+  }, [setLocalEditState]);
+  const removeTag = useCallback((tag: string) => {
+    setLocalEditState(true);
+    setTags((previous) => previous.filter((item) => item !== tag));
+  }, [setLocalEditState]);
 
-  // setVersion：从 note.versions 选 A/B/C，把对应版本 title/body 写回 canonical draft。
-  // 切版本时连 tags/cover 一起回写——否则编辑区 + 右侧体检面板会拿到「A 版正文 + 全局 tags」
-  // 的混搭(打分/字数错位、排版看似混乱)。每个版本作为完整一体回写,体检始终对齐当前版。
+  const currentVersionSnapshot = useCallback(
+    (v: VersionId): DraftVersion | undefined => visibleVersions?.[v],
+    [visibleVersions],
+  );
+
+  const postCopyLifecycle = useCallback(
+    async (action: "select" | "revision" | "adopt", payload: Record<string, unknown>): Promise<CopyLifecycle> => {
+      const res = await fetch(`/api/backend/copies/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => null);
+      const lifecycle = parseCopyLifecycle(body?.lifecycle);
+      if (
+        !res.ok || body?.ok === false || !lifecycle ||
+        lifecycle.resourceId !== payload.resourceId
+      ) {
+        throw new StudioWriteError(body?.error || `版本操作失败（${res.status}）`, res.status);
+      }
+      return lifecycle;
+    },
+    [],
+  );
+
+  const handleLifecycleConflict = useCallback(async () => {
+    await refreshCopyLifecycle();
+    showToast("文案版本已在别处更新，已刷新状态，请重试");
+  }, [refreshCopyLifecycle, showToast]);
+
+  const draftDiffersFromSnapshot = useCallback(
+    (v: VersionId): boolean => {
+      const saved = currentVersionSnapshot(v);
+      if (!saved) return false;
+      return (
+        t.draftTitle !== saved.title ||
+        t.draftContent !== saved.body ||
+        JSON.stringify(tags) !== JSON.stringify(saved.tags) ||
+        cover !== saved.cover
+      );
+    },
+    [cover, currentVersionSnapshot, t.draftTitle, t.draftContent, tags],
+  );
+
+  /** 只在“采用”这一明确边界保存一次不可变修订；输入期间绝不逐键写库。 */
+  const saveRevisionAtBoundary = useCallback(
+    async (v: VersionId, lifecycle: CopyLifecycle): Promise<CopyLifecycle> => {
+      const saved = currentVersionSnapshot(v);
+      if (!saved || v !== activeVersion || !draftDiffersFromSnapshot(v)) return lifecycle;
+      const revised = await postCopyLifecycle("revision", {
+        resourceId: lifecycle.resourceId,
+        expectedResourceVersion: lifecycle.latestResourceVersion,
+        expectedStateVersion: lifecycle.stateVersion,
+        title: t.draftTitle,
+        body: t.draftContent,
+        tags,
+        cover,
+        note: saved.note,
+        label: saved.label || v,
+      });
+      if (!revised.selectedVersion) throw new StudioWriteError("修订未返回精确版本", 502);
+      setLocalEditState(false);
+      applyAuthoritativeLifecycle(revised);
+      return revised;
+    },
+    [activeVersion, applyAuthoritativeLifecycle, cover, currentVersionSnapshot, draftDiffersFromSnapshot, postCopyLifecycle, setLocalEditState, t.draftTitle, t.draftContent, tags],
+  );
+
+  // 切版本身是一个保存边界：当前版有编辑时必须先追加不可变修订，再用修订响应里的
+  // 新 stateVersion 选择目标版。整个序列串行执行，任一步失败都保留当前画布。
   const setVersion = useCallback(
-    (v: VersionId) => {
-      const ver = versions?.[v];
-      if (!ver) {
+    async (v: VersionId) => {
+      if (lifecycleWriteBusyRef.current) {
+        showToast("版本操作正在处理中，请稍候");
+        return;
+      }
+      const target = currentVersionSnapshot(v);
+      if (!target) {
         showToast("该版本暂不可用");
         return;
       }
-      t.setDraftTitle(ver.title);
-      t.setDraftContent(ver.body);
-      setTags(ver.tags);
-      setCover(ver.cover);
-      setActiveVersion(v);
+      if (v === activeVersion) return;
+
+      const currentDirty = draftDiffersFromSnapshot(activeVersion);
+      if (!copyResourceId || !copyLifecycle || copyLifecycleStatus !== "ready" || !target.resourceVersion) {
+        if (currentDirty) {
+          showToast("当前版本有未保存编辑，但缺少可追溯版本状态，不能切换以免丢失内容");
+          return;
+        }
+        // 历史消息缺生命周期时仍允许只读对比；明确提示该选择不会写入后端。
+        t.setDraftTitle(target.title);
+        t.setDraftContent(target.body);
+        setTags(target.tags);
+        setCover(target.cover);
+        setActiveVersion(v);
+        setLocalEditState(false);
+        showToast("该旧草稿缺少精确版本信息，本次只做本地预览");
+        return;
+      }
+
+      lifecycleWriteBusyRef.current = true;
+      try {
+        const ready = currentDirty
+          ? await saveRevisionAtBoundary(activeVersion, copyLifecycle)
+          : copyLifecycle;
+        const selected = await postCopyLifecycle("select", {
+          resourceId: copyResourceId,
+          resourceVersion: target.resourceVersion,
+          expectedStateVersion: ready.stateVersion,
+          label: target.label || v,
+        });
+        setLocalEditState(false);
+        // POST 返回的 exact snapshot 是唯一画布来源；流里的 target 只用于提交其已验证版本号。
+        applyAuthoritativeLifecycle(selected);
+      } catch (error) {
+        if (error instanceof StudioWriteError && error.status === 409) {
+          await handleLifecycleConflict();
+        } else {
+          showToast(`版本切换失败：${error instanceof Error ? error.message : "未知错误"}`);
+        }
+      } finally {
+        lifecycleWriteBusyRef.current = false;
+      }
     },
-    [versions, t, showToast],
+    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, copyLifecycleStatus, copyResourceId, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, postCopyLifecycle, saveRevisionAtBoundary, setLocalEditState, showToast, t],
+  );
+
+  const adoptVersion = useCallback(
+    async (v: VersionId) => {
+      if (lifecycleWriteBusyRef.current) {
+        showToast("版本操作正在处理中，请稍候");
+        return;
+      }
+      const saved = currentVersionSnapshot(v);
+      if (!copyResourceId || !copyLifecycle || copyLifecycleStatus !== "ready" || !saved?.resourceVersion) {
+        showToast("当前草稿缺少可追溯的资源版本，暂不能采用");
+        return;
+      }
+      lifecycleWriteBusyRef.current = true;
+      try {
+        const wasDirty = v === activeVersion && draftDiffersFromSnapshot(v);
+        const ready = await saveRevisionAtBoundary(v, copyLifecycle);
+        const resourceVersion = wasDirty && ready.selectedVersion
+          ? ready.selectedVersion
+          : saved.resourceVersion;
+        const adopted = await postCopyLifecycle("adopt", {
+          resourceId: copyResourceId,
+          resourceVersion,
+          expectedStateVersion: ready.stateVersion,
+        });
+        setLocalEditState(false);
+        applyAuthoritativeLifecycle(adopted);
+        showToast("已采用此版本，后续会按该精确版本沉淀与回填");
+      } catch (error) {
+        if (error instanceof StudioWriteError && error.status === 409) {
+          await handleLifecycleConflict();
+        } else {
+          showToast(`采用失败：${error instanceof Error ? error.message : "未知错误"}`);
+        }
+      } finally {
+        lifecycleWriteBusyRef.current = false;
+      }
+    },
+    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, copyLifecycleStatus, copyResourceId, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, postCopyLifecycle, saveRevisionAtBoundary, setLocalEditState, showToast],
   );
 
   // schedule：乐观更新 + await POST /api/backend/schedule，成功保留、失败回滚。
   const schedule = useCallback(
     async (date: number) => {
+      if (lifecycleWriteBusyRef.current) {
+        showToast("版本操作正在处理中，请稍候再排期");
+        return;
+      }
+      const selected = currentVersionSnapshot(activeVersion);
+      if (!copyResourceId) {
+        showToast("这篇草稿没有后端资源标识，无法安全排期，请重新生成后再试");
+        return;
+      }
+      if (!selected?.resourceVersion) {
+        showToast("当前版本缺少精确版本号，无法排期，不能用其他版本代替");
+        return;
+      }
+      if (!copyLifecycle || copyLifecycleStatus !== "ready") {
+        showToast("版本状态尚未就绪，暂不能排期，请稍后重试");
+        return;
+      }
+      if (copyLifecycle.selectedVersion !== selected.resourceVersion) {
+        showToast("当前画布版本与后端选中版本不一致，已刷新版本状态，请重新排期");
+        await handleLifecycleConflict();
+        return;
+      }
       const snapshot = calendar;
       const time = "19:00";
       const acct = selectedAccount ?? "";
+      if (!acct) {
+        showToast("请先选择要发布的小红书账号");
+        return;
+      }
+      lifecycleWriteBusyRef.current = true;
       const item = { t: (note.title || "新笔记").slice(0, 8), time, tone: "coral" as const, acct };
       setCalendar((cal) => applyOptimisticSchedule(cal, date, item));
       setScheduled(true);
@@ -700,55 +1006,132 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const yyyy = ym ? Number(ym[1]) : now.getFullYear();
       const mm = ym ? Number(ym[2]) : now.getMonth() + 1;
       const dateStr = `${yyyy}-${pad2(mm)}-${pad2(date)}`;
+      const dirty = draftDiffersFromSnapshot(activeVersion);
+      // 目标快照与 latest 并发基线是两个独立维度：即使用户选回历史 A 版，也必须从
+      // 该 selected 精确快照追加最终修订，同时用 latest/state 阻止并发覆盖。
+      const versionContract: ScheduleVersionContract = {
+        targetResourceVersion: selected.resourceVersion,
+        expectedLatestResourceVersion: copyLifecycle.latestResourceVersion,
+        expectedStateVersion: copyLifecycle.stateVersion,
+      };
+      const finalDraft = dirty ? {
+        title: note.title,
+        body: note.body,
+        tags: note.tags,
+        cover: note.cover,
+        note: selected.note,
+      } : null;
+      // requestId 绑定一次“脏稿定稿尝试”：同一内容、同一目标快照与 CAS 基线在网络
+      // 失败/响应丢失后继续复用；任一版本维度变化时才生成新的 UUID。
+      const attemptFingerprint = finalDraft == null ? null : JSON.stringify({
+        resourceId: copyResourceId,
+        ...versionContract,
+        date: dateStr,
+        time,
+        account: acct,
+        finalDraft,
+      });
+      let requestId: string | null = null;
       try {
+        if (attemptFingerprint != null) {
+          const existingAttempt = dirtyScheduleAttemptRef.current;
+          if (existingAttempt?.fingerprint === attemptFingerprint) {
+            requestId = existingAttempt.requestId;
+          } else {
+            requestId = crypto.randomUUID();
+            dirtyScheduleAttemptRef.current = { fingerprint: attemptFingerprint, requestId };
+          }
+        }
         const res = await fetch("/api/backend/schedule", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ resourceId: copyResourceId ?? "", date: dateStr, time, account: acct }),
+          body: JSON.stringify({
+            resourceId: copyResourceId,
+            ...versionContract,
+            date: dateStr,
+            time,
+            account: acct,
+            ...(finalDraft == null ? {} : { finalDraft, requestId }),
+          }),
         });
         const body = await res.json().catch(() => null);
         if (!res.ok || !body || body.ok === false) {
-          throw new Error(body?.error || `排期失败（${res.status}）`);
+          throw new StudioWriteError(body?.error || `排期失败（${res.status}）`, res.status);
         }
+        const finalizedVersion = positiveInteger(body?.scheduled?.resourceVersion);
+        const nextStateVersion = positiveInteger(body?.scheduled?.stateVersion);
+        if (!finalizedVersion || !nextStateVersion) throw new StudioWriteError("排期响应缺少精确版本状态", 502);
+        // schedule 响应不携带版本快照；定稿成功后必须回读 GET，不能在前端合成“权威”版本。
+        dirtyScheduleAttemptRef.current = null;
+        setLocalEditState(false);
+        await refreshCopyLifecycle();
         showToast(`已定稿并排期到 ${date} 日 ${time}`);
         setCalendarOverride(null);
         calendarRes.reload();
       } catch (err) {
         setCalendar(rollbackSchedule(snapshot));
         setScheduled(false);
-        showToast(`排期失败：${err instanceof Error ? err.message : "未知错误"}`);
+        // 4xx 表示本次完整排期意图已被服务端明确拒绝，下一次点击必须使用新 key；
+        // 只有网络错误、响应丢失或 5xx 才保留 key，以便安全重放同一 payload。
+        if (err instanceof StudioWriteError && err.status >= 400 && err.status < 500) {
+          dirtyScheduleAttemptRef.current = null;
+        }
+        if (err instanceof StudioWriteError && err.status === 409) {
+          await handleLifecycleConflict();
+        } else {
+          showToast(`排期失败：${err instanceof Error ? err.message : "未知错误"}`);
+        }
+      } finally {
+        lifecycleWriteBusyRef.current = false;
       }
     },
-    [calendar, selectedAccount, note.title, copyResourceId, showToast, calendarRes, month.label, setCalendar],
+    [activeVersion, calendar, selectedAccount, note.title, note.body, note.tags, note.cover, copyResourceId, copyLifecycle, copyLifecycleStatus, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, refreshCopyLifecycle, setLocalEditState, showToast, calendarRes, month.label, setCalendar],
   );
 
   // backfillSave：先本地校验（口径同后端 _clean_metrics），再 await POST /api/backend/backfill。
   const backfillSave = useCallback(
-    async (metrics?: Record<string, unknown>) => {
+    async (target: PublishItem, metrics?: Record<string, unknown>) => {
       const payload = metrics ?? {};
       const validation = validateBackfillMetrics(payload);
       if (!validation.ok) {
         showToast(`回填校验失败：该字段需为非负数值（${validation.error}）`);
         return;
       }
+      if (target.stage !== "published") {
+        showToast("只能给发布管线中“已发布”的文案回填表现");
+        return;
+      }
+      if (!target.resourceId || !target.resourceVersion) {
+        showToast("所选发布条目缺少精确文案版本，暂不能回填表现");
+        return;
+      }
       try {
         const res = await fetch("/api/backend/backfill", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ resourceId: copyResourceId ?? "", metrics: validation.cleaned }),
+          body: JSON.stringify({
+            resourceId: target.resourceId,
+            resourceVersion: target.resourceVersion,
+            metrics: validation.cleaned,
+          }),
         });
         const body = await res.json().catch(() => null);
         if (!res.ok || !body || body.ok === false) {
-          throw new Error(body?.error || `回填失败（${res.status}）`);
+          throw new StudioWriteError(body?.error || `回填失败（${res.status}）`, res.status);
         }
         showToast("数据已回填并沉淀飞书");
         analyticsRes.reload();
         pipelineRes.reload();
       } catch (err) {
-        showToast(`回填失败：${err instanceof Error ? err.message : "未知错误"}`);
+        if (err instanceof StudioWriteError && err.status === 409) {
+          pipelineRes.reload();
+          showToast("所选发布版本已变化，已刷新发布队列，请重新选择");
+        } else {
+          showToast(`回填失败：${err instanceof Error ? err.message : "未知错误"}`);
+        }
       }
     },
-    [copyResourceId, showToast, analyticsRes, pipelineRes],
+    [showToast, analyticsRes, pipelineRes],
   );
 
   // advanceStage：POST /api/backend/pipeline 推进发布管线 stage，成功后由 GET 重读真实 stage。
@@ -781,7 +1164,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         const res = await fetch("/api/backend/pipeline", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ resourceId, toStage, link }),
+          body: JSON.stringify({ resourceId, resourceVersion: item.resourceVersion, toStage, link }),
         });
         const body = await res.json().catch(() => null);
         if (!res.ok || !body || body.ok === false) {
@@ -789,11 +1172,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         }
         showToast(toStage === "published" ? "已标记发布并贴回链" : "已推进至已回填");
         pipelineRes.reload();
+        if (resourceId === copyResourceId) void refreshCopyLifecycle();
       } catch (err) {
         showToast(`推进失败：${err instanceof Error ? err.message : "未知错误"}`);
       }
     },
-    [showToast, pipelineRes],
+    [copyResourceId, refreshCopyLifecycle, showToast, pipelineRes],
   );
 
   // polish：走既有 handleExecuteCommand("polish") 真实润色流式链路（R5.2 已接入）。
@@ -845,11 +1229,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     publishQueue,
     selectedAccount,
     setSelectedAccount,
+    copyLifecycle,
+    copyLifecycleStatus,
     loadState,
     actions: {
       setSection,
       chooseTopic,
       setVersion,
+      adoptVersion,
       updateField,
       addTag,
       removeTag,
@@ -871,6 +1258,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setCover("");
         setScheduled(false);
         setActiveVersion("A");
+        setLocalEditState(false);
         // 复位创作态:新会话回到「先搜索/出选题」的参考素材栏,不直接进编辑器。
         setCreationMode(false);
         t.setThreadId(null);
@@ -1007,6 +1395,8 @@ function parseTitlesFromMessages(
 function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"]): {
   versions: Partial<Versions> | null;
   copyResourceId: string | null;
+  copyResourceVersion: number | null;
+  copyStateVersion: number | null;
   process: StudioProcess | null;
   imitation: StudioImitation | null;
 } {
@@ -1033,9 +1423,33 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
       const obj = JSON.parse(last[2].trim()) as Record<string, unknown>;
       const rawId = obj.resource_id ?? obj.resourceId;
       const copyResourceId = typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
-      const versions = Array.isArray(obj.versions)
-        ? mapVersions(obj.versions as DraftVersionInput[])
+      const copyResourceVersion = positiveInteger(obj.resource_version ?? obj.resourceVersion);
+      const copyStateVersion = positiveInteger(obj.state_version ?? obj.stateVersion);
+      const rawVersions = Array.isArray(obj.versions) ? obj.versions as DraftVersionInput[] : null;
+      let versions = rawVersions
+        ? mapVersions(rawVersions)
         : null;
+      if (!rawVersions && copyResourceVersion != null) {
+        // 单版新契约不要求额外输出 versions 数组；顶层成品与顶层 resource_version
+        // 本就一一对应，因此把它规整为 UI 的 A 槽，不是猜测版本。
+        versions = mapVersions([{
+          label: "A",
+          title: typeof obj.title === "string" ? obj.title : "",
+          body: typeof obj.body === "string" ? obj.body : "",
+          tags: Array.isArray(obj.tags) ? obj.tags.filter((tag): tag is string => typeof tag === "string") : [],
+          cover: typeof obj.cover === "string" ? obj.cover : "",
+          note: "",
+          resource_version: copyResourceVersion,
+        }]);
+      }
+      // 单版本块里顶层 resource_version 就是顶层 title/body 对应的版本，可安全绑定 A；
+      // 多版本缺各自版本号时绝不把同一个顶层版本冒充成 A/B/C。
+      if (
+        versions?.A && rawVersions?.length === 1 &&
+        versions.A.resourceVersion == null && copyResourceVersion != null
+      ) {
+        versions = { ...versions, A: { ...versions.A, resourceVersion: copyResourceVersion } };
+      }
       // 创作过程(outline + ai_audit_log)与成品同块携带,供"创作过程"抽屉回看;不进正文。
       const outline = typeof obj.outline === "string" ? obj.outline : "";
       const auditRaw = obj.ai_audit_log ?? obj.ai_audit_self_correction_log;
@@ -1061,19 +1475,26 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
           };
         }
       }
-      return { versions, copyResourceId, process, imitation };
+      return { versions, copyResourceId, copyResourceVersion, copyStateVersion, process, imitation };
     } catch {
       // 非法 JSON（流式未闭合等）→ 继续扫描更早的消息。
       continue;
     }
   }
-  return { versions: null, copyResourceId: null, process: null, imitation: null };
+  return {
+    versions: null,
+    copyResourceId: null,
+    copyResourceVersion: null,
+    copyStateVersion: null,
+    process: null,
+    imitation: null,
+  };
 }
 
 // ── studio overlay 本地持久化(按 threadId 隔离) ──────────────────────────────
 // 与 useThreadDraftState 的草稿 autosave 同思路:每个会话一份 overlay 快照,
 // 刷新/切会话后据此恢复选题绑定、版本选择、标签等,避免「内容消失」。
-const OVERLAY_LATEST_VERSION = 1;
+const OVERLAY_LATEST_VERSION = 2;
 
 interface StudioOverlaySnapshot {
   v: number;
@@ -1086,6 +1507,8 @@ interface StudioOverlaySnapshot {
   creationMode: boolean;
   // 该会话是否已排期定稿。此前是全局裸 state,不随会话切换复位 → 跨会话泄漏误弹编辑器。
   scheduled: boolean;
+  // 用户在 Studio 画布上的编辑是否尚未形成后端不可变快照；刷新/切回时保护本地稿。
+  hasLocalEdits: boolean;
 }
 
 function buildStudioOverlayKey(threadId: string | null): string {
@@ -1100,6 +1523,7 @@ function readStudioOverlay(threadId: string | null): StudioOverlaySnapshot | nul
     const raw = window.localStorage.getItem(buildStudioOverlayKey(threadId));
     if (!raw) return null;
     const o = JSON.parse(raw) as Partial<StudioOverlaySnapshot>;
+    if (o.v !== OVERLAY_LATEST_VERSION) return null;
     const av = o.activeVersion;
     return {
       v: OVERLAY_LATEST_VERSION,
@@ -1110,6 +1534,7 @@ function readStudioOverlay(threadId: string | null): StudioOverlaySnapshot | nul
       activeVersion: av === "A" || av === "B" || av === "C" ? av : "A",
       creationMode: o.creationMode === true,
       scheduled: o.scheduled === true,
+      hasLocalEdits: o.hasLocalEdits === true,
     };
   } catch {
     return null;

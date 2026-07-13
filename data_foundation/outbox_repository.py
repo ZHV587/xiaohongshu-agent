@@ -121,7 +121,7 @@ class OutboxRepository:
             return {}
         rows = self.conn.execute(
             """
-            select topic, tenant_id, count(*) as n
+            select topic, tenant_id, count(distinct resource_id) as n
             from resource_outbox
             where status in ('pending', 'retry', 'processing')
               and topic = any(%s::text[])

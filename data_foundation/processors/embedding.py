@@ -192,17 +192,25 @@ class EmbeddingProcessor:
                        idx.chunker_version,
                        idx.config_version
                 from resource_versions rv
+                join resources r
+                  on r.tenant_id = rv.tenant_id and r.id = rv.resource_id
+                left join generated_copy_states gcs
+                  on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
                 join embedding_indexes idx
                   on idx.tenant_id = rv.tenant_id
                  and idx.id = %s
                 where rv.tenant_id = %s
                   and rv.resource_id = %s
                   and rv.version = %s
-                  and rv.version = (
-                    select max(latest.version)
-                    from resource_versions latest
-                    where latest.tenant_id = rv.tenant_id
-                      and latest.resource_id = rv.resource_id
+                  and (
+                    (r.type = 'generated_copy' and gcs.knowledge_target_version = rv.version)
+                    or
+                    (r.type <> 'generated_copy' and rv.version = (
+                      select max(latest.version)
+                      from resource_versions latest
+                      where latest.tenant_id = rv.tenant_id
+                        and latest.resource_id = rv.resource_id
+                    ))
                   )
                 """,
                 (embedding_index_id, tenant_id, resource_id, resource_version),

@@ -22,6 +22,7 @@ def save_performance_metric_resource(
     channel: str = "xiaohongshu",
     note_url: str | None = None,
     extra_content: dict[str, Any] | None = None,
+    target_resource_version: int | None = None,
 ) -> dict[str, Any]:
     target_resource_id = target_resource_id.strip()
     if not target_resource_id:
@@ -51,6 +52,30 @@ def save_performance_metric_resource(
             actor_open_id=actor_open_id,
             resource_id=target_resource_id,
         )
+        resolved_target_version = target_resource_version
+        lifecycle = None
+        if target.get("type") == "generated_copy":
+            from data_foundation.repositories.generated_copy import GeneratedCopyRepository
+
+            lifecycle = GeneratedCopyRepository(repo)
+            resolved_target_version = lifecycle.attributable_version(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=target_resource_id,
+                requested_version=target_resource_version,
+            )
+        elif resolved_target_version is None:
+            resolved_target_version = target.get("version")
+        if resolved_target_version is None:
+            raise ValueError("target resource version is required")
+        version_exists = getattr(repo, "resource_version_exists", None)
+        if callable(version_exists) and not version_exists(
+            tenant_id=tenant_id,
+            resource_id=target_resource_id,
+            resource_version=int(resolved_target_version),
+        ):
+            raise ValueError("target resource version does not exist")
+        content_json["target_resource_version"] = int(resolved_target_version)
         # 幂等:同一 target 已有 performance_metric 则复用其 id 原地更新,不新建第二条。
         existing_id = repo.find_performance_metric_id(
             tenant_id=tenant_id,
@@ -76,6 +101,12 @@ def save_performance_metric_resource(
             edge_type=MEASURED_BY_EDGE,
             weight=score,
         )
+        if lifecycle is not None:
+            lifecycle.mark_measured(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=target_resource_id,
+            )
     return {
         "ok": True,
         "resource": {
@@ -85,6 +116,7 @@ def save_performance_metric_resource(
             "version": resource.version,
         },
         "score": score,
+        "target_resource_version": int(resolved_target_version),
     }
 
 
@@ -112,6 +144,7 @@ def get_resource_performance_payload(
             "score": float(content_json.get("score", row.get("weight", 0.0))),
             "metrics": dict(content_json.get("metrics") or {}),
             "channel": content_json.get("channel"),
+            "target_resource_version": content_json.get("target_resource_version"),
             "updated_at": updated_at.isoformat() if updated_at is not None else None,
         })
     return {"ok": True, "target_resource_id": resource_id, "metrics": metrics}

@@ -1,5 +1,16 @@
+import inspect
+
 import data_foundation.tools as tools
 import data_foundation.operations as ops
+
+
+def test_calendar_and_pipeline_sql_hydrate_bound_copy_version():
+    calendar_source = inspect.getsource(ops._load_schedule_items)
+    pipeline_source = inspect.getsource(ops.load_pipeline)
+    for source in (calendar_source, pipeline_source):
+        assert "resource_versions cv" in source
+        assert "target_resource_version" in source
+        assert "cv.content_json->>'title'" in source
 
 
 def _cfg(open_id: str):

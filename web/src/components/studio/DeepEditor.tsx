@@ -214,7 +214,7 @@ function ToolBtn({ icon, label, active, badge, badgeTone = "primary", onClick }:
 
 // ── 版本抽屉:A/B/C 列表点选即切换(收纳原 v1 左栏草稿版本区 + 并排对比屏的能力) ──
 function VersionsDrawerBody({ ids }: { ids: VersionId[] }) {
-  const { note, actions } = useStudio();
+  const { note, actions, copyLifecycle, copyLifecycleStatus } = useStudio();
   if (!note.versions || ids.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -228,19 +228,37 @@ function VersionsDrawerBody({ ids }: { ids: VersionId[] }) {
       {ids.map((id) => {
         const v = note.versions![id]!;
         const on = note.activeVersion === id;
+        const adopted = v.resourceVersion != null && copyLifecycle?.adoptedVersion === v.resourceVersion;
+        const canAdopt = Boolean(note.resourceId && v.resourceVersion && copyLifecycle && copyLifecycleStatus === "ready");
         const sc = scoreOf(computeChecks({ ...note, title: v.title, body: v.body, tags: v.tags, cover: v.cover }));
         return (
-          <button key={id} data-testid={`version-${id}`} onClick={() => actions.setVersion(id)} style={{ display: "flex", alignItems: "flex-start", gap: 9, textAlign: "left", padding: "10px 11px", borderRadius: "var(--radius-md)", cursor: "pointer", border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--accent-surface)" : "var(--surface-card)" }}>
-            <span style={{ width: 22, height: 22, borderRadius: 6, background: on ? "var(--primary)" : "var(--oats-dark)", color: on ? "#fff" : "var(--text-muted)", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "var(--font-display)" }}>{id}</span>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: on ? "var(--primary)" : "var(--text-body)" }}>{v.label.replace(/^版本\s*/, "")}</span>
-                <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: sc >= 80 ? "var(--success)" : "var(--warning)" }}>{sc} 分</span>
-                {on && <span style={{ fontSize: 9, color: "var(--primary)", fontWeight: 700, background: "var(--surface-card)", padding: "1px 6px", borderRadius: 999 }}>当前</span>}
+          <div key={id} style={{ display: "flex", flexDirection: "column", gap: 7, padding: "10px 11px", borderRadius: "var(--radius-md)", border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--accent-surface)" : "var(--surface-card)" }}>
+            <button data-testid={`version-${id}`} onClick={() => actions.setVersion(id)} style={{ display: "flex", alignItems: "flex-start", gap: 9, textAlign: "left", padding: 0, border: "none", cursor: "pointer", background: "transparent" }}>
+              <span style={{ width: 22, height: 22, borderRadius: 6, background: on ? "var(--primary)" : "var(--oats-dark)", color: on ? "#fff" : "var(--text-muted)", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "var(--font-display)" }}>{id}</span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: on ? "var(--primary)" : "var(--text-body)" }}>{v.label.replace(/^版本\s*/, "")}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: sc >= 80 ? "var(--success)" : "var(--warning)" }}>{sc} 分</span>
+                  {on && <span style={{ fontSize: 9, color: "var(--primary)", fontWeight: 700, background: "var(--surface-card)", padding: "1px 6px", borderRadius: 999 }}>当前</span>}
+                </span>
+                <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.title || "(无标题)"}</span>
               </span>
-              <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.title || "(无标题)"}</span>
-            </span>
-          </button>
+            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, paddingLeft: 31 }}>
+              <span className="font-tabular" style={{ flex: 1, fontSize: 9, color: v.resourceVersion ? "var(--text-subtle)" : "var(--warning)" }}>
+                {v.resourceVersion ? `不可变版本 v${v.resourceVersion}` : "旧稿缺少精确版本"}
+              </span>
+              <Button
+                variant={adopted ? "secondary" : "primary"}
+                size="sm"
+                leftIcon={<Icon name={adopted ? "check-circle-2" : "check"} size={11} />}
+                disabled={!canAdopt || adopted}
+                onClick={() => actions.adoptVersion(id)}
+              >
+                {adopted ? "已采用" : "采用此版本"}
+              </Button>
+            </div>
+          </div>
         );
       })}
     </div>

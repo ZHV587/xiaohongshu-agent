@@ -107,17 +107,23 @@ class EmbeddingRepository:
             if index is None:
                 raise PermissionError("Embedding index not found for tenant")
 
-            latest = self.conn.execute(
+            target = self.conn.execute(
                 """
-                select max(version) as version
-                from resource_versions
-                where tenant_id = %s and resource_id = %s
+                select case
+                         when r.type = 'generated_copy' then gcs.knowledge_target_version
+                         else (select max(rv.version) from resource_versions rv
+                               where rv.tenant_id = r.tenant_id and rv.resource_id = r.id)
+                       end as version
+                from resources r
+                left join generated_copy_states gcs
+                  on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                where r.tenant_id = %s and r.id = %s
                 """,
                 (tenant_id, resource_id),
             ).fetchone()
-            if latest is None or latest["version"] is None:
-                raise PermissionError("Resource version not found for tenant")
-            if int(latest["version"]) != int(resource_version):
+            if target is None or target["version"] is None:
+                return "superseded"
+            if int(target["version"]) != int(resource_version):
                 return "superseded"
 
             self.conn.execute(
@@ -264,16 +270,30 @@ class EmbeddingRepository:
     def _recount_index(self, index_id: str, *, tenant_id: str) -> None:
         self.conn.execute(
             """
-            with current_resources as (
-              select r.id, max(rv.version) as resource_version
+            with version_targets as (
+              select r.id, r.tenant_id,
+                     case when r.type = 'generated_copy'
+                          then gcs.knowledge_target_version
+                          else max(rv.version)
+                     end as resource_version
               from resources r
               join resource_versions rv
                 on rv.tenant_id = r.tenant_id
                and rv.resource_id = r.id
+              left join generated_copy_states gcs
+                on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
               where r.tenant_id = %s
                 and r.status = 'active'
-                and nullif(trim(coalesce(r.content_text, '')), '') is not null
-              group by r.id
+              group by r.id, r.tenant_id, r.type, gcs.knowledge_target_version
+            ), current_resources as (
+              select vt.id, vt.resource_version
+              from version_targets vt
+              join resource_versions target_rv
+                on target_rv.tenant_id = vt.tenant_id
+               and target_rv.resource_id = vt.id
+               and target_rv.version = vt.resource_version
+              where vt.resource_version is not null
+                and nullif(trim(coalesce(target_rv.content_text, '')), '') is not null
             ), counts as (
               select count(*)::int as expected_resources,
                      count(*) filter (

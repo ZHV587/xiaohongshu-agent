@@ -44,7 +44,14 @@ class FakeRepo:
         return SimpleNamespace(id=rid, type=resource_type, title=title, version=1)
 
     def writable_resource_metadata(self, *, tenant_id, actor_open_id, resource_id, conn=None):
-        return {"id": resource_id, "visibility": "team", "owner_open_id": actor_open_id}
+        resource = self.resources[resource_id]
+        return {
+            "id": resource_id,
+            "type": resource["type"],
+            "version": 1,
+            "visibility": "team",
+            "owner_open_id": actor_open_id,
+        }
 
     def find_performance_metric_id(self, *, tenant_id, target_resource_id, conn=None):
         return self._metric_by_target.get(target_resource_id)

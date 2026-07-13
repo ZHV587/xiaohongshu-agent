@@ -31,12 +31,34 @@ class GraphProcessor:
         if self.config.state != "enabled" or self.graph is None:
             raise PermanentProcessingError("Falkor config is missing")
         resource_id = str(item.payload.get("resource_id") or item.resource_id or "")
-        if not resource_id:
-            raise PermanentProcessingError("Graph outbox payload missing resource_id")
+        resource_version = int(item.payload.get("version") or item.resource_version or 0)
+        if not resource_id or resource_version <= 0:
+            raise PermanentProcessingError("Graph outbox payload missing resource_id/version")
         with self.conn.cursor(row_factory=dict_row) as cur:
             node = cur.execute(
-                "select id::text as id, tenant_id, type, title from resources where tenant_id=%s and id=%s",
-                (item.tenant_id, resource_id),
+                """
+                select r.id::text as id, r.tenant_id, r.type,
+                       coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                       rv.version as resource_version
+                from resources r
+                join resource_versions rv
+                  on rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+                left join generated_copy_states gcs
+                  on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                where r.tenant_id = %s and r.id = %s and rv.version = %s
+                  and (
+                    (r.type = 'generated_copy' and (
+                      gcs.knowledge_target_version is null
+                      or rv.version = gcs.knowledge_target_version
+                    ))
+                    or
+                    (r.type <> 'generated_copy' and rv.version = (
+                      select max(latest.version) from resource_versions latest
+                      where latest.tenant_id = r.tenant_id and latest.resource_id = r.id
+                    ))
+                  )
+                """,
+                (item.tenant_id, resource_id, resource_version),
             ).fetchone()
             edges = None if node is None else cur.execute(
                 """
@@ -50,8 +72,16 @@ class GraphProcessor:
             ).fetchall()
         await lease.assert_owned()
         if node is None:
-            # 资源已从核心库消失:物理删除图节点及其关联边,使图谱与核心库一致,
-            # 否则已删资源会永久驻留图谱形成脏数据。DETACH DELETE 幂等,可安全重试。
+            with self.conn.cursor(row_factory=dict_row) as cur:
+                exists = cur.execute(
+                    "select 1 from resources where tenant_id = %s and id = %s",
+                    (item.tenant_id, resource_id),
+                ).fetchone()
+            if exists is not None:
+                # 资源仍存在，说明这是旧候选/旧 knowledge target 的迟到 outbox；不得把图节点
+                # 回退到旧版本，更不能把当前节点删掉。
+                return ProcessResult(status="superseded")
+            # 资源确已从核心库消失才物理删除图节点及其关联边。
             await asyncio.to_thread(self.graph.delete_node, resource_id)
             return ProcessResult(status="superseded")
         # falkordb/redis 客户端是同步阻塞 socket I/O。与 meili 同理(见 meili.py 注释):
@@ -60,7 +90,8 @@ class GraphProcessor:
         await asyncio.to_thread(
             self.graph.merge_node,
             {"id": node["id"], "tenant_id": node["tenant_id"],
-             "type": node["type"], "title": node["title"]},
+             "type": node["type"], "title": node["title"],
+             "resource_version": int(node["resource_version"])},
         )
         for e in edges:
             await asyncio.to_thread(

@@ -235,7 +235,9 @@ def _load_schedule_items(*, tenant_id: str, account: str | None) -> list[dict]:
     try:
         rows = conn.execute(
             """
-            select c.title as title, m.content_json as metric_json
+            select c.id::text as resource_id,
+                   coalesce(nullif(cv.content_json->>'title', ''), c.title) as title,
+                   m.content_json as metric_json
             from resources m
             join resource_edges e
               on e.tenant_id = m.tenant_id
@@ -244,6 +246,10 @@ def _load_schedule_items(*, tenant_id: str, account: str | None) -> list[dict]:
             join resources c
               on c.tenant_id = m.tenant_id
              and c.id = e.source_resource_id
+            left join resource_versions cv
+              on cv.tenant_id = c.tenant_id
+             and cv.resource_id = c.id
+             and cv.version = nullif(m.content_json->>'target_resource_version', '')::int
             where m.tenant_id = %s and m.type = 'performance_metric' and m.status = 'active'
               and (m.content_json ->> 'scheduled_date') is not null
             order by m.content_json ->> 'scheduled_date', m.content_json ->> 'scheduled_time'
@@ -267,6 +273,8 @@ def _load_schedule_items(*, tenant_id: str, account: str | None) -> list[dict]:
                 "time": content.get("scheduled_time") or "",
                 "tone": "coral",
                 "acct": acct,
+                "resourceId": row["resource_id"],
+                "resourceVersion": content.get("target_resource_version"),
             }
         )
     return [{"date": day, "items": items} for day, items in sorted(by_day.items())]
@@ -300,7 +308,8 @@ def load_pipeline(*, tenant_id: str, account: str | None) -> list[dict]:
     try:
         rows = conn.execute(
             """
-            select c.id::text as id, c.title,
+            select c.id::text as id,
+                   coalesce(nullif(cv.content_json->>'title', ''), c.title) as title,
                    m.content_json as metric_json, m.updated_at as metric_updated
             from resources c
             join resource_edges e
@@ -311,6 +320,10 @@ def load_pipeline(*, tenant_id: str, account: str | None) -> list[dict]:
               on m.tenant_id = c.tenant_id
              and m.id = e.target_resource_id
              and m.type = 'performance_metric'
+            left join resource_versions cv
+              on cv.tenant_id = c.tenant_id
+             and cv.resource_id = c.id
+             and cv.version = nullif(m.content_json->>'target_resource_version', '')::int
             where c.tenant_id = %s and c.type = 'generated_copy' and c.status = 'active'
             order by m.updated_at desc, c.id desc
             limit 50
@@ -341,6 +354,8 @@ def load_pipeline(*, tenant_id: str, account: str | None) -> list[dict]:
             time_text = _format_dt(content.get("published_at") or row.get("metric_updated"))
         item = {
             "id": index,
+            "resourceId": str(row["id"]),
+            "resourceVersion": content.get("target_resource_version"),
             "title": row["title"],
             "acct": acct,
             "stage": stage,

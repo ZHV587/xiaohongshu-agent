@@ -61,6 +61,13 @@ export interface DraftVersion {
   cover: string;
   body: string;
   tags: string[];
+  /** 后端 resource_versions 的不可变版本号；缺失时不得猜测或执行生命周期写操作。 */
+  resourceVersion?: number;
+}
+
+/** lifecycle GET 返回的权威不可变版本快照；字段必须完整，不能由流消息补齐。 */
+export interface CopyVersionSnapshot extends DraftVersion {
+  resourceVersion: number;
 }
 
 export type Versions = Record<VersionId, DraftVersion>;
@@ -93,6 +100,38 @@ export interface StudioNote {
   /** 本次生成的创作过程(outline 对标依据/论证链 + audit 22 条自审纠偏),从 xhs_copy 块
    *  的 outline/ai_audit_log 字段解析;仅供"创作过程"抽屉回看,不渲染进正文。无则 null。 */
   process: StudioProcess | null;
+  /** 同一篇 generated_copy 的稳定资源标识；旧消息可能没有，写动作必须据此禁用。 */
+  resourceId: string | null;
+}
+
+export type CopyLifecycleStatus =
+  | "candidate"
+  | "selected"
+  | "adopted"
+  | "finalized"
+  | "published"
+  | "measured";
+
+/** generated_copy 的权威版本指针与乐观并发令牌。 */
+export interface CopyLifecycle {
+  resourceId: string;
+  status: CopyLifecycleStatus;
+  selectedVersion: number | null;
+  selectedLabel: string | null;
+  adoptedVersion: number | null;
+  finalizedVersion: number | null;
+  publishedVersion: number | null;
+  knowledgeTargetVersion: number | null;
+  latestResourceVersion: number;
+  stateVersion: number;
+  versions: CopyVersionSnapshot[];
+}
+
+/** 排期写入的三重 CAS：目标是当前选中的精确快照，latest/state 是并发基线。 */
+export interface ScheduleVersionContract {
+  targetResourceVersion: number;
+  expectedLatestResourceVersion: number;
+  expectedStateVersion: number;
 }
 
 export interface StudioUser {
@@ -169,6 +208,8 @@ export interface CalendarItem {
   time: string;
   tone: "coral" | "topic" | "draft";
   acct: string;
+  resourceId?: string;
+  resourceVersion?: number;
 }
 
 export interface CalendarDay {
@@ -193,6 +234,8 @@ export interface PublishItem {
   time: string;
   /** 后端资源 id（用于推进 stage 写动作）；后端未提供时省略。 */
   resourceId?: string;
+  /** 排期/发布/效果回填都绑定到这个精确不可变版本。 */
+  resourceVersion?: number;
 }
 
 export interface Trend {

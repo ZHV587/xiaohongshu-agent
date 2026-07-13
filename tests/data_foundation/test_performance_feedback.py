@@ -22,7 +22,7 @@ class RecordingRepository:
     def __init__(self):
         self.upserts = []
         self.edges = []
-        self.target = {"visibility": "private", "owner_open_id": "ou_owner"}
+        self.target = {"type": "xhs_online_note", "version": 1, "visibility": "private", "owner_open_id": "ou_owner"}
 
     def unit_of_work(self):
         return nullcontext()
@@ -60,6 +60,7 @@ class RecordingRepository:
                     "metrics": {"likes": 120, "collects": 80, "comments": 12, "shares": 5, "views": 3000},
                     "score": 0.112,
                     "channel": "xiaohongshu",
+                    "target_resource_version": None,
                 },
                 "weight": 0.112,
                 "updated_at": SimpleNamespace(isoformat=lambda: "2026-06-20T08:00:00+00:00"),
@@ -90,12 +91,14 @@ def test_save_performance_metric_persists_metric_and_measured_by_edge():
             "version": 1,
         },
         "score": 0.112,
+        "target_resource_version": 1,
     }
     assert repo.upserts[0]["resource_type"] == "performance_metric"
     assert repo.upserts[0]["title"] == "小红书效果 2026-06-20"
     assert repo.upserts[0]["summary"] == "score=0.112 likes=120 collects=80 comments=12 shares=5 views=3000"
     assert repo.upserts[0]["content_json"] == {
         "target_resource_id": "generated-1",
+        "target_resource_version": 1,
         "metrics": {"likes": 120, "collects": 80, "comments": 12, "shares": 5, "views": 3000},
         "score": 0.112,
         "published_at": "2026-06-20T08:00:00+00:00",
@@ -173,6 +176,7 @@ def test_get_resource_performance_payload_returns_metrics():
                 "score": 0.112,
                 "metrics": {"likes": 120, "collects": 80, "comments": 12, "shares": 5, "views": 3000},
                 "channel": "xiaohongshu",
+                "target_resource_version": None,
                 "updated_at": "2026-06-20T08:00:00+00:00",
             }
         ],
@@ -285,7 +289,7 @@ class _StatefulRepo:
         self.edges: set[tuple[str, str, str]] = set()
         self.edge_weight: dict[tuple[str, str, str], float] = {}
         self._seq = 0
-        self.target = {"visibility": "team", "owner_open_id": "ou_feishu"}
+        self.target = {"type": "xhs_online_note", "version": 1, "visibility": "team", "owner_open_id": "ou_feishu"}
 
     def unit_of_work(self):
         return nullcontext()

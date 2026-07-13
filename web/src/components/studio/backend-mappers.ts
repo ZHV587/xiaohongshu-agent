@@ -12,12 +12,153 @@ import type {
   Account,
   CalendarDay,
   CalendarItem,
+  CopyLifecycle,
+  CopyVersionSnapshot,
   DraftVersion,
   PublishItem,
   PublishStage,
   Versions,
   VersionId,
 } from "./types";
+
+const COPY_LIFECYCLE_STATUSES = new Set([
+  "candidate",
+  "selected",
+  "adopted",
+  "finalized",
+  "published",
+  "measured",
+]);
+
+function positiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function parseCopyVersionSnapshot(value: unknown): CopyVersionSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const resourceVersion = positiveInteger(raw.resourceVersion);
+  if (
+    !resourceVersion ||
+    typeof raw.label !== "string" || !raw.label.trim() ||
+    typeof raw.title !== "string" || !raw.title.trim() ||
+    typeof raw.body !== "string" || !raw.body.trim() ||
+    !Array.isArray(raw.tags) || raw.tags.some((tag) => typeof tag !== "string") ||
+    typeof raw.cover !== "string" ||
+    typeof raw.note !== "string"
+  ) {
+    return null;
+  }
+  return {
+    resourceVersion,
+    label: raw.label,
+    title: raw.title,
+    body: raw.body,
+    tags: [...raw.tags] as string[],
+    cover: raw.cover,
+    note: raw.note,
+  };
+}
+
+/**
+ * 严格解析 generated_copy 生命周期及其权威不可变快照。
+ *
+ * 不接受旧 payload，也不拿流消息补字段：只要快照缺失、重复、排序错误，或任一生命周期
+ * 指针找不到对应版本，就返回 null，让调用方禁用所有写动作。
+ */
+export function parseCopyLifecycle(value: unknown): CopyLifecycle | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const status = raw.status;
+  const resourceId = typeof raw.resourceId === "string" ? raw.resourceId.trim() : "";
+  const latestResourceVersion = positiveInteger(raw.latestResourceVersion);
+  const stateVersion = positiveInteger(raw.stateVersion);
+  if (
+    !resourceId || typeof status !== "string" || !COPY_LIFECYCLE_STATUSES.has(status) ||
+    !latestResourceVersion || !stateVersion || !Array.isArray(raw.versions) || raw.versions.length === 0
+  ) {
+    return null;
+  }
+  const versions: CopyVersionSnapshot[] = [];
+  let previousVersion = 0;
+  for (const item of raw.versions) {
+    const snapshot = parseCopyVersionSnapshot(item);
+    if (!snapshot || snapshot.resourceVersion <= previousVersion) return null;
+    previousVersion = snapshot.resourceVersion;
+    versions.push(snapshot);
+  }
+  const versionNumbers = new Set(versions.map((snapshot) => snapshot.resourceVersion));
+  if (versions.at(-1)?.resourceVersion !== latestResourceVersion) return null;
+
+  const nullableVersion = (field: string): number | null | undefined => {
+    if (!Object.hasOwn(raw, field)) return undefined;
+    if (raw[field] === null) return null;
+    return positiveInteger(raw[field]) ?? undefined;
+  };
+  const selectedVersion = nullableVersion("selectedVersion");
+  const adoptedVersion = nullableVersion("adoptedVersion");
+  const finalizedVersion = nullableVersion("finalizedVersion");
+  const publishedVersion = nullableVersion("publishedVersion");
+  const knowledgeTargetVersion = nullableVersion("knowledgeTargetVersion");
+  const pointers = [selectedVersion, adoptedVersion, finalizedVersion, publishedVersion, knowledgeTargetVersion];
+  if (pointers.includes(undefined) || pointers.some((pointer) => pointer != null && !versionNumbers.has(pointer))) {
+    return null;
+  }
+  let selectedLabel: string | null | undefined;
+  if (!Object.hasOwn(raw, "selectedLabel")) {
+    selectedLabel = undefined;
+  } else if (raw.selectedLabel === null) {
+    selectedLabel = null;
+  } else if (typeof raw.selectedLabel === "string" && raw.selectedLabel.trim()) {
+    selectedLabel = raw.selectedLabel.trim();
+  }
+  if (selectedLabel === undefined || (selectedVersion === null) !== (selectedLabel === null)) return null;
+  if (selectedVersion != null) {
+    const selectedSnapshot = versions.find((snapshot) => snapshot.resourceVersion === selectedVersion);
+    if (!selectedSnapshot || selectedSnapshot.label !== selectedLabel) return null;
+  }
+  return {
+    resourceId,
+    status: status as CopyLifecycle["status"],
+    selectedVersion: selectedVersion as number | null,
+    selectedLabel,
+    adoptedVersion: adoptedVersion as number | null,
+    finalizedVersion: finalizedVersion as number | null,
+    publishedVersion: publishedVersion as number | null,
+    knowledgeTargetVersion: knowledgeTargetVersion as number | null,
+    latestResourceVersion,
+    stateVersion,
+    versions,
+  };
+}
+
+function versionIdFromLabel(label: string | null | undefined): VersionId | null {
+  const normalized = label?.replace(/^版本\s*/u, "").trim().toUpperCase();
+  return normalized === "A" || normalized === "B" || normalized === "C" ? normalized : null;
+}
+
+export function copyLifecycleSnapshot(
+  lifecycle: CopyLifecycle,
+  resourceVersion: number | null,
+): CopyVersionSnapshot | null {
+  if (resourceVersion == null) return null;
+  return lifecycle.versions.find((snapshot) => snapshot.resourceVersion === resourceVersion) ?? null;
+}
+
+/** 每个 A/B/C 取后端返回的最新快照；同标签历史版本按 resourceVersion 升序由新覆盖旧。 */
+export function mapLifecycleVersions(lifecycle: CopyLifecycle): Partial<Versions> {
+  const mapped: Partial<Versions> = {};
+  for (const snapshot of lifecycle.versions) {
+    const id = versionIdFromLabel(snapshot.label);
+    if (id) mapped[id] = { ...snapshot, tags: [...snapshot.tags] };
+  }
+  const selectedId = versionIdFromLabel(lifecycle.selectedLabel);
+  const selectedSnapshot = copyLifecycleSnapshot(lifecycle, lifecycle.selectedVersion);
+  if (selectedId && selectedSnapshot) {
+    mapped[selectedId] = { ...selectedSnapshot, tags: [...selectedSnapshot.tags] };
+  }
+  return mapped;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Property 6：多版本数组 → Versions（A/B/C）映射 + 选择应用
@@ -34,10 +175,16 @@ export interface DraftVersionInput {
   cover?: string;
   body?: string;
   tags?: string[];
+  resource_version?: number;
+  resourceVersion?: number;
 }
 
 /** 把单个原始版本规整为完整 DraftVersion（缺失字段补安全默认值，不编造内容）。 */
 function normalizeDraftVersion(input: DraftVersionInput, id: VersionId): DraftVersion {
+  const rawResourceVersion = input.resource_version ?? input.resourceVersion;
+  const resourceVersion = Number.isInteger(rawResourceVersion) && Number(rawResourceVersion) > 0
+    ? Number(rawResourceVersion)
+    : undefined;
   return {
     label: typeof input.label === "string" && input.label.length > 0 ? input.label : id,
     note: typeof input.note === "string" ? input.note : "",
@@ -45,6 +192,7 @@ function normalizeDraftVersion(input: DraftVersionInput, id: VersionId): DraftVe
     cover: typeof input.cover === "string" ? input.cover : "",
     body: typeof input.body === "string" ? input.body : "",
     tags: Array.isArray(input.tags) ? input.tags.filter((t): t is string => typeof t === "string") : [],
+    ...(resourceVersion == null ? {} : { resourceVersion }),
   };
 }
 

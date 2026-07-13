@@ -33,14 +33,14 @@ class DriftEntry:
 
 def detect_index_drift(
     *,
-    expected_by_tenant: dict[str, int],
+    expected_by_topic: dict[str, dict[str, int]],
     engine_actual: dict[str, dict[str, int]],
     engine_pending: dict[str, dict[str, int]],
 ) -> list[DriftEntry]:
     """纯函数:对账 PG 应有数 vs 引擎实际 + 在途,返回真实丢失项。
 
     参数:
-    - expected_by_tenant:{tenant: PG 当前资源数}
+    - expected_by_topic:{topic: {tenant: PG 对该引擎应有的资源数}}
     - engine_actual:{topic: {tenant: 引擎实际行数}}
     - engine_pending:{topic: {tenant: 在途 outbox 任务数}}
 
@@ -48,11 +48,15 @@ def detect_index_drift(
     都成功消费也补不齐 → 引擎确有丢失(而非正常 backlog)。expected<=0 的租户跳过。
     """
     entries: list[DriftEntry] = []
-    for tenant_id in sorted(expected_by_tenant):
-        expected = int(expected_by_tenant[tenant_id])
-        if expected <= 0:
+    for topic in ENGINE_TOPICS:
+        # Absence of a topic means that engine is disabled/unconfigured.  An enabled
+        # but empty engine is represented explicitly as ``topic: {}`` and is audited.
+        if topic not in engine_actual:
             continue
-        for topic in ENGINE_TOPICS:
+        for tenant_id in sorted(expected_by_topic.get(topic, {})):
+            expected = int(expected_by_topic.get(topic, {}).get(tenant_id, 0))
+            if expected <= 0:
+                continue
             actual = int(engine_actual.get(topic, {}).get(tenant_id, 0))
             pending = int(engine_pending.get(topic, {}).get(tenant_id, 0))
             missing = expected - actual - pending

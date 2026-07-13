@@ -129,6 +129,9 @@ def test_save_generated_copy_persists_publishable_text_and_evidence_edges():
         "title": "露营别乱买",
         "body": "这份清单够了",
         "tags": ["#露营", "#装备"],
+        "cover": "",
+        "note": "",
+        "variant_label": "A",
         "source_topic": "轻量露营",
         "evidence": [{
             "resource_id": "source-1",
@@ -158,6 +161,89 @@ def test_save_generated_copy_links_imitation_source_edge():
     assert result["ok"] is True
     assert ("generated-1", "source-1", "derived_from") in repo.edges
     assert ("generated-1", "ref-note-1", "imitated_from") in repo.edges
+
+
+def test_save_generated_copy_rejects_more_than_three_ui_candidates():
+    repo = RecordingRepository()
+    versions = [
+        {"label": label, "title": f"{label} 标题", "body": f"{label} 正文", "tags": []}
+        for label in ("A", "B", "C", "D")
+    ]
+    with pytest.raises(ValueError, match="at most 3"):
+        save_generated_copy_resource(
+            repo,
+            tenant_id="default",
+            actor_open_id="ou_user",
+            title="A 标题",
+            body="A 正文",
+            tags=[],
+            versions=versions,
+        )
+
+
+def test_existing_resource_revision_requires_both_cas_tokens(monkeypatch):
+    import data_foundation.repositories.generated_copy as lifecycle_module
+
+    repo = RecordingRepository()
+    repo.conn = type("Conn", (), {"transaction": lambda self: nullcontext()})()
+    calls = []
+
+    class _Lifecycle:
+        def __init__(self, _repo):
+            pass
+
+        def save_revision(self, **kwargs):
+            calls.append(kwargs)
+            assert kwargs["expected_resource_version"] == 1
+            assert kwargs["expected_state_version"] == 1
+            assert kwargs["label"] is None
+            return type(
+                "State",
+                (),
+                {
+                    "latest_resource_version": 2,
+                    "state_version": 2,
+                    "selected_label": "B",
+                },
+            )()
+
+        def select_version(self, **kwargs):
+            return type("State", (), {"state_version": 3})()
+
+    monkeypatch.setattr(lifecycle_module, "GeneratedCopyRepository", _Lifecycle)
+    result = save_generated_copy_resource(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id="existing-1",
+        expected_resource_version=1,
+        expected_state_version=1,
+        title="润色标题",
+        body="润色正文",
+        tags=["#润色"],
+    )
+
+    assert calls
+    assert result["resource"]["resource_id"] == "existing-1"
+    assert result["resource"]["latest_resource_version"] == 2
+    assert result["resource"]["state_version"] == 2
+    assert result["resource"]["versions"][0]["label"] == "B"
+
+
+def test_existing_resource_revision_fails_closed_when_cas_tokens_are_missing():
+    repo = RecordingRepository()
+    repo.conn = type("Conn", (), {"transaction": lambda self: nullcontext()})()
+
+    with pytest.raises(ValueError, match="expected_resource_version"):
+        save_generated_copy_resource(
+            repo,
+            tenant_id="default",
+            actor_open_id="ou_user",
+            resource_id="existing-1",
+            title="Polished title",
+            body="Polished body",
+            tags=[],
+        )
 
 
 def test_save_generated_content_requires_non_empty_payloads():

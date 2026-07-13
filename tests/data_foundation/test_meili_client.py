@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock
-from data_foundation.meili_client import MeiliResourceIndex
+from data_foundation.meili_client import MeiliResourceIndex, MeiliTenantAudit
 
 
 def _index_with(mock_client):
@@ -8,12 +8,40 @@ def _index_with(mock_client):
 
 def test_ensure_index_sets_filterable_and_searchable():
     client = MagicMock()
+    index = client.index.return_value
+    index.update_filterable_attributes.return_value = MagicMock(task_uid=11)
+    index.update_searchable_attributes.return_value = MagicMock(task_uid=12)
+    index.wait_for_task.side_effect = [
+        MagicMock(status="succeeded"),
+        MagicMock(status="succeeded"),
+    ]
     idx = _index_with(client)
     idx.ensure_index()
     client.index.assert_called_with("resources")
-    index = client.index.return_value
-    index.update_filterable_attributes.assert_called_once_with(["tenant_id", "type"])
+    index.update_filterable_attributes.assert_called_once_with(
+        ["tenant_id", "type", "resource_version"]
+    )
     index.update_searchable_attributes.assert_called_once_with(["title", "summary", "content_text"])
+    assert index.wait_for_task.call_count == 2
+
+
+def test_audit_tenant_detects_legacy_documents_when_raw_count_matches():
+    client = MagicMock()
+    index = client.index.return_value
+    # PG expects 3 and Meili also has 3 documents, but only one can be hydrated by
+    # exact immutable version.  Cardinality-only drift detection would miss this.
+    index.search.side_effect = [
+        {"estimatedTotalHits": 3},
+        {"estimatedTotalHits": 1},
+    ]
+
+    audit = _index_with(client).audit_tenant(tenant_id="default")
+
+    assert audit == MeiliTenantAudit(total_documents=3, versioned_documents=1)
+    assert audit.malformed_documents == 2
+    assert index.search.call_args_list[1].kwargs["opt_params"]["filter"] == (
+        'tenant_id = "default" AND resource_version >= 1'
+    )
 
 
 def test_upsert_document_uses_resource_id_as_primary_key():
@@ -45,18 +73,18 @@ def test_upsert_raises_when_meili_task_not_succeeded():
                     "title": "t", "summary": None, "content_text": "b"})
 
 
-def test_search_returns_id_score_pairs_with_tenant_filter():
+def test_search_returns_id_score_version_tuples_with_tenant_filter():
     client = MagicMock()
     index = client.index.return_value
     index.search.return_value = {
         "hits": [
-            {"resource_id": "a", "_rankingScore": 0.9},
-            {"resource_id": "b", "_rankingScore": 0.4},
+            {"resource_id": "a", "_rankingScore": 0.9, "resource_version": 2},
+            {"resource_id": "b", "_rankingScore": 0.4, "resource_version": 7},
         ]
     }
     idx = _index_with(client)
     hits = idx.search("减脂", tenant_id="default", limit=10)
-    assert hits == [("a", 0.9), ("b", 0.4)]
+    assert hits == [("a", 0.9, 2), ("b", 0.4, 7)]
     args, kwargs = index.search.call_args
     assert args[0] == "减脂"
     assert kwargs["opt_params"]["filter"] == 'tenant_id = "default"'
@@ -64,12 +92,17 @@ def test_search_returns_id_score_pairs_with_tenant_filter():
     assert kwargs["opt_params"]["showRankingScore"] is True
 
 
-def test_search_defaults_missing_ranking_score_to_zero():
+def test_search_defaults_missing_ranking_score_to_zero_and_requires_version():
     client = MagicMock()
     index = client.index.return_value
-    index.search.return_value = {"hits": [{"resource_id": "a"}]}
+    index.search.return_value = {
+        "hits": [
+            {"resource_id": "a", "resource_version": 3},
+            {"resource_id": "legacy-without-version"},
+        ]
+    }
     idx = _index_with(client)
-    assert idx.search("q", tenant_id="default", limit=5) == [("a", 0.0)]
+    assert idx.search("q", tenant_id="default", limit=5) == [("a", 0.0, 3)]
 
 
 def test_from_config_reuses_underlying_client_for_same_config(monkeypatch):

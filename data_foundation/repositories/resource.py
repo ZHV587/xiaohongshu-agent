@@ -290,6 +290,7 @@ class ResourceRepository(BaseRepository):
         version: int,
         requests: list,
         event_id: Any = None,
+        dedupe_event: bool = False,
         cursor: Cursor = None,
     ) -> None:
         for request in requests:
@@ -298,15 +299,23 @@ class ResourceRepository(BaseRepository):
                 "resource_id": str(resource_id),
                 "version": version,
             }
+            dedupe_identity = [
+                tenant_id,
+                str(resource_id),
+                version,
+                request.topic,
+                *request.dedupe_parts,
+            ]
+            # Normal resource upserts remain version-idempotent.  Lifecycle target
+            # transitions are different: v1 -> v2 -> v1 must enqueue the second v1
+            # transition, otherwise the old succeeded v1 row swallows the repair.
+            if dedupe_event:
+                if event_id is None:
+                    raise ValueError("event_id is required for event-scoped outbox dedupe")
+                dedupe_identity.append(str(event_id))
             dedupe_key = hashlib.sha256(
                 json.dumps(
-                    [
-                        tenant_id,
-                        str(resource_id),
-                        version,
-                        request.topic,
-                        *request.dedupe_parts,
-                    ],
+                    dedupe_identity,
                     sort_keys=True,
                     ensure_ascii=False,
                 ).encode("utf-8")
@@ -467,6 +476,105 @@ class ResourceRepository(BaseRepository):
                     return None
                 return self._resource_from_row(row, version=row["version"])
 
+    def get_resource_version(
+        self,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_id: str,
+        resource_version: int,
+        conn: Optional[Connection] = None,
+    ) -> Resource | None:
+        """按 ACL hydrate 指定不可变版本，绝不回读 resources 的 latest 正文。
+
+        resources 只提供身份、权限和不随版本变化的元数据；标题优先取版本 content_json.title，
+        正文与结构化内容完全来自 resource_versions。
+        """
+        if not isinstance(resource_version, int) or isinstance(resource_version, bool) or resource_version <= 0:
+            raise ValueError("resource_version must be a positive integer")
+        where_clause = self.readable_resource_where("r")
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    f"""
+                    select r.id, r.tenant_id, r.type,
+                           coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                           r.summary, rv.content_text, rv.content_json,
+                           r.status, r.visibility, r.owner_open_id,
+                           r.created_at, r.updated_at,
+                           null::timestamptz as source_updated_at,
+                           rv.version
+                    from resources r
+                    join resource_versions rv
+                      on rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+                    where r.id = %(resource_id)s
+                      and rv.version = %(resource_version)s
+                      and {where_clause}
+                    """,
+                    {
+                        "resource_id": resource_id,
+                        "resource_version": resource_version,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
+                ).fetchone()
+                return None if row is None else self._resource_from_row(row, version=row["version"])
+
+    def get_resource_for_knowledge(
+        self,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_id: str,
+        conn: Optional[Connection] = None,
+    ) -> Resource | None:
+        """Hydrate the exact snapshot that an Agent is allowed to use as knowledge.
+
+        A generated copy is intentionally invisible until a lifecycle transition sets
+        ``knowledge_target_version``.  Non-generated resources continue to expose their
+        latest immutable snapshot.  The ACL and lifecycle pointer are checked in the
+        same query so a concurrent pointer change cannot leak a stale candidate.
+        """
+        where_clause = self.readable_resource_where("r")
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    f"""
+                    select r.id, r.tenant_id, r.type,
+                           coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                           r.summary, rv.content_text, rv.content_json,
+                           r.status, r.visibility, r.owner_open_id,
+                           r.created_at, r.updated_at,
+                           (
+                             select max(rm.external_updated_at)
+                             from resource_mappings rm
+                             where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
+                           ) as source_updated_at,
+                           rv.version
+                    from resources r
+                    left join generated_copy_states gcs
+                      on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                    join resource_versions rv
+                      on rv.tenant_id = r.tenant_id
+                     and rv.resource_id = r.id
+                     and rv.version = case
+                       when r.type = 'generated_copy' then gcs.knowledge_target_version
+                       else (
+                         select max(latest.version)
+                         from resource_versions latest
+                         where latest.tenant_id = r.tenant_id
+                           and latest.resource_id = r.id
+                       )
+                     end
+                    where r.id = %(resource_id)s
+                      and {where_clause}
+                    """,
+                    {
+                        "resource_id": resource_id,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
+                ).fetchone()
+                return None if row is None else self._resource_from_row(row, version=row["version"])
+
     def grant_permission(
         self,
         *,
@@ -495,14 +603,118 @@ class ResourceRepository(BaseRepository):
         tenant_id: str,
         actor_open_id: str,
         resource_ids: list[str],
+        resource_versions: list[int] | None = None,
+        knowledge_only: bool = False,
         conn: Optional[Connection] = None,
     ) -> list[dict]:
         if not resource_ids:
             return []
+        if resource_versions is not None:
+            if knowledge_only:
+                raise ValueError("resource_versions and knowledge_only are mutually exclusive")
+            if len(resource_versions) != len(resource_ids):
+                raise ValueError("resource_versions must align with resource_ids")
+            if any(
+                not isinstance(version, int)
+                or isinstance(version, bool)
+                or version <= 0
+                for version in resource_versions
+            ):
+                raise ValueError("resource_versions must contain positive integers")
         ordering = {rid: i for i, rid in enumerate(resource_ids)}
         where_clause = self.readable_resource_where("r")
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
+                if resource_versions is not None:
+                    rows = cursor.execute(
+                        f"""
+                        with requested(resource_id, resource_version, ordinal) as (
+                          select *
+                          from unnest(
+                            %(resource_ids)s::uuid[],
+                            %(resource_versions)s::int[]
+                          ) with ordinality
+                        )
+                        select r.id, r.tenant_id, r.type,
+                               coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                               r.summary, rv.content_text, rv.content_json,
+                               r.status, r.visibility, r.owner_open_id,
+                               r.created_at, r.updated_at,
+                               (
+                                 select max(rm.external_updated_at)
+                                 from resource_mappings rm
+                                 where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
+                               ) as source_updated_at,
+                               1.0::real as score,
+                               rv.version as resource_version
+                        from requested req
+                        join resources r on r.id = req.resource_id
+                        join resource_versions rv
+                          on rv.tenant_id = r.tenant_id
+                         and rv.resource_id = r.id
+                         and rv.version = req.resource_version
+                        left join generated_copy_states gcs
+                          on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                        where {where_clause}
+                          and (
+                            r.type <> 'generated_copy'
+                            or gcs.knowledge_target_version = rv.version
+                          )
+                        order by req.ordinal
+                        """,
+                        {
+                            "resource_ids": resource_ids,
+                            "resource_versions": resource_versions,
+                            "tenant_id": tenant_id,
+                            "actor_open_id": actor_open_id,
+                        },
+                    ).fetchall()
+                    return [dict(row) for row in rows]
+                if knowledge_only:
+                    rows = cursor.execute(
+                        f"""
+                        with requested(resource_id, ordinal) as (
+                          select *
+                          from unnest(%(resource_ids)s::uuid[]) with ordinality
+                        )
+                        select r.id, r.tenant_id, r.type,
+                               coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                               r.summary, rv.content_text, rv.content_json,
+                               r.status, r.visibility, r.owner_open_id,
+                               r.created_at, r.updated_at,
+                               (
+                                 select max(rm.external_updated_at)
+                                 from resource_mappings rm
+                                 where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
+                               ) as source_updated_at,
+                               1.0::real as score,
+                               rv.version as resource_version
+                        from requested req
+                        join resources r on r.id = req.resource_id
+                        left join generated_copy_states gcs
+                          on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                        join resource_versions rv
+                          on rv.tenant_id = r.tenant_id
+                         and rv.resource_id = r.id
+                         and rv.version = case
+                           when r.type = 'generated_copy' then gcs.knowledge_target_version
+                           else (
+                             select max(latest.version)
+                             from resource_versions latest
+                             where latest.tenant_id = r.tenant_id
+                               and latest.resource_id = r.id
+                           )
+                         end
+                        where {where_clause}
+                        order by req.ordinal
+                        """,
+                        {
+                            "resource_ids": resource_ids,
+                            "tenant_id": tenant_id,
+                            "actor_open_id": actor_open_id,
+                        },
+                    ).fetchall()
+                    return [dict(row) for row in rows]
                 rows = cursor.execute(
                     f"""
                     select r.*,
@@ -556,7 +768,11 @@ class ResourceRepository(BaseRepository):
                 rows = cursor.execute(
                     f"""
                     with candidates as (
-                      select r.*, e.chunk_index, e.chunk_text,
+                      select r.id, r.tenant_id, r.type,
+                             coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                             r.summary, rv.content_text, rv.content_json,
+                             r.status, r.visibility, r.owner_open_id, r.created_at, r.updated_at,
+                             e.chunk_index, e.chunk_text,
                              (
                                select max(rm.external_updated_at)
                                from resource_mappings rm
@@ -581,13 +797,19 @@ class ResourceRepository(BaseRepository):
                         on rv.tenant_id = e.tenant_id
                        and rv.resource_id = e.resource_id
                        and rv.version = e.resource_version
+                      left join generated_copy_states gcs
+                        on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
                       where e.embedding_model = %(embedding_model)s
                         and {where_clause}
-                        and rv.version = (
-                          select max(latest.version)
-                          from resource_versions latest
-                          where latest.tenant_id = r.tenant_id
-                            and latest.resource_id = r.id
+                        and (
+                          (r.type = 'generated_copy' and rv.version = gcs.knowledge_target_version)
+                          or
+                          (r.type <> 'generated_copy' and rv.version = (
+                            select max(latest.version)
+                            from resource_versions latest
+                            where latest.tenant_id = r.tenant_id
+                              and latest.resource_id = r.id
+                          ))
                         )
                     )
                     select * from candidates
@@ -623,8 +845,13 @@ class ResourceRepository(BaseRepository):
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 row = cursor.execute(
-                    "select id::text as id, visibility, owner_open_id from resources where id = %s",
-                    (resource_id,),
+                    """
+                    select r.id::text as id, r.type, r.visibility, r.owner_open_id,
+                           (select max(rv.version) from resource_versions rv
+                            where rv.tenant_id = r.tenant_id and rv.resource_id = r.id) as version
+                    from resources r where r.id = %s and r.tenant_id = %s
+                    """,
+                    (resource_id, tenant_id),
                 ).fetchone()
                 if row is None:
                     raise PermissionError("Resource not found or not writable")
@@ -656,6 +883,24 @@ class ResourceRepository(BaseRepository):
                     (tenant_id, target_resource_id),
                 ).fetchone()
                 return None if row is None else row["id"]
+
+    def resource_version_exists(
+        self,
+        *,
+        tenant_id: str,
+        resource_id: str,
+        resource_version: int,
+        conn: Optional[Connection] = None,
+    ) -> bool:
+        with self.connection_context(conn) as connection:
+            row = connection.execute(
+                """
+                select 1 from resource_versions
+                where tenant_id = %s and resource_id = %s and version = %s
+                """,
+                (tenant_id, resource_id, resource_version),
+            ).fetchone()
+            return row is not None
 
     def existing_mapping_external_ids(
         self,
@@ -1084,6 +1329,67 @@ class ResourceRepository(BaseRepository):
             conn=conn or self.conn,
         )
 
+    def ensure_resource_association(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_id: str,
+        source_topic: str | None = None,
+        conn: Optional[Connection] = None,
+    ) -> bool:
+        """保证新素材至少有一条图关联；无强证据时挂同主题/同作者弱关联。
+
+        强关联由上层先写 derived_from / imitated_from。本方法只在仍无出边时，从 actor
+        可读的既有选题或文案中选最近一条；全库第一条素材没有可连对象时返回 False。
+        """
+        where_clause = self.readable_resource_where("r")
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                exists = cursor.execute(
+                    """
+                    select 1 from resource_edges
+                    where tenant_id = %s and source_resource_id = %s
+                    limit 1
+                    """,
+                    (tenant_id, resource_id),
+                ).fetchone()
+                if exists is not None:
+                    return True
+                target = cursor.execute(
+                    f"""
+                    select r.id::text as id
+                    from resources r
+                    where r.id <> %(resource_id)s
+                      and r.type in ('generated_topic', 'generated_copy', 'xhs_note', 'xhs_online_note')
+                      and {where_clause}
+                    order by
+                      case when %(source_topic)s <> '' and
+                                     (r.summary = %(source_topic)s or r.content_text ilike '%%' || %(source_topic)s || '%%')
+                           then 0 else 1 end,
+                      r.updated_at desc,
+                      r.id desc
+                    limit 1
+                    """,
+                    {
+                        "resource_id": resource_id,
+                        "source_topic": source_topic or "",
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
+                ).fetchone()
+                if target is None:
+                    return False
+                self.add_edge(
+                    tenant_id=tenant_id,
+                    source_resource_id=resource_id,
+                    target_resource_id=target["id"],
+                    edge_type="same_topic",
+                    weight=0.1,
+                    conn=connection,
+                )
+                return True
+
     def performance_rows(
         self,
         *,
@@ -1120,7 +1426,3 @@ class ResourceRepository(BaseRepository):
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 return {name: cursor.execute(f"select count(*) as c from {name}").fetchone()["c"] for name in names}
-
-
-
-

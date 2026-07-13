@@ -72,10 +72,20 @@ class FalkorResourceGraph:
             _indexed_graphs.add(cache_key)
 
     def merge_node(self, node: dict[str, Any]) -> None:
+        resource_version = node.get("resource_version")
+        if (
+            not isinstance(resource_version, int)
+            or isinstance(resource_version, bool)
+            or resource_version <= 0
+        ):
+            raise ValueError("resource_version must be a positive integer")
         self.graph.query(
-            "MERGE (r:Resource {id: $id}) SET r.tenant_id=$tenant_id, r.type=$type, r.title=$title",
+            "MERGE (r:Resource {id: $id}) "
+            "SET r.tenant_id=$tenant_id, r.type=$type, r.title=$title, "
+            "r.resource_version=$resource_version",
             {"id": node["id"], "tenant_id": node.get("tenant_id"),
-             "type": node.get("type"), "title": node.get("title")},
+             "type": node.get("type"), "title": node.get("title"),
+             "resource_version": resource_version},
         )
 
     def merge_edge(self, *, source_id: str, target_id: str, edge_type: str,
@@ -136,7 +146,9 @@ class FalkorResourceGraph:
             WITH p {et_clause}
             UNWIND relationships(p) as rel
             RETURN startNode(rel).id, startNode(rel).title, startNode(rel).type,
+                   startNode(rel).resource_version,
                    endNode(rel).id, endNode(rel).title, endNode(rel).type,
+                   endNode(rel).resource_version,
                    rel.edge_type, rel.weight
             """,
             params,
@@ -145,9 +157,15 @@ class FalkorResourceGraph:
         edges: list[dict] = []
         seen_edges: set[tuple[str, str, str]] = set()
         for r in rows:
-            sid, stitle, stype, tid, ttitle, ttype, etype, weight = r
-            nodes[sid] = {"id": sid, "title": stitle, "type": stype}
-            nodes[tid] = {"id": tid, "title": ttitle, "type": ttype}
+            sid, stitle, stype, sversion, tid, ttitle, ttype, tversion, etype, weight = r
+            nodes[sid] = {
+                "id": sid, "title": stitle, "type": stype,
+                "resource_version": sversion,
+            }
+            nodes[tid] = {
+                "id": tid, "title": ttitle, "type": ttype,
+                "resource_version": tversion,
+            }
             key = (sid, tid, etype)
             if key not in seen_edges:
                 seen_edges.add(key)

@@ -32,19 +32,45 @@ class MeiliProcessor:
         if self.config.state != "enabled" or self.index is None:
             raise PermanentProcessingError("Meili config is missing")
         resource_id = str(item.payload.get("resource_id") or item.resource_id or "")
-        if not resource_id:
-            raise PermanentProcessingError("Meili outbox payload missing resource_id")
+        resource_version = int(item.payload.get("version") or item.resource_version or 0)
+        if not resource_id or resource_version <= 0:
+            raise PermanentProcessingError("Meili outbox payload missing resource_id/version")
         with self.conn.cursor(row_factory=dict_row) as cur:
             row = cur.execute(
                 """
-                select id::text as id, tenant_id, type, title, summary, content_text
-                from resources where tenant_id = %s and id = %s
+                select r.id::text as id, r.tenant_id, r.type,
+                       coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
+                       r.summary, rv.content_text, rv.version as resource_version
+                from resources r
+                join resource_versions rv
+                  on rv.tenant_id = r.tenant_id
+                 and rv.resource_id = r.id
+                 and rv.version = %s
+                left join generated_copy_states gcs
+                  on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                where r.tenant_id = %s and r.id = %s
+                  and (
+                    (r.type = 'generated_copy' and gcs.knowledge_target_version = rv.version)
+                    or
+                    (r.type <> 'generated_copy' and rv.version = (
+                      select max(latest.version) from resource_versions latest
+                      where latest.tenant_id = r.tenant_id and latest.resource_id = r.id
+                    ))
+                  )
                 """,
-                (item.tenant_id, resource_id),
+                (resource_version, item.tenant_id, resource_id),
             ).fetchone()
         if row is None:
-            # 资源已从核心库消失:物理删除 Meili 文档,使检索引擎与核心库一致,
-            # 否则已删资源会永久驻留索引形成脏数据(见 delete 注释)。删除幂等,可安全重试。
+            with self.conn.cursor(row_factory=dict_row) as cur:
+                exists = cur.execute(
+                    "select 1 from resources where tenant_id = %s and id = %s",
+                    (item.tenant_id, resource_id),
+                ).fetchone()
+            if exists is not None:
+                # 资源仍在，但这条 outbox 指向旧版本、普通候选或已被新采纳版本替代。
+                # 绝不能删除当前 Meili 文档，也不能回退索引到错误快照。
+                return ProcessResult(status="superseded")
+            # 资源确已从核心库消失才物理删除索引文档。
             await lease.assert_owned()
             await asyncio.to_thread(self.index.delete, resource_id)
             return ProcessResult(status="superseded")
@@ -68,6 +94,7 @@ class MeiliProcessor:
                 "title": row["title"],
                 "summary": row["summary"],
                 "content_text": row["content_text"],
+                "resource_version": int(row["resource_version"]),
             },
         )
         return ProcessResult(status="succeeded")

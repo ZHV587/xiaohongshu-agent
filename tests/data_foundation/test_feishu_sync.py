@@ -306,7 +306,7 @@ class _PerfRecordingRepository:
         return None
 
     def writable_resource_metadata(self, **kwargs):
-        return {"visibility": "team", "owner_open_id": "ou_sync"}
+        return {"type": "feishu_base_record", "version": 1, "visibility": "team", "owner_open_id": "ou_sync"}
 
     def find_performance_metric_id(self, **kwargs):
         return None

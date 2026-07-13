@@ -4,7 +4,7 @@ from contextlib import nullcontext
 from typing import Any
 
 from data_foundation.models import RuntimeIdentityConfig
-from data_foundation.outbox_requests import default_write_requests
+from data_foundation.outbox_requests import candidate_graph_requests, default_write_requests
 
 DERIVED_EDGE = "derived_from"
 FEEDBACK_EDGE = "feedback_on"
@@ -79,38 +79,164 @@ def save_generated_copy_resource(
     source_topic: str | None = None,
     evidence: list[dict[str, Any]] | None = None,
     reference_resource_id: str | None = None,
+    versions: list[dict[str, Any]] | None = None,
+    resource_id: str | None = None,
+    expected_resource_version: int | None = None,
+    expected_state_version: int | None = None,
+    origin_turn_id: str | None = None,
 ) -> dict[str, Any]:
-    title = title.strip()
-    if not title:
-        raise ValueError("title is required")
-    body = body.strip()
-    if not body:
-        raise ValueError("body is required")
-    cleaned_tags = [tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()]
+    implicit_single_revision = versions is None
+    candidates = _clean_copy_candidates(title=title, body=body, tags=tags, versions=versions)
+    canonical = candidates[0]
     cleaned_evidence = _clean_evidence(evidence)
     source_topic = source_topic.strip() if isinstance(source_topic, str) and source_topic.strip() else None
-    parts = [title, "", body]
-    if cleaned_tags:
-        parts.extend(["", " ".join(cleaned_tags)])
     with _unit_of_work(repo):
+        is_real_repo = callable(getattr(getattr(repo, "conn", None), "transaction", None))
+        lifecycle = None
+        if is_real_repo:
+            from data_foundation.repositories.generated_copy import GeneratedCopyRepository
+
+            lifecycle = GeneratedCopyRepository(repo)
+        existing_resource_id = resource_id.strip() if isinstance(resource_id, str) else ""
+        if existing_resource_id:
+            if lifecycle is None:
+                raise RuntimeError("resource_id revisions require a connection-bound repository")
+            if (
+                not isinstance(expected_resource_version, int)
+                or isinstance(expected_resource_version, bool)
+                or expected_resource_version <= 0
+                or not isinstance(expected_state_version, int)
+                or isinstance(expected_state_version, bool)
+                or expected_state_version <= 0
+            ):
+                raise ValueError(
+                    "existing resource revisions require expected_resource_version "
+                    "and expected_state_version"
+                )
+            current_resource_version = expected_resource_version
+            current_state_version = expected_state_version
+            candidate_versions: list[dict[str, Any]] = []
+            for candidate in candidates:
+                state = lifecycle.save_revision(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=existing_resource_id,
+                    expected_resource_version=current_resource_version,
+                    expected_state_version=current_state_version,
+                    title=candidate["title"],
+                    body=candidate["body"],
+                    tags=candidate["tags"],
+                    label=None if implicit_single_revision else candidate["label"],
+                    cover=candidate["cover"],
+                    note=candidate["note"],
+                )
+                current_resource_version = state.latest_resource_version
+                current_state_version = state.state_version
+                candidate_versions.append(
+                    {
+                        "label": state.selected_label,
+                        "resource_version": current_resource_version,
+                        "title": candidate["title"],
+                    }
+                )
+            # save_revision 逐条追加时 selected 会暂指最后一版；候选集 canonical 永远是首版 A，
+            # 在同一外层事务内显式选回首版，保证返回映射、生命周期指针和前端默认选择一致。
+            if len(candidate_versions) > 1:
+                selected = lifecycle.select_version(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=existing_resource_id,
+                    resource_version=candidate_versions[0]["resource_version"],
+                    expected_state_version=current_state_version,
+                    label=candidate_versions[0]["label"],
+                )
+                current_state_version = selected.state_version
+            _link_evidence(
+                repo,
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                generated_id=existing_resource_id,
+                evidence=cleaned_evidence,
+            )
+            if reference_resource_id:
+                link_imitation_source(
+                    repo,
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    copy_resource_id=existing_resource_id,
+                    reference_resource_id=reference_resource_id,
+                )
+            return {
+                "ok": True,
+                "resource": {
+                    "resource_id": existing_resource_id,
+                    "type": "generated_copy",
+                    "title": candidates[0]["title"],
+                    "resource_version": candidate_versions[0]["resource_version"],
+                    "latest_resource_version": current_resource_version,
+                    "state_version": current_state_version,
+                    "versions": candidate_versions,
+                },
+                "evidence_count": len(cleaned_evidence),
+            }
+        if lifecycle is not None and origin_turn_id:
+            lifecycle.lock_origin(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                origin_turn_id=origin_turn_id,
+            )
+            replay = lifecycle.find_by_origin(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                origin_turn_id=origin_turn_id,
+            )
+            if replay is not None:
+                return replay
         resource = repo.upsert_resource(
             tenant_id=tenant_id,
             actor_open_id=actor_open_id,
             resource_type="generated_copy",
-            title=title,
+            title=canonical["title"],
             summary=source_topic,
-            content_text="\n".join(parts),
-            content_json={
-                "title": title,
-                "body": body,
-                "tags": cleaned_tags,
-                "source_topic": source_topic,
-                "evidence": cleaned_evidence,
-            },
+            content_text=_copy_text(canonical),
+            content_json=_copy_json(canonical, source_topic=source_topic, evidence=cleaned_evidence),
             visibility="team",
             owner_open_id=actor_open_id,
-            outbox_requests=default_write_requests(),
+            # 普通文案候选不进入可检索知识；只同步图，明确采纳/定稿后再索引精确版本。
+            outbox_requests=candidate_graph_requests(),
         )
+        candidate_versions = [
+            {
+                "label": canonical["label"],
+                "resource_version": int(resource.version),
+                "title": canonical["title"],
+            }
+        ]
+        first_version = int(resource.version)
+        for candidate in candidates[1:]:
+            resource = repo.upsert_resource(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource.id,
+                resource_type="generated_copy",
+                title=candidate["title"],
+                summary=source_topic,
+                content_text=_copy_text(candidate),
+                content_json=_copy_json(
+                    candidate, source_topic=source_topic, evidence=cleaned_evidence
+                ),
+                visibility="team",
+                owner_open_id=actor_open_id,
+                # 同一 stable resource 的其余候选只追加不可变版本，不单独进索引/图节点。
+                outbox_requests=[],
+            )
+            candidate_versions.append(
+                {
+                    "label": candidate["label"],
+                    "resource_version": int(resource.version),
+                    "title": candidate["title"],
+                }
+            )
         _link_evidence(repo, tenant_id=tenant_id, actor_open_id=actor_open_id, generated_id=resource.id, evidence=cleaned_evidence)
         # §5 仿写可追溯:若本篇是仿写产出,对范本素材建 imitated_from 边(成品→范本)。
         # 与 _link_evidence 同一 unit_of_work 内,失败随事务回滚(与证据边一致)。
@@ -119,7 +245,117 @@ def save_generated_copy_resource(
                 repo, tenant_id=tenant_id, actor_open_id=actor_open_id,
                 copy_resource_id=resource.id, reference_resource_id=reference_resource_id,
             )
-        return _payload(resource, cleaned_evidence)
+        # 没有证据/仿写范本时，按同主题或同作者最近素材挂一条弱关联；全库首条素材
+        # 确实没有既有对象可连时才允许返回 False。
+        ensure_link = getattr(repo, "ensure_resource_association", None)
+        if callable(ensure_link):
+            ensure_link(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource.id,
+                source_topic=source_topic,
+            )
+        # 生产仓储绑定连接时，同一事务初始化生命周期；测试假仓不伪造数据库状态。
+        if lifecycle is not None:
+            state = lifecycle.initialize_candidate(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource.id,
+                resource_version=first_version,
+                label=canonical["label"],
+                candidates=candidate_versions,
+                origin_turn_id=origin_turn_id,
+            )
+            state_version = state.state_version
+        else:
+            state_version = None
+        payload = _payload(resource, cleaned_evidence)
+        payload["resource"]["title"] = canonical["title"]
+        payload["resource"].pop("version", None)
+        payload["resource"]["resource_version"] = first_version
+        payload["resource"]["latest_resource_version"] = int(resource.version)
+        payload["resource"]["state_version"] = state_version
+        payload["resource"]["versions"] = candidate_versions
+        return payload
+
+
+def _clean_copy_candidates(
+    *,
+    title: Any,
+    body: Any,
+    tags: Any,
+    versions: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    raw = versions if versions is not None else [{"title": title, "body": body, "tags": tags, "label": "A"}]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("versions must contain at least one candidate")
+    if len(raw) > 3:
+        raise ValueError("versions must contain at most 3 candidates")
+    cleaned: list[dict[str, Any]] = []
+    labels: set[str] = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError("each version must be an object")
+        candidate_title = item.get("title")
+        candidate_body = item.get("body")
+        candidate_tags = item.get("tags")
+        if not isinstance(candidate_title, str) or not candidate_title.strip():
+            raise ValueError("each version title is required")
+        if not isinstance(candidate_body, str) or not candidate_body.strip():
+            raise ValueError("each version body is required")
+        if not isinstance(candidate_tags, list):
+            raise ValueError("each version tags must be an array")
+        default_label = chr(ord("A") + index)
+        label = item.get("label")
+        label = label.strip()[:20] if isinstance(label, str) and label.strip() else default_label
+        if label in labels:
+            raise ValueError("version labels must be unique")
+        labels.add(label)
+        cleaned.append(
+            {
+                "label": label,
+                "title": candidate_title.strip(),
+                "body": candidate_body.strip(),
+                "tags": [tag.strip() for tag in candidate_tags if isinstance(tag, str) and tag.strip()],
+                "cover": item.get("cover").strip() if isinstance(item.get("cover"), str) else "",
+                "note": item.get("note").strip() if isinstance(item.get("note"), str) else "",
+            }
+        )
+    if versions is not None:
+        top_title = title.strip() if isinstance(title, str) else ""
+        top_body = body.strip() if isinstance(body, str) else ""
+        if not isinstance(tags, list):
+            raise ValueError("top-level tags must be an array")
+        top_tags = [tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()]
+        if (
+            cleaned[0]["title"] != top_title
+            or cleaned[0]["body"] != top_body
+            or cleaned[0]["tags"] != top_tags
+        ):
+            raise ValueError("top-level title/body/tags must match the first version")
+    return cleaned
+
+
+def _copy_json(
+    candidate: dict[str, Any], *, source_topic: str | None, evidence: list[dict[str, str]]
+) -> dict[str, Any]:
+    return {
+        "title": candidate["title"],
+        "body": candidate["body"],
+        "tags": candidate["tags"],
+        "cover": candidate["cover"],
+        "note": candidate["note"],
+        "variant_label": candidate["label"],
+        "source_topic": source_topic,
+        "evidence": evidence,
+    }
+
+
+def _copy_text(candidate: dict[str, Any]) -> str:
+    parts = [candidate["title"], "", candidate["body"]]
+    if candidate["tags"]:
+        parts.extend(["", " ".join(candidate["tags"])])
+    return "\n".join(parts)
 
 
 def save_user_feedback_resource(

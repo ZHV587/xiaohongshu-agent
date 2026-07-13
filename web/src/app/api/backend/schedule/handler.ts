@@ -10,7 +10,15 @@ type ScheduleRouteDeps = {
   forwardToInternalServer: typeof forwardToInternalServer;
 };
 
-const REQUIRED_FIELDS = ["resourceId", "date", "time", "account"] as const;
+const REQUIRED_FIELDS = [
+  "resourceId",
+  "targetResourceVersion",
+  "expectedLatestResourceVersion",
+  "expectedStateVersion",
+  "date",
+  "time",
+  "account",
+] as const;
 
 function missingField(body: Record<string, unknown>): string | null {
   for (const field of REQUIRED_FIELDS) {
@@ -39,15 +47,50 @@ export function createSchedulePost(deps: ScheduleRouteDeps) {
       if (missing) {
         return jsonNoStore({ ok: false, error: `missing field '${missing}'` }, { status: 400 });
       }
+      if (!Number.isInteger(body.targetResourceVersion) || Number(body.targetResourceVersion) <= 0) {
+        return jsonNoStore({ ok: false, error: "'targetResourceVersion' must be a positive integer" }, { status: 400 });
+      }
+      if (!Number.isInteger(body.expectedLatestResourceVersion) || Number(body.expectedLatestResourceVersion) <= 0) {
+        return jsonNoStore({ ok: false, error: "'expectedLatestResourceVersion' must be a positive integer" }, { status: 400 });
+      }
+      if (!Number.isInteger(body.expectedStateVersion) || Number(body.expectedStateVersion) <= 0) {
+        return jsonNoStore({ ok: false, error: "'expectedStateVersion' must be a positive integer" }, { status: 400 });
+      }
+      const finalDraft = body.finalDraft;
+      if (
+        finalDraft != null && (
+          typeof finalDraft !== "object" || Array.isArray(finalDraft) ||
+          typeof (finalDraft as Record<string, unknown>).title !== "string" ||
+          typeof (finalDraft as Record<string, unknown>).body !== "string" ||
+          !Array.isArray((finalDraft as Record<string, unknown>).tags) ||
+          ((finalDraft as Record<string, unknown>).tags as unknown[]).some((tag) => typeof tag !== "string") ||
+          ((finalDraft as Record<string, unknown>).cover != null && typeof (finalDraft as Record<string, unknown>).cover !== "string") ||
+          ((finalDraft as Record<string, unknown>).note != null && typeof (finalDraft as Record<string, unknown>).note !== "string")
+        )
+      ) {
+        return jsonNoStore({ ok: false, error: "'finalDraft' must contain title, body and tags" }, { status: 400 });
+      }
+      const requestId = body.requestId;
+      if (requestId != null && (typeof requestId !== "string" || !requestId.trim())) {
+        return jsonNoStore({ ok: false, error: "'requestId' must be a non-empty string" }, { status: 400 });
+      }
+      if (finalDraft != null && requestId == null) {
+        return jsonNoStore({ ok: false, error: "missing field 'requestId'" }, { status: 400 });
+      }
       const response = await deps.forwardToInternalServer(
         "/_internal/studio/schedule",
         "POST",
         user.openId,
         {
           resourceId: body.resourceId,
+          targetResourceVersion: body.targetResourceVersion,
+          expectedLatestResourceVersion: body.expectedLatestResourceVersion,
+          expectedStateVersion: body.expectedStateVersion,
           date: body.date,
           time: body.time,
           account: body.account,
+          ...(finalDraft == null ? {} : { finalDraft }),
+          ...(requestId == null ? {} : { requestId }),
         },
         { isAdmin: user.isAdmin },
       );

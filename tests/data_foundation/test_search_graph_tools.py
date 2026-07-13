@@ -232,11 +232,14 @@ def test_expand_graph_queries_falkor_and_filters_by_permission(monkeypatch):
     # hops 透传(clamp 在 1..3)
     assert fake_graph.expand.call_args.kwargs["hops"] == 2
     assert fake_graph.expand.call_args.kwargs["edge_types"] == ["derived_from"]
+    hydrate_call = next(call for call in repo.calls if call[0] == "readable_by_ids")
+    assert hydrate_call[1]["knowledge_only"] is True
 
 
 def test_expand_graph_filters_out_invisible_nodes(monkeypatch):
     class _PartialVisibleRepo(_FakeRepository):
         def readable_rows_by_ids(self, **kwargs):
+            assert kwargs["knowledge_only"] is True
             # 只有 resource-1 可见,resource-2 被权限过滤
             return [{"id": "resource-1", "title": "起点", "summary": None, "type": "topic",
                      "visibility": "team", "score": 1.0, "source_updated_at": None, "updated_at": None}]
@@ -417,7 +420,7 @@ def test_search_tool_returns_structured_json(monkeypatch):
         yield repo
 
     fake_index = MagicMock()
-    fake_index.search.return_value = [("resource-1", 0.9)]
+    fake_index.search.return_value = [("resource-1", 0.9, 1)]
     monkeypatch.setattr(df_tools, "_repository", repository)
     monkeypatch.setenv("XHS_MEILI_URL", "http://127.0.0.1:7700")
     monkeypatch.setenv("XHS_MEILI_KEY", "k")
@@ -433,6 +436,9 @@ def test_search_tool_returns_structured_json(monkeypatch):
     assert result["results"][0]["title"] == "露营装备"
     assert "content_text" not in result["results"][0]
     fake_index.search.assert_called_once()
+    hydrate_call = next(call for call in repo.calls if call[0] == "readable_by_ids")
+    assert hydrate_call[1]["resource_ids"] == ["resource-1"]
+    assert hydrate_call[1]["resource_versions"] == [1]
 
 
 def test_search_tool_returns_error_when_meili_unavailable(monkeypatch):
@@ -457,7 +463,7 @@ def test_semantic_search_tool_falls_back_to_fulltext_when_no_active_index(monkey
         yield repo
 
     fake_index = MagicMock()
-    fake_index.search.return_value = [("resource-9", 0.5)]
+    fake_index.search.return_value = [("resource-9", 0.5, 1)]
     monkeypatch.setattr(df_tools, "_repository", repository)
     monkeypatch.setenv("XHS_MEILI_URL", "http://127.0.0.1:7700")
     monkeypatch.setenv("XHS_MEILI_KEY", "k")
@@ -751,7 +757,7 @@ def test_get_resource_tool_distinguishes_source_and_index_freshness(monkeypatch)
 
     @contextmanager
     def repository():
-        yield SimpleNamespace(get_resource=lambda *_args: resource)
+        yield SimpleNamespace(get_resource_for_knowledge=lambda *_args: resource)
 
     monkeypatch.setattr(df_tools, "_repository", repository)
 

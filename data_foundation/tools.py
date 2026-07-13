@@ -130,13 +130,15 @@ def search_local_note_cards(keyword: str, limit: int = 12, config: RunnableConfi
         hits = index.search(keyword.strip(), tenant_id=default_tenant_id(), limit=over_fetch)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"MEILI_QUERY_FAILED: {exc}", "results": []}
-    ids = [rid for rid, _ in hits]
-    score_by_id = {rid: score for rid, score in hits}
+    ids = [rid for rid, _, _ in hits]
+    versions = [version for _, _, version in hits]
+    score_by_id = {rid: score for rid, score, _ in hits}
     with _repository() as repo:
         rows = repo.readable_rows_by_ids(
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
             resource_ids=ids,
+            resource_versions=versions,
         )
     cards: list[dict[str, Any]] = []
     for row in rows:
@@ -175,13 +177,15 @@ def search_resources(query: str, limit: int = 10, config: RunnableConfig | None 
         hits = index.search(query.strip(), tenant_id=default_tenant_id(), limit=over_fetch)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"MEILI_QUERY_FAILED: {exc}"}
-    ids = [rid for rid, _ in hits]
-    score_by_id = {rid: score for rid, score in hits}
+    ids = [rid for rid, _, _ in hits]
+    versions = [version for _, _, version in hits]
+    score_by_id = {rid: score for rid, score, _ in hits}
     with _repository() as repo:
         rows = repo.readable_rows_by_ids(
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
             resource_ids=ids,
+            resource_versions=versions,
         )
         valid_ids = [str(r["id"]) for r in rows]
         perf_data = repo.bulk_performance_metrics(
@@ -309,7 +313,7 @@ def get_resource(resource_id: str, config: RunnableConfig | None = None) -> dict
     except (ValueError, TypeError, AttributeError):
         return {"ok": False, "error": "Resource not found or not permitted"}
     with _repository() as repo:
-        resource = repo.get_resource(default_tenant_id(), actor, resource_id)
+        resource = repo.get_resource_for_knowledge(default_tenant_id(), actor, resource_id)
     if resource is None:
         return {"ok": False, "error": "Resource not found or not permitted"}
     return {
@@ -326,6 +330,69 @@ def get_resource(resource_id: str, config: RunnableConfig | None = None) -> dict
                 resource.source_updated_at.isoformat() if resource.source_updated_at else None
             ),
             "indexed_at": resource.updated_at.isoformat() if resource.updated_at else None,
+        },
+    }
+
+
+@tool
+def get_generated_copy_lifecycle(
+    resource_id: str,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Read exact generated-copy snapshots and current CAS tokens for a revision.
+
+    Use this before ``save_generated_copy`` when an existing resource's
+    ``latest_resource_version`` or ``state_version`` is absent/stale.  Access requires
+    owner/write permission; candidate bodies are returned only to that editor path and
+    are not exposed through the general knowledge retrieval tool.
+    """
+    actor = actor_from_config(config)
+    try:
+        uuid.UUID(str(resource_id))
+    except (ValueError, TypeError, AttributeError):
+        return {"ok": False, "error": "Generated copy not found or not permitted"}
+    from data_foundation.repositories.generated_copy import GeneratedCopyRepository
+
+    try:
+        with _repository() as repo:
+            lifecycle = GeneratedCopyRepository(repo)
+            state = lifecycle.get_state(
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                resource_id=resource_id,
+            )
+            snapshots = lifecycle.list_versions(
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                resource_id=resource_id,
+            )
+    except (PermissionError, ValueError):
+        return {"ok": False, "error": "Generated copy not found or not permitted"}
+    return {
+        "ok": True,
+        "lifecycle": {
+            "resource_id": state.resource_id,
+            "status": state.lifecycle_status,
+            "selected_version": state.selected_version,
+            "selected_label": state.selected_label,
+            "adopted_version": state.adopted_version,
+            "finalized_version": state.finalized_version,
+            "published_version": state.published_version,
+            "knowledge_target_version": state.knowledge_target_version,
+            "latest_resource_version": state.latest_resource_version,
+            "state_version": state.state_version,
+            "versions": [
+                {
+                    "resource_version": snapshot["resourceVersion"],
+                    "label": snapshot["label"],
+                    "title": snapshot["title"],
+                    "body": snapshot["body"],
+                    "tags": snapshot["tags"],
+                    "cover": snapshot["cover"],
+                    "note": snapshot["note"],
+                }
+                for snapshot in snapshots
+            ],
         },
     }
 
@@ -428,6 +495,10 @@ def save_generated_copy(
     title: str,
     body: str,
     tags: list[str],
+    versions: list[dict[str, Any]] | None = None,
+    resource_id: str | None = None,
+    expected_resource_version: int | None = None,
+    expected_state_version: int | None = None,
     source_topic: str | None = None,
     evidence: list[dict[str, Any]] | None = None,
     reference_resource_id: str | None = None,
@@ -435,10 +506,22 @@ def save_generated_copy(
 ) -> dict[str, Any]:
     """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation.
 
+    多版本成品必须把完整 A/B/C 传入 versions；后端会一次事务冷存为同一 resource_id 的
+    不可变 resource_versions，并返回每版 resource_version。候选不会进入知识检索。
+    润色/重写已有文案时必须传 resource_id，让修订继续追加在同一资源；若已有
+    expected_resource_version/expected_state_version 必须一并传入做并发校验；任一缺失都会
+    fail closed，必须先读取最新生命周期令牌后重试，绝不静默追写到未知的新版本。
+
     reference_resource_id: 仿写产出时,该篇所仿的范本素材 resource_id。传入则落一条
     imitated_from 边(成品→范本),满足「仿写成品可追溯到范本原型」(§5)。非仿写留空。
     """
     actor = actor_from_config(config)
+    configurable = config.get("configurable", {}) if isinstance(config, dict) else {}
+    origin_turn_id = (
+        str(configurable.get("turn_id") or "").strip()
+        if isinstance(configurable, dict)
+        else ""
+    ) or None
     with _repository() as repo:
         return save_generated_copy_resource(
             repo,
@@ -447,6 +530,11 @@ def save_generated_copy(
             title=title,
             body=body,
             tags=tags,
+            versions=versions,
+            resource_id=resource_id,
+            expected_resource_version=expected_resource_version,
+            expected_state_version=expected_state_version,
+            origin_turn_id=origin_turn_id,
             source_topic=source_topic,
             evidence=evidence,
             reference_resource_id=reference_resource_id,
@@ -477,6 +565,7 @@ def save_user_feedback(
 def save_performance_metric(
     target_resource_id: str,
     metrics: dict[str, Any],
+    target_resource_version: int | None = None,
     published_at: str | None = None,
     channel: str = "xiaohongshu",
     note_url: str | None = None,
@@ -490,6 +579,7 @@ def save_performance_metric(
             tenant_id=default_tenant_id(),
             actor_open_id=actor,
             target_resource_id=target_resource_id,
+            target_resource_version=target_resource_version,
             metrics=metrics,
             published_at=published_at,
             channel=channel,
@@ -592,6 +682,7 @@ data_foundation_tools = [
     semantic_search_resources,
     graph_expand,
     get_resource,
+    get_generated_copy_lifecycle,
     get_data_foundation_status,
     sync_feishu_resources,
     save_generated_topic,
@@ -602,4 +693,3 @@ data_foundation_tools = [
     get_operations_data,
     save_session_snapshot,
 ]
-

@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 
 
 DATA_FOUNDATION_TABLES = (
+    "data_foundation_migrations",
     "user_skill_audit_events",
     "user_skill_publications",
     "user_skill_versions",
@@ -22,6 +23,7 @@ DATA_FOUNDATION_TABLES = (
     "service_executions",
     "service_instances",
     "sync_sources",
+    "generated_copy_states",
     "resource_outbox",
     "resource_embeddings",
     "embedding_indexes",

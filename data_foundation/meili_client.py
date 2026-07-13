@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import threading
+from dataclasses import dataclass
 from typing import Any
 
 import meilisearch
@@ -12,6 +14,18 @@ from data_foundation.engine_config import MeiliConfig
 # 每 cycle 新建 HTTP 客户端。config 变化(换地址/key)自动建新实例。
 _client_cache: dict[tuple[str, str], Any] = {}
 _cache_lock = threading.Lock()
+
+
+@dataclass(frozen=True)
+class MeiliTenantAudit:
+    """A tenant's total documents and documents safe for exact-version hydration."""
+
+    total_documents: int
+    versioned_documents: int
+
+    @property
+    def malformed_documents(self) -> int:
+        return max(0, self.total_documents - self.versioned_documents)
 
 
 def _reset_client_cache() -> None:
@@ -33,7 +47,7 @@ def _get_client(config: MeiliConfig) -> Any:
 
 class MeiliResourceIndex:
     SEARCHABLE = ["title", "summary", "content_text"]
-    FILTERABLE = ["tenant_id", "type"]
+    FILTERABLE = ["tenant_id", "type", "resource_version"]
 
     def __init__(self, *, client: Any, index_uid: str = "resources"):
         self.client = client
@@ -45,8 +59,21 @@ class MeiliResourceIndex:
 
     def ensure_index(self) -> None:
         index = self.client.index(self.index_uid)
-        index.update_filterable_attributes(self.FILTERABLE)
-        index.update_searchable_attributes(self.SEARCHABLE)
+        tasks = (
+            ("filterable attributes", index.update_filterable_attributes(self.FILTERABLE)),
+            ("searchable attributes", index.update_searchable_attributes(self.SEARCHABLE)),
+        )
+        # Settings updates are asynchronous just like document writes.  Drift audit
+        # immediately filters on resource_version, so returning before the settings
+        # task is applied would turn a healthy index into a false-negative audit.
+        for operation, info in tasks:
+            task = index.wait_for_task(info.task_uid, timeout_in_ms=30000)
+            status = getattr(task, "status", None)
+            if status != "succeeded":
+                raise RuntimeError(
+                    f"Meili {operation} task not succeeded: status={status} "
+                    f"error={getattr(task, 'error', None)}"
+                )
 
     def upsert(self, document: dict[str, Any]) -> None:
         # add_documents 是**异步入队**:返回 TaskInfo 即返回,Meili 端任务可能稍后才应用甚至失败。
@@ -79,26 +106,57 @@ class MeiliResourceIndex:
                 f"error={getattr(task, 'error', None)}"
             )
 
-    def count(self, *, tenant_id: str) -> int:
-        """按 tenant 统计索引内文档数(对账用)。limit=0 只取总数不取命中。"""
-        result = self.client.index(self.index_uid).search(
-            "",
-            opt_params={"filter": f'tenant_id = "{tenant_id}"', "limit": 0},
-        )
-        return int(result.get("estimatedTotalHits") or result.get("totalHits") or 0)
+    def audit_tenant(self, *, tenant_id: str) -> MeiliTenantAudit:
+        """Count all documents and documents carrying a valid immutable version.
 
-    def search(self, query: str, *, tenant_id: str, limit: int) -> list[tuple[str, float]]:
+        Old Meili documents can have the right cardinality while lacking
+        ``resource_version``.  Those documents are unusable because the Postgres ACL
+        hydrator must never guess the latest version.  Counting the valid subset makes
+        this schema drift visible even when the raw document total still matches PG.
+        """
+        tenant_literal = json.dumps(tenant_id, ensure_ascii=False)
+        index = self.client.index(self.index_uid)
+
+        def _count(filter_expression: str) -> int:
+            result = index.search(
+                "",
+                opt_params={"filter": filter_expression, "limit": 0},
+            )
+            return int(result.get("estimatedTotalHits") or result.get("totalHits") or 0)
+
+        total = _count(f"tenant_id = {tenant_literal}")
+        versioned = _count(
+            f"tenant_id = {tenant_literal} AND resource_version >= 1"
+        )
+        return MeiliTenantAudit(
+            total_documents=total,
+            versioned_documents=versioned,
+        )
+
+    def search(self, query: str, *, tenant_id: str, limit: int) -> list[tuple[str, float, int]]:
         # showRankingScore:让 Meili 返回 _rankingScore(0~1 归一化相关度),
         # 贯通到 rank_evidence 作 BM25 口径排序依据;否则全文相关度信号丢失。
         result = self.client.index(self.index_uid).search(
             query,
             opt_params={
-                "filter": f'tenant_id = "{tenant_id}"',
+                "filter": f"tenant_id = {json.dumps(tenant_id, ensure_ascii=False)}",
                 "limit": limit,
                 "showRankingScore": True,
             },
         )
-        return [
-            (hit["resource_id"], float(hit.get("_rankingScore") or 0.0))
-            for hit in result.get("hits", [])
-        ]
+        hits: list[tuple[str, float, int]] = []
+        for hit in result.get("hits", []):
+            version = hit.get("resource_version")
+            # Old/incomplete documents have no immutable-version identity.  Returning
+            # them would force the PG ACL hydrator to guess "latest", which can expose
+            # an unadopted generated-copy candidate.  Fail closed until reindexing.
+            if not isinstance(version, int) or isinstance(version, bool) or version <= 0:
+                continue
+            hits.append(
+                (
+                    str(hit["resource_id"]),
+                    float(hit.get("_rankingScore") or 0.0),
+                    version,
+                )
+            )
+        return hits

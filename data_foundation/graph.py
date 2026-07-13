@@ -32,16 +32,24 @@ def expand_graph(
     )
     # 回 Postgres 过权限:只保留 actor 可见的节点
     node_ids = [n["id"] for n in raw_nodes]
-    visible = {
-        str(row["id"])
+    hydrated = {
+        str(row["id"]): row
         for row in repo.readable_rows_by_ids(
-            tenant_id=tenant_id, actor_open_id=actor_open_id, resource_ids=node_ids
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            resource_ids=node_ids,
+            knowledge_only=True,
         )
     }
     nodes = [
-        GraphNode(resource_id=n["id"], title=n["title"], type=n["type"], depth=0)
+        GraphNode(
+            resource_id=n["id"],
+            title=hydrated[n["id"]]["title"],
+            type=hydrated[n["id"]]["type"],
+            depth=0,
+        )
         for n in raw_nodes
-        if n["id"] in visible
+        if n["id"] in hydrated
     ]
     edges = [
         GraphEdge(
@@ -51,6 +59,6 @@ def expand_graph(
             weight=e["weight"],
         )
         for e in raw_edges
-        if e["source"] in visible and e["target"] in visible
+        if e["source"] in hydrated and e["target"] in hydrated
     ]
     return GraphExpansion(nodes=nodes, edges=edges)
