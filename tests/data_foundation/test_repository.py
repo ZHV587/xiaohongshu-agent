@@ -254,8 +254,14 @@ def test_upsert_same_mapping_creates_second_version(migrated_conn):
     assert second.id == first.id
     assert second.version == 2
     assert repo.debug_counts()["resource_versions"] == 2
-    events = migrated_conn.execute("select event_type from resource_events order by created_at, id").fetchall()
-    assert [event["event_type"] for event in events] == ["imported", "updated"]
+    events = migrated_conn.execute(
+        "select event_type, (payload->>'version')::int as resource_version "
+        "from resource_events order by resource_version"
+    ).fetchall()
+    assert [(event["event_type"], event["resource_version"]) for event in events] == [
+        ("imported", 1),
+        ("updated", 2),
+    ]
 
 
 def test_upsert_identical_mapping_is_idempotent(migrated_conn):

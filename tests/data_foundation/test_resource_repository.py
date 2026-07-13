@@ -106,11 +106,14 @@ def test_upsert_resource_updates_correctly(migrated_conn):
         assert versions[1]["content_text"] == "Updated Content"
 
         events = cursor.execute(
-            "select event_type from resource_events where resource_id = %s order by created_at",
-            (resource_id,)
+            "select event_type, (payload->>'version')::int as resource_version "
+            "from resource_events where resource_id = %s order by resource_version",
+            (resource_id,),
         ).fetchall()
-        assert len(events) == 2
-        assert events[1]["event_type"] == "updated"
+        assert [(event["event_type"], event["resource_version"]) for event in events] == [
+            ("imported", 1),
+            ("updated", 2),
+        ]
 
         outbox = cursor.execute(
             "select topic, payload from resource_outbox where resource_id = %s and resource_version = 2 order by topic",
