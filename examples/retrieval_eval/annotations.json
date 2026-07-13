@@ -1,0 +1,62 @@
+{
+  "schema_version": "retrieval-eval-v1",
+  "dataset_id": "synthetic-retrieval-smoke-2026-07-13",
+  "created_at": "2026-07-13T00:00:00Z",
+  "cases": [
+    {
+      "case_id": "workplace-hook-001",
+      "tenant_id": "synthetic-tenant-001",
+      "actor_open_id": "synthetic-actor-001",
+      "query": "synthetic_query_answerable_001",
+      "limit": 3,
+      "filters": {
+        "asset_kinds": ["copy"],
+        "source_kinds": ["user_adopted"],
+        "niches": ["synthetic-niche-a"],
+        "min_quality": 0.7
+      },
+      "expected_engines": ["semantic", "keyword", "graph"],
+      "judgments": [
+        {
+          "resource_id": "00000000-0000-0000-0000-000000000001",
+          "resource_version": 3,
+          "relevance_grade": 3,
+          "acl_allowed": true,
+          "current_version": true,
+          "duplicate_family_id": "family-workplace-hook-a"
+        },
+        {
+          "resource_id": "00000000-0000-0000-0000-000000000002",
+          "resource_version": 1,
+          "relevance_grade": 2,
+          "acl_allowed": true,
+          "current_version": true,
+          "duplicate_family_id": "family-workplace-hook-b"
+        },
+        {
+          "resource_id": "00000000-0000-0000-0000-000000000003",
+          "resource_version": 2,
+          "relevance_grade": 0,
+          "acl_allowed": true,
+          "current_version": true,
+          "duplicate_family_id": null
+        }
+      ]
+    },
+    {
+      "case_id": "synthetic-no-answer-filter-001",
+      "tenant_id": "synthetic-tenant-001",
+      "actor_open_id": "synthetic-actor-001",
+      "query": "synthetic_query_no_answer_001",
+      "limit": 3,
+      "filters": {
+        "asset_kinds": ["copy"],
+        "source_kinds": ["user_adopted"],
+        "niches": ["synthetic-empty-niche"],
+        "min_quality": 0.95
+      },
+      "expected_engines": ["semantic", "keyword"],
+      "judgments": []
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "schema_version": "retrieval-eval-results-v1",
+  "dataset_id": "synthetic-retrieval-smoke-2026-07-13",
+  "generated_at": "2026-07-13T00:05:00Z",
+  "observations": [
+    {
+      "case_id": "workplace-hook-001",
+      "latency_ms": 82.4,
+      "result": {
+        "retrieval_mode": "hybrid",
+        "evidence": [
+          {
+            "resource_id": "00000000-0000-0000-0000-000000000001",
+            "resource_version": 3,
+            "type": "generated_copy",
+            "asset_kind": "copy",
+            "source_kind": "user_adopted",
+            "niche": "synthetic-niche-a",
+            "title": "synthetic-title-001",
+            "summary": "synthetic-summary-001",
+            "source_updated_at": "2026-07-10T08:00:00Z",
+            "indexed_at": "2026-07-10T08:01:00Z",
+            "score": 0.91,
+            "relevance": 0.94,
+            "freshness": 0.9,
+            "quality": 0.88,
+            "performance": 0.72,
+            "retrieval_sources": ["semantic", "keyword"],
+            "why_selected": "synthetic-selection-reason-001"
+          },
+          {
+            "resource_id": "00000000-0000-0000-0000-000000000003",
+            "resource_version": 2,
+            "type": "generated_copy",
+            "asset_kind": "copy",
+            "source_kind": "user_adopted",
+            "niche": "synthetic-niche-a",
+            "title": "synthetic-title-003",
+            "summary": "synthetic-summary-003",
+            "source_updated_at": "2026-07-09T08:00:00Z",
+            "indexed_at": "2026-07-09T08:01:00Z",
+            "score": 0.73,
+            "relevance": 0.69,
+            "freshness": 0.88,
+            "quality": 0.8,
+            "performance": 0.62,
+            "retrieval_sources": ["keyword"],
+            "why_selected": "synthetic-selection-reason-003"
+          },
+          {
+            "resource_id": "00000000-0000-0000-0000-000000000002",
+            "resource_version": 1,
+            "type": "deconstruction",
+            "asset_kind": "pattern",
+            "source_kind": "viral_deconstruction",
+            "niche": "synthetic-niche-a",
+            "title": "synthetic-title-002",
+            "summary": "synthetic-summary-002",
+            "source_updated_at": "2026-07-08T08:00:00Z",
+            "indexed_at": "2026-07-08T08:01:00Z",
+            "score": 0.71,
+            "relevance": 0.76,
+            "freshness": 0.84,
+            "quality": 0.86,
+            "performance": 0.55,
+            "retrieval_sources": ["semantic"],
+            "why_selected": "synthetic-selection-reason-002"
+          }
+        ],
+        "engines_used": ["semantic", "keyword"],
+        "degraded_engines": [
+          {
+            "engine": "graph",
+            "reason_code": "FALKOR_UNAVAILABLE",
+            "retryable": true
+          }
+        ],
+        "gaps": null
+      }
+    },
+    {
+      "case_id": "synthetic-no-answer-filter-001",
+      "latency_ms": 61.2,
+      "result": {
+        "retrieval_mode": "insufficient_relevance",
+        "evidence": [],
+        "engines_used": ["semantic", "keyword"],
+        "degraded_engines": [],
+        "gaps": "synthetic-no-answer"
+      }
+    }
+  ]
+}
