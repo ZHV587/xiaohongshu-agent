@@ -38,7 +38,7 @@ description: |
 回答完后，告诉我你卡在哪里（或者「全懂了」），我来写第{N+1}篇。
 ```
 
-章节生成后调用 `save_session_snapshot(project_name, "{课题名}-第{N}篇", content)` 保存到数据库，再调用 `sync_diagnosis_to_feishu(project_name, "{课题名}-第{N}篇", content)` 同步飞书。下一篇通过 `search_resources` / `get_resource` 找回前文与反馈，不依赖本地文件。
+章节生成后调用 `save_session_snapshot(project_name, "{课题名}-第{N}篇", content, snapshot_kind="learning_chapter")` 保存到数据库，再调用 `sync_diagnosis_to_feishu(project_name, "{课题名}-第{N}篇", content)` 同步飞书。章节是可恢复的教学检查点，不自动升格为策略知识；下一篇通过 `get_session_snapshots(project_name)` 找回前文与反馈，不依赖通用知识检索或本地文件。
 
 ---
 

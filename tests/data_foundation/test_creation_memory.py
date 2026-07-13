@@ -18,6 +18,39 @@ from data_foundation.creation_memory import (
 )
 
 
+class _MemoryPreferenceRepository:
+    def __init__(self):
+        self.observations = {}
+        self.state = None
+
+    def acquire_actor_lock(self, **_kwargs):
+        return None
+
+    def insert_observation(self, *, observation, **_kwargs):
+        inserted = observation.event_key not in self.observations
+        self.observations.setdefault(observation.event_key, observation)
+        return inserted
+
+    def list_observations(self, **_kwargs):
+        return list(self.observations.values())
+
+    def get_profile_state(self, **_kwargs):
+        return self.state
+
+    def upsert_profile_state(self, **kwargs):
+        self.state = dict(kwargs)
+        return self.state
+
+
+@pytest.fixture()
+def preference_memory(monkeypatch):
+    from data_foundation.repositories import preference as preference_repository
+
+    memory = _MemoryPreferenceRepository()
+    monkeypatch.setattr(preference_repository, "PreferenceRepository", lambda _conn: memory)
+    return memory
+
+
 @dataclass
 class RecordingRepository:
     upserts: list[dict[str, Any]]
@@ -26,18 +59,28 @@ class RecordingRepository:
     def __init__(self):
         self.upserts = []
         self.edges = []
+        self.edge_versions = []
+        self.resources = {}
+        self.conn = object()
 
     def unit_of_work(self):
         return nullcontext()
 
     def upsert_resource(self, **kwargs):
         self.upserts.append(kwargs)
-        return SimpleNamespace(
-            id=f"generated-{len(self.upserts)}",
+        resource_id = kwargs.get("resource_id") or f"generated-{len(self.resources) + 1}"
+        resource = SimpleNamespace(
+            id=resource_id,
             type=kwargs["resource_type"],
             title=kwargs["title"],
             version=1,
+            content_text=kwargs.get("content_text"),
+            content_json=dict(kwargs.get("content_json") or {}),
+            visibility=kwargs.get("visibility", "private"),
+            owner_open_id=kwargs.get("owner_open_id"),
         )
+        self.resources[(str(resource_id), 1)] = resource
+        return resource
 
     def add_edge(self, **kwargs):
         self.edges.append((
@@ -45,6 +88,32 @@ class RecordingRepository:
             kwargs["target_resource_id"],
             kwargs["edge_type"],
         ))
+        self.edge_versions.append(
+            (kwargs["source_resource_version"], kwargs["target_resource_version"])
+        )
+
+    def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
+        stored = self.resources.get((str(resource_id), int(resource_version)))
+        if stored is not None:
+            return stored
+        return SimpleNamespace(
+            id=resource_id,
+            version=resource_version,
+            type="generated_copy",
+            title="目标文案",
+            content_text="目标正文",
+            content_json={"title": "目标文案", "body": "目标正文", "tags": []},
+            visibility="team",
+            owner_open_id=actor_open_id,
+        )
+
+    def get_resource(self, _tenant_id, _actor_open_id, resource_id):
+        versions = [
+            resource
+            for (stored_id, _version), resource in self.resources.items()
+            if stored_id == str(resource_id)
+        ]
+        return versions[-1] if versions else None
 
 
 def test_save_generated_topic_persists_resource_and_evidence_edges():
@@ -57,14 +126,15 @@ def test_save_generated_topic_persists_resource_and_evidence_edges():
         direction="露营装备",
         topics=["轻量露营（收藏点强）", "亲子露营（决策链短）"],
         evidence=[
-            {
-                "resource_id": "source-1",
+                {
+                    "resource_id": "source-1",
+                    "resource_version": 4,
                 "title": "轻量露营样本",
                 "summary": "轻量清单收藏高",
                 "source_updated_at": "2026-05-01T08:00:00+00:00",
                 "indexed_at": "2026-06-19T12:30:00+00:00",
             },
-            {"resource_id": "source-1", "summary": "重复来源应去重"},
+            {"resource_id": "source-1", "resource_version": 4, "summary": "重复来源应去重"},
         ],
     )
 
@@ -87,6 +157,7 @@ def test_save_generated_topic_persists_resource_and_evidence_edges():
         "topics": ["轻量露营（收藏点强）", "亲子露营（决策链短）"],
         "evidence": [{
             "resource_id": "source-1",
+            "resource_version": 4,
             "title": "轻量露营样本",
             "summary": "轻量清单收藏高",
             "source_updated_at": "2026-05-01T08:00:00+00:00",
@@ -95,8 +166,9 @@ def test_save_generated_topic_persists_resource_and_evidence_edges():
     }
     assert repo.upserts[0]["visibility"] == "team"
     assert repo.upserts[0]["owner_open_id"] == "ou_user"
-    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["meili_index", "graph_ingest"]
+    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["knowledge_enrich"]
     assert repo.edges == [("generated-1", "source-1", "derived_from")]
+    assert repo.edge_versions == [(1, 4)]
 
 
 def test_save_generated_copy_persists_publishable_text_and_evidence_edges():
@@ -112,6 +184,7 @@ def test_save_generated_copy_persists_publishable_text_and_evidence_edges():
         source_topic="轻量露营",
         evidence=[{
             "resource_id": "source-1",
+            "resource_version": 4,
             "title": "轻量露营样本",
             "summary": "清单型内容收藏高",
             "source_updated_at": "未知",
@@ -134,7 +207,8 @@ def test_save_generated_copy_persists_publishable_text_and_evidence_edges():
         "variant_label": "A",
         "source_topic": "轻量露营",
         "evidence": [{
-            "resource_id": "source-1",
+                "resource_id": "source-1",
+                "resource_version": 4,
             "title": "轻量露营样本",
             "summary": "清单型内容收藏高",
             "source_updated_at": "未知",
@@ -155,12 +229,68 @@ def test_save_generated_copy_links_imitation_source_edge():
         body="这份清单够了",
         tags=["#露营"],
         source_topic="轻量露营",
-        evidence=[{"resource_id": "source-1", "summary": "清单收藏高"}],
+        evidence=[{"resource_id": "source-1", "resource_version": 4, "summary": "清单收藏高"}],
         reference_resource_id="ref-note-1",
+        reference_resource_version=6,
     )
     assert result["ok"] is True
     assert ("generated-1", "source-1", "derived_from") in repo.edges
     assert ("generated-1", "ref-note-1", "imitated_from") in repo.edges
+
+
+def test_save_generated_copy_links_every_candidate_exact_version():
+    class _VersionedRepository(RecordingRepository):
+        def upsert_resource(self, **kwargs):
+            self.upserts.append(kwargs)
+            resource_id = kwargs.get("resource_id") or "generated-1"
+            versions = [
+                version
+                for stored_id, version in self.resources
+                if stored_id == str(resource_id)
+            ]
+            version = max(versions, default=0) + 1
+            resource = SimpleNamespace(
+                id=resource_id,
+                type=kwargs["resource_type"],
+                title=kwargs["title"],
+                version=version,
+                content_text=kwargs.get("content_text"),
+                content_json=dict(kwargs.get("content_json") or {}),
+                visibility=kwargs.get("visibility", "private"),
+                owner_open_id=kwargs.get("owner_open_id"),
+            )
+            self.resources[(str(resource_id), version)] = resource
+            return resource
+
+    repo = _VersionedRepository()
+    candidates = [
+        {"label": label, "title": f"{label} 标题", "body": f"{label} 正文", "tags": []}
+        for label in ("A", "B", "C")
+    ]
+    result = save_generated_copy_resource(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_user",
+        title="A 标题",
+        body="A 正文",
+        tags=[],
+        versions=candidates,
+        evidence=[{"resource_id": "source-1", "resource_version": 4}],
+        reference_resource_id="reference-1",
+        reference_resource_version=6,
+    )
+
+    assert [item["resource_version"] for item in result["resource"]["versions"]] == [1, 2, 3]
+    assert {
+        (edge_type, source_version, target_version)
+        for (_, _, edge_type), (source_version, target_version) in zip(
+            repo.edges, repo.edge_versions, strict=True
+        )
+    } == {
+        (edge_type, source_version, target_version)
+        for source_version in (1, 2, 3)
+        for edge_type, target_version in (("derived_from", 4), ("imitated_from", 6))
+    }
 
 
 def test_save_generated_copy_rejects_more_than_three_ui_candidates():
@@ -285,7 +415,7 @@ def test_save_generated_content_requires_non_empty_payloads():
         )
 
 
-def test_save_user_feedback_persists_feedback_and_optional_target_edge():
+def test_save_user_feedback_persists_feedback_and_optional_target_edge(preference_memory):
     repo = RecordingRepository()
 
     result = save_user_feedback_resource(
@@ -294,6 +424,7 @@ def test_save_user_feedback_persists_feedback_and_optional_target_edge():
         actor_open_id="ou_user",
         feedback="标题再狠一点",
         target_resource_id="generated-0",
+        target_resource_version=3,
         feedback_type="revision_request",
     )
 
@@ -303,11 +434,36 @@ def test_save_user_feedback_persists_feedback_and_optional_target_edge():
     assert repo.upserts[0]["title"] == "修改意见"
     assert repo.upserts[0]["summary"] == "标题再狠一点"
     assert repo.upserts[0]["content_text"] == "标题再狠一点"
-    assert repo.upserts[0]["content_json"] == {
-        "feedback": "标题再狠一点",
+    assert repo.upserts[0]["content_json"]["feedback"] == "标题再狠一点"
+    assert repo.upserts[0]["content_json"]["target_resource_id"] == "generated-0"
+    assert repo.upserts[0]["content_json"]["target_resource_version"] == 3
+    assert repo.upserts[0]["content_json"]["feedback_type"] == "revision_request"
+    assert repo.upserts[0]["content_json"]["idempotency_key"]
+    assert [edge for edge in repo.edges if edge[2] == "feedback_on"] == [
+        (result["resource"]["resource_id"], "generated-0", "feedback_on")
+    ]
+    assert len(preference_memory.observations) == 1
+
+
+def test_save_user_feedback_retry_reuses_resource_and_preference_event(preference_memory):
+    repo = RecordingRepository()
+    kwargs = {
+        "tenant_id": "default",
+        "actor_open_id": "ou_user",
+        "feedback": "再短一点",
         "target_resource_id": "generated-0",
+        "target_resource_version": 3,
+        "feedback_type": "revision_request",
+        "idempotency_key": "tool-call-1",
     }
-    assert repo.edges == [("generated-1", "generated-0", "feedback_on")]
+
+    first = save_user_feedback_resource(repo, **kwargs)
+    replay = save_user_feedback_resource(repo, **kwargs)
+
+    assert replay["resource"]["resource_id"] == first["resource"]["resource_id"]
+    assert replay["resource"]["version"] == first["resource"]["version"] == 1
+    assert replay["idempotent_replay"] is True
+    assert len(preference_memory.observations) == 1
 
 
 def test_save_user_feedback_validates_type_and_text():
@@ -343,16 +499,29 @@ class AssocRepo:
 
     def __init__(self, unreadable: set[str] | None = None):
         self.edges: list[tuple[str, str, str, float]] = []
+        self.edge_versions: list[tuple[int, int]] = []
         self.unreadable = unreadable or set()
         self.conn = None
 
-    def add_edge(self, *, tenant_id, source_resource_id, target_resource_id, edge_type, weight=1.0):
+    def add_edge(
+        self,
+        *,
+        tenant_id,
+        source_resource_id,
+        source_resource_version,
+        target_resource_id,
+        target_resource_version,
+        edge_type,
+        weight=1.0,
+        properties=None,
+    ):
         self.edges.append((source_resource_id, target_resource_id, edge_type, weight))
+        self.edge_versions.append((source_resource_version, target_resource_version))
 
-    def check_permission(self, resource_id, actor, permission="read", conn=None):
+    def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
         if resource_id in self.unreadable:
-            raise PermissionError("not readable")
-        return True
+            return None
+        return SimpleNamespace(id=resource_id, version=resource_version)
 
 
 def test_associate_links_semantic_neighbors_capped_and_weighted():
@@ -363,13 +532,14 @@ def test_associate_links_semantic_neighbors_capped_and_weighted():
         tenant_id="default",
         actor_open_id="ou_user",
         resource_id="new-1",
+        resource_version=2,
         neighbors=[
-            {"resource_id": "n1", "score": 0.9},
-            {"resource_id": "n2", "score": 0.7},
-            {"resource_id": "n3", "score": 0.5},
-            {"resource_id": "n4", "score": 0.4},  # 超过 max_edges=3,应被截断
+            {"resource_id": "n1", "resource_version": 1, "score": 0.9},
+            {"resource_id": "n2", "resource_version": 2, "score": 0.7},
+            {"resource_id": "n3", "resource_version": 3, "score": 0.5},
+            {"resource_id": "n4", "resource_version": 4, "score": 0.4},  # 超过 max_edges=3,应被截断
         ],
-        co_ingested_ids=["new-1"],
+        co_ingested_resources=[{"resource_id": "new-1", "resource_version": 2}],
         max_edges=3,
     )
     sem = [e for e in repo.edges if e[2] == "semantically_related"]
@@ -386,12 +556,13 @@ def test_associate_dedupes_self_and_repeats():
         tenant_id="default",
         actor_open_id="ou_user",
         resource_id="new-1",
+        resource_version=2,
         neighbors=[
-            {"resource_id": "new-1", "score": 0.99},  # 自身,跳过
-            {"resource_id": "n1", "score": 0.8},
-            {"resource_id": "n1", "score": 0.6},  # 重复,跳过
+            {"resource_id": "new-1", "resource_version": 2, "score": 0.99},  # 自身,跳过
+            {"resource_id": "n1", "resource_version": 1, "score": 0.8},
+            {"resource_id": "n1", "resource_version": 1, "score": 0.6},  # 重复,跳过
         ],
-        co_ingested_ids=[],
+        co_ingested_resources=[],
     )
     assert len(repo.edges) == 1
     assert out["semantic"] == 1
@@ -405,8 +576,13 @@ def test_associate_co_ingested_fallback_when_no_neighbors():
         tenant_id="default",
         actor_open_id="ou_user",
         resource_id="new-1",
+        resource_version=2,
         neighbors=[],
-        co_ingested_ids=["new-1", "new-2", "new-3"],
+        co_ingested_resources=[
+            {"resource_id": "new-1", "resource_version": 2},
+            {"resource_id": "new-2", "resource_version": 3},
+            {"resource_id": "new-3", "resource_version": 4},
+        ],
     )
     co = [e for e in repo.edges if e[2] == "co_ingested"]
     assert {e[1] for e in co} == {"new-2", "new-3"}
@@ -421,8 +597,9 @@ def test_associate_isolated_when_nothing_to_link():
         tenant_id="default",
         actor_open_id="ou_user",
         resource_id="new-1",
+        resource_version=2,
         neighbors=[],
-        co_ingested_ids=["new-1"],
+        co_ingested_resources=[{"resource_id": "new-1", "resource_version": 2}],
     )
     assert repo.edges == []
     assert out["isolated"] is True
@@ -436,8 +613,9 @@ def test_associate_skips_unreadable_neighbor():
         tenant_id="default",
         actor_open_id="ou_user",
         resource_id="new-1",
-        neighbors=[{"resource_id": "private", "score": 0.9}],
-        co_ingested_ids=[],
+        resource_version=2,
+        neighbors=[{"resource_id": "private", "resource_version": 9, "score": 0.9}],
+        co_ingested_resources=[],
     )
     assert repo.edges == []
     assert out["isolated"] is True
@@ -451,10 +629,13 @@ def test_link_imitation_source_builds_edge():
         tenant_id="default",
         actor_open_id="ou_user",
         copy_resource_id="copy-1",
+        copy_resource_version=3,
         reference_resource_id="ref-1",
+        reference_resource_version=8,
     )
     assert ok is True
     assert repo.edges == [("copy-1", "ref-1", "imitated_from", 1.0)]
+    assert repo.edge_versions == [(3, 8)]
 
 
 def test_link_imitation_source_gated_and_guarded():
@@ -462,15 +643,18 @@ def test_link_imitation_source_gated_and_guarded():
     repo = AssocRepo(unreadable={"ref-private"})
     assert link_imitation_source(
         repo, tenant_id="default", actor_open_id="ou_user",
-        copy_resource_id="copy-1", reference_resource_id="ref-private",
+        copy_resource_id="copy-1", copy_resource_version=3,
+        reference_resource_id="ref-private", reference_resource_version=8,
     ) is False
     assert link_imitation_source(
         repo, tenant_id="default", actor_open_id="ou_user",
-        copy_resource_id="copy-1", reference_resource_id=" ",
+        copy_resource_id="copy-1", copy_resource_version=3,
+        reference_resource_id=" ", reference_resource_version=8,
     ) is False
     assert link_imitation_source(
         repo, tenant_id="default", actor_open_id="ou_user",
-        copy_resource_id="copy-1", reference_resource_id="copy-1",
+        copy_resource_id="copy-1", copy_resource_version=3,
+        reference_resource_id="copy-1", reference_resource_version=3,
     ) is False
     assert repo.edges == []
 
@@ -507,16 +691,28 @@ def test_creation_memory_writes_real_resource_edges(migrated_conn, monkeypatch):
         body="这份清单够了",
         tags=["#露营"],
         source_topic="轻量露营",
-        evidence=[{"resource_id": source.id, "summary": "清单型内容收藏高"}],
+        evidence=[{
+            "resource_id": source.id,
+            "resource_version": int(source.version),
+            "summary": "清单型内容收藏高",
+        }],
     )
 
     fake_graph.expand.return_value = (
         [
-            {"id": result["resource"]["resource_id"], "title": "露营别乱买", "type": "generated_copy"},
-            {"id": source.id, "title": "轻量露营样本", "type": "feishu_base_record"}
+            {"id": result["resource"]["resource_id"], "resource_version": result["resource"]["version"], "title": "露营别乱买", "type": "generated_copy"},
+            {"id": source.id, "resource_version": int(source.version), "title": "轻量露营样本", "type": "feishu_base_record"}
         ],
         [
-            {"source": result["resource"]["resource_id"], "target": source.id, "edge_type": "derived_from", "weight": 1.0}
+            {
+                "source": result["resource"]["resource_id"],
+                "source_resource_version": result["resource"]["version"],
+                "target": source.id,
+                "target_resource_version": int(source.version),
+                "edge_type": "derived_from",
+                "weight": 1.0,
+                "properties": {},
+            }
         ]
     )
 
@@ -525,7 +721,7 @@ def test_creation_memory_writes_real_resource_edges(migrated_conn, monkeypatch):
         tenant_id="default",
         actor_open_id="ou_user",
         resource_ids=[result["resource"]["resource_id"]],
-        hops=1,
+        resource_versions=[result["resource"]["version"]],
         edge_types=["derived_from"],
     )
 
@@ -550,7 +746,11 @@ def test_creation_memory_rolls_back_when_evidence_edge_is_invalid(migrated_conn)
             title="露营别乱买",
             body="这份清单够了",
             tags=["#露营"],
-            evidence=[{"resource_id": "00000000-0000-0000-0000-000000000000", "summary": "不存在"}],
+            evidence=[{
+                "resource_id": "00000000-0000-0000-0000-000000000000",
+                "resource_version": 1,
+                "summary": "不存在",
+            }],
         )
 
     counts = repo.debug_counts()

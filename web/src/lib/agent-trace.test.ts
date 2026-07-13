@@ -89,6 +89,30 @@ test("presentation is a real tool-call chain: each step names its tool + what it
   assert.equal(stage.resultText, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
 });
 
+test("knowledge, lifecycle and session tools use the same explicit presentation registry", () => {
+  const expected = new Map([
+    ["get_generated_copy_lifecycle", "读取文案生命周期"],
+    ["save_writing_teardown", "归档写作拆解"],
+    ["get_writing_profile", "加载写作偏好"],
+    ["save_session_snapshot", "保存会话快照"],
+    ["get_session_snapshots", "恢复会话快照"],
+    ["confirm_session_snapshot", "确认长期知识"],
+  ]);
+  for (const [toolName, title] of expected) {
+    const state = reduceTraceEvents(undefined, [
+      event({
+        event_id: `event-${toolName}`,
+        tool_name: toolName,
+        label: "tool completed",
+      }),
+    ]);
+    const [stage] = toTracePresentation(state).userStages;
+    assert.equal(stage.title, title);
+    assert.notEqual(stage.title, "处理当前步骤");
+    assert.notEqual(stage.intent, "把当前任务继续往前推进。");
+  }
+});
+
 test("presentation folds started and completed events into one user step", () => {
   const state = reduceTraceEvents(undefined, [
     event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from data_foundation.agent_trace import (
@@ -40,6 +42,10 @@ def test_sanitize_payload_removes_secrets_and_full_payloads() -> None:
             "token": "secret-token",
             "authorization": "Bearer abc",
             "payload": {"body": "完整正文不能保存"},
+            "content": "私有会话正文",
+            "body": "完整文案",
+            "profile": {"positive_preferences": ["私有偏好"]},
+            "metadata": {"private": True},
             "safe": {"used_count": 3},
         }
     )
@@ -48,7 +54,98 @@ def test_sanitize_payload_removes_secrets_and_full_payloads() -> None:
     assert "token" not in payload
     assert "authorization" not in payload
     assert "payload" not in payload
+    assert "content" not in payload
+    assert "body" not in payload
+    assert "profile" not in payload
+    assert "metadata" not in payload
     assert payload["safe"] == {"used_count": 3}
+
+
+def test_sanitize_payload_redacts_nested_urls_raw_output_and_inline_secrets() -> None:
+    from data_foundation.agent_trace import REDACTED_URL
+
+    app_token = "bascn-private-app-token"
+    payload = sanitize_payload(
+        {
+            "ok": True,
+            "redirect_url": f"https://feishu.cn/base/{app_token}?table=tbl-secret",
+            "raw": f"CLI echoed app_token={app_token}",
+            "nested": [
+                {"message": f"request failed at https://example.test/{app_token}"},
+                {"message": f"authorization=Bearer-{app_token}"},
+                {"message": f"token={app_token}"},
+            ],
+        }
+    )
+
+    serialized = str(payload)
+    assert payload["redirect_url"] == REDACTED_URL
+    assert "raw" not in payload
+    assert app_token not in serialized
+    assert "https://" not in serialized
+    assert payload["nested"][2]["message"] == "token=[REDACTED]"
+
+
+def test_sanitize_payload_turns_exception_into_classification_without_raw_message() -> None:
+    secret = "bascn-exception-secret"
+    sanitized = sanitize_payload(
+        RuntimeError(f"request https://feishu.cn/base/{secret} token={secret}")
+    )
+
+    assert sanitized == {"code": "RuntimeError", "message": "tool execution failed"}
+    assert secret not in str(sanitized)
+
+
+def test_sanitize_payload_redacts_quoted_json_secret_assignments() -> None:
+    secrets = ("super-private-token", "cred-secret", "client-secret", "api-secret")
+
+    sanitized = sanitize_payload(
+        '{"token":"super-private-token","nested":{"app_token":"super-private-token"},'
+        '"credentials":"cred-secret","client_secret":"client-secret","api_key":"api-secret"}'
+    )
+
+    assert all(secret not in sanitized for secret in secrets)
+    assert sanitized.count("[REDACTED]") == 5
+
+
+def test_sanitize_payload_drops_all_known_secret_key_spellings() -> None:
+    sanitized = sanitize_payload(
+        {
+            "credentials": "cred-secret",
+            "client-secret": "client-secret",
+            "clientSecret": "client-camel-secret",
+            "api-key": "api-secret",
+            "private_key": "private-secret",
+            "secretKey": "key-secret",
+            "safe": True,
+        }
+    )
+
+    assert sanitized == {"safe": True}
+
+
+def test_build_trace_event_sanitizes_envelope_fields_and_drops_unknown_keys() -> None:
+    secrets = ("trace-secret", "run-secret", "turn-secret", "event-secret", "label-secret")
+    event = build_trace_event(
+        type="xhs.trace.run.started",
+        trace_id="https://example.test/trace-secret",
+        run_id="token=run-secret",
+        turn_id='{"token":"turn-secret"}',
+        event_id="https://example.test/event-secret",
+        label="authorization=label-secret",
+        visibility="user",
+        seq=1,
+        arbitrary="token=must-not-be-streamed",
+    )
+
+    serialized = json.dumps(event, ensure_ascii=False)
+    assert all(secret not in serialized for secret in secrets)
+    assert "must-not-be-streamed" not in serialized
+    assert "arbitrary" not in event
+    assert event["trace_id"].startswith("trace-")
+    assert event["run_id"].startswith("run-")
+    assert event["turn_id"].startswith("turn-")
+    assert event["event_id"].startswith("event-")
 
 
 def test_lifecycle_rejects_terminal_without_started() -> None:
@@ -151,8 +248,78 @@ def test_trace_tool_wrapper_emits_started_and_completed(monkeypatch) -> None:
     assert result == {"ok": True, "results": [1, 2, 3]}
     assert [event["type"] for event in emitted] == ["xhs.trace.tool.started", "xhs.trace.tool.completed"]
     assert emitted[0]["label"] == "查找相关素材"
+    assert emitted[0]["safe_args"]["positional_arg_count"] == 1
+    assert emitted[0]["safe_args"]["keyword_arg_names"] == ["config"]
+    assert "职场穿搭" not in str(emitted[0]["safe_args"])
+    assert "safe_result" not in emitted[1]
     assert emitted[1]["metrics"]["found_count"] == 3
     assert emitted[0]["seq"] < emitted[1]["seq"]
+
+
+def test_trace_tool_wrapper_records_no_argument_or_result_values(monkeypatch) -> None:
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+
+    emitted = []
+    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
+    secret = "bascn-no-trace-secret"
+
+    @tool
+    def syncing_tool(title: str, config: dict | None = None) -> dict:
+        """Return the same redirect shape as the Feishu synchronization tool."""
+
+        return {
+            "ok": True,
+            "redirect_url": f"https://feishu.cn/base/{secret}?table=tbl-1",
+            "raw": f"token={secret}",
+        }
+
+    wrapped = trace_tool(syncing_tool, stage_id="persist", label="同步飞书")
+    result = wrapped.func(
+        title=f"私密标题-{secret}",
+        config={"configurable": {"thread_id": "thread-1", "turn_id": "turn-1"}},
+    )
+
+    assert secret in result["redirect_url"]  # 业务返回不被 trace 包装器篡改
+    assert emitted[0]["safe_args"] == {
+        "positional_arg_count": 0,
+        "keyword_arg_names": ["config", "title"],
+    }
+    assert "safe_result" not in emitted[1]
+    assert secret not in str(emitted)
+
+
+def test_trace_tool_wrapper_never_emits_raw_exception_text(monkeypatch) -> None:
+    from langchain_core.tools import tool
+
+    from data_foundation.agent_trace import trace_tool
+
+    emitted = []
+    monkeypatch.setattr("data_foundation.agent_trace.emit_trace", lambda event, **kwargs: emitted.append(event))
+    secret = "bascn-runtime-secret"
+
+    @tool
+    def failing_tool(config: dict | None = None) -> dict:
+        """Fail after an upstream client leaked a credential in its exception text."""
+
+        raise RuntimeError(f"GET https://feishu.cn/base/{secret} app_token={secret}")
+
+    wrapped = trace_tool(failing_tool, stage_id="persist", label="同步飞书")
+    with pytest.raises(RuntimeError, match=secret):
+        wrapped.func(
+            config={"configurable": {"thread_id": "thread-1", "turn_id": "turn-1"}}
+        )
+
+    assert [event["type"] for event in emitted] == [
+        "xhs.trace.tool.started",
+        "xhs.trace.tool.failed",
+    ]
+    assert emitted[1]["error"] == {
+        "code": "RuntimeError",
+        "message": "tool execution failed",
+    }
+    assert secret not in str(emitted)
 
 
 def test_trace_tool_wrapper_keeps_seq_monotonic_for_same_trace(monkeypatch) -> None:

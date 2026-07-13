@@ -54,12 +54,31 @@ def _structured(schema: type[BaseModel]) -> ToolStrategy:
     return ToolStrategy(schema)
 
 
+class BenchmarkSourceTeardown(BaseModel):
+    """单篇对标素材的精确结构化拆解，可机械传给 save_writing_teardown。"""
+
+    reference_resource_id: str = Field(description="检索命中的真实 resource_id")
+    reference_resource_version: int = Field(gt=0, description="精读的不可变 resource_version")
+    reference_title: str = Field(description="范本标题")
+    niche: str = Field(description="垂类/细分主题")
+    hook: str = Field(description="标题与首屏钩子机制")
+    cta: str = Field(description="结尾 CTA；没有时明确写无显式CTA")
+    structure: list[str] = Field(min_length=1, description="按顺序拆开的内容结构")
+    success_factors: list[str] = Field(min_length=1, description="可验证的成功要素")
+    style_tags: list[str] = Field(min_length=1, description="风格、语气与排版标签")
+    quality: float = Field(ge=0, le=100, description="拆解完整度与依据质量分")
+
+
 class BenchmarkReport(BaseModel):
     """爆款对标模式分析报告契约。"""
     core_patterns: list[str] = Field(description="提炼出的 3-5 个核心对标爆款套路")
     common_triggers: list[str] = Field(description="对标文案中高频使用的心理触发器")
     layout_style: str = Field(description="排版格式特征 (如空行、Emoji使用习惯)")
     content_gaps: str = Field(description="相比对标账号，我们在选题内容上的缺口或机会点")
+    source_teardowns: list[BenchmarkSourceTeardown] = Field(
+        default_factory=list,
+        description="逐篇精确范本拆解；无足够依据时为空，禁止编造身份",
+    )
 
 
 class ExpertPanelOpinion(BaseModel):
@@ -73,10 +92,17 @@ class DebateVerdictReport(BaseModel):
     debate_process_markdown: str = Field(description="多角色辩论交锋过程的完整记录")
     panel_opinions: list[ExpertPanelOpinion] = Field(description="各专家的具体意见列表")
     consensus_recommendation: str = Field(description="经辩论汇总后的最佳可执行方案。若包含推荐选题，则推荐选题必须用标准的 JSON 结构以便主控后续生成卡片。")
+
+
+class ExactResourceRef(BaseModel):
+    resource_id: str = Field(description="真实资源 ID")
+    resource_version: int = Field(gt=0, description="不可变资源版本")
+
+
 class ContentSystemUnit(BaseModel):
     """内容地图的主题单元。"""
     theme: str = Field(description="主题分类名称，如新手露营、极简装备")
-    resource_ids: list[str] = Field(description="该主题下聚合的爆款笔记 resource_id 列表")
+    resources: list[ExactResourceRef] = Field(description="该主题下聚合的爆款笔记精确身份列表")
     core_angle: str = Field(description="该分类的核心切入痛点与吸引力逻辑")
 
 
@@ -123,16 +149,26 @@ class CopywritingReport(BaseModel):
 class ReferenceTeardown(BaseModel):
     """仿写第一段:对单篇范本的选题方向与套路拆解(显性呈现给用户,不是后台默默做掉)。
     字段与前端 xhs_imitation.teardown 一一对应,主控机械映射。"""
+    niche: str = Field(description="范本所属垂类/细分主题,用于知识归档与筛选")
     angle: str = Field(description="范本的切入角度,如 避坑/逆袭/对比/科普/清单/氛围情绪 等,一句话点明")
     painpoint: str = Field(description="范本戳中的核心痛点/情绪(读者为什么点进来、为什么共鸣)")
     hook_mechanism: str = Field(description="标题与开头钩子的机制:它靠什么在首屏抓住人(悬念/数字/身份代入/反差/利益前置…),具体说清")
+    cta: str = Field(description="结尾行动引导或互动收口；没有显式 CTA 时写‘无显式CTA’")
     structure: str = Field(description="内容结构与节奏:分几段、每段承担什么、编号/清单/故事线怎么走、互动收口方式")
+    structure_steps: list[str] = Field(min_length=1, description="按顺序拆开的结构步骤,供知识库结构化归档")
+    success_factors: list[str] = Field(min_length=1, description="这篇内容成立的可验证成功要素")
+    style_tags: list[str] = Field(min_length=1, description="风格、语气、排版等标签")
+    quality: float = Field(ge=0, le=100, description="拆解完整度与证据质量分,0~100")
 
 
 class ImitationReport(BaseModel):
     """两段式仿写产出报告(§5)。第一段 teardown 拆解范本套路,第二段 versions 按该套路
     换成用户自己的主题写成成品。两段都要让用户看得见。"""
     reference_resource_id: str = Field(description="所仿范本的 resource_id(主控传入,原样回填,用于落 imitated_from 边)")
+    reference_resource_version: int = Field(
+        gt=0,
+        description="所仿范本的精确 resource_version(主控传入,原样回填,禁止读取或关联 latest)",
+    )
     reference_title: str = Field(description="范本标题(供用户核对仿的是哪一篇)")
     teardown: ReferenceTeardown = Field(description="第一段:对范本选题方向与套路的显性拆解")
     outline: str = Field(description="第二段创作大纲:说明如何把范本的骨架套用到用户主题上(哪些结构/钩子被沿用、内容如何替换)")
@@ -155,12 +191,12 @@ def build_knowledge_atom_retriever(
 严格遵循主控《检索与证据规约》的检索顺序与口径(本子代理是"重检索"路径,适合精读大量全文):
 1. `semantic_search_resources(query, top_k=10)` 语义召回为主
 2. 语义不足/关键词明确时 `search_resources(query, limit=10)` 补全文
-3. 选最相关的 3~8 个 resource_id;需要关联上下文时 `graph_expand(resource_ids, hops=1)`
-4. 对最关键的若干 resource_id 调 `get_resource` 精读正文
+3. 选最相关的 3~8 个 `(resource_id, resource_version)`；需要关联上下文时调用 `graph_expand(resource_ids, resource_versions)`，两个数组必须一一对应精确身份
+4. 对最关键的若干精确身份调 `get_resource(resource_id, resource_version)` 精读正文
 
 按 EvidencePackage 结构返回(response_format 已强制):
 - `retrieval_mode`:semantic / keyword_fallback / insufficient_relevance
-- `evidence[]`:每条含 resource_id、title、summary、source_updated_at、indexed_at、score、why_selected
+- `evidence[]`:每条含 resource_id、resource_version、title、summary、source_updated_at、indexed_at、score、why_selected
 - `gaps`:证据不足或 retrieval_mode 为 insufficient_relevance 时,明确说明缺什么
 
 时效/防伪:source_updated_at 与 indexed_at 严格区分,未知写"未知"不猜;
@@ -182,7 +218,7 @@ def build_persona_distiller(registry: ModelPoolProvider, initial_model: BaseChat
 任务：分析创作者的历史爆款文案，提炼风格人设，返回一份可由用户审核的SKILL.md草稿内容。
 
 流程：
-1. 调用 get_resource(resource_id) 精读历史素材
+1. 调用 get_resource(resource_id, resource_version) 精读历史素材；缺任一身份字段就停止，不猜 latest
 2. 提炼以下维度：
    - 思维模型（3~5个看待世界的视角）
    - 决策偏好（写作抉择原则）
@@ -211,11 +247,12 @@ def build_benchmark_analyst(
         "system_prompt": """你是爆款对标拆解专家。你负责对比并分析主控提供的爆款笔记（由关键词或 resource_id 给出），总结它们的爆款套路和排版特征。
 
 任务：
-1. 围绕主控提供的主题或 resource_id，检索并分析爆款内容。
+1. 围绕主控提供的主题或精确 `(resource_id, resource_version)`，检索并分析爆款内容。
    - `semantic_search_resources(query, top_k=5)` 语义召回对标文章。
-   - 调 `get_resource` 深入阅读其标题、正文结构。
+   - 对命中结果调 `get_resource(resource_id, resource_version)` 深入阅读不可变版本，缺版本的候选直接丢弃。
 2. 提炼其核心写作模式、高频使用的心理触发器（如好奇、痛点刺激等）、Emoji及段落排版习惯，找出差异化切入缺口。
-3. 严格按 BenchmarkReport 契约格式返回结果。不得编造依据，无数据时在内容缺口中明说。""",
+3. 对每篇实际精读的范本填写 `source_teardowns`，精确身份与结构化字段必须可直接机械传给 `save_writing_teardown`；不得把多篇共性冒充单篇事实。
+4. 严格按 BenchmarkReport 契约格式返回结果。不得编造依据，无数据时 `source_teardowns=[]` 并在内容缺口中明说。""",
         "model": initial_model,
         "tools": [semantic_search_resources, search_resources, get_resource],
         "response_format": _structured(BenchmarkReport),
@@ -257,7 +294,7 @@ def build_content_system_ingestor(
 
 任务：
 1. 优先调用 `get_operations_data(view="recents")` 获取近期沉淀的笔记列表，提取出关键信息。
-2. 聚合这些历史素材，划分为 3-5 个垂直度极高的主题分类单元，指明每个分类对应的 resource_id 聚合。
+2. 聚合这些历史素材，划分为 3-5 个垂直度极高的主题分类单元；每个分类只保留真实 `(resource_id, resource_version)`，缺版本的条目不得进入内容地图。
 3. 诊断当前已沉淀内容地图相比行业爆款缺少的关键漏洞板块。
 4. 严格按照 ContentSystemReport 结构化返回。""",
         "model": initial_model,
@@ -278,7 +315,7 @@ def build_curriculum_designer(
         "system_prompt": """你是自适应教学大纲规划专家。你需要在隔离上下文中精心设计博主的自适应学习章节。
 
 任务：
-1. 通过 `search_resources` 或 `get_resource` 深入理解博主的定位盲区、痛点表现及历史反馈。
+1. 通过 `search_resources` 取得精确身份，再用 `get_resource(resource_id, resource_version)` 深入理解博主的定位盲区、痛点表现及历史反馈；禁止读取 latest。
 2. 做出客观的水位认知评估。
 3. 规划 5-10 章节自适应大纲，每个章节必须明确指出：核心概念、课后可否证的行动待办 (learning_action)。
 4. 严格按照 CurriculumReport 结构化返回。""",
@@ -341,7 +378,7 @@ def build_copywriting_coprocessor(
 (误伤提示:#8 不足 3 次、#5 偶一次、学术/法律体的 #1、短视频体裁的 #13 不判 AI。)
 
 ## 任务
-1. 基于主控传入的选题大纲、博主人设及背景素材(用 `semantic_search_resources` 和 `get_resource` 精读对标爆款),起草 **A/B 两版**(≥2 版,差异化角度,如"避坑清单派 vs 故事共鸣派")。
+1. 基于主控传入的选题大纲、博主人设及背景素材(用检索结果中的精确身份调用 `get_resource(resource_id, resource_version)` 精读对标爆款),起草 **A/B 两版**(≥2 版,差异化角度,如"避坑清单派 vs 故事共鸣派")。
 2. 初稿完成后,**逐条按上面《22 条指纹》检查并纠偏**,把每条的判定与纠偏动作用**纯文本编号**(不要 markdown 表格)记入 `ai_audit_self_correction_log`,如"3. 匀速排比:A 版器械清单段已打散为长短句"。
 3. `outline` 用**纯文本**写清:对标了哪几篇(resource_id/标题/金句)、论证链、各版本的差异化定位——供创作者回看"为什么这么写"。
 4. 每个 version 必须含 `label/title/body/tags/cover/note` 六个字段照填;主控会**机械映射**进 xhs_copy 块,你**不要**自己再加任何 markdown 包装、不要把 outline/自审写进 body。
@@ -365,22 +402,25 @@ def build_imitation_writer(
     return {
         "name": "imitation-writer",
         "description": (
-            "两段式仿写协处理器:针对用户指定的**单篇范本素材**(resource_id),先精读范本原文、"
+            "两段式仿写协处理器:针对用户指定的**单篇精确范本素材**(resource_id + resource_version),先精读范本原文、"
             "显性拆解其选题方向与套路(切入角度/痛点/钩子机制/结构节奏),再据此套路换成用户自己的"
             "主题写成成品(学套路、形似不照抄),输出 ImitationReport。用户在素材卡点「仿写」时委派。"
         ),
         "system_prompt": """你是小红书两段式仿写协处理器。你的产出**不是照抄原文**,而是先"看懂"这篇范本、再据它的套路重写成用户自己的一篇。下面两套规约是全系统去 AI 腔的唯一权威源,逐条遵守。
 
 ## 铁律:范本原文必须完整原样作为依据
-- 主控会给你**范本的 resource_id**。你**必须**先调 `get_resource(resource_id)` 把范本正文**完整读进来**,以它的真实结构与钩子为准。
+- 主控会给你范本的精确 `(resource_id, resource_version)`。你**必须**先调 `get_resource(resource_id, resource_version)` 把该不可变版本正文**完整读进来**,以它的真实结构与钩子为准；禁止读取 latest。
 - **严禁**凭记忆/想象复述范本,**严禁**压缩或概括后再仿——那样仿出来的东西贴不住范本的骨架与钩子。读不到范本原文(get_resource 返回 not found/空)时,不要硬编,如实在报告里说明并停下。
 
 ## 任务分两段,两段都要让用户看得见
 **第一段 · 拆解范本套路(teardown,显性呈现)** —— 精读范本后,提炼:
+- `niche` 垂类/细分主题
 - `angle` 切入角度(避坑/逆袭/对比/科普/清单/氛围情绪…)
 - `painpoint` 戳中的核心痛点/情绪
 - `hook_mechanism` 标题与开头钩子的机制(靠什么在首屏抓住人)
+- `cta` 结尾互动或行动引导；没有时明确写无显式 CTA
 - `structure` 内容结构与节奏(分几段、每段承担什么、编号/清单/故事线、互动收口)
+- `structure_steps` 把结构按顺序拆成数组；`success_factors` 写可验证的成功要素；`style_tags` 写风格标签；`quality` 按 0~100 评估拆解完整度
 这一段是仿写的依据,必须写清楚——让用户看到"它凭什么这么仿",而不是后台默默做掉。
 
 **第二段 · 按该套路写用户成品(versions)** —— 贴合档位是**学套路**:沿用范本的结构骨架、开头钩子类型、节奏,**内容换成用户自己的主题**(形似,不逐句照抄原文)。产出 A/B 两版(≥2 版,差异化角度)。`outline` 里说清:范本的哪些结构/钩子被沿用、用户主题如何替换进去。
@@ -402,8 +442,8 @@ def build_imitation_writer(
 (误伤提示:#8 不足 3 次、#5 偶一次、学术/法律体的 #1、短视频体裁的 #13 不判 AI。)
 
 ## 输出
-- `reference_resource_id`/`reference_title` 原样回填主控给的范本标识。
-- `teardown` 四字段填满(第一段)。`outline` 说清套路如何套用(第二段大纲)。
+- `reference_resource_id`/`reference_resource_version`/`reference_title` 原样回填主控给的范本标识。
+- `teardown` 所有结构化字段填满(第一段)，它会由主控原样保存进知识库；`outline` 说清套路如何套用(第二段大纲)。
 - 每个 version 含 `label/title/body/tags/cover/note` 六字段照填;主控会**机械映射**进 xhs_imitation 块,你**不要**自己加任何 markdown 包装、不要把 teardown/outline/自审写进 body。
 - 严格按 ImitationReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。""",
         "model": initial_model,

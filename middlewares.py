@@ -86,12 +86,12 @@ class FrontendDirectState(AgentState):
     - `selected_notes`:用户在搜索卡片勾选要采纳的线上笔记的权威副本。
       `adopt_online_notes` 经 `InjectedState("selected_notes")` 注入它落库。
     - `selected_topic`:用户点选的那张选题卡的权威数据 `{topic, evidence}`,evidence 即卡片
-      上展示的库内依据(带 resource_id)。`save_generated_topic` 经 `InjectedState("selected_topic")`
+      上展示的库内依据(每条带精确 resource_id + resource_version)。`save_generated_topic` 经 `InjectedState("selected_topic")`
       注入它落库 —— 即「卡片展示的依据 = 落库的依据」,evidence 不再由 LLM 重填。
-    - `selected_reference`:用户在素材卡点「仿写」时,该范本的权威标识 `{resource_id?, note?}`。
-      本地已入库素材带 `resource_id`(直接可仿);线上未入库笔记只带 `note`(主控须先
-      `adopt_online_notes` 收录拿 id 再仿,满足「范本可追溯」§5)。委派 `imitation-writer` 时
-      把范本 resource_id 放进 brief,子代理 `get_resource` 精读范本原文原样。
+    - `selected_reference`:用户在素材卡点「仿写」时,该范本的权威标识 `{resource_id?, resource_version?, note?}`。
+      本地已入库素材必须同时带 `resource_id` 与 `resource_version`;线上未入库笔记只带 `note`
+      (主控须先 `adopt_online_notes` 收录并取得精确身份再仿)。委派 `imitation-writer` 时
+      把范本精确身份放进 brief,子代理按不可变版本精读范本原文。
     """
 
     selected_notes: NotRequired[list[dict]]

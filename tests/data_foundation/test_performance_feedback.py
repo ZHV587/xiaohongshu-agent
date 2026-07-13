@@ -14,14 +14,50 @@ from data_foundation.performance_feedback import (
 from data_foundation.repositories.resource import ResourceRepository
 
 
+class _MemoryPreferenceRepository:
+    def __init__(self):
+        self.observations = {}
+        self.state = None
+        self.actor_locks = []
+
+    def acquire_actor_lock(self, **kwargs):
+        self.actor_locks.append((kwargs["tenant_id"], kwargs["actor_open_id"]))
+
+    def insert_observation(self, *, observation, **_kwargs):
+        inserted = observation.event_key not in self.observations
+        self.observations.setdefault(observation.event_key, observation)
+        return inserted
+
+    def list_observations(self, **_kwargs):
+        return list(self.observations.values())
+
+    def get_profile_state(self, **_kwargs):
+        return self.state
+
+    def upsert_profile_state(self, **kwargs):
+        self.state = dict(kwargs)
+        return self.state
+
+
+@pytest.fixture()
+def preference_memory(monkeypatch):
+    from data_foundation.repositories import preference as preference_repository
+
+    memory = _MemoryPreferenceRepository()
+    monkeypatch.setattr(preference_repository, "PreferenceRepository", lambda _conn: memory)
+    return memory
+
+
 @dataclass
 class RecordingRepository:
     upserts: list[dict[str, Any]]
     edges: list[tuple[str, str, str, float]]
 
     def __init__(self):
+        self.conn = None
         self.upserts = []
         self.edges = []
+        self.resources = {}
         self.target = {"type": "xhs_online_note", "version": 1, "visibility": "private", "owner_open_id": "ou_owner"}
 
     def unit_of_work(self):
@@ -29,12 +65,19 @@ class RecordingRepository:
 
     def upsert_resource(self, **kwargs):
         self.upserts.append(kwargs)
-        return SimpleNamespace(
-            id=f"metric-{len(self.upserts)}",
+        resource_id = kwargs.get("resource_id") or f"metric-{len(self.resources) + 1}"
+        resource = SimpleNamespace(
+            id=resource_id,
             type=kwargs["resource_type"],
             title=kwargs["title"],
             version=1,
+            content_text=kwargs.get("content_text"),
+            content_json=dict(kwargs.get("content_json") or {}),
+            visibility=kwargs.get("visibility", "private"),
+            owner_open_id=kwargs.get("owner_open_id"),
         )
+        self.resources[(str(resource_id), 1)] = resource
+        return resource
 
     def add_edge(self, **kwargs):
         self.edges.append((
@@ -47,6 +90,21 @@ class RecordingRepository:
     def writable_resource_metadata(self, **kwargs):
         self.writable_kwargs = kwargs
         return self.target
+
+    def get_resource_version(self, _tenant_id, actor_open_id, resource_id, resource_version):
+        stored = self.resources.get((str(resource_id), int(resource_version)))
+        if stored is not None:
+            return stored
+        return SimpleNamespace(
+            id=resource_id,
+            type=self.target["type"],
+            title="目标文案",
+            version=resource_version,
+            content_text="目标正文",
+            content_json={"title": "目标文案", "body": "目标正文", "tags": []},
+            visibility=self.target["visibility"],
+            owner_open_id=actor_open_id,
+        )
 
     def find_performance_metric_id(self, **kwargs):
         return getattr(self, "existing_metric_id", None)
@@ -68,7 +126,7 @@ class RecordingRepository:
         ]
 
 
-def test_save_performance_metric_persists_metric_and_measured_by_edge():
+def test_save_performance_metric_persists_metric_and_measured_by_edge(preference_memory):
     repo = RecordingRepository()
 
     result = save_performance_metric_resource(
@@ -107,8 +165,11 @@ def test_save_performance_metric_persists_metric_and_measured_by_edge():
     }
     assert repo.upserts[0]["visibility"] == "private"
     assert repo.upserts[0]["owner_open_id"] == "ou_owner"
-    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["meili_index", "graph_ingest"]
-    assert repo.edges == [("generated-1", "metric-1", "measured_by", 0.112)]
+    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["knowledge_enrich"]
+    assert [edge for edge in repo.edges if edge[2] == "measured_by"] == [
+        ("generated-1", "metric-1", "measured_by", 0.112)
+    ]
+    assert len(preference_memory.observations) == 1
 
 
 def test_save_performance_metric_validates_target_and_metrics():
@@ -284,11 +345,14 @@ class _StatefulRepo:
     """模拟真实幂等:按 target 复用既有 metric,边按 (source,target,edge_type) 去重。"""
 
     def __init__(self):
+        self.conn = None
         self.metric_by_target: dict[str, str] = {}
         self.metric_content: dict[str, dict] = {}
         self.edges: set[tuple[str, str, str]] = set()
         self.edge_weight: dict[tuple[str, str, str], float] = {}
         self._seq = 0
+        self.resource_versions: dict[str, int] = {}
+        self.resources = {}
         self.target = {"type": "xhs_online_note", "version": 1, "visibility": "team", "owner_open_id": "ou_feishu"}
 
     def unit_of_work(self):
@@ -301,6 +365,18 @@ class _StatefulRepo:
         return self.metric_by_target.get(target_resource_id)
 
     def upsert_resource(self, **kwargs):
+        if kwargs["resource_type"] == "writing_preference_profile":
+            rid = kwargs["resource_id"]
+            version = self.resource_versions.get(rid, 0) + 1
+            self.resource_versions[rid] = version
+            resource = SimpleNamespace(
+                id=rid, type=kwargs["resource_type"], title=kwargs["title"], version=version,
+                content_text=kwargs.get("content_text"),
+                content_json=dict(kwargs.get("content_json") or {}),
+                visibility=kwargs["visibility"], owner_open_id=kwargs["owner_open_id"],
+            )
+            self.resources[(rid, version)] = resource
+            return resource
         rid = kwargs.get("resource_id")
         target = kwargs["content_json"]["target_resource_id"]
         if rid is None:
@@ -308,15 +384,34 @@ class _StatefulRepo:
             rid = f"metric-{self._seq}"
         self.metric_by_target[target] = rid
         self.metric_content[rid] = dict(kwargs["content_json"])
-        return SimpleNamespace(id=rid, type=kwargs["resource_type"], title=kwargs["title"], version=1)
+        version = self.resource_versions.get(rid, 0) + 1
+        self.resource_versions[rid] = version
+        resource = SimpleNamespace(
+            id=rid, type=kwargs["resource_type"], title=kwargs["title"], version=version,
+            content_text=kwargs.get("content_text"),
+            content_json=dict(kwargs.get("content_json") or {}),
+            visibility=kwargs["visibility"], owner_open_id=kwargs["owner_open_id"],
+        )
+        self.resources[(rid, version)] = resource
+        return resource
 
     def add_edge(self, **kwargs):
         key = (kwargs["source_resource_id"], kwargs["target_resource_id"], kwargs["edge_type"])
         self.edges.add(key)
         self.edge_weight[key] = kwargs["weight"]
 
+    def get_resource_version(self, _tenant_id, actor_open_id, resource_id, resource_version):
+        stored = self.resources.get((str(resource_id), int(resource_version)))
+        if stored is not None:
+            return stored
+        return SimpleNamespace(
+            id=resource_id, type=self.target["type"], title="目标", version=resource_version,
+            content_text="正文", content_json={"title": "目标", "body": "正文", "tags": []},
+            visibility=self.target["visibility"], owner_open_id=actor_open_id,
+        )
 
-def test_save_performance_metric_is_idempotent_per_target():
+
+def test_save_performance_metric_is_idempotent_per_target(preference_memory):
     repo = _StatefulRepo()
     for likes in (100, 5000, 99999):  # 同一 target 反复回填,数值变化
         save_performance_metric_resource(
@@ -329,14 +424,15 @@ def test_save_performance_metric_is_idempotent_per_target():
     # 幂等:恰 1 条 metric、1 条边,末次数值覆盖
     assert len(repo.metric_by_target) == 1
     assert len([rid for rid in repo.metric_content]) == 1
-    assert len(repo.edges) == 1
+    assert len([edge for edge in repo.edges if edge[2] == "measured_by"]) == 1
+    assert len(preference_memory.observations) == 3
     only_rid = repo.metric_by_target["feishu-rec-1"]
     assert repo.metric_content[only_rid]["metrics"]["likes"] == 99999
     # metric 继承 target 的 visibility/owner(R7.1)
     assert repo.target["visibility"] == "team"
 
 
-def test_two_targets_get_two_metrics():
+def test_two_targets_get_two_metrics(preference_memory):
     repo = _StatefulRepo()
     save_performance_metric_resource(
         repo, tenant_id="default", actor_open_id="ou_feishu",
@@ -347,4 +443,5 @@ def test_two_targets_get_two_metrics():
         target_resource_id="rec-2", metrics={"likes": 2},
     )
     assert len(repo.metric_by_target) == 2
-    assert len(repo.edges) == 2
+    assert len([edge for edge in repo.edges if edge[2] == "measured_by"]) == 2
+    assert len(preference_memory.observations) == 2

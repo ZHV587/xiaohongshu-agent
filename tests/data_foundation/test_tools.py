@@ -3,27 +3,30 @@ from __future__ import annotations
 import inspect
 from contextlib import nullcontext
 
+from data_foundation.preference_learning import ExactResourceVersion
 from tools.runtime_identity import identity_config
 
 
-def test_resource_repository_check_permission_signature_is_stable():
-    """S2 护栏(不依赖 DB):creation_memory._actor_can_read 用 getattr(repo,"check_permission")
-    软门调用真仓权限校验。若真方法被改名/改签名,getattr 取不到 → 软门退化成 allow-all 越权,
-    而其余单测仍绿(假仓本就没这方法、真仓 ACL 测试默认 skip)。此处把签名钉死,漂移即在单元层炸。
-    """
+def test_resource_repository_exact_version_acl_signature_is_stable():
     from data_foundation.repositories.resource import ResourceRepository
 
-    assert hasattr(ResourceRepository, "check_permission")
-    params = list(inspect.signature(ResourceRepository.check_permission).parameters)
-    # _actor_can_read 以 (resource_id, actor, permission=..., conn=...) 调用,这些形参必须在
-    assert params[:3] == ["self", "resource_id", "actor"], params
-    assert "permission" in params and "conn" in params, params
+    params = list(inspect.signature(ResourceRepository.get_resource_version).parameters)
+    assert params[:5] == [
+        "self",
+        "tenant_id",
+        "actor_open_id",
+        "resource_id",
+        "resource_version",
+    ], params
 
 
 class RecordingRepository:
     def __init__(self):
         self.edges = []
+        self.upserts = []
+        self.resources = {}
         self.conn = object()
+        self.session_rows = []
 
     def unit_of_work(self):
         return nullcontext()
@@ -44,19 +47,62 @@ class RecordingRepository:
 
     def upsert_resource(self, **kwargs):
         self.upsert = kwargs
-        return type(
+        self.upserts.append(kwargs)
+        resource_id = kwargs.get("resource_id") or f"generated-{len(self.resources) + 1}"
+        resource = type(
             "Resource",
             (),
-            {"id": "generated-1", "type": kwargs["resource_type"], "title": kwargs["title"], "version": 1},
+            {
+                "id": resource_id,
+                "type": kwargs["resource_type"],
+                "title": kwargs["title"],
+                "version": 1,
+                "content_text": kwargs.get("content_text"),
+                "content_json": dict(kwargs.get("content_json") or {}),
+                "visibility": kwargs.get("visibility", "private"),
+                "owner_open_id": kwargs.get("owner_open_id"),
+            },
         )()
+        self.resources[(str(resource_id), 1)] = resource
+        return resource
 
     def add_edge(self, **kwargs):
         self.edge = kwargs
         self.edges.append(kwargs)
 
+    def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
+        stored = self.resources.get((str(resource_id), int(resource_version)))
+        if stored is not None:
+            return stored
+        return type(
+            "Resource",
+            (),
+            {
+                "id": resource_id,
+                "version": resource_version,
+                "title": "爆款原文",
+                "type": "xhs_online_note",
+                "content_text": "爆款原文正文",
+                "content_json": {"title": "爆款原文", "body": "爆款原文正文"},
+                "visibility": "team",
+                "owner_open_id": actor_open_id,
+            },
+        )()
+
+    def get_resource_for_knowledge(
+        self, tenant_id, actor_open_id, resource_id, resource_version
+    ):
+        return self.get_resource_version(
+            tenant_id, actor_open_id, resource_id, resource_version
+        )
+
     def writable_resource_metadata(self, **kwargs):
         self.writable_kwargs = kwargs
         return {"type": "xhs_online_note", "version": 1, "visibility": "team", "owner_open_id": kwargs["actor_open_id"]}
+
+    def list_owned_session_snapshots(self, **kwargs):
+        self.session_list_kwargs = kwargs
+        return list(self.session_rows)
 
     def find_performance_metric_id(self, **kwargs):
         return None
@@ -86,6 +132,47 @@ class _RepoContext:
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+
+class _MemoryPreferenceRepository:
+    def __init__(self):
+        self.observations = {}
+        self.state = None
+
+    def acquire_actor_lock(self, **_kwargs):
+        return None
+
+    def insert_observation(self, *, observation, **_kwargs):
+        inserted = observation.event_key not in self.observations
+        self.observations.setdefault(observation.event_key, observation)
+        return inserted
+
+    def list_observations(self, **_kwargs):
+        return list(self.observations.values())
+
+    def get_profile_state(self, **_kwargs):
+        return self.state
+
+    def upsert_profile_state(self, **kwargs):
+        self.state = dict(kwargs)
+        return self.state
+
+    def list_eligible_assets(self, **_kwargs):
+        return []
+
+    def list_actor_patterns(self, **_kwargs):
+        return []
+
+    def mark_synthesis_completed(self, **_kwargs):
+        return True
+
+
+def _patch_preference_repository(monkeypatch):
+    from data_foundation.repositories import preference as preference_repository
+
+    memory = _MemoryPreferenceRepository()
+    monkeypatch.setattr(preference_repository, "PreferenceRepository", lambda _conn: memory)
+    return memory
 
 
 def test_get_data_foundation_status_tool_returns_structured_status(monkeypatch):
@@ -147,8 +234,8 @@ def test_save_generated_topic_tool_persists_for_current_actor(monkeypatch):
         selected_topic={
             "topic": "轻量露营（收藏点强）",
             "evidence": [
-                {"resource_id": "source-1", "summary": "依据"},
-                {"resource_id": "source-2", "summary": "另一个依据"},
+                {"resource_id": "source-1", "resource_version": 2, "summary": "依据"},
+                {"resource_id": "source-2", "resource_version": 3, "summary": "另一个依据"},
             ],
         },
         config=identity_config("ou_user"),
@@ -161,6 +248,7 @@ def test_save_generated_topic_tool_persists_for_current_actor(monkeypatch):
     # 落库的选题以用户点选的那张卡为准(覆盖 LLM 占位)
     assert repo.upsert["content_json"]["topics"] == ["轻量露营（收藏点强）"]
     assert [edge["target_resource_id"] for edge in repo.edges] == ["source-1", "source-2"]
+    assert [edge["target_resource_version"] for edge in repo.edges] == [2, 3]
 
 
 def test_save_generated_topic_evidence_not_llm_arg():
@@ -197,18 +285,54 @@ def test_save_user_feedback_tool_persists_revision_request(monkeypatch):
     from data_foundation import tools as df_tools
 
     repo = RecordingRepository()
+    preferences = _patch_preference_repository(monkeypatch)
     monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
 
     result = df_tools.save_user_feedback.func(
         feedback="标题再狠一点",
         target_resource_id="generated-0",
+        target_resource_version=4,
         feedback_type="revision_request",
         config=identity_config("ou_user"),
     )
 
     assert result["ok"] is True
-    assert repo.upsert["resource_type"] == "revision_request"
-    assert repo.edge["edge_type"] == "feedback_on"
+    feedback_write = next(item for item in repo.upserts if item["resource_type"] == "revision_request")
+    assert feedback_write["content_json"]["target_resource_version"] == 4
+    feedback_edge = next(item for item in repo.edges if item["edge_type"] == "feedback_on")
+    assert feedback_edge["target_resource_version"] == 4
+    assert len(preferences.observations) == 1
+    observation = next(iter(preferences.observations.values()))
+    assert observation.event_type == "feedback"
+    assert observation.source == ExactResourceVersion(
+        result["resource"]["resource_id"], 1
+    )
+
+
+def test_save_writing_teardown_tool_persists_exact_source_link(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.save_writing_teardown.func(
+        source_resource_id="source-1",
+        source_resource_version=6,
+        niche="职场成长",
+        hook="工作三年后我才发现",
+        cta="收藏后照着检查",
+        structure=["反常识钩子", "亲历证据", "步骤清单"],
+        success_factors=["具体数字", "低门槛行动"],
+        style_tags=["克制", "口语"],
+        quality=88,
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert repo.upsert["resource_type"] == "writing_teardown"
+    assert repo.upsert["content_json"]["source_resource_version"] == 6
+    assert repo.edge["edge_type"] == "teardown_of"
+    assert repo.edge["target_resource_version"] == 6
 
 
 def test_save_generated_topic_skips_edge_to_unreadable_evidence(monkeypatch):
@@ -217,10 +341,12 @@ def test_save_generated_topic_skips_edge_to_unreadable_evidence(monkeypatch):
     from data_foundation import tools as df_tools
 
     class _AclRepo(RecordingRepository):
-        def check_permission(self, resource_id, actor, permission="write", conn=None):
+        def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
             if resource_id == "11111111-1111-1111-1111-111111111111":  # 受害者私有资源
-                raise PermissionError("not readable")
-            # 其余(本人可读)放行
+                return None
+            return super().get_resource_version(
+                tenant_id, actor_open_id, resource_id, resource_version
+            )
 
     repo = _AclRepo()
     monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
@@ -231,8 +357,8 @@ def test_save_generated_topic_skips_edge_to_unreadable_evidence(monkeypatch):
         selected_topic={
             "topic": "轻量化装备清单",
             "evidence": [
-                {"resource_id": "22222222-2222-2222-2222-222222222222"},  # 可读
-                {"resource_id": "11111111-1111-1111-1111-111111111111"},  # 不可读
+                {"resource_id": "22222222-2222-2222-2222-222222222222", "resource_version": 1},  # 可读
+                {"resource_id": "11111111-1111-1111-1111-111111111111", "resource_version": 1},  # 不可读
             ],
         },
         config=identity_config("ou_user"),
@@ -249,21 +375,28 @@ def test_save_user_feedback_skips_edge_to_unreadable_target(monkeypatch):
     from data_foundation import tools as df_tools
 
     class _AclRepo(RecordingRepository):
-        def check_permission(self, resource_id, actor, permission="write", conn=None):
-            raise PermissionError("not readable")
+        def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
+            if resource_id == "11111111-1111-1111-1111-111111111111":
+                return None
+            return super().get_resource_version(
+                tenant_id, actor_open_id, resource_id, resource_version
+            )
 
     repo = _AclRepo()
+    preferences = _patch_preference_repository(monkeypatch)
     monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
 
     result = df_tools.save_user_feedback.func(
         feedback="想抄这条",
         target_resource_id="11111111-1111-1111-1111-111111111111",
+        target_resource_version=1,
         feedback_type="revision_request",
         config=identity_config("ou_user"),
     )
 
     assert result["ok"] is True
-    assert repo.edges == []  # 越权边被跳过
+    assert not [edge for edge in repo.edges if edge["edge_type"] == "feedback_on"]
+    assert len(preferences.observations) == 1  # 反馈事实本身仍精确、私有地被观察
 
 
 def test_save_session_snapshot_tool_persists_for_current_actor(monkeypatch):
@@ -276,7 +409,8 @@ def test_save_session_snapshot_tool_persists_for_current_actor(monkeypatch):
         project_name="露营账号",
         title="账号定位诊断",
         content="目标人群、卖点、内容方向……",
-        metadata={"phase": "diagnosis"},
+        snapshot_kind="diagnosis",
+        metadata={"phase": "diagnosis", "confirmed": True, "confirmed_by": "伪造"},
         config=identity_config("ou_user"),
     )
 
@@ -285,29 +419,113 @@ def test_save_session_snapshot_tool_persists_for_current_actor(monkeypatch):
     assert repo.upsert["actor_open_id"] == "ou_user"
     assert repo.upsert["resource_type"] == "session_snapshot"
     assert repo.upsert["title"] == "[露营账号] 账号定位诊断"
+    assert repo.upsert["visibility"] == "private"
+    assert repo.upsert["content_json"] == {
+        "phase": "diagnosis",
+        "project_name": "露营账号",
+        "snapshot_kind": "diagnosis",
+    }
+    assert result["resource_version"] == 1
+    assert result["confirmation_status"] == "unconfirmed"
     # outbox 副作用必须被显式投递(P0 回归:default_write_requests 曾因缺 import 抛 NameError)
     assert repo.upsert["outbox_requests"] is not None
+
+
+def test_get_session_snapshots_uses_owner_scoped_restore_path(monkeypatch):
+    from datetime import datetime, timezone
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    repo.session_rows = [{
+        "resource_id": "11111111-1111-1111-1111-111111111111",
+        "resource_version": 3,
+        "title": "[露营账号] 阶段状态",
+        "summary": "阶段状态",
+        "content_text": "本轮结论",
+        "content_json": {"snapshot_kind": "workflow_state"},
+        "updated_at": datetime(2026, 7, 13, tzinfo=timezone.utc),
+    }]
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    result = df_tools.get_session_snapshots.func(
+        project_name="露营账号",
+        limit=5,
+        config=identity_config("ou_user"),
+    )
+
+    assert result["snapshots"][0]["resource_version"] == 3
+    assert repo.session_list_kwargs["actor_open_id"] == "ou_user"
+    assert repo.session_list_kwargs["project_name"] == "露营账号"
+
+
+def test_confirm_session_snapshot_uses_permission_checked_confirmation_repository(monkeypatch):
+    from data_foundation import tools as df_tools
+    from data_foundation.knowledge import repository as knowledge_repository
+
+    repo = RecordingRepository()
+    captured = {}
+
+    class _KnowledgeRepository:
+        def __init__(self, conn):
+            captured["conn"] = conn
+
+        def confirm_exact_version(self, *args):
+            captured["args"] = args
+            return {
+                "resource_id": args[2],
+                "resource_version": args[3],
+                "eligibility": "pending",
+                "asset_kind": "strategy_fact",
+            }
+
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+    monkeypatch.setattr(knowledge_repository, "KnowledgeRepository", _KnowledgeRepository)
+    assert "snapshot_kind" not in df_tools.confirm_session_snapshot.args_schema.model_json_schema()[
+        "properties"
+    ]
+
+    result = df_tools.confirm_session_snapshot.func(
+        resource_id="11111111-1111-1111-1111-111111111111",
+        resource_version=2,
+        config=identity_config("ou_user"),
+    )
+
+    assert result["ok"] is True
+    assert captured["args"] == (
+        "default",
+        "ou_user",
+        "11111111-1111-1111-1111-111111111111",
+        2,
+        "strategy_fact",
+        {},
+    )
 
 
 def test_save_performance_metric_tool_persists_for_current_actor(monkeypatch):
     from data_foundation import tools as df_tools
 
     repo = RecordingRepository()
+    preferences = _patch_preference_repository(monkeypatch)
     monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
 
     result = df_tools.save_performance_metric.func(
         target_resource_id="generated-1",
+        target_resource_version=1,
         metrics={"likes": 10, "collects": 5, "views": 100},
         published_at="2026-06-20T08:00:00+00:00",
         config=identity_config("ou_user"),
     )
 
     assert result["ok"] is True
-    assert repo.upsert["tenant_id"] == "default"
-    assert repo.upsert["actor_open_id"] == "ou_user"
-    assert repo.upsert["resource_type"] == "performance_metric"
-    assert repo.edge["source_resource_id"] == "generated-1"
-    assert repo.edge["edge_type"] == "measured_by"
+    metric_write = next(item for item in repo.upserts if item["resource_type"] == "performance_metric")
+    assert metric_write["tenant_id"] == "default"
+    assert metric_write["actor_open_id"] == "ou_user"
+    measured_edge = next(item for item in repo.edges if item["edge_type"] == "measured_by")
+    assert measured_edge["source_resource_id"] == "generated-1"
+    assert measured_edge["source_resource_version"] == 1
+    observation = next(iter(preferences.observations.values()))
+    assert observation.event_type == "metric"
+    assert observation.source == ExactResourceVersion("generated-1", 1)
 
 
 def test_get_resource_performance_tool_reads_for_current_actor(monkeypatch):
@@ -345,6 +563,7 @@ def test_search_resources_integrates_ranking_fields(monkeypatch):
         return [
             {
                 "id": rid,
+                "resource_version": 1,
                 "type": "doc",
                 "title": "露营装备",
                 "summary": "露营",
@@ -377,6 +596,7 @@ def test_search_resources_integrates_ranking_fields(monkeypatch):
 
     assert result["ok"] is True
     assert len(result["results"]) == 1
+    assert result["results"][0]["resource_version"] == 1
     assert "why_selected" in result["results"][0]
     assert "rank_signals" in result["results"][0]
 
@@ -392,6 +612,7 @@ def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
         return [
             {
                 "id": "res-1",
+                "resource_version": 1,
                 "type": "feishu_base_record",
                 "title": "秋冬护肤",
                 "summary": "s",
@@ -433,6 +654,7 @@ def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
     assert result["ok"] is True
     assert len(result["results"]) == 1
     card = result["results"][0]
+    assert card["resource_version"] == 1
     # 细致字段(rank_evidence 路径拿不到的)
     assert card["cover_url"] == "http://sns-webpic-qc.xhscdn.com/a.jpg"
     assert card["note_url"] == "http://xhslink.com/o/abc"

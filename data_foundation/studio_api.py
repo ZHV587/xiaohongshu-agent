@@ -346,7 +346,9 @@ def _persist_schedule(
             repo.add_edge(
                 tenant_id=tenant_id,
                 source_resource_id=resource_id,
+                source_resource_version=int(lifecycle.finalized_version),
                 target_resource_id=resource.id,
+                target_resource_version=int(resource.version),
                 edge_type=MEASURED_BY_EDGE,
                 weight=float(content.get("score") or 0.0),
             )
@@ -486,7 +488,9 @@ def _persist_pipeline_stage(
             repo.add_edge(
                 tenant_id=tenant_id,
                 source_resource_id=resource_id,
+                source_resource_version=int(target_version),
                 target_resource_id=resource.id,
+                target_resource_version=int(resource.version),
                 edge_type=MEASURED_BY_EDGE,
                 weight=float(content.get("score") or 0.0),
             )

@@ -21,7 +21,7 @@ def test_hydrate_feishu_record_maps_fields():
         },
         "table_name": "单篇采集库",
     }
-    card = hydrate_note_card("rid-1", "feishu_base_record", content_json, score=0.7)
+    card = hydrate_note_card("rid-1", 3, "feishu_base_record", content_json, score=0.7)
     assert card is not None
     assert card["title"] == "秋冬护肤攻略"
     assert card["author"] == "护肤老师"
@@ -35,6 +35,7 @@ def test_hydrate_feishu_record_maps_fields():
     assert card["source"] == "local"
     assert card["already_local"] is True
     assert card["resource_id"] == "rid-1"
+    assert card["resource_version"] == 3
     assert len(card["summary"]) <= 141
 
 
@@ -55,7 +56,7 @@ def test_hydrate_online_note_uses_card_shape():
         "created_at": "2026-06-20",
         "tags": ["标签1", "标签2"],
     }
-    card = hydrate_note_card("rid-2", "xhs_online_note", content_json, score=0.9)
+    card = hydrate_note_card("rid-2", 7, "xhs_online_note", content_json, score=0.9)
     assert card["title"] == "线上笔记"
     assert card["note_url"] == "http://xhslink.com/o/abc"
     assert card["interactive"] == 165
@@ -64,7 +65,7 @@ def test_hydrate_online_note_uses_card_shape():
 
 
 def test_hydrate_non_note_type_returns_none():
-    assert hydrate_note_card("rid", "generated_copy", {"title": "x"}) is None
+    assert hydrate_note_card("rid", 1, "generated_copy", {"title": "x"}) is None
 
 
 def test_dedupe_by_note_url():

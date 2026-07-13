@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from unittest.mock import MagicMock
 from datetime import datetime, timezone
 
@@ -90,10 +91,18 @@ def test_process_ensures_index_settings_once_before_upsert():
     assert index.upsert.call_count == 2
 
 
-def test_process_supersedes_stale_or_candidate_version_without_deleting_current_document():
-    conn = MagicMock()
-    cur = conn.cursor.return_value.__enter__.return_value
-    cur.execute.return_value.fetchone.side_effect = [None, {"exists": 1}]
+def test_stale_exact_task_reconciles_the_resource_level_current_document():
+    conn = _conn_returning(
+        {
+            "id": "r1",
+            "tenant_id": "default",
+            "type": "feishu_base_record",
+            "title": "current-v2",
+            "summary": None,
+            "content_text": "current body",
+            "resource_version": 2,
+        }
+    )
     index = MagicMock()
     processor = MeiliProcessor(
         conn=conn,
@@ -105,6 +114,144 @@ def test_process_supersedes_stale_or_candidate_version_without_deleting_current_
         processor.process(_item({"resource_id": "r1", "version": 1}), _Lease())
     )
 
-    assert result.status == "superseded"
+    assert result.status == "succeeded"
     index.delete.assert_not_called()
+    assert index.upsert.call_args.args[0]["resource_version"] == 2
+
+
+def test_process_deletes_stale_document_when_resource_has_no_current_knowledge_target():
+    conn = _conn_returning(None)
+    index = MagicMock()
+    processor = MeiliProcessor(
+        conn=conn,
+        index=index,
+        config=MeiliConfig(state="enabled", url="u", api_key="k"),
+    )
+
+    result = asyncio.run(
+        processor.process(_item({"resource_id": "rejected-1", "version": 2}), _Lease())
+    )
+
+    assert result.status == "superseded"
+    index.delete.assert_called_once_with("rejected-1")
     index.upsert.assert_not_called()
+
+
+class _DynamicCursor:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, _sql, _params):
+        return self
+
+    def fetchone(self):
+        with self.connection.lock:
+            current = self.connection.current
+            return None if current is None else dict(current)
+
+
+class _DynamicConnection:
+    def __init__(self, current):
+        self.current = current
+        self.lock = threading.Lock()
+
+    def cursor(self, **_kwargs):
+        return _DynamicCursor(self)
+
+    def set_current(self, current):
+        with self.lock:
+            self.current = current
+
+
+class _BarrierIndex:
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.operations = []
+
+    def ensure_index(self):
+        return None
+
+    def _barrier_once(self):
+        if not self.started.is_set():
+            self.started.set()
+            assert self.release.wait(timeout=2)
+
+    def upsert(self, document):
+        self.operations.append(("upsert", dict(document)))
+        self._barrier_once()
+
+    def delete(self, resource_id):
+        self.operations.append(("delete", resource_id))
+        self._barrier_once()
+
+
+def _current_document(version=1):
+    return {
+        "id": "race-1",
+        "tenant_id": "default",
+        "type": "writing_teardown",
+        "title": f"teardown-v{version}",
+        "summary": None,
+        "content_text": "body",
+        "resource_version": version,
+    }
+
+
+def test_upsert_in_flight_then_withdrawn_is_rechecked_and_deleted():
+    async def scenario():
+        connection = _DynamicConnection(_current_document())
+        index = _BarrierIndex()
+        processor = MeiliProcessor(
+            conn=connection,
+            index=index,
+            config=MeiliConfig(state="enabled", url="u", api_key="k"),
+        )
+        task = asyncio.create_task(
+            processor.process(
+                _item({"resource_id": "race-1", "version": 1}),
+                _Lease(),
+            )
+        )
+        assert await asyncio.to_thread(index.started.wait, 1)
+        connection.set_current(None)
+        index.release.set()
+        return await task, index.operations
+
+    result, operations = asyncio.run(scenario())
+
+    assert result.status == "superseded"
+    assert [operation[0] for operation in operations] == ["upsert", "delete"]
+
+
+def test_delete_in_flight_then_restored_is_rechecked_and_upserted():
+    async def scenario():
+        connection = _DynamicConnection(None)
+        index = _BarrierIndex()
+        processor = MeiliProcessor(
+            conn=connection,
+            index=index,
+            config=MeiliConfig(state="enabled", url="u", api_key="k"),
+        )
+        task = asyncio.create_task(
+            processor.process(
+                _item({"resource_id": "race-1", "version": 1}),
+                _Lease(),
+            )
+        )
+        assert await asyncio.to_thread(index.started.wait, 1)
+        connection.set_current(_current_document(version=2))
+        index.release.set()
+        return await task, index.operations
+
+    result, operations = asyncio.run(scenario())
+
+    assert result.status == "succeeded"
+    assert [operation[0] for operation in operations] == ["delete", "upsert"]
+    assert operations[-1][1]["resource_version"] == 2

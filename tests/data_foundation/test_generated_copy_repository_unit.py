@@ -75,13 +75,14 @@ def test_meili_and_agent_hydration_fail_closed_on_generated_copy_pointer():
     meili_source = inspect.getsource(ResourceRepository.readable_rows_by_ids)
     assert "resource_versions must align with resource_ids" in meili_source
     assert "rv.version = req.resource_version" in meili_source
-    assert "gcs.knowledge_target_version = rv.version" in meili_source
+    assert "join current_knowledge_targets target" in meili_source
+    assert "target.resource_version = req.resource_version" in meili_source
     assert "rv.content_text" in meili_source
-    assert "when r.type = 'generated_copy' then gcs.knowledge_target_version" in meili_source
 
     agent_source = inspect.getsource(ResourceRepository.get_resource_for_knowledge)
     assert "readable_resource_where" in agent_source
-    assert "then gcs.knowledge_target_version" in agent_source
+    assert "from current_knowledge_targets target" in agent_source
+    assert "rv.version = target.resource_version" in agent_source
     assert "rv.content_text" in agent_source
 
     revision_source = inspect.getsource(GeneratedCopyRepository._append_revision)
@@ -144,6 +145,46 @@ def test_lifecycle_versions_are_exact_ordered_snapshots_with_stable_labels():
             "note": "",
         },
     ]
+
+
+def test_revision_inherits_exact_provenance_and_links_immutable_base():
+    repo = GeneratedCopyRepository.__new__(GeneratedCopyRepository)
+    repo.conn = MagicMock()
+    cursor = repo.conn.cursor.return_value.__enter__.return_value
+    cursor.execute.return_value.fetchall.return_value = [
+        {
+            "target_resource_id": "source-1",
+            "target_resource_version": 7,
+            "edge_type": "derived_from",
+            "weight": 0.8,
+            "properties": {"basis": "evidence"},
+        },
+        {
+            "target_resource_id": "reference-1",
+            "target_resource_version": 3,
+            "edge_type": "imitated_from",
+            "weight": 1.0,
+            "properties": {},
+        },
+    ]
+    repo.resource_repo = MagicMock()
+
+    repo._inherit_revision_provenance(
+        tenant_id="default",
+        resource_id="copy-1",
+        base_resource_version=2,
+        revision_resource_version=5,
+    )
+
+    calls = [call.kwargs for call in repo.resource_repo.add_edge.call_args_list]
+    assert [(call["edge_type"], call["source_resource_version"]) for call in calls] == [
+        ("derived_from", 5),
+        ("imitated_from", 5),
+        ("revised_from", 5),
+    ]
+    assert calls[-1]["target_resource_id"] == "copy-1"
+    assert calls[-1]["target_resource_version"] == 2
+    assert calls[-1]["properties"] == {"relation_kind": "revision"}
 
 
 def _repo_with_locked_state(monkeypatch, current):
@@ -292,6 +333,56 @@ def test_published_and_measured_terminal_retries_are_idempotent(monkeypatch):
     ) is measured
     repo.conn.execute.assert_not_called()
     event.assert_not_called()
+
+
+def test_published_and_measured_transitions_reclassify_the_exact_knowledge_target(monkeypatch):
+    finalized = SimpleNamespace(
+        lifecycle_status="finalized",
+        finalized_version=4,
+        latest_resource_version=4,
+    )
+    published_repo = _repo_with_locked_state(monkeypatch, finalized)
+    published_repo.conn.execute.return_value.fetchone.return_value = {"resource_id": "copy-1"}
+    published_result = object()
+    monkeypatch.setattr(published_repo, "_state", lambda *_args, **_kwargs: published_result)
+    published_event = MagicMock()
+    monkeypatch.setattr(published_repo, "_event_and_index", published_event)
+
+    assert published_repo.mark_published(
+        tenant_id="default", actor_open_id="ou_owner", resource_id="copy-1"
+    ) is published_result
+    published_event.assert_called_once_with(
+        tenant_id="default",
+        resource_id="copy-1",
+        resource_version=4,
+        actor_open_id="ou_owner",
+        event_type="published",
+        payload={"version": 4},
+    )
+
+    published = SimpleNamespace(
+        lifecycle_status="published",
+        published_version=4,
+        latest_resource_version=4,
+    )
+    measured_repo = _repo_with_locked_state(monkeypatch, published)
+    measured_repo.conn.execute.return_value.fetchone.return_value = {"resource_id": "copy-1"}
+    measured_result = object()
+    monkeypatch.setattr(measured_repo, "_state", lambda *_args, **_kwargs: measured_result)
+    measured_event = MagicMock()
+    monkeypatch.setattr(measured_repo, "_event_and_index", measured_event)
+
+    assert measured_repo.mark_measured(
+        tenant_id="default", actor_open_id="ou_owner", resource_id="copy-1"
+    ) is measured_result
+    measured_event.assert_called_once_with(
+        tenant_id="default",
+        resource_id="copy-1",
+        resource_version=4,
+        actor_open_id="ou_owner",
+        event_type="metrics_backfilled",
+        payload={"version": 4},
+    )
 
 
 def test_performance_attribution_accepts_only_exact_published_version(monkeypatch):

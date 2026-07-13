@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from psycopg import Connection
 
@@ -13,7 +13,13 @@ from data_foundation.processors.embedding import (
 from data_foundation.processors.base import Processor
 
 
-DEFAULT_TOPICS = ("embedding_generate", "graph_ingest", "meili_index")
+DEFAULT_TOPICS = (
+    "embedding_generate",
+    "graph_ingest",
+    "knowledge_enrich",
+    "meili_index",
+    "preference_synthesize",
+)
 
 
 class ProcessorRegistry:
@@ -54,6 +60,7 @@ def default_processor_registry(
     conn: Connection,
     *,
     embedding_config: EmbeddingProviderConfig | None | object = _UNSET,
+    preference_connection_factory: Callable[[], Connection] | None = None,
 ) -> ProcessorRegistry:
     if embedding_config is _UNSET:
         embedding_config = embedding_config_from_runtime()
@@ -61,7 +68,9 @@ def default_processor_registry(
     from data_foundation.falkor_client import FalkorResourceGraph
     from data_foundation.meili_client import MeiliResourceIndex
     from data_foundation.processors.graph import GraphProcessor
+    from data_foundation.processors.knowledge import KnowledgeEnrichProcessor
     from data_foundation.processors.meili import MeiliProcessor
+    from data_foundation.processors.preference import PreferenceSynthesizeProcessor
 
     meili_cfg = meili_config_from_env()
     meili_index = MeiliResourceIndex.from_config(meili_cfg) if meili_cfg.state == "enabled" else None
@@ -72,6 +81,11 @@ def default_processor_registry(
             "embedding_generate": EmbeddingProcessor(
                 conn,
                 config=embedding_config,
+            ),
+            "knowledge_enrich": KnowledgeEnrichProcessor(conn),
+            "preference_synthesize": PreferenceSynthesizeProcessor(
+                conn,
+                connection_factory=preference_connection_factory,
             ),
             "meili_index": MeiliProcessor(conn, index=meili_index, config=meili_cfg),
             "graph_ingest": GraphProcessor(conn, graph=falkor_graph, config=falkor_cfg),

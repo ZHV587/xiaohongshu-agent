@@ -130,6 +130,8 @@ def test_semantic_rows_uses_schema_qualified_vector_cast_for_custom_search_paths
 
     assert "::public.vector" in conn.sql
     assert "::vector" not in conn.sql
+    assert "join current_knowledge_targets target" in conn.sql
+    assert "target.resource_version = e.resource_version" in conn.sql
 
 
 def test_upsert_resource_writes_version_event_mapping_and_outbox(migrated_conn):
@@ -260,7 +262,8 @@ def test_add_edge_enqueues_graph_ingest_for_source_endpoint(migrated_conn):
     )
     repo.add_edge(
         tenant_id="default", source_resource_id=doc.id,
-        target_resource_id=metric.id, edge_type="measured_by", weight=1.0,
+        source_resource_version=int(doc.version), target_resource_id=metric.id,
+        target_resource_version=int(metric.version), edge_type="measured_by", weight=1.0,
     )
 
     # 文档(边 source)现在有了 graph_ingest → 下次 ingest 文档时这条出边会进 Falkor
@@ -288,7 +291,8 @@ def test_add_edge_graph_ingest_dedupes_with_existing(migrated_conn):
     # src 已有 1 条 graph_ingest(version=1);加边后 add_edge 用同 dedupe_parts+同 version
     repo.add_edge(
         tenant_id="default", source_resource_id=src.id,
-        target_resource_id=tgt.id, edge_type="derived_from", weight=1.0,
+        source_resource_version=int(src.version), target_resource_id=tgt.id,
+        target_resource_version=int(tgt.version), edge_type="derived_from", weight=1.0,
     )
     rows = _outbox_rows_for(migrated_conn, resource_id=src.id, topic="graph_ingest")
     assert len(rows) == 1  # 去重,不是 2
@@ -758,7 +762,15 @@ def test_bulk_performance_metrics_fetches_multiple(migrated_conn):
         content_json={"target_resource_id": str(target1.id), "metrics": {"likes": 50}, "score": 50.0},
         visibility="private", owner_open_id=actor_open_id
     )
-    repo.add_edge(tenant_id=tenant_id, source_resource_id=target1.id, target_resource_id=metric.id, edge_type="measured_by", weight=50.0)
+    repo.add_edge(
+        tenant_id=tenant_id,
+        source_resource_id=target1.id,
+        source_resource_version=int(target1.version),
+        target_resource_id=metric.id,
+        target_resource_version=int(metric.version),
+        edge_type="measured_by",
+        weight=50.0,
+    )
 
     res = repo.bulk_performance_metrics(tenant_id, [str(target1.id), str(target2.id)])
     assert str(target1.id) in res
@@ -766,5 +778,3 @@ def test_bulk_performance_metrics_fetches_multiple(migrated_conn):
     assert res[str(target1.id)][0]["metrics"]["likes"] == 50
     assert str(target2.id) in res
     assert len(res[str(target2.id)]) == 0
-
-

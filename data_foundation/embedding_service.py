@@ -35,29 +35,11 @@ class EmbeddingIndexService:
     def discover_reconcile_tenants(self, *, limit: int) -> list[str]:
         rows = self.conn.execute(
             """
-            with version_targets as (
-              select r.tenant_id, r.id, r.type, gcs.knowledge_target_version,
-                     case when r.type = 'generated_copy'
-                          then gcs.knowledge_target_version
-                          else max(rv.version)
-                     end as version
-              from resources r
-              join resource_versions rv
-                on rv.tenant_id = r.tenant_id
-               and rv.resource_id = r.id
-              left join generated_copy_states gcs
-                on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
-              where r.status = 'active'
-              group by r.tenant_id, r.id, r.type, gcs.knowledge_target_version
-            ), current_resources as (
-              select vt.tenant_id, vt.id, vt.version
-              from version_targets vt
-              join resource_versions rv
-                on rv.tenant_id = vt.tenant_id
-               and rv.resource_id = vt.id
-               and rv.version = vt.version
-              where vt.version is not null
-                and nullif(trim(coalesce(rv.content_text, '')), '') is not null
+            with current_resources as (
+              select target.tenant_id, target.resource_id as id,
+                     target.resource_version as version
+              from current_knowledge_targets target
+              where nullif(trim(coalesce(target.content_text, '')), '') is not null
             ), current_counts as (
               select tenant_id, count(*)::int as expected_resources
               from current_resources
@@ -167,27 +149,12 @@ class EmbeddingIndexService:
     def _current_embeddable_resources(self, tenant_id: str):
         return self.conn.execute(
             """
-            with version_targets as (
-              select r.id, r.type, gcs.knowledge_target_version,
-                     case when r.type = 'generated_copy'
-                          then gcs.knowledge_target_version
-                          else max(rv.version)
-                     end as version
-              from resources r
-              join resource_versions rv
-                on rv.tenant_id = r.tenant_id and rv.resource_id = r.id
-              left join generated_copy_states gcs
-                on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
-              where r.tenant_id = %s and r.status = 'active'
-              group by r.id, r.type, gcs.knowledge_target_version
-            )
-            select vt.id::text as id, vt.version
-            from version_targets vt
-            join resource_versions rv
-              on rv.resource_id = vt.id and rv.version = vt.version
-            where vt.version is not null
-              and nullif(trim(coalesce(rv.content_text, '')), '') is not null
-            order by vt.id
+            select target.resource_id::text as id,
+                   target.resource_version as version
+            from current_knowledge_targets target
+            where target.tenant_id = %s
+              and nullif(trim(coalesce(target.content_text, '')), '') is not null
+            order by target.resource_id
             """,
             (tenant_id,),
         ).fetchall()

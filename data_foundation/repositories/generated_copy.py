@@ -7,7 +7,12 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
+from data_foundation.knowledge.locking import acquire_classification_lock
 from data_foundation.outbox_requests import default_write_requests
+
+
+REVISION_EDGE = "revised_from"
+INHERITED_PROVENANCE_EDGES = ("derived_from", "imitated_from")
 
 
 class GeneratedCopyConflict(RuntimeError):
@@ -357,6 +362,12 @@ class GeneratedCopyRepository:
                 cover=cover,
                 note=note,
             )
+            self._inherit_revision_provenance(
+                tenant_id=tenant_id,
+                resource_id=resource_id,
+                base_resource_version=base_version,
+                revision_resource_version=int(saved.version),
+            )
             row = self.conn.execute(
                 """
                 update generated_copy_states
@@ -536,6 +547,12 @@ class GeneratedCopyRepository:
                     note=normalized_draft["note"],
                 )
                 final_version = int(saved.version)
+                self._inherit_revision_provenance(
+                    tenant_id=tenant_id,
+                    resource_id=resource_id,
+                    base_resource_version=target_resource_version,
+                    revision_resource_version=final_version,
+                )
                 self._event(
                     tenant_id=tenant_id,
                     resource_id=resource_id,
@@ -631,9 +648,10 @@ class GeneratedCopyRepository:
                 """,
                 (actor_open_id, tenant_id, resource_id),
             ).fetchone()
-            self._event(
+            self._event_and_index(
                 tenant_id=tenant_id,
                 resource_id=resource_id,
+                resource_version=int(current.finalized_version),
                 actor_open_id=actor_open_id,
                 event_type="published",
                 payload={"version": current.finalized_version},
@@ -681,9 +699,10 @@ class GeneratedCopyRepository:
                 """,
                 (actor_open_id, tenant_id, resource_id),
             ).fetchone()
-            self._event(
+            self._event_and_index(
                 tenant_id=tenant_id,
                 resource_id=resource_id,
+                resource_version=int(current.published_version),
                 actor_open_id=actor_open_id,
                 event_type="metrics_backfilled",
                 payload={"version": current.published_version},
@@ -748,9 +767,69 @@ class GeneratedCopyRepository:
             outbox_requests=[],
         )
 
+    def _inherit_revision_provenance(
+        self,
+        *,
+        tenant_id: str,
+        resource_id: str,
+        base_resource_version: int,
+        revision_resource_version: int,
+    ) -> None:
+        """Carry exact source provenance forward and link the immutable revision base."""
+        with self.conn.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(
+                """
+                select target_resource_id::text as target_resource_id,
+                       target_resource_version, edge_type, weight, properties
+                from resource_edges
+                where tenant_id = %s
+                  and source_resource_id = %s
+                  and source_resource_version = %s
+                  and edge_type = any(%s::text[])
+                order by edge_type, target_resource_id, target_resource_version
+                """,
+                (
+                    tenant_id,
+                    resource_id,
+                    base_resource_version,
+                    list(INHERITED_PROVENANCE_EDGES),
+                ),
+            ).fetchall()
+        for row in rows:
+            self.resource_repo.add_edge(
+                tenant_id=tenant_id,
+                source_resource_id=resource_id,
+                source_resource_version=revision_resource_version,
+                target_resource_id=row["target_resource_id"],
+                target_resource_version=int(row["target_resource_version"]),
+                edge_type=row["edge_type"],
+                weight=float(row["weight"]),
+                properties=dict(row["properties"] or {}),
+                conn=self.conn,
+            )
+        self.resource_repo.add_edge(
+            tenant_id=tenant_id,
+            source_resource_id=resource_id,
+            source_resource_version=revision_resource_version,
+            target_resource_id=resource_id,
+            target_resource_version=base_resource_version,
+            edge_type=REVISION_EDGE,
+            weight=1.0,
+            properties={"relation_kind": "revision"},
+            conn=self.conn,
+        )
+
     def _lock_and_authorize(
         self, *, tenant_id: str, actor_open_id: str, resource_id: str
     ) -> GeneratedCopyState:
+        # Lifecycle pointers are mutable inputs to exact-version qualification.  Acquire
+        # the same lock as KnowledgeService before changing them so an older decision
+        # cannot commit after a newer adoption/finalization fact.
+        acquire_classification_lock(
+            self.conn,
+            tenant_id=tenant_id,
+            resource_id=resource_id,
+        )
         self.resource_repo.writable_resource_metadata(
             tenant_id=tenant_id, actor_open_id=actor_open_id, resource_id=resource_id
         )
@@ -873,7 +952,38 @@ class GeneratedCopyRepository:
                 json.dumps(payload, sort_keys=True, ensure_ascii=False),
             ),
         ).fetchone()
-        return row["id"]
+        event_id = row["id"]
+        # Preference learning is part of the same lifecycle transaction.  A failure
+        # must roll the lifecycle event/state back; swallowing it would permanently
+        # create an adopted/published fact that the profile never observes.
+        if event_type in {
+            "revision_saved",
+            "adopted",
+            "finalized_for_schedule",
+            "published",
+        }:
+            resource_version = payload.get("version")
+            if (
+                not isinstance(resource_version, int)
+                or isinstance(resource_version, bool)
+                or resource_version <= 0
+            ):
+                raise ValueError(f"{event_type} preference event requires an exact version")
+            from data_foundation.preference_learning import PreferenceLearningService
+
+            PreferenceLearningService(self.resource_repo).record_exact_event(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                event_type=event_type,
+                source_resource_id=resource_id,
+                source_resource_version=resource_version,
+                source_event_id=str(event_id),
+                event_payload=payload,
+                base_resource_version=(
+                    payload.get("base_version") if event_type == "revision_saved" else None
+                ),
+            )
+        return event_id
 
     def _state_with_latest(self, row: Any) -> GeneratedCopyState:
         latest = self.conn.execute(

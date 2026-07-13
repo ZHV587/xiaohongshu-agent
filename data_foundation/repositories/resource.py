@@ -5,6 +5,7 @@ from typing import Optional, Any, Union
 from psycopg import Connection, Cursor
 from psycopg.rows import dict_row
 
+from data_foundation.knowledge.locking import acquire_classification_lock
 from data_foundation.repositories.base import BaseRepository
 from data_foundation.models import Resource, RuntimeIdentityConfig
 from data_foundation.outbox_requests import default_write_requests
@@ -39,7 +40,7 @@ class ResourceRepository(BaseRepository):
         type-count delta, optional external mapping, and outbox tasks.
 
         单一调用契约(全 kwargs)。outbox_requests 语义(单一源,消除随签名静默分歧):
-        - None(默认):投递 default_write_requests()(meili_index + graph_ingest),新资源默认进检索/图谱管道。
+        - None(默认):投递 knowledge_enrich；资格处理成功后再投既有检索/图谱/向量管道。
         - []:显式不投递任何 outbox(仅本地、无需索引的中间态)。
         - 非空列表:按给定 OutboxRequest 投递。
         """
@@ -85,7 +86,19 @@ class ResourceRepository(BaseRepository):
                                 created_at=resource.created_at,
                                 updated_at=resource.updated_at,
                             )
-                    
+
+                    # Mapping resolution above is the only step allowed to change the
+                    # stable resource id.  From this point through live-row/version and
+                    # outbox writes, serialize with KnowledgeService classification.
+                    # Mapping lock is always acquired first, preventing lock-order
+                    # inversion for two imports of the same external identity.
+                    resource_id = resource.id if resource.id is not None else str(uuid.uuid4())
+                    acquire_classification_lock(
+                        cursor,
+                        tenant_id=tenant_id,
+                        resource_id=resource_id,
+                    )
+
                     # Enforce tenant boundary security checks
                     existing = None
                     if resource.id is not None:
@@ -99,7 +112,6 @@ class ResourceRepository(BaseRepository):
                             raise PermissionError("Tenant access bypass: resource belongs to another tenant")
                     
                     # Extract and default fields
-                    resource_id = resource.id if resource.id is not None else str(uuid.uuid4())
                     resource_type = resource.type
                     title = resource.title
                     summary = resource.summary
@@ -140,6 +152,7 @@ class ResourceRepository(BaseRepository):
                                 content_text=content_text,
                                 content_json=content_json,
                                 content_hash=content_hash,
+                                status=status,
                                 visibility=visibility,
                                 owner_open_id=owner_open_id,
                             ):
@@ -268,6 +281,7 @@ class ResourceRepository(BaseRepository):
         content_text: str | None,
         content_json: dict[str, Any],
         content_hash: str,
+        status: str,
         visibility: str,
         owner_open_id: str | None,
     ) -> bool:
@@ -278,6 +292,7 @@ class ResourceRepository(BaseRepository):
             and row["summary"] == summary
             and row["content_text"] == content_text
             and dict(row["content_json"]) == content_json
+            and row["status"] == status
             and row["visibility"] == visibility
             and row["owner_open_id"] == owner_open_id
         )
@@ -524,15 +539,21 @@ class ResourceRepository(BaseRepository):
         tenant_id: str,
         actor_open_id: str,
         resource_id: str,
+        resource_version: int,
         conn: Optional[Connection] = None,
     ) -> Resource | None:
         """Hydrate the exact snapshot that an Agent is allowed to use as knowledge.
 
-        A generated copy is intentionally invisible until a lifecycle transition sets
-        ``knowledge_target_version``.  Non-generated resources continue to expose their
-        latest immutable snapshot.  The ACL and lifecycle pointer are checked in the
-        same query so a concurrent pointer change cannot leak a stale candidate.
+        ``current_knowledge_targets`` is the single qualification + exact-version gate.
+        The ACL and knowledge pointer are checked in the same query so a concurrent
+        lifecycle or qualification change cannot leak a stale/unqualified snapshot.
         """
+        if (
+            not isinstance(resource_version, int)
+            or isinstance(resource_version, bool)
+            or resource_version <= 0
+        ):
+            raise ValueError("resource_version must be a positive integer")
         where_clause = self.readable_resource_where("r")
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
@@ -549,31 +570,84 @@ class ResourceRepository(BaseRepository):
                              where rm.resource_id = r.id and rm.tenant_id = r.tenant_id
                            ) as source_updated_at,
                            rv.version
-                    from resources r
-                    left join generated_copy_states gcs
-                      on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                    from current_knowledge_targets target
+                    join resources r
+                      on r.tenant_id = target.tenant_id and r.id = target.resource_id
                     join resource_versions rv
-                      on rv.tenant_id = r.tenant_id
-                     and rv.resource_id = r.id
-                     and rv.version = case
-                       when r.type = 'generated_copy' then gcs.knowledge_target_version
-                       else (
-                         select max(latest.version)
-                         from resource_versions latest
-                         where latest.tenant_id = r.tenant_id
-                           and latest.resource_id = r.id
-                       )
-                     end
-                    where r.id = %(resource_id)s
+                      on rv.tenant_id = target.tenant_id
+                     and rv.resource_id = target.resource_id
+                     and rv.version = target.resource_version
+                    where target.resource_id = %(resource_id)s
+                      and target.resource_version = %(resource_version)s
                       and {where_clause}
                     """,
                     {
                         "resource_id": resource_id,
+                        "resource_version": resource_version,
                         "tenant_id": tenant_id,
                         "actor_open_id": actor_open_id,
                     },
                 ).fetchone()
                 return None if row is None else self._resource_from_row(row, version=row["version"])
+
+    def list_owned_session_snapshots(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        project_name: str | None = None,
+        limit: int = 10,
+        conn: Optional[Connection] = None,
+    ) -> list[dict[str, Any]]:
+        """Read the actor's latest exact session checkpoints outside the knowledge gate.
+
+        Session checkpoints remain restorable even before the user confirms them as
+        reusable strategy knowledge.  This path is deliberately owner-only; team ACL
+        and generic resource search must not turn unconfirmed model output into shared
+        knowledge.
+        """
+        if not actor_open_id:
+            raise ValueError("actor_open_id is required")
+        safe_limit = min(max(int(limit), 1), 50)
+        project = project_name.strip() if isinstance(project_name, str) else ""
+        title_prefix = f"[{project}] " if project else ""
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                rows = cursor.execute(
+                    """
+                    select r.id::text as resource_id, rv.version as resource_version,
+                           r.title, r.summary, rv.content_text, rv.content_json,
+                           r.created_at, r.updated_at
+                    from resources r
+                    join lateral (
+                      select version, content_text, content_json
+                      from resource_versions exact
+                      where exact.tenant_id = r.tenant_id
+                        and exact.resource_id = r.id
+                      order by exact.version desc
+                      limit 1
+                    ) rv on true
+                    where r.tenant_id = %(tenant_id)s
+                      and r.type = 'session_snapshot'
+                      and r.owner_open_id = %(actor_open_id)s
+                      and r.status = 'active'
+                      and (
+                        %(project_name)s = ''
+                        or rv.content_json->>'project_name' = %(project_name)s
+                        or left(r.title, char_length(%(title_prefix)s)) = %(title_prefix)s
+                      )
+                    order by r.updated_at desc, r.id
+                    limit %(limit)s
+                    """,
+                    {
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                        "project_name": project,
+                        "title_prefix": title_prefix,
+                        "limit": safe_limit,
+                    },
+                ).fetchall()
+        return [dict(row) for row in rows]
 
     def grant_permission(
         self,
@@ -588,14 +662,70 @@ class ResourceRepository(BaseRepository):
         with self.connection_context(conn) as connection:
             with connection.transaction():
                 with connection.cursor(row_factory=dict_row) as cursor:
-                    cursor.execute(
+                    row = cursor.execute(
                         """
                         insert into resource_permissions (tenant_id, resource_id, subject_type, subject_id, permission)
                         values (%s, %s, %s, %s, %s)
                         on conflict(tenant_id, resource_id, subject_type, subject_id, permission) do nothing
+                        returning id::text
                         """,
                         (tenant_id, resource_id, subject_type, subject_id, permission),
-                    )
+                    ).fetchone()
+                    if row is not None and subject_type == "user":
+                        from data_foundation.preference_outbox import enqueue_preference_synthesis
+
+                        enqueue_preference_synthesis(
+                            cursor,
+                            tenant_id=tenant_id,
+                            actor_open_id=subject_id,
+                            trigger_key=f"permission:grant:{row['id']}",
+                            trigger_payload={
+                                "kind": "permission_grant",
+                                "resource_id": resource_id,
+                                "permission": permission,
+                            },
+                        )
+
+    def revoke_permission(
+        self,
+        *,
+        tenant_id: str,
+        resource_id: str,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        conn: Optional[Connection] = None,
+    ) -> bool:
+        """Revoke one exact ACL row and recompute any affected actor patterns."""
+        with self.connection_context(conn) as connection:
+            with connection.transaction():
+                with connection.cursor(row_factory=dict_row) as cursor:
+                    row = cursor.execute(
+                        """
+                        delete from resource_permissions
+                        where tenant_id = %s and resource_id = %s
+                          and subject_type = %s and subject_id = %s and permission = %s
+                        returning id::text
+                        """,
+                        (tenant_id, resource_id, subject_type, subject_id, permission),
+                    ).fetchone()
+                    if row is None:
+                        return False
+                    if subject_type == "user":
+                        from data_foundation.preference_outbox import enqueue_preference_synthesis
+
+                        enqueue_preference_synthesis(
+                            cursor,
+                            tenant_id=tenant_id,
+                            actor_open_id=subject_id,
+                            trigger_key=f"permission:revoke:{row['id']}",
+                            trigger_payload={
+                                "kind": "permission_revoke",
+                                "resource_id": resource_id,
+                                "permission": permission,
+                            },
+                        )
+                    return True
 
     def readable_rows_by_ids(
         self,
@@ -649,17 +779,15 @@ class ResourceRepository(BaseRepository):
                                rv.version as resource_version
                         from requested req
                         join resources r on r.id = req.resource_id
+                        join current_knowledge_targets target
+                          on target.tenant_id = r.tenant_id
+                         and target.resource_id = r.id
+                         and target.resource_version = req.resource_version
                         join resource_versions rv
                           on rv.tenant_id = r.tenant_id
                          and rv.resource_id = r.id
                          and rv.version = req.resource_version
-                        left join generated_copy_states gcs
-                          on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
                         where {where_clause}
-                          and (
-                            r.type <> 'generated_copy'
-                            or gcs.knowledge_target_version = rv.version
-                          )
                         order by req.ordinal
                         """,
                         {
@@ -691,20 +819,13 @@ class ResourceRepository(BaseRepository):
                                rv.version as resource_version
                         from requested req
                         join resources r on r.id = req.resource_id
-                        left join generated_copy_states gcs
-                          on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                        join current_knowledge_targets target
+                          on target.tenant_id = r.tenant_id
+                         and target.resource_id = r.id
                         join resource_versions rv
-                          on rv.tenant_id = r.tenant_id
-                         and rv.resource_id = r.id
-                         and rv.version = case
-                           when r.type = 'generated_copy' then gcs.knowledge_target_version
-                           else (
-                             select max(latest.version)
-                             from resource_versions latest
-                             where latest.tenant_id = r.tenant_id
-                               and latest.resource_id = r.id
-                           )
-                         end
+                          on rv.tenant_id = target.tenant_id
+                         and rv.resource_id = target.resource_id
+                         and rv.version = target.resource_version
                         where {where_clause}
                         order by req.ordinal
                         """,
@@ -797,20 +918,12 @@ class ResourceRepository(BaseRepository):
                         on rv.tenant_id = e.tenant_id
                        and rv.resource_id = e.resource_id
                        and rv.version = e.resource_version
-                      left join generated_copy_states gcs
-                        on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                      join current_knowledge_targets target
+                        on target.tenant_id = e.tenant_id
+                       and target.resource_id = e.resource_id
+                       and target.resource_version = e.resource_version
                       where e.embedding_model = %(embedding_model)s
                         and {where_clause}
-                        and (
-                          (r.type = 'generated_copy' and rv.version = gcs.knowledge_target_version)
-                          or
-                          (r.type <> 'generated_copy' and rv.version = (
-                            select max(latest.version)
-                            from resource_versions latest
-                            where latest.tenant_id = r.tenant_id
-                              and latest.resource_id = r.id
-                          ))
-                        )
                     )
                     select * from candidates
                     where resource_rank = 1
@@ -1314,18 +1427,24 @@ class ResourceRepository(BaseRepository):
         *,
         tenant_id: str,
         source_resource_id: str,
+        source_resource_version: int,
         target_resource_id: str,
+        target_resource_version: int,
         edge_type: str,
         weight: float = 1.0,
+        properties: dict | None = None,
         conn: Optional[Connection] = None,
     ) -> None:
         from data_foundation.repositories.feedback import FeedbackRepository
         FeedbackRepository(conn or self.conn).add_edge(
             tenant_id=tenant_id,
             source_resource_id=source_resource_id,
+            source_resource_version=source_resource_version,
             target_resource_id=target_resource_id,
+            target_resource_version=target_resource_version,
             edge_type=edge_type,
             weight=weight,
+            properties=properties,
             conn=conn or self.conn,
         )
 
@@ -1335,6 +1454,7 @@ class ResourceRepository(BaseRepository):
         tenant_id: str,
         actor_open_id: str,
         resource_id: str,
+        resource_version: int,
         source_topic: str | None = None,
         conn: Optional[Connection] = None,
     ) -> bool:
@@ -1343,23 +1463,39 @@ class ResourceRepository(BaseRepository):
         强关联由上层先写 derived_from / imitated_from。本方法只在仍无出边时，从 actor
         可读的既有选题或文案中选最近一条；全库第一条素材没有可连对象时返回 False。
         """
+        if (
+            not isinstance(resource_version, int)
+            or isinstance(resource_version, bool)
+            or resource_version <= 0
+        ):
+            raise ValueError("resource_version must be a positive integer")
         where_clause = self.readable_resource_where("r")
         with self.connection_context(conn) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 exists = cursor.execute(
                     """
                     select 1 from resource_edges
-                    where tenant_id = %s and source_resource_id = %s
+                    where tenant_id = %s
+                      and source_resource_id = %s
+                      and source_resource_version = %s
                     limit 1
                     """,
-                    (tenant_id, resource_id),
+                    (tenant_id, resource_id, resource_version),
                 ).fetchone()
                 if exists is not None:
                     return True
                 target = cursor.execute(
                     f"""
-                    select r.id::text as id
+                    select r.id::text as id,
+                           latest.version as resource_version
                     from resources r
+                    join lateral (
+                      select rv.version
+                      from resource_versions rv
+                      where rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+                      order by rv.version desc
+                      limit 1
+                    ) latest on true
                     where r.id <> %(resource_id)s
                       and r.type in ('generated_topic', 'generated_copy', 'xhs_note', 'xhs_online_note')
                       and {where_clause}
@@ -1383,7 +1519,9 @@ class ResourceRepository(BaseRepository):
                 self.add_edge(
                     tenant_id=tenant_id,
                     source_resource_id=resource_id,
+                    source_resource_version=resource_version,
                     target_resource_id=target["id"],
+                    target_resource_version=int(target["resource_version"]),
                     edge_type="same_topic",
                     weight=0.1,
                     conn=connection,

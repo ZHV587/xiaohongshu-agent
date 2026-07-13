@@ -88,6 +88,7 @@ def adopt_online_note_resource(
                 tenant_id=tenant_id,
                 actor_open_id=actor_open_id,
                 target_resource_id=str(resource.id),
+                target_resource_version=int(resource.version),
                 metrics=metrics,
                 published_at=str(note.get("created_at") or "") or None,
                 channel="xiaohongshu",
@@ -97,6 +98,7 @@ def adopt_online_note_resource(
     return {
         "ok": True,
         "resource_id": str(resource.id),
+        "resource_version": int(resource.version),
         "note_id": note_id,
         "note_url": note_url,
     }

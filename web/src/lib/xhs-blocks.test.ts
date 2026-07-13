@@ -29,7 +29,7 @@ test("parseXhsBlocks strips leaked <thinking> from text segments", () => {
 
 test("preserves valid topic evidence", () => {
   const [segment] = parseXhsBlocks(`\`\`\`xhs_topics
-{"intro":"方向建议","topics":["轻量露营"],"evidence":[{"resource_id":"note-1","title":"高互动露营笔记","summary":"轻量装备清单更易收藏","source_updated_at":"2026-05-01T08:00:00Z","indexed_at":"2026-06-18T08:00:00Z"}]}
+{"intro":"方向建议","topics":["轻量露营"],"evidence":[{"resource_id":"note-1","resource_version":2,"title":"高互动露营笔记","summary":"轻量装备清单更易收藏","source_updated_at":"2026-05-01T08:00:00Z","indexed_at":"2026-06-18T08:00:00Z"}]}
 \`\`\``);
 
   assert.equal(segment.kind, "topics");
@@ -37,6 +37,7 @@ test("preserves valid topic evidence", () => {
   assert.deepEqual(segment.data.evidence, [
     {
       resource_id: "note-1",
+      resource_version: 2,
       title: "高互动露营笔记",
       summary: "轻量装备清单更易收藏",
       source_updated_at: "2026-05-01T08:00:00Z",
@@ -47,7 +48,7 @@ test("preserves valid topic evidence", () => {
 
 test("preserves valid copy evidence and filters malformed entries", () => {
   const [segment] = parseXhsBlocks(`\`\`\`xhs_copy
-{"title":"周末轻装出发","body":"正文","tags":["#露营"],"evidence":[{"resource_id":"note-2","title":"露营标题样本","summary":"数字和场景组合表现突出"},{"resource_id":"","title":"无效来源","summary":"缺少资源标识"},{"resource_id":"note-3","title":"无效来源","summary":42}]}
+{"title":"周末轻装出发","body":"正文","tags":["#露营"],"evidence":[{"resource_id":"note-2","resource_version":4,"title":"露营标题样本","summary":"数字和场景组合表现突出"},{"resource_id":"","resource_version":1,"title":"无效来源","summary":"缺少资源标识"},{"resource_id":"note-3","resource_version":1,"title":"无效来源","summary":42}]}
 \`\`\``);
 
   assert.equal(segment.kind, "copy");
@@ -55,6 +56,7 @@ test("preserves valid copy evidence and filters malformed entries", () => {
   assert.deepEqual(segment.data.evidence, [
     {
       resource_id: "note-2",
+      resource_version: 4,
       title: "露营标题样本",
       summary: "数字和场景组合表现突出",
     },
@@ -78,13 +80,13 @@ test("keeps payloads without evidence backward compatible", () => {
 
 test("discards malformed evidence timestamps without dropping the source", () => {
   const [segment] = parseXhsBlocks(`\`\`\`xhs_copy
-{"title":"标题","body":"正文","tags":[],"evidence":[{"resource_id":"note-4","title":"来源","summary":"摘要","source_updated_at":"not-a-date","indexed_at":""}]}
+{"title":"标题","body":"正文","tags":[],"evidence":[{"resource_id":"note-4","resource_version":3,"title":"来源","summary":"摘要","source_updated_at":"not-a-date","indexed_at":""}]}
 \`\`\``);
 
   assert.equal(segment.kind, "copy");
   if (segment.kind !== "copy") return;
   assert.deepEqual(segment.data.evidence, [
-    {resource_id: "note-4", title: "来源", summary: "摘要"},
+    {resource_id: "note-4", resource_version: 3, title: "来源", summary: "摘要"},
   ]);
 });
 
@@ -141,7 +143,7 @@ test("parses xhs_topics when JSON is on the same line as the fence tag (Claude /
 
 test("parses xhs_topics when JSON string values contain triple backticks", () => {
   const [segment] = parseXhsBlocks(`\`\`\`xhs_topics
-{"topics":["围栏字符"],"evidence":[{"resource_id":"note-5","title":"标题含 \`\`\` 字符","summary":"摘要也保留","source_updated_at":"2026-05-01T08:00:00Z","indexed_at":"2026-06-18T08:00:00Z"}]}
+{"topics":["围栏字符"],"evidence":[{"resource_id":"note-5","resource_version":6,"title":"标题含 \`\`\` 字符","summary":"摘要也保留","source_updated_at":"2026-05-01T08:00:00Z","indexed_at":"2026-06-18T08:00:00Z"}]}
 \`\`\``);
 
   assert.equal(segment.kind, "topics");
@@ -149,6 +151,7 @@ test("parses xhs_topics when JSON string values contain triple backticks", () =>
   assert.deepEqual(segment.data.evidence, [
     {
       resource_id: "note-5",
+      resource_version: 6,
       title: "标题含 ``` 字符",
       summary: "摘要也保留",
       source_updated_at: "2026-05-01T08:00:00Z",
@@ -161,7 +164,7 @@ test("xhs_imitation block is stripped from prose (no JSON leak)", () => {
   const content = [
     "两版仿写好了,选一版定稿。",
     "```xhs_imitation",
-    '{ "reference_resource_id": "res-1", "reference_title": "范本", "teardown": { "angle": "避坑", "painpoint": "踩雷", "hook_mechanism": "数字", "structure": "清单" }, "title": "我的标题", "body": "我的正文", "tags": ["#a"], "versions": [{ "label": "A", "title": "我的标题", "body": "我的正文", "tags": ["#a"], "cover": "", "note": "" }] }',
+    '{ "reference_resource_id": "res-1", "reference_resource_version": 1, "reference_title": "范本", "teardown": { "angle": "避坑", "painpoint": "踩雷", "hook_mechanism": "数字", "structure": "清单" }, "title": "我的标题", "body": "我的正文", "tags": ["#a"], "versions": [{ "label": "A", "title": "我的标题", "body": "我的正文", "tags": ["#a"], "cover": "", "note": "" }] }',
     "```",
   ].join("\n");
   const segs = parseXhsBlocks(content);

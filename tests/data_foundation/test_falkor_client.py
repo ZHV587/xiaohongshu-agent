@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock
+import pytest
 from data_foundation.falkor_client import FalkorResourceGraph
 
 
@@ -23,13 +24,16 @@ def test_merge_node_uses_merge_with_id():
 def test_merge_edge_merges_both_endpoints_as_placeholder():
     fg, g = _graph_with()
     fg.merge_edge(source_id="a", target_id="b", edge_type="derived_from", weight=1.0,
-                  properties={}, tenant_id="default")
+                  properties={"source_resource_version": 2, "target_resource_version": 4},
+                  tenant_id="default")
     cypher, params = g.query.call_args[0][0], g.query.call_args[0][1]
     # 两端都 MERGE(target 占位)+ 边 MERGE,共 >=3 个 MERGE
     assert cypher.count("MERGE") >= 3
     # edge_type 作参数传入(变长路径查询用统一 :REL 标签 + edge_type 属性)
     assert params["etype"] == "derived_from"
     assert params["sid"] == "a" and params["tid"] == "b"
+    assert params["source_version"] == 2 and params["target_version"] == 4
+    assert "source_resource_version: $source_version" in cypher
 
 
 def test_merge_edge_placeholder_nodes_get_tenant_on_create():
@@ -37,10 +41,25 @@ def test_merge_edge_placeholder_nodes_get_tenant_on_create():
     占位节点在补属性任务跑完前永远召不回(线上曾积累 12 个"隐形"节点)。"""
     fg, g = _graph_with()
     fg.merge_edge(source_id="a", target_id="b", edge_type="derived_from", weight=1.0,
-                  properties={}, tenant_id="default")
+                  properties={"source_resource_version": 2, "target_resource_version": 4},
+                  tenant_id="default")
     cypher, params = g.query.call_args[0][0], g.query.call_args[0][1]
     # 两端各带一次 ON CREATE SET(只在新建时写,不覆盖已有真实属性)
     assert cypher.count("ON CREATE SET") == 2
+
+
+def test_delete_outgoing_version_edges_is_exact_and_tenant_scoped():
+    fg, g = _graph_with()
+
+    fg.delete_outgoing_version_edges(
+        source_id="a", source_resource_version=3, tenant_id="default"
+    )
+
+    cypher, params = g.query.call_args[0]
+    assert "rel.source_resource_version = $version" in cypher
+    assert "rel.source_resource_version IS NULL" in cypher
+    assert "s.tenant_id = $tenant" in cypher
+    assert params == {"id": "a", "tenant": "default", "version": 3}
     assert "tenant_id = $tenant" in cypher
     assert params["tenant"] == "default"
 
@@ -52,23 +71,88 @@ def test_expand_returns_nodes_and_edges():
             "a", "T-a", "feishu_base_record", 2,
             "b", "T-b", "feishu_base_record", 4,
             "derived_from", 1.0,
+            {
+                "edge_type": "derived_from",
+                "weight": 1.0,
+                "source_resource_version": 2,
+                "target_resource_version": 4,
+                "reason": "same_hook",
+            },
         ]
     ]
-    nodes, edges = fg.expand(resource_ids=["a"], hops=1, edge_types=None, tenant_id="default")
+    nodes, edges = fg.expand(
+        resource_ids=["a"], resource_versions=[2], edge_types=None, tenant_id="default"
+    )
     assert any(n["id"] == "a" for n in nodes)
     assert next(n for n in nodes if n["id"] == "a")["resource_version"] == 2
-    assert any(e["source"] == "a" and e["target"] == "b" for e in edges)
+    edge = next(e for e in edges if e["source"] == "a" and e["target"] == "b")
+    assert edge["source_resource_version"] == 2
+    assert edge["target_resource_version"] == 4
+    assert edge["properties"] == {
+        "source_resource_version": 2,
+        "target_resource_version": 4,
+        "reason": "same_hook",
+    }
 
 
-def test_expand_traversal_is_undirected():
-    """遍历必须是无向的(-[:REL*1..N]- 而非 ]->):素材关联是双向语义,有向会漏掉
-    "只作为关联目标"的节点(其入边邻居永远召不回)。"""
+def test_expand_is_undirected_and_scoped_to_exact_seed_version():
+    """一跳遍历无向，但入口必须用关系端点版本锁定，不得混入同 ID 的历史版本边。"""
     fg, g = _graph_with()
     g.query.return_value.result_set = []
-    fg.expand(resource_ids=["a"], hops=2, edge_types=None, tenant_id="default")
-    cypher = g.query.call_args[0][0]
-    assert "-[:REL*1..2]-" in cypher
+    fg.expand(resource_ids=["a"], resource_versions=[3], edge_types=None, tenant_id="default")
+    cypher, params = g.query.call_args[0]
+    assert "-[rel:REL]-" in cypher
     assert "]->" not in cypher
+    assert "rel.source_resource_version = $versions[i]" in cypher
+    assert "rel.target_resource_version = $versions[i]" in cypher
+    assert "rel.source_resource_version IS NOT NULL" in cypher
+    assert "rel.target_resource_version IS NOT NULL" in cypher
+    assert params["versions"] == [3]
+
+
+def test_expand_keeps_same_relationship_type_for_distinct_exact_versions():
+    fg, g = _graph_with()
+    base = [
+        "a", "A", "generated_copy", 3,
+        "b", "B", "xhs_note", 5,
+        "imitated_from", 1.0,
+    ]
+    g.query.return_value.result_set = [
+        [*base, {"source_resource_version": 3, "target_resource_version": 5}],
+    ]
+
+    _nodes, edges = fg.expand(
+        resource_ids=["a"], resource_versions=[3],
+        edge_types=["imitated_from"], tenant_id="default"
+    )
+
+    assert [
+        (edge["source_resource_version"], edge["target_resource_version"])
+        for edge in edges
+    ] == [(3, 5)]
+
+
+def test_expand_rejects_relationship_without_exact_endpoint_versions():
+    fg, g = _graph_with()
+    g.query.return_value.result_set = [[
+        "a", "A", "generated_copy", 1,
+        "b", "B", "xhs_note", 1,
+        "derived_from", 1.0,
+        {"source_resource_version": 1},
+    ]]
+
+    with pytest.raises(ValueError, match="target_resource_version"):
+        fg.expand(
+            resource_ids=["a"], resource_versions=[1], edge_types=None, tenant_id="default"
+        )
+
+
+def test_expand_rejects_missing_or_misaligned_seed_versions():
+    fg, _g = _graph_with()
+    with pytest.raises(ValueError, match="align"):
+        fg.expand(resource_ids=["a"], resource_versions=[], edge_types=None, tenant_id="default")
+    with pytest.raises(ValueError, match="positive"):
+        fg.expand(resource_ids=["a"], resource_versions=[0], edge_types=None, tenant_id="default")
 
 
 def test_ensure_indexes_runs_once_per_graph(monkeypatch):

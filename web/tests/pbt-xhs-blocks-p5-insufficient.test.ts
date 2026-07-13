@@ -49,6 +49,7 @@ const topicsArrayArb = fc.array(insufficientTopicArb, { minLength: 1, maxLength:
 const topLevelEvidenceArb = fc.array(
   fc.record({
     resource_id: nonEmptyRenderable("res-x"),
+    resource_version: fc.integer({ min: 1, max: 10_000 }),
     title: nonEmptyRenderable("共享证据标题"),
     summary: nonEmptyRenderable("共享证据摘要"),
   }),

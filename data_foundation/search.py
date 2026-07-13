@@ -20,7 +20,18 @@ def validate_embedding(embedding: list[float]) -> None:
 
 
 def _result_from_row(row: Any) -> ResourceSearchResult:
-    metadata = {"type": row["type"], "visibility": row["visibility"]}
+    resource_version = row.get("resource_version") if hasattr(row, "get") else None
+    if (
+        not isinstance(resource_version, int)
+        or isinstance(resource_version, bool)
+        or resource_version <= 0
+    ):
+        raise ValueError("semantic search rows must carry an exact resource_version")
+    metadata = {
+        "type": row["type"],
+        "visibility": row["visibility"],
+        "resource_version": resource_version,
+    }
     source_updated_at = row.get("source_updated_at") if hasattr(row, "get") else None
     indexed_at = row.get("updated_at") if hasattr(row, "get") else None
     if source_updated_at is not None:

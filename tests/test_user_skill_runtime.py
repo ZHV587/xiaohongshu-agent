@@ -300,6 +300,7 @@ def test_draft_test_mode_removes_write_and_subagent_tools():
         tools=[
             {"name": "get_resource"},
             {"name": "save_generated_copy"},
+            {"name": "save_writing_teardown"},
             {"name": "lark_cli"},
             {"name": "task"},
         ],

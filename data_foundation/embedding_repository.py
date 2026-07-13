@@ -109,15 +109,9 @@ class EmbeddingRepository:
 
             target = self.conn.execute(
                 """
-                select case
-                         when r.type = 'generated_copy' then gcs.knowledge_target_version
-                         else (select max(rv.version) from resource_versions rv
-                               where rv.tenant_id = r.tenant_id and rv.resource_id = r.id)
-                       end as version
-                from resources r
-                left join generated_copy_states gcs
-                  on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
-                where r.tenant_id = %s and r.id = %s
+                select resource_version as version
+                from current_knowledge_targets
+                where tenant_id = %s and resource_id = %s
                 """,
                 (tenant_id, resource_id),
             ).fetchone()
@@ -270,30 +264,11 @@ class EmbeddingRepository:
     def _recount_index(self, index_id: str, *, tenant_id: str) -> None:
         self.conn.execute(
             """
-            with version_targets as (
-              select r.id, r.tenant_id,
-                     case when r.type = 'generated_copy'
-                          then gcs.knowledge_target_version
-                          else max(rv.version)
-                     end as resource_version
-              from resources r
-              join resource_versions rv
-                on rv.tenant_id = r.tenant_id
-               and rv.resource_id = r.id
-              left join generated_copy_states gcs
-                on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
-              where r.tenant_id = %s
-                and r.status = 'active'
-              group by r.id, r.tenant_id, r.type, gcs.knowledge_target_version
-            ), current_resources as (
-              select vt.id, vt.resource_version
-              from version_targets vt
-              join resource_versions target_rv
-                on target_rv.tenant_id = vt.tenant_id
-               and target_rv.resource_id = vt.id
-               and target_rv.version = vt.resource_version
-              where vt.resource_version is not null
-                and nullif(trim(coalesce(target_rv.content_text, '')), '') is not null
+            with current_resources as (
+              select target.resource_id as id, target.resource_version
+              from current_knowledge_targets target
+              where target.tenant_id = %s
+                and nullif(trim(coalesce(target.content_text, '')), '') is not null
             ), counts as (
               select count(*)::int as expected_resources,
                      count(*) filter (

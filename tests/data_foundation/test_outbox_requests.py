@@ -33,8 +33,8 @@ def _resource() -> Resource:
 def test_default_write_requests_are_resource_agnostic_declarations():
     requests = default_write_requests()
 
-    assert [request.topic for request in requests] == ["meili_index", "graph_ingest"]
-    assert [request.payload for request in requests] == [{}, {}]
+    assert [request.topic for request in requests] == ["knowledge_enrich"]
+    assert [request.payload for request in requests] == [{}]
 
 
 def test_embedding_request_requires_explicit_index_profile():

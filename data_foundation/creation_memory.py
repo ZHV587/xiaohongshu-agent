@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import hashlib
+import json
 from typing import Any
+import uuid
 
-from data_foundation.models import RuntimeIdentityConfig
 from data_foundation.outbox_requests import candidate_graph_requests, default_write_requests
 
 DERIVED_EDGE = "derived_from"
@@ -16,9 +18,17 @@ SEMANTIC_EDGE = "semantically_related"
 CO_INGEST_EDGE = "co_ingested"
 # 仿写自 — 成品文案 → 其范本素材的行为关联(§5 可追溯)。
 IMITATED_EDGE = "imitated_from"
+FEEDBACK_NAMESPACE = uuid.UUID("a7cd925a-6978-43c2-9ba5-b5648c30d2ad")
 
 
-def _actor_can_read(repo: Any, *, tenant_id: str, actor_open_id: str, target_resource_id: str) -> bool:
+def _actor_can_read(
+    repo: Any,
+    *,
+    tenant_id: str,
+    actor_open_id: str,
+    target_resource_id: str,
+    target_resource_version: int,
+) -> bool:
     """校验 actor 是否对 target 有读权限。
 
     P1 安全:用户提交的 evidence[].resource_id / 反馈 target_resource_id 是不可信输入,
@@ -26,15 +36,12 @@ def _actor_can_read(repo: Any, *, tenant_id: str, actor_open_id: str, target_res
     materialize 后经图遍历暴露其存在)。故在边写入前,于编排层对每个用户提供的 target 做读权限闸门。
     repo 无 check_permission(测试假仓)时放行,真实 ResourceRepository 强制校验。
     """
-    check = getattr(repo, "check_permission", None)
-    if not callable(check):
-        return True
-    actor = RuntimeIdentityConfig(tenant_id=tenant_id, open_id=actor_open_id)
-    try:
-        check(target_resource_id, actor, permission="read", conn=getattr(repo, "conn", None))
-        return True
-    except PermissionError:
-        return False
+    return repo.get_resource_version(
+        tenant_id,
+        actor_open_id,
+        target_resource_id,
+        target_resource_version,
+    ) is not None
 
 
 def save_generated_topic_resource(
@@ -64,7 +71,14 @@ def save_generated_topic_resource(
             owner_open_id=actor_open_id,
             outbox_requests=default_write_requests(),
         )
-        _link_evidence(repo, tenant_id=tenant_id, actor_open_id=actor_open_id, generated_id=resource.id, evidence=cleaned_evidence)
+        _link_evidence(
+            repo,
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            generated_id=resource.id,
+            generated_version=int(resource.version),
+            evidence=cleaned_evidence,
+        )
         return _payload(resource, cleaned_evidence)
 
 
@@ -79,6 +93,7 @@ def save_generated_copy_resource(
     source_topic: str | None = None,
     evidence: list[dict[str, Any]] | None = None,
     reference_resource_id: str | None = None,
+    reference_resource_version: int | None = None,
     versions: list[dict[str, Any]] | None = None,
     resource_id: str | None = None,
     expected_resource_version: int | None = None,
@@ -151,21 +166,17 @@ def save_generated_copy_resource(
                     label=candidate_versions[0]["label"],
                 )
                 current_state_version = selected.state_version
-            _link_evidence(
+            _link_copy_versions(
                 repo,
                 tenant_id=tenant_id,
                 actor_open_id=actor_open_id,
-                generated_id=existing_resource_id,
+                copy_resource_id=existing_resource_id,
+                candidate_versions=candidate_versions,
                 evidence=cleaned_evidence,
+                reference_resource_id=reference_resource_id,
+                reference_resource_version=reference_resource_version,
+                source_topic=source_topic,
             )
-            if reference_resource_id:
-                link_imitation_source(
-                    repo,
-                    tenant_id=tenant_id,
-                    actor_open_id=actor_open_id,
-                    copy_resource_id=existing_resource_id,
-                    reference_resource_id=reference_resource_id,
-                )
             return {
                 "ok": True,
                 "resource": {
@@ -237,24 +248,17 @@ def save_generated_copy_resource(
                     "title": candidate["title"],
                 }
             )
-        _link_evidence(repo, tenant_id=tenant_id, actor_open_id=actor_open_id, generated_id=resource.id, evidence=cleaned_evidence)
-        # §5 仿写可追溯:若本篇是仿写产出,对范本素材建 imitated_from 边(成品→范本)。
-        # 与 _link_evidence 同一 unit_of_work 内,失败随事务回滚(与证据边一致)。
-        if reference_resource_id:
-            link_imitation_source(
-                repo, tenant_id=tenant_id, actor_open_id=actor_open_id,
-                copy_resource_id=resource.id, reference_resource_id=reference_resource_id,
-            )
-        # 没有证据/仿写范本时，按同主题或同作者最近素材挂一条弱关联；全库首条素材
-        # 确实没有既有对象可连时才允许返回 False。
-        ensure_link = getattr(repo, "ensure_resource_association", None)
-        if callable(ensure_link):
-            ensure_link(
-                tenant_id=tenant_id,
-                actor_open_id=actor_open_id,
-                resource_id=resource.id,
-                source_topic=source_topic,
-            )
+        _link_copy_versions(
+            repo,
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            copy_resource_id=resource.id,
+            candidate_versions=candidate_versions,
+            evidence=cleaned_evidence,
+            reference_resource_id=reference_resource_id,
+            reference_resource_version=reference_resource_version,
+            source_topic=source_topic,
+        )
         # 生产仓储绑定连接时，同一事务初始化生命周期；测试假仓不伪造数据库状态。
         if lifecycle is not None:
             state = lifecycle.initialize_candidate(
@@ -365,7 +369,9 @@ def save_user_feedback_resource(
     actor_open_id: str,
     feedback: str,
     target_resource_id: str | None = None,
+    target_resource_version: int | None = None,
     feedback_type: str = "user_feedback",
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     feedback = feedback.strip()
     if not feedback:
@@ -379,17 +385,56 @@ def save_user_feedback_resource(
     )
     if feedback_type == "revision_request" and not target_resource_id:
         raise ValueError("target_resource_id is required for revision_request")
+    if target_resource_id:
+        target_resource_version = _required_version(
+            target_resource_version, field="target_resource_version"
+        )
+    feedback_payload = {
+        "feedback": feedback,
+        "target_resource_id": target_resource_id,
+        "target_resource_version": target_resource_version,
+        "feedback_type": feedback_type,
+    }
+    stable_request = (
+        idempotency_key.strip()
+        if isinstance(idempotency_key, str) and idempotency_key.strip()
+        else hashlib.sha256(
+            json.dumps(
+                feedback_payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+    )
+    stable_identity = f"{tenant_id}:{actor_open_id}:{stable_request}"
+    feedback_resource_id = str(uuid.uuid5(FEEDBACK_NAMESPACE, stable_identity))
     with _unit_of_work(repo):
+        existing = None
+        get_resource = getattr(repo, "get_resource", None)
+        if callable(get_resource):
+            existing = get_resource(tenant_id, actor_open_id, feedback_resource_id)
+        expected_content = {**feedback_payload, "idempotency_key": stable_request}
+        if existing is not None and (
+            str(getattr(existing, "content_text", "") or "") != feedback
+            or dict(getattr(existing, "content_json", {}) or {}) != expected_content
+        ):
+            raise ValueError("idempotency_key was already used with a different feedback payload")
+        idempotent_replay = existing is not None
         resource = repo.upsert_resource(
             tenant_id=tenant_id,
             actor_open_id=actor_open_id,
+            resource_id=feedback_resource_id,
             resource_type=feedback_type,
             title="用户反馈" if feedback_type == "user_feedback" else "修改意见",
             summary=feedback[:120],
             content_text=feedback,
-            content_json={"feedback": feedback, "target_resource_id": target_resource_id},
-            visibility="team",
+            content_json=expected_content,
+            visibility="private",
             owner_open_id=actor_open_id,
+            mapping={
+                "system": "internal",
+                "external_type": "user_feedback",
+                "external_id": stable_identity,
+                "sync_status": "synced",
+            },
             outbox_requests=default_write_requests(),
         )
         if target_resource_id:
@@ -398,15 +443,39 @@ def save_user_feedback_resource(
             if _actor_can_read(
                 repo, tenant_id=tenant_id, actor_open_id=actor_open_id,
                 target_resource_id=target_resource_id,
+                target_resource_version=int(target_resource_version),
             ):
                 repo.add_edge(
                     tenant_id=tenant_id,
                     source_resource_id=resource.id,
+                    source_resource_version=int(resource.version),
                     target_resource_id=target_resource_id,
+                    target_resource_version=int(target_resource_version),
                     edge_type=FEEDBACK_EDGE,
                     weight=1.0,
                 )
-    return _payload(resource, [])
+        # Feedback text is an exact behavior signal, not a preferred copy snapshot.
+        # PreferenceLearningService records it actor-privately and rebuilds the private
+        # profile in this same transaction; failures must roll the feedback write back.
+        from data_foundation.preference_learning import PreferenceLearningService
+
+        PreferenceLearningService(repo).record_exact_event(
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            event_type=feedback_type,
+            source_resource_id=str(resource.id),
+            source_resource_version=int(resource.version),
+            source_event_id=f"feedback-request:{stable_request}",
+            event_payload={
+                "feedback": feedback,
+                "feedback_type": feedback_type,
+                "target_resource_id": target_resource_id,
+                "target_resource_version": target_resource_version,
+            },
+        )
+    result = _payload(resource, [])
+    result["idempotent_replay"] = idempotent_replay
+    return result
 
 
 def _clean_strings(values: list[str], *, field: str) -> list[str]:
@@ -416,9 +485,9 @@ def _clean_strings(values: list[str], *, field: str) -> list[str]:
     return cleaned
 
 
-def _clean_evidence(evidence: list[dict[str, Any]] | None) -> list[dict[str, str]]:
-    cleaned: list[dict[str, str]] = []
-    seen: set[str] = set()
+def _clean_evidence(evidence: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
     for item in evidence or []:
         if not isinstance(item, dict):
             continue
@@ -426,11 +495,20 @@ def _clean_evidence(evidence: list[dict[str, Any]] | None) -> list[dict[str, str
         if not isinstance(resource_id, str) or not resource_id.strip():
             continue
         resource_id = resource_id.strip()
-        if resource_id in seen:
+        resource_version = item.get("resource_version")
+        if (
+            not isinstance(resource_version, int)
+            or isinstance(resource_version, bool)
+            or resource_version <= 0
+        ):
             continue
-        seen.add(resource_id)
+        identity = (resource_id, resource_version)
+        if identity in seen:
+            continue
+        seen.add(identity)
         cleaned_item = {
             "resource_id": resource_id,
+            "resource_version": resource_version,
             "title": _clean_optional_string(item.get("title")),
             "summary": _clean_optional_string(item.get("summary")),
             "source_updated_at": _clean_optional_string(item.get("source_updated_at")),
@@ -446,23 +524,81 @@ def _link_evidence(
     tenant_id: str,
     actor_open_id: str,
     generated_id: str,
-    evidence: list[dict[str, str]],
+    generated_version: int,
+    evidence: list[dict[str, Any]],
 ) -> None:
     for item in evidence:
         target = item["resource_id"]
+        target_version = int(item["resource_version"])
         # evidence resource_id 是用户/LLM 提供的不可信输入:只对 actor 可读的 target 建 derived_from
         # 边,跳过无权读的(防越权连到他人私有资源),与 _clean_evidence「丢坏的、继续」一致。
         if not _actor_can_read(
             repo, tenant_id=tenant_id, actor_open_id=actor_open_id, target_resource_id=target,
+            target_resource_version=target_version,
         ):
             continue
         repo.add_edge(
             tenant_id=tenant_id,
             source_resource_id=generated_id,
+            source_resource_version=generated_version,
             target_resource_id=target,
+            target_resource_version=target_version,
             edge_type=DERIVED_EDGE,
             weight=1.0,
         )
+
+
+def _link_copy_versions(
+    repo: Any,
+    *,
+    tenant_id: str,
+    actor_open_id: str,
+    copy_resource_id: str,
+    candidate_versions: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
+    reference_resource_id: str | None,
+    reference_resource_version: int | None,
+    source_topic: str | None,
+) -> None:
+    """Give every immutable copy candidate its own exact provenance edges."""
+    exact_reference_version = None
+    if reference_resource_id:
+        exact_reference_version = _required_version(
+            reference_resource_version, field="reference_resource_version"
+        )
+    ensure_link = getattr(repo, "ensure_resource_association", None)
+    for candidate in candidate_versions:
+        version = _required_version(
+            candidate.get("resource_version"), field="candidate resource_version"
+        )
+        _link_evidence(
+            repo,
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            generated_id=copy_resource_id,
+            generated_version=version,
+            evidence=evidence,
+        )
+        if reference_resource_id and exact_reference_version is not None:
+            link_imitation_source(
+                repo,
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                copy_resource_id=copy_resource_id,
+                copy_resource_version=version,
+                reference_resource_id=reference_resource_id,
+                reference_resource_version=exact_reference_version,
+            )
+        # Strong provenance wins; without one, attach the exact candidate to a weak
+        # existing neighbour so B/C candidates do not become version-level islands.
+        if callable(ensure_link):
+            ensure_link(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=copy_resource_id,
+                resource_version=version,
+                source_topic=source_topic,
+            )
 
 
 def associate_ingested_resource(
@@ -471,8 +607,9 @@ def associate_ingested_resource(
     tenant_id: str,
     actor_open_id: str,
     resource_id: str,
+    resource_version: int,
     neighbors: list[dict[str, Any]],
-    co_ingested_ids: list[str] | None = None,
+    co_ingested_resources: list[dict[str, Any]] | None = None,
     max_edges: int = 3,
 ) -> dict[str, Any]:
     """§0 素材不孤立:给新入库素材挂至少一条关联边,永不成孤岛。
@@ -494,6 +631,7 @@ def associate_ingested_resource(
 
     Returns: {"semantic": n_semantic, "co_ingested": n_co, "isolated": bool}
     """
+    resource_version = _required_version(resource_version, field="resource_version")
     linked: set[str] = set()
     n_semantic = 0
     for item in neighbors:
@@ -505,10 +643,18 @@ def associate_ingested_resource(
         if not isinstance(target, str) or not target.strip():
             continue
         target = target.strip()
+        target_version = item.get("resource_version")
+        if (
+            not isinstance(target_version, int)
+            or isinstance(target_version, bool)
+            or target_version <= 0
+        ):
+            continue
         if target == resource_id or target in linked:
             continue
         if not _actor_can_read(
             repo, tenant_id=tenant_id, actor_open_id=actor_open_id, target_resource_id=target,
+            target_resource_version=target_version,
         ):
             continue
         try:
@@ -521,7 +667,9 @@ def associate_ingested_resource(
         repo.add_edge(
             tenant_id=tenant_id,
             source_resource_id=resource_id,
+            source_resource_version=resource_version,
             target_resource_id=target,
+            target_resource_version=target_version,
             edge_type=SEMANTIC_EDGE,
             weight=weight,
         )
@@ -531,8 +679,18 @@ def associate_ingested_resource(
     n_co = 0
     if n_semantic == 0:
         # 语义/主题关联一条都没建成 → 行为兜底:同批收录的其它素材互挂 co_ingested。
-        for other in co_ingested_ids or []:
-            if not isinstance(other, str) or not other.strip():
+        for item in co_ingested_resources or []:
+            if not isinstance(item, dict):
+                continue
+            other = item.get("resource_id")
+            other_version = item.get("resource_version")
+            if (
+                not isinstance(other, str)
+                or not other.strip()
+                or not isinstance(other_version, int)
+                or isinstance(other_version, bool)
+                or other_version <= 0
+            ):
                 continue
             other = other.strip()
             if other == resource_id or other in linked:
@@ -542,7 +700,9 @@ def associate_ingested_resource(
             repo.add_edge(
                 tenant_id=tenant_id,
                 source_resource_id=resource_id,
+                source_resource_version=resource_version,
                 target_resource_id=other,
+                target_resource_version=other_version,
                 edge_type=CO_INGEST_EDGE,
                 weight=1.0,
             )
@@ -558,7 +718,9 @@ def link_imitation_source(
     tenant_id: str,
     actor_open_id: str,
     copy_resource_id: str,
+    copy_resource_version: int,
     reference_resource_id: str,
+    reference_resource_version: int,
 ) -> bool:
     """§5 仿写可追溯:成品文案 → 范本素材建 imitated_from 边。
 
@@ -570,24 +732,33 @@ def link_imitation_source(
         if isinstance(reference_resource_id, str) and reference_resource_id.strip()
         else ""
     )
+    copy_resource_version = _required_version(
+        copy_resource_version, field="copy_resource_version"
+    )
+    reference_resource_version = _required_version(
+        reference_resource_version, field="reference_resource_version"
+    )
     if not reference_resource_id or reference_resource_id == copy_resource_id:
         return False
     if not _actor_can_read(
         repo, tenant_id=tenant_id, actor_open_id=actor_open_id,
         target_resource_id=reference_resource_id,
+        target_resource_version=reference_resource_version,
     ):
         return False
     repo.add_edge(
         tenant_id=tenant_id,
         source_resource_id=copy_resource_id,
+        source_resource_version=copy_resource_version,
         target_resource_id=reference_resource_id,
+        target_resource_version=reference_resource_version,
         edge_type=IMITATED_EDGE,
         weight=1.0,
     )
     return True
 
 
-def _payload(resource: Any, evidence: list[dict[str, str]]) -> dict[str, Any]:
+def _payload(resource: Any, evidence: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "ok": True,
         "resource": {
@@ -602,6 +773,12 @@ def _payload(resource: Any, evidence: list[dict[str, str]]) -> dict[str, Any]:
 
 def _clean_optional_string(value: Any) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _required_version(value: Any, *, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
 
 
 def _unit_of_work(repo: Any):

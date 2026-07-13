@@ -63,7 +63,7 @@ def test_sync_wiki_documents_upserts_resource_and_wiki_mapping():
     )
 
     assert result == SyncResult(imported=1, errors=[])
-    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["meili_index", "graph_ingest"]
+    assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["knowledge_enrich"]
     assert repo.mappings[0]["external_type"] == "wiki_node"
     assert repo.mappings[0]["external_id"] == "sp1:wik1"
 

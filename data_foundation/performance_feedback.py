@@ -97,9 +97,32 @@ def save_performance_metric_resource(
         repo.add_edge(
             tenant_id=tenant_id,
             source_resource_id=target_resource_id,
+            source_resource_version=int(resolved_target_version),
             target_resource_id=resource.id,
+            target_resource_version=int(resource.version),
             edge_type=MEASURED_BY_EDGE,
             weight=score,
+        )
+        # Every immutable performance_metric version is one exact, retry-idempotent
+        # preference fact.  Keep this inside the metric unit of work: if profile
+        # observation/rebuild fails, metric + measured_by + lifecycle all roll back.
+        from data_foundation.preference_learning import PreferenceLearningService
+
+        PreferenceLearningService(repo).record_exact_event(
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            event_type="metrics_backfilled",
+            source_resource_id=target_resource_id,
+            source_resource_version=int(resolved_target_version),
+            source_event_id=f"performance_metric:{resource.id}:v{int(resource.version)}",
+            event_payload={
+                "metrics": cleaned_metrics,
+                "score": score,
+                "metric_resource_id": str(resource.id),
+                "metric_resource_version": int(resource.version),
+                "published_at": published_at,
+                "channel": channel,
+            },
         )
         if lifecycle is not None:
             lifecycle.mark_measured(

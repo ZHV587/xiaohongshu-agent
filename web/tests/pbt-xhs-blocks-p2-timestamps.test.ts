@@ -38,6 +38,7 @@ const nonEmpty = (prefix: string) => fc.string().map((s) => prefix + s.replace(/
 
 interface EvidenceSpec {
   rid: string;
+  version: number;
   title: string;
   summary: string;
   src: string;
@@ -47,12 +48,14 @@ interface EvidenceSpec {
 const evidenceArb: fc.Arbitrary<EvidenceSpec> = fc
   .record({
     rid: nonEmpty("rid-"),
+    version: fc.integer({ min: 1, max: 10_000 }),
     title: nonEmpty("title-"),
     summary: nonEmpty("summary-"),
     pair: distinctIsoPair,
   })
-  .map(({ rid, title, summary, pair }) => ({
+  .map(({ rid, version, title, summary, pair }) => ({
     rid,
+    version,
     title,
     summary,
     src: pair[0],
@@ -79,6 +82,7 @@ test("Property 2: 富选题内证据的 source_updated_at / indexed_at 往返后
             title: "选题标题",
             evidence: specs.map((s) => ({
               resource_id: s.rid,
+              resource_version: s.version,
               title: s.title,
               summary: s.summary,
               source_updated_at: s.src,
@@ -96,6 +100,7 @@ test("Property 2: 富选题内证据的 source_updated_at / indexed_at 往返后
 
       evidence.forEach((ev: RichEvidence, i) => {
         const spec = specs[i];
+        assert.equal(ev.resource_version, spec.version, "resource_version 应精确保留");
         // 各自保值
         assert.equal(ev.source_updated_at, spec.src, "source_updated_at 应保留源端值");
         assert.equal(ev.indexed_at, spec.idx, "indexed_at 应保留索引值");
@@ -115,6 +120,7 @@ test("Property 2: 顶层共享证据(SourceEvidence)的双时间字段往返后�
         topics: ["纯字符串选题"],
         evidence: specs.map((s) => ({
           resource_id: s.rid,
+          resource_version: s.version,
           title: s.title,
           summary: s.summary,
           source_updated_at: s.src,
@@ -128,6 +134,7 @@ test("Property 2: 顶层共享证据(SourceEvidence)的双时间字段往返后�
 
       evidence.forEach((ev: SourceEvidence, i) => {
         const spec = specs[i];
+        assert.equal(ev.resource_version, spec.version, "resource_version 应精确保留");
         assert.equal(ev.source_updated_at, spec.src, "source_updated_at 应保留源端值");
         assert.equal(ev.indexed_at, spec.idx, "indexed_at 应保留索引值");
         assert.notEqual(ev.source_updated_at, spec.idx, "source_updated_at 不得取到 indexed_at 的值");

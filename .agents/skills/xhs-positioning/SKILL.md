@@ -94,7 +94,7 @@ description: |
 
 **输出**：3 条备选 CTA 话术 + 适用场景说明
 
-完成后整合为完整的定位诊断报告，调用 `save_session_snapshot` 持久化，调用 `sync_diagnosis_to_feishu` 同步飞书。
+完成后整合为完整的定位诊断报告，调用 `save_session_snapshot(..., snapshot_kind="positioning")` 持久化为当前用户可恢复的精确检查点，再调用 `sync_diagnosis_to_feishu` 同步飞书。仅当用户随后明确认可该定位结论时，才对返回的精确身份调用 `confirm_session_snapshot(resource_id, resource_version)`；确认类型由已保存的 exact snapshot 决定。
 
 ---
 

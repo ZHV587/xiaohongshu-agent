@@ -57,6 +57,7 @@ const numberArb = fc.oneof(
 const richEvidenceArb = fc.record(
   {
     resource_id: textArb,
+    resource_version: fc.integer({ min: 1, max: 10_000 }),
     type: textArb,
     title: textArb,
     summary: textArb,
@@ -68,19 +69,20 @@ const richEvidenceArb = fc.record(
     source_updated_at: timestampArb,
     indexed_at: timestampArb,
   },
-  { requiredKeys: ["resource_id", "title", "summary"] },
+  { requiredKeys: ["resource_id", "resource_version", "title", "summary"] },
 );
 
 // 顶层共享证据（SourceEvidence 原始形态）。
 const sourceEvidenceArb = fc.record(
   {
     resource_id: textArb,
+    resource_version: fc.integer({ min: 1, max: 10_000 }),
     title: textArb,
     summary: textArb,
     source_updated_at: timestampArb,
     indexed_at: timestampArb,
   },
-  { requiredKeys: ["resource_id", "title", "summary"] },
+  { requiredKeys: ["resource_id", "resource_version", "title", "summary"] },
 );
 
 // 富选题原始形态:所有键可选,以覆盖「缺字段降级 + 证据回退顶层」等分支。

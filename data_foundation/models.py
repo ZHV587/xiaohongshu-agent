@@ -35,6 +35,7 @@ class ResourceSearchResult:
 @dataclass(frozen=True)
 class GraphNode:
     resource_id: str
+    resource_version: int
     title: str
     type: str
     depth: int
@@ -43,9 +44,12 @@ class GraphNode:
 @dataclass(frozen=True)
 class GraphEdge:
     source_resource_id: str
+    source_resource_version: int
     target_resource_id: str
+    target_resource_version: int
     edge_type: str
     weight: float
+    properties: dict[str, Any]
 
 
 @dataclass(frozen=True)

@@ -6,13 +6,40 @@ from data_foundation.repositories.feedback import FeedbackRepository
 from data_foundation.models import Resource, RuntimeIdentityConfig
 
 
+@pytest.mark.parametrize(
+    ("source_version", "target_version", "field"),
+    [
+        (None, 1, "source_resource_version"),
+        (0, 1, "source_resource_version"),
+        (True, 1, "source_resource_version"),
+        (1, None, "target_resource_version"),
+        (1, -1, "target_resource_version"),
+        (1, 1.5, "target_resource_version"),
+    ],
+)
+def test_add_edge_rejects_missing_or_invalid_exact_versions(
+    source_version, target_version, field
+):
+    with pytest.raises(ValueError, match=field):
+        FeedbackRepository().add_edge(
+            tenant_id="tenant_1",
+            source_resource_id="00000000-0000-0000-0000-000000000001",
+            source_resource_version=source_version,
+            target_resource_id="00000000-0000-0000-0000-000000000002",
+            target_resource_version=target_version,
+            edge_type="derived_from",
+        )
+
+
 def test_add_edge_validation(migrated_conn):
     repo = FeedbackRepository()
     with pytest.raises(ValueError, match="Edge type is required"):
         repo.add_edge(
             tenant_id="tenant_1",
             source_resource_id="00000000-0000-0000-0000-000000000001",
+            source_resource_version=1,
             target_resource_id="00000000-0000-0000-0000-000000000002",
+            target_resource_version=1,
             edge_type="",
             weight=1.0,
             conn=migrated_conn
@@ -21,7 +48,9 @@ def test_add_edge_validation(migrated_conn):
         repo.add_edge(
             tenant_id="tenant_1",
             source_resource_id="00000000-0000-0000-0000-000000000001",
+            source_resource_version=1,
             target_resource_id="00000000-0000-0000-0000-000000000002",
+            target_resource_version=1,
             edge_type="test_edge",
             weight=float('inf'),
             conn=migrated_conn
@@ -77,7 +106,9 @@ def test_add_edge_cross_tenant_denied(migrated_conn):
         fb_repo.add_edge(
             tenant_id="tenant_1",
             source_resource_id=r1.id,
+            source_resource_version=1,
             target_resource_id=r2.id,
+            target_resource_version=1,
             edge_type="cross_edge",
             weight=1.0,
             conn=migrated_conn
@@ -134,9 +165,12 @@ def test_add_edge_inserts_correctly(migrated_conn):
     fb_repo.add_edge(
         tenant_id="tenant_1",
         source_resource_id=r1.id,
+        source_resource_version=1,
         target_resource_id=r2.id,
+        target_resource_version=1,
         edge_type="related_to",
         weight=2.5,
+        properties={"reason": "manual"},
         conn=migrated_conn
     )
     
@@ -148,6 +182,13 @@ def test_add_edge_inserts_correctly(migrated_conn):
         ).fetchone()
         assert edge is not None
         assert edge["weight"] == 2.5
+        assert edge["source_resource_version"] == 1
+        assert edge["target_resource_version"] == 1
+        assert edge["properties"] == {
+            "reason": "manual",
+            "source_resource_version": 1,
+            "target_resource_version": 1,
+        }
         
         # Verify outbox
         outbox = cursor.execute(
@@ -164,7 +205,20 @@ def test_add_edge_inserts_correctly(migrated_conn):
         import json
         expected_dedupe = hashlib.sha256(
             json.dumps(
-                ["tenant_1", str(r1.id), 1, "graph_ingest", "graph", "edge", str(r2.id), "related_to"],
+                [
+                    "tenant_1", str(r1.id), 1, "graph_ingest", "graph", "edge",
+                    "1", str(r2.id), "1", "related_to",
+                    2.5,
+                    json.dumps(
+                        {
+                            "reason": "manual",
+                            "source_resource_version": 1,
+                            "target_resource_version": 1,
+                        },
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ),
+                ],
                 sort_keys=True,
                 ensure_ascii=False
             ).encode("utf-8")
@@ -184,7 +238,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Invalid UUID format"):
         fb_repo.create_edge(
             source_id="invalid-uuid",
+            source_version=1,
             target_id="00000000-0000-0000-0000-000000000002",
+            target_version=1,
             edge_type="test",
             actor=actor1,
             conn=migrated_conn
@@ -193,7 +249,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Invalid UUID format"):
         fb_repo.create_edge(
             source_id="00000000-0000-0000-0000-000000000001",
+            source_version=1,
             target_id="invalid-uuid",
+            target_version=1,
             edge_type="test",
             actor=actor1,
             conn=migrated_conn
@@ -243,7 +301,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Source resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r1.id,
+            source_version=1,
             target_id=r2.id,
+            target_version=1,
             edge_type="test",
             actor=actor2,
             conn=migrated_conn
@@ -294,7 +354,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Source resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r_team.id,
+            source_version=1,
             target_id=r_target.id,
+            target_version=1,
             edge_type="test_team_edge",
             actor=actor3,
             conn=migrated_conn
@@ -325,7 +387,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Target resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r_owned_by_user3.id,
+            source_version=1,
             target_id=r_target.id,
+            target_version=1,
             edge_type="test_edge",
             actor=actor3,
             conn=migrated_conn
@@ -335,7 +399,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     # This should succeed because actor3 has write permission on source, and read permission on target
     fb_repo.create_edge(
         source_id=r_owned_by_user3.id,
+        source_version=1,
         target_id=r_team.id,
+        target_version=1,
         edge_type="test_team_read_edge",
         actor=actor3,
         conn=migrated_conn
@@ -346,7 +412,9 @@ def test_create_edge_denies_unauthorized_user(migrated_conn):
     with pytest.raises(PermissionError, match="Target resource does not exist or unauthorized"):
         fb_repo.create_edge(
             source_id=r_owned_by_user3.id,
+            source_version=1,
             target_id=r2.id,
+            target_version=1,
             edge_type="test_invalid_target",
             actor=actor3,
             conn=migrated_conn
@@ -377,7 +445,9 @@ def test_add_edge_after_node_ingest_enqueues_distinct_task(migrated_conn):
             (src.id,),
         )
 
-    fb_repo.add_edge(tenant_id="tenant_1", source_resource_id=src.id, target_resource_id=tgt.id,
+    fb_repo.add_edge(tenant_id="tenant_1", source_resource_id=src.id,
+                     source_resource_version=1, target_resource_id=tgt.id,
+                     target_resource_version=1,
                      edge_type="measured_by", weight=1.0, conn=migrated_conn)
 
     with migrated_conn.cursor(row_factory=dict_row) as cur:

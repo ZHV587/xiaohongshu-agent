@@ -11,6 +11,13 @@ from data_foundation import db, models
 
 EXPECTED_TABLES = {
     "data_foundation_migrations",
+    "knowledge_families",
+    "knowledge_asset_states",
+    "knowledge_enrichments",
+    "preference_observations",
+    "writing_profile_states",
+    "preference_synthesis_states",
+    "preference_synthesis_events",
     "user_skills",
     "user_skill_versions",
     "user_skill_publications",
@@ -92,6 +99,59 @@ def test_schema_sql_is_packaged_for_installed_deployments():
     assert "schema.sql" in package_data["data_foundation"]
 
 
+def test_schema_declares_exact_knowledge_state_views_and_immutable_enrichments():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    for table in (
+        "knowledge_families", "knowledge_asset_states", "knowledge_enrichments",
+        "preference_observations", "writing_profile_states",
+    ):
+        assert f"create table if not exists {table}" in schema
+    assert "primary key (tenant_id, resource_id, resource_version)" in schema
+    assert "eligible_for_synthesis boolean" in schema
+    assert "search_reconcile_generation bigint not null default 0" in schema
+    assert "knowledge_asset_states_search_generation_check" in schema
+    assert "visibility text not null" in schema
+    assert "before update or delete on knowledge_enrichments" in schema
+    assert "create or replace view qualified_knowledge_versions" in schema
+    assert "create or replace view base_current_knowledge_targets" in schema
+    assert "create or replace view current_knowledge_targets" in schema
+    assert "qkv.resource_version = gcs.knowledge_target_version" in schema
+    assert "profile_resource_id uuid" in schema
+    assert "profile_resource_version int" in schema
+    assert "input_digest text" in schema
+    assert "observation_count int" in schema
+
+
+def test_schema_migrates_resource_edges_to_exact_inferred_versions_once():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    assert "source_resource_version int not null" in schema
+    assert "target_resource_version int not null" in schema
+    assert "legacy_version_inferred" in schema
+    assert "uq_resource_edges_exact unique" in schema
+    assert "foreign key (tenant_id, source_resource_id, source_resource_version)" in schema
+    assert "foreign key (tenant_id, target_resource_id, target_resource_version)" in schema
+    assert "20260713_knowledge_gate_v2" in schema
+
+
+def test_knowledge_gate_cutover_is_synchronous_atomic_and_has_no_legacy_view_branch():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    migration_runtime = Path("data_foundation/db.py").read_text(encoding="utf-8").lower()
+
+    assert "'20260713_knowledge_gate_v2', 'backfilling', null" in schema
+    assert "def _complete_knowledge_gate" in migration_runtime
+    assert "with conn.transaction():" in migration_runtime
+    assert "service.enrich_exact_version" in migration_runtime
+    assert "set status = 'complete', completed_at = now()" in migration_runtime
+    # The view has one final qualification source; no permanent pending/legacy union.
+    current_view = schema.split("create or replace view current_knowledge_targets", 1)[1].split(
+        "create table if not exists resource_permissions", 1
+    )[0]
+    assert "from base_current_knowledge_targets" in current_view
+    assert "edge.edge_type = 'teardown_of'" in current_view
+    assert "union" not in current_view
+    assert "backfilling" not in current_view
+
+
 def test_meili_resource_version_backfill_is_once_only_and_uses_outbox():
     schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
     assert "create table if not exists data_foundation_migrations" in schema
@@ -156,6 +216,107 @@ def test_meili_resource_version_backfill_requeues_or_inserts_once(migrated_conn)
         where tenant_id = 'tenant-reindex' and topic = 'meili_index'
         """
     ).fetchone()["n"] == 2
+
+
+def test_knowledge_gate_synchronously_classifies_legacy_targets_before_return(migrated_conn):
+    from data_foundation.repositories.resource import ResourceRepository
+
+    repo = ResourceRepository(migrated_conn)
+    migrated_conn.execute(
+        "delete from data_foundation_migrations where migration_key = %s",
+        (db.KNOWLEDGE_GATE_MIGRATION_KEY,),
+    )
+    document = repo.upsert_resource(
+        tenant_id="legacy-tenant",
+        actor_open_id="ou-owner",
+        resource_type="feishu_doc",
+        title="旧知识",
+        content_text="迁移提交后必须立即可检索",
+        visibility="team",
+        outbox_requests=[],
+    )
+    signal = repo.upsert_resource(
+        tenant_id="legacy-tenant",
+        actor_open_id="ou-owner",
+        resource_type="generated_topic",
+        title="旧选题信号",
+        content_text="不能伪装成写作知识",
+        visibility="team",
+        outbox_requests=[],
+    )
+    candidate = repo.upsert_resource(
+        tenant_id="legacy-tenant",
+        actor_open_id="ou-owner",
+        resource_type="generated_copy",
+        title="未采纳候选",
+        content_text="候选正文",
+        visibility="team",
+        outbox_requests=[],
+    )
+    adopted = repo.upsert_resource(
+        tenant_id="legacy-tenant",
+        actor_open_id="ou-owner",
+        resource_type="generated_copy",
+        title="已采纳文案",
+        content_text="已采纳正文",
+        visibility="team",
+        outbox_requests=[],
+    )
+    migrated_conn.execute(
+        """
+        insert into generated_copy_states (
+          tenant_id, resource_id, owner_open_id, lifecycle_status,
+          updated_by_open_id
+        ) values
+          ('legacy-tenant', %s, 'ou-owner', 'candidate', 'ou-owner')
+        """,
+        (candidate.id,),
+    )
+    migrated_conn.execute(
+        """
+        insert into generated_copy_states (
+          tenant_id, resource_id, owner_open_id, lifecycle_status,
+          selected_version, selected_label, adopted_version,
+          knowledge_target_version, updated_by_open_id
+        ) values (
+          'legacy-tenant', %s, 'ou-owner', 'adopted',
+          1, 'A', 1, 1, 'ou-owner'
+        )
+        """,
+        (adopted.id,),
+    )
+
+    db.run_migrations(migrated_conn)
+
+    marker = migrated_conn.execute(
+        "select status, completed_at from data_foundation_migrations where migration_key = %s",
+        (db.KNOWLEDGE_GATE_MIGRATION_KEY,),
+    ).fetchone()
+    assert marker["status"] == "complete"
+    assert marker["completed_at"] is not None
+    states = migrated_conn.execute(
+        """
+        select resource_id::text, eligibility
+        from knowledge_asset_states
+        where tenant_id = 'legacy-tenant'
+        """
+    ).fetchall()
+    by_id = {row["resource_id"]: row["eligibility"] for row in states}
+    assert by_id[document.id] == "qualified"
+    assert by_id[adopted.id] == "qualified"
+    assert by_id[signal.id] == "rejected"
+    assert candidate.id not in by_id
+    current_ids = {
+        row["resource_id"]
+        for row in migrated_conn.execute(
+            """
+            select resource_id::text
+            from current_knowledge_targets
+            where tenant_id = 'legacy-tenant'
+            """
+        ).fetchall()
+    }
+    assert current_ids == {document.id, adopted.id}
     assert migrated_conn.execute(
         """
         select count(*) as n
@@ -242,8 +403,8 @@ def test_schema_source_enforces_tenant_scoped_resource_references():
 
     assert "foreign key (tenant_id, resource_id)\n    references resources(tenant_id, id)" in schema
     assert schema.count("foreign key (tenant_id, resource_id)\n    references resources(tenant_id, id)") == 5
-    assert "foreign key (tenant_id, source_resource_id)\n    references resources(tenant_id, id)" in schema
-    assert "foreign key (tenant_id, target_resource_id)\n    references resources(tenant_id, id)" in schema
+    assert "foreign key (tenant_id, source_resource_id, source_resource_version)" in schema
+    assert "foreign key (tenant_id, target_resource_id, target_resource_version)" in schema
     assert "foreign key (tenant_id, event_id)\n    references resource_events(tenant_id, id)" in schema
     assert "unique (tenant_id, id, embedding_model, chunker_version)" in schema
     assert (
@@ -584,8 +745,9 @@ def test_edges_reject_cross_tenant_endpoints(migrated_conn):
         migrated_conn.execute(
             """
             insert into resource_edges
-              (tenant_id, source_resource_id, target_resource_id, edge_type)
-            values ('tenant-a', %s, %s, 'references')
+              (tenant_id, source_resource_id, source_resource_version,
+               target_resource_id, target_resource_version, edge_type)
+            values ('tenant-a', %s, 1, %s, 1, 'references')
             """,
             (source_id, target_id),
         )

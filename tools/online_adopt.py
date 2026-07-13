@@ -60,7 +60,13 @@ def _find_neighbors(query: str, config: RunnableConfig | None) -> list[dict[str,
     out: list[dict[str, Any]] = []
     for item in res.get("results", []) or []:
         if isinstance(item, dict) and item.get("resource_id"):
-            out.append({"resource_id": item["resource_id"], "score": item.get("score")})
+            out.append(
+                {
+                    "resource_id": item["resource_id"],
+                    "resource_version": item.get("resource_version"),
+                    "score": item.get("score"),
+                }
+            )
     return out
 
 
@@ -95,7 +101,7 @@ def adopt_online_notes(
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     # (resource_id, note) 对:采纳成功后统一做 §0 关联(需全批 resource_id 才能挂同批兜底边)。
-    adopted_pairs: list[tuple[str, dict[str, Any]]] = []
+    adopted_pairs: list[tuple[str, int, dict[str, Any]]] = []
 
     conn = connect()
     try:
@@ -133,7 +139,8 @@ def adopt_online_notes(
                 continue
 
             resource_id = core["resource_id"]
-            adopted_pairs.append((resource_id, note))
+            resource_version = int(core["resource_version"])
+            adopted_pairs.append((resource_id, resource_version, note))
             feishu_synced: bool | str = False
             if sync_feishu:
                 if note_id in already_synced:
@@ -163,15 +170,19 @@ def adopt_online_notes(
                 # already_adopted=True 表示本次采纳前库里就有(幂等 upsert,非本次新收录)→ 前端计「跳过」。
                 "already_adopted": note_id in already_adopted,
                 "resource_id": resource_id,
+                "resource_version": resource_version,
                 "feishu_synced": feishu_synced,
             })
 
         # ── §0 素材不孤立:每条采纳成功的笔记至少挂一条关联边(永不孤岛)。 ──
         # 全批采纳完再挂边:语义邻居用全文检索找已有素材;都没有时退化到同批 co_ingested。
         # 关联失败(检索挂了/建边报错)绝不影响采纳结果——逐条 try,把关联情况记进 result。
-        all_ids = [rid for rid, _ in adopted_pairs]
+        all_resources = [
+            {"resource_id": rid, "resource_version": version}
+            for rid, version, _ in adopted_pairs
+        ]
         by_resource = {r["resource_id"]: r for r in results if r.get("resource_id")}
-        for rid, note in adopted_pairs:
+        for rid, resource_version, note in adopted_pairs:
             try:
                 neighbors = _find_neighbors(_neighbor_query(note), config)
                 assoc = associate_ingested_resource(
@@ -179,8 +190,9 @@ def adopt_online_notes(
                     tenant_id=tenant_id,
                     actor_open_id=actor,
                     resource_id=rid,
+                    resource_version=resource_version,
                     neighbors=neighbors,
-                    co_ingested_ids=all_ids,
+                    co_ingested_resources=all_resources,
                 )
                 if rid in by_resource:
                     by_resource[rid]["associations"] = assoc

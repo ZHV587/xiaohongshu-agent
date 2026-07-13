@@ -272,7 +272,13 @@ async def test_process_outbox_batch_uses_registry_topics_and_continues_after_err
 
     assert repo.leases == [{
         "tenant_id": "default",
-        "topics": ["embedding_generate", "graph_ingest", "meili_index"],
+        "topics": [
+            "embedding_generate",
+            "graph_ingest",
+            "knowledge_enrich",
+            "meili_index",
+            "preference_synthesize",
+        ],
         "lease_owner": "worker-a",
         "batch_size": 10,
         "lease_seconds": 60,

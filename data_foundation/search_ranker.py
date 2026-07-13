@@ -79,6 +79,13 @@ def rank_evidence(
     for item in results:
         resource_id = item["resource_id"]
         meta = item.get("metadata") or {}
+        resource_version = item.get("resource_version", meta.get("resource_version"))
+        if (
+            not isinstance(resource_version, int)
+            or isinstance(resource_version, bool)
+            or resource_version <= 0
+        ):
+            raise ValueError("ranked evidence must carry an exact resource_version")
 
         # 1. Relevance Score(按 score_kind 口径)
         relevance = _relevance_score(float(item.get("score") or 0.0), score_kind, max_raw_score)
@@ -135,6 +142,7 @@ def rank_evidence(
 
         candidates.append({
             "resource_id": resource_id,
+            "resource_version": resource_version,
             "title": item["title"],
             "summary": item["summary"],
             "score": round(final_score, 4),

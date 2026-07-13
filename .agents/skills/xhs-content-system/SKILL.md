@@ -67,7 +67,7 @@ description: |
 
 完成后暂停，让用户确认主题划分是否准确，是否需要合并或拆分。
 
-用户确认主题地图后落库（这是结构化资产沉淀，属本技能本职）：按主控 system prompt §4《存储路由与权威性》先写数据库 `save_session_snapshot(project_name, "内容主题地图-{date}", content)`，成功后同步飞书 `sync_diagnosis_to_feishu(project_name, "内容主题地图-{date}", content)`。
+用户确认主题地图后落库（这是结构化资产沉淀，属本技能本职）：按主控 system prompt §4《存储路由与权威性》先调用 `save_session_snapshot(project_name, "内容主题地图-{date}", content, snapshot_kind="content_system")`，再把返回的精确身份传给 `confirm_session_snapshot(resource_id, resource_version)`；确认类型只从已保存 exact snapshot 读取。两步成功后同步飞书 `sync_diagnosis_to_feishu(project_name, "内容主题地图-{date}", content)`。
 
 ---
 

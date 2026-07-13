@@ -10,6 +10,7 @@ class PerformanceRepository(BaseRepository):
     def save_performance(
         self,
         resource_id: str,
+        resource_version: int,
         likes: int,
         comments: int,
         shares: int,
@@ -31,9 +32,22 @@ class PerformanceRepository(BaseRepository):
 
                 # 2. Lock target resource row and verify it exists
                 with connection.cursor(row_factory=dict_row) as cursor:
+                    if (
+                        not isinstance(resource_version, int)
+                        or isinstance(resource_version, bool)
+                        or resource_version <= 0
+                    ):
+                        raise ValueError("resource_version must be a positive integer")
                     target = cursor.execute(
-                        "SELECT id, visibility, owner_open_id FROM resources WHERE id = %s FOR UPDATE",
-                        (resource_id,),
+                        """
+                        select r.id, r.visibility, r.owner_open_id
+                        from resources r
+                        join resource_versions rv
+                          on rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+                        where r.id = %s and rv.version = %s
+                        for update of r
+                        """,
+                        (resource_id, resource_version),
                     ).fetchone()
                     if not target:
                         raise ValueError("Resource not found")
@@ -62,6 +76,7 @@ class PerformanceRepository(BaseRepository):
                     title="效果数据",
                     content_json={
                         "target_resource_id": resource_id,
+                        "target_resource_version": resource_version,
                         "metrics": {
                             "likes": likes,
                             "comments": comments,
@@ -78,7 +93,9 @@ class PerformanceRepository(BaseRepository):
                 fb_repo.add_edge(
                     tenant_id=actor.tenant_id,
                     source_resource_id=resource_id,
+                    source_resource_version=resource_version,
                     target_resource_id=upserted_metric.id,
+                    target_resource_version=int(upserted_metric.version),
                     edge_type="measured_by",
                     weight=score,
                     conn=connection,

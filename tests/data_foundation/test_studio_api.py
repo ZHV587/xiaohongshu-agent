@@ -643,25 +643,87 @@ def test_copy_lifecycle_stale_write_returns_409(monkeypatch):
 
 
 class _FakeResource:
-    def __init__(self, rid, *, title="未命名笔记", content_text="正文", content_json=None):
+    def __init__(
+        self,
+        rid,
+        *,
+        title="未命名笔记",
+        content_text="正文",
+        content_json=None,
+        resource_type="performance_metric",
+        version=1,
+        visibility="team",
+        owner_open_id="ou_user",
+    ):
         self.id = rid
         self.title = title
         self.content_text = content_text
-        self.content_json = content_json or {}
-        self.type = "performance_metric"
-        self.version = 1
+        self.content_json = dict(content_json or {})
+        self.type = resource_type
+        self.version = version
+        self.visibility = visibility
+        self.owner_open_id = owner_open_id
+
+
+class _MemoryPreferenceRepository:
+    """Studio tests exercise the real preference service without opening a database."""
+
+    def __init__(self):
+        self._observations = {}
+        self._states = {}
+        self.actor_locks = []
+
+    def acquire_actor_lock(self, **kwargs):
+        self.actor_locks.append((kwargs["tenant_id"], kwargs["actor_open_id"]))
+
+    def insert_observation(self, *, tenant_id, actor_open_id, observation):
+        key = (tenant_id, actor_open_id, observation.event_key)
+        inserted = key not in self._observations
+        self._observations.setdefault(key, observation)
+        return inserted
+
+    def list_observations(self, *, tenant_id, actor_open_id):
+        return [
+            observation
+            for (tenant, actor, _), observation in self._observations.items()
+            if tenant == tenant_id and actor == actor_open_id
+        ]
+
+    def get_profile_state(self, *, tenant_id, actor_open_id):
+        return self._states.get((tenant_id, actor_open_id))
+
+    def upsert_profile_state(self, *, tenant_id, actor_open_id, **state):
+        key = (tenant_id, actor_open_id)
+        previous = self._states.get(key)
+        revision = 1 if previous is None else previous["revision"]
+        if previous is not None and previous["input_digest"] != state["input_digest"]:
+            revision += 1
+        stored = {
+            "tenant_id": tenant_id,
+            "owner_open_id": actor_open_id,
+            **state,
+            "revision": revision,
+        }
+        self._states[key] = stored
+        return stored
 
 
 class _FakeRepo:
     """跑通 _persist_* 真实代码路径的内存仓储(对齐 ResourceRepository 被调用面)。"""
 
     def __init__(self, *, resources=None, metric_id=None, metric_content=None):
+        self.conn = None
         self._resources = dict(resources or {})
+        self._versions = {
+            (resource_id, resource.version): resource
+            for resource_id, resource in self._resources.items()
+        }
         self._metric_id = metric_id
         if metric_id is not None:
-            self._resources.setdefault(
+            resource = self._resources.setdefault(
                 metric_id, _FakeResource(metric_id, content_json=dict(metric_content or {}))
             )
+            self._versions.setdefault((metric_id, resource.version), resource)
         self.upserts: list[dict] = []
         self.edges: list[dict] = []
 
@@ -674,10 +736,19 @@ class _FakeRepo:
         return self._resources.get(resource_id)
 
     def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
-        return self._resources.get(resource_id)
+        return self._versions.get((resource_id, resource_version))
 
     def writable_resource_metadata(self, *, tenant_id, actor_open_id, resource_id):
-        return {"type": "performance_metric", "version": 1, "visibility": "team", "owner_open_id": actor_open_id}
+        resource = self._resources[resource_id]
+        return {
+            "type": resource.type,
+            "version": resource.version,
+            "visibility": resource.visibility,
+            "owner_open_id": resource.owner_open_id,
+        }
+
+    def resource_version_exists(self, *, tenant_id, resource_id, resource_version):
+        return (resource_id, resource_version) in self._versions
 
     def find_performance_metric_id(self, *, tenant_id, target_resource_id):
         return self._metric_id
@@ -686,10 +757,21 @@ class _FakeRepo:
         rid = kwargs.get("resource_id") or f"metric-{len(self.upserts) + 1}"
         self.upserts.append(kwargs)
         # 回写内存,使后续 _existing_metric_content 读到刚写入的 content_json(回填二次合并依赖)
-        self._resources[rid] = _FakeResource(
-            rid, title=kwargs.get("title", ""), content_json=dict(kwargs.get("content_json") or {})
+        previous = self._resources.get(rid)
+        version = 1 if previous is None else previous.version + 1
+        resource = _FakeResource(
+            rid,
+            title=kwargs.get("title", ""),
+            content_text=kwargs.get("content_text") or "",
+            content_json=dict(kwargs.get("content_json") or {}),
+            resource_type=kwargs["resource_type"],
+            version=version,
+            visibility=kwargs["visibility"],
+            owner_open_id=kwargs["owner_open_id"],
         )
-        return self._resources[rid]
+        self._resources[rid] = resource
+        self._versions[(rid, version)] = resource
+        return resource
 
     def add_edge(self, **kwargs):
         self.edges.append(kwargs)
@@ -697,6 +779,7 @@ class _FakeRepo:
 
 def _use_fake_repo(monkeypatch, repo):
     import data_foundation.studio_api as studio_api
+    import data_foundation.repositories.preference as preference_repository
 
     @contextmanager
     def _fake_repository():
@@ -717,6 +800,13 @@ def _use_fake_repo(monkeypatch, repo):
             return None
 
     monkeypatch.setattr(studio_api, "GeneratedCopyRepository", _FakeLifecycle)
+    preference_memory = _MemoryPreferenceRepository()
+    monkeypatch.setattr(
+        preference_repository,
+        "PreferenceRepository",
+        lambda _conn: preference_memory,
+    )
+    repo.preference_memory = preference_memory
     monkeypatch.setattr(studio_api, "_best_effort_feishu_draft", lambda *a, **k: None)
     monkeypatch.setattr(studio_api, "_best_effort_feishu_metrics", lambda *a, **k: None)
 
@@ -941,7 +1031,11 @@ def test_persist_backfill_carries_over_account_and_marks_measured(monkeypatch):
     )
     assert "score" in result
     # 最后一次 upsert 为二次合并:stage=measured + 保留 account/scheduled_* + save 写入的 metrics
-    final = repo.upserts[-1]["content_json"]
+    final = [
+        write["content_json"]
+        for write in repo.upserts
+        if write["resource_type"] == "performance_metric"
+    ][-1]
     assert final["stage"] == "measured"
     assert final["account"] == "acc_1"
     assert final["scheduled_date"] == "2026-02-12"

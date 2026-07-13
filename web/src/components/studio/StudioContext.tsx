@@ -26,12 +26,20 @@ import { useBackendResource, type LoadStatus } from "./useBackendResource";
 import {
   deriveTimeline,
   parseLatestAdoption,
-  adoptedNoteResourceIds,
+  adoptedNoteResourceIdentities,
+  mergeDiscoveryMaterials,
   type TimelineItem,
   type DiscoveryNote,
   type AdoptionOutcome,
 } from "@/lib/thinking-trace";
 import { StudioContext } from "./useStudio";
+import {
+  parseCurrentDocumentBinding,
+  resolveLifecycleWriteBinding,
+  resolveCurrentDocumentBinding,
+  validateBindingAgainstLifecycle,
+  type CurrentDocumentBinding,
+} from "./current-document-binding";
 import {
   applyOptimisticSchedule,
   canAdvanceStage,
@@ -215,6 +223,7 @@ class StudioWriteError extends Error {
 
 export function StudioProvider({ children }: { children: ReactNode }) {
   const t = useThread();
+  const documentThreadId = t.threadId ?? "__new__";
   const { presentationsByTurnId } = useTraceContext();
   const [section, setSectionRaw] = useQueryState("section");
   const [activeRecent, setActiveRecent] = useState<number | null>(null);
@@ -228,6 +237,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [activeVersion, setActiveVersion] = useState<VersionId>("A");
   const [copyLifecycle, setCopyLifecycle] = useState<CopyLifecycle | null>(null);
   const [copyLifecycleStatus, setCopyLifecycleStatus] = useState<LoadStatus>("idle");
+  const [currentDocumentBinding, setCurrentDocumentBinding] =
+    useState<CurrentDocumentBinding | null>(null);
   // 用户修订会生成新的不可变 resource_version；流里的原始 xhs_copy 不会被改写，故按
   // A/B/C 保存后端确认后的修订快照，后续采纳/排期始终使用精确版本与对应内容。
   const [revisionSnapshots, setRevisionSnapshots] = useState<Partial<Record<VersionId, DraftVersion>>>({});
@@ -361,6 +372,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setCreationMode(snap.creationMode);
         setScheduled(snap.scheduled);
         setHasLocalEdits(snap.hasLocalEdits);
+        setCurrentDocumentBinding(snap.currentDocumentBinding);
         localEditsRef.current = snap.hasLocalEdits;
       } else if (prev !== undefined) {
         // 切到一个无 overlay 记录的会话 → 重置默认,避免与上一会话串台。
@@ -374,6 +386,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         // 右栏误弹深度编辑器(「没点选题/仿写也弹创作 UI」的残留形态)。
         setScheduled(false);
         setHasLocalEdits(false);
+        setCurrentDocumentBinding(null);
         localEditsRef.current = false;
       }
     });
@@ -394,8 +407,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       creationMode,
       scheduled,
       hasLocalEdits,
+      currentDocumentBinding,
     });
-  }, [t.threadId, topicId, kw, tags, cover, activeVersion, creationMode, scheduled, hasLocalEdits]);
+  }, [t.threadId, topicId, kw, tags, cover, activeVersion, creationMode, scheduled, hasLocalEdits, currentDocumentBinding]);
 
   const setSection = useCallback((s: StudioSection) => void setSectionRaw(s), [setSectionRaw]);
   // 白名单校验:URL ?section=任意值 不应被透传(消费组件 switch 不中会渲染空白)。
@@ -419,7 +433,41 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [t.isLoading]);
 
   // ── multi-version draft + its backend resource id parsed from the live stream ──
-  const { versions, copyResourceId, process, imitation } = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
+  const parsedCopy = useMemo(() => parseCopyFromMessages(t.messages), [t.messages]);
+  const { versions, process, imitation } = parsedCopy;
+  const streamDocumentBinding = useMemo(
+    () => parseCurrentDocumentBinding({
+      ownerThreadId: documentThreadId,
+      resourceId: parsedCopy.copyResourceId,
+      resourceVersion: parsedCopy.copyResourceVersion,
+      stateVersion: parsedCopy.copyStateVersion,
+    }),
+    [documentThreadId, parsedCopy.copyResourceId, parsedCopy.copyResourceVersion, parsedCopy.copyStateVersion],
+  );
+  const pendingDocumentBinding = useMemo(
+    () => {
+      const candidate = resolveCurrentDocumentBinding(streamDocumentBinding, currentDocumentBinding);
+      return candidate?.ownerThreadId === documentThreadId ? candidate : null;
+    },
+    [documentThreadId, streamDocumentBinding, currentDocumentBinding],
+  );
+  // Stream identity is only the candidate used for lifecycle GET.  Mutations never use
+  // it directly; they remain bound to the last lifecycle-verified exact document.
+  const pendingResourceId = pendingDocumentBinding?.resourceId ?? null;
+  const verifiedDocumentBinding = currentDocumentBinding?.ownerThreadId === documentThreadId
+    ? currentDocumentBinding
+    : null;
+  const copyResourceId = verifiedDocumentBinding?.resourceId ?? null;
+  const lifecycleWriteBinding = useMemo(
+    () => resolveLifecycleWriteBinding(
+      pendingDocumentBinding,
+      verifiedDocumentBinding,
+      copyLifecycle,
+      copyLifecycleStatus === "ready",
+      documentThreadId,
+    ),
+    [pendingDocumentBinding, verifiedDocumentBinding, copyLifecycle, copyLifecycleStatus, documentThreadId],
+  );
   const visibleVersions = useMemo<Partial<Versions> | null>(() => {
     // lifecycle 一旦就绪，UI 只展示后端 exact snapshots；绝不再把流里的旧 A/B/C
     // 与已修订版本混合。加载失败时流版本仅供只读预览，所有写动作仍被状态闸门禁用。
@@ -494,32 +542,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   // 全流程已成功采纳的 note_id → resource_id 映射:采纳成功后,素材栏对应卡应立即标「已收录」
   // (already_local)并带上真实 resource_id(可直接仿写,不必再走「先收录再仿」)。这也让底部
   // 「收录选中 N 篇」的可采纳集合把刚入库的排除掉,不会重复勾选采纳。
-  const adoptedIds = useMemo(() => adoptedNoteResourceIds(t.messages), [t.messages]);
+  const adoptedIdentities = useMemo(() => adoptedNoteResourceIdentities(t.messages), [t.messages]);
 
   const materials: DiscoveryNote[] = useMemo(() => {
-    const byId = new Map<string, DiscoveryNote>();
-    for (const item of timeline) {
-      if (item.kind !== "discovery") continue;
-      for (const n of item.notes) {
-        const existing = byId.get(n.note_id);
-        // 后到的同 id 覆盖(通常更新);但已带 resource_id/already_local 的记录不被无 id 的覆盖掉。
-        if (!existing || (!existing.resource_id && n.resource_id) || (!existing.already_local && n.already_local)) {
-          byId.set(n.note_id, { ...existing, ...n });
-        }
-      }
-    }
-    // 采纳结果回填:命中 adoptedIds 的笔记标为已入库,补上真实 resource_id(后端结果权威)。
-    for (const [noteId, resourceId] of adoptedIds) {
-      const existing = byId.get(noteId);
-      if (!existing) continue;
-      byId.set(noteId, {
-        ...existing,
-        already_local: true,
-        resource_id: existing.resource_id || resourceId || undefined,
-      });
-    }
-    return Array.from(byId.values());
-  }, [timeline, adoptedIds]);
+    return mergeDiscoveryMaterials(timeline, adoptedIdentities);
+  }, [timeline, adoptedIdentities]);
 
   // 测试可观测钩子:暴露思考链总步数,供 e2e 断言思考 UI 已渲染。仅写 window,生产无副作用。
   useEffect(() => {
@@ -549,6 +576,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       ([, snapshot]) => snapshot.resourceVersion === lifecycle.selectedVersion,
     );
     setCopyLifecycle(lifecycle);
+    setCurrentDocumentBinding({
+      ownerThreadId: documentThreadId,
+      resourceId: lifecycle.resourceId,
+      resourceVersion: lifecycle.selectedVersion ?? lifecycle.latestResourceVersion,
+      stateVersion: lifecycle.stateVersion,
+    });
     setRevisionSnapshots(authoritativeVersions);
     setCopyLifecycleStatus(lifecycle.selectedVersion == null || selectedEntry ? "ready" : "error");
     // 本地未保存编辑优先：权威状态/快照照常更新，但画布只在干净时切到 selected exact snapshot。
@@ -560,9 +593,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setCover(selectedSnapshot.cover);
       setLocalEditState(false);
     }
-  }, [setCanonicalBody, setCanonicalTitle, setLocalEditState]);
+  }, [documentThreadId, setCanonicalBody, setCanonicalTitle, setLocalEditState]);
 
-  const requestCopyLifecycle = useCallback(async (resourceId: string, signal?: AbortSignal): Promise<CopyLifecycle> => {
+  const requestCopyLifecycle = useCallback(async (
+    binding: CurrentDocumentBinding,
+    signal?: AbortSignal,
+  ): Promise<CopyLifecycle> => {
+    const { resourceId } = binding;
     const res = await fetch(`/api/backend/copies/${encodeURIComponent(resourceId)}/lifecycle`, {
       headers: { Accept: "application/json" },
       cache: "no-store",
@@ -574,6 +611,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       throw new Error(payload?.error || `版本状态加载失败（${res.status}）`);
     }
     if (lifecycle.resourceId !== resourceId) throw new Error("版本状态与当前文案不匹配");
+    if (!validateBindingAgainstLifecycle(binding, lifecycle)) {
+      throw new Error("版本状态不包含当前成品的精确版本");
+    }
     return lifecycle;
   }, []);
 
@@ -583,10 +623,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     queueMicrotask(() => {
       setCopyLifecycle(null);
       setRevisionSnapshots({});
-      setCopyLifecycleStatus(copyResourceId ? "loading" : "idle");
+      setCopyLifecycleStatus(pendingResourceId ? "loading" : "idle");
     });
-    if (!copyResourceId) return () => controller.abort();
-    void requestCopyLifecycle(copyResourceId, controller.signal)
+    if (!pendingDocumentBinding) return () => controller.abort();
+    void requestCopyLifecycle(pendingDocumentBinding, controller.signal)
       .then((lifecycle) => {
         if (controller.signal.aborted) return;
         applyAuthoritativeLifecycle(lifecycle);
@@ -597,13 +637,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setCopyLifecycleStatus("error");
       });
     return () => controller.abort();
-  }, [applyAuthoritativeLifecycle, copyResourceId, requestCopyLifecycle]);
+  }, [applyAuthoritativeLifecycle, pendingDocumentBinding, pendingResourceId, requestCopyLifecycle]);
 
   const refreshCopyLifecycle = useCallback(async (): Promise<CopyLifecycle | null> => {
-    if (!copyResourceId) return null;
+    if (!pendingDocumentBinding) return null;
     setCopyLifecycleStatus("loading");
     try {
-      const lifecycle = await requestCopyLifecycle(copyResourceId);
+      const lifecycle = await requestCopyLifecycle(pendingDocumentBinding);
       applyAuthoritativeLifecycle(lifecycle);
       return lifecycle;
     } catch {
@@ -611,7 +651,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setCopyLifecycleStatus("error");
       return null;
     }
-  }, [applyAuthoritativeLifecycle, copyResourceId, requestCopyLifecycle]);
+  }, [applyAuthoritativeLifecycle, pendingDocumentBinding, requestCopyLifecycle]);
 
   const chooseTopic = useCallback(
     (topic: Topic) => {
@@ -634,6 +674,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const sameTopicAsLoaded = topicId === topic.id;
       const alreadyHasCopy = Boolean(t.draftTitle.trim() || t.draftContent.trim() || versions);
       if (sameTopicAsLoaded && alreadyHasCopy) return;
+      // 这是明确的新成品意图：先解除上一份文档绑定。后续只有新 xhs_copy 的 exact identity
+      // 能建立新绑定，绝不把上一选题的 resourceId 带进本轮。
+      setCurrentDocumentBinding(null);
       setActiveVersion("A");
 
       // 换了不同选题 → 先清掉上一个选题的残留草稿(标题/正文/标签/封面),避免新选题生成期间
@@ -652,10 +695,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       // save_generated_topic 经 InjectedState("selected_topic") 读它落库,主控委派
       // copywriting-coprocessor 时也从中取 resource_id 让子代理 get_resource 精读对标原文。
       // 缺了这一传递,主控拿不到真实 id 只能凭空编造 → 子代理精读必然 "not found"(历史根因)。
-      // 字段形状对齐后端 _clean_evidence:resource_id/title/summary/source_updated_at/indexed_at。
+      // 字段形状对齐后端 _clean_evidence，并保留不可变的 (resource_id, resource_version)。
       const bundle = evidence[topic.id];
       const selectedEvidence = (bundle?.items ?? []).map((it) => ({
         resource_id: it.resource_id,
+        resource_version: it.resource_version,
         title: it.title,
         summary: it.summary,
         source_updated_at: it.source_updated_at,
@@ -751,6 +795,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       // 仿写同样是显式创作意图:右栏切成编辑器(顶部仿写拆解横幅 + 下方成品)。
       setCreationMode(true);
       setLocalEditState(false);
+      // 仿写每次都创建新成品，必须显式解除上一份 current-document binding。
+      setCurrentDocumentBinding(null);
       // 先清掉上一次创作/仿写的残留草稿(标题/正文/标签/封面)。仿写每次都是全新成品,无「重进
       // 同一篇不重跑」的场景 —— 不清会在新仿写流出前一直显示上一篇的旧正文(与 chooseTopic 换选题
       // 同类的「新意图显示旧内容」泄漏;配合 useThreadDraftState 的 `_new` 槽守卫一并根治)。
@@ -759,9 +805,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setTags([]);
       setCover("");
       const label = note.title ? `《${note.title}》` : "这篇";
-      if (note.resource_id) {
+      if (
+        typeof note.resource_id === "string" &&
+        note.resource_id.trim().length > 0 &&
+        Number.isInteger(note.resource_version) &&
+        (note.resource_version ?? 0) > 0
+      ) {
         t.submitText(`照着${label}的套路,仿写成我自己的一篇。先拆解它的选题方向与套路,再据此写成品。`, {
-          selected_reference: { resource_id: note.resource_id, note },
+          selected_reference: {
+            resource_id: note.resource_id,
+            resource_version: note.resource_version,
+            note,
+          },
         });
       } else {
         // 线上未入库:范本本身作为 selected_notes 直传,后端先收录拿 id 再仿。
@@ -881,7 +936,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (v === activeVersion) return;
 
       const currentDirty = draftDiffersFromSnapshot(activeVersion);
-      if (!copyResourceId || !copyLifecycle || copyLifecycleStatus !== "ready" || !target.resourceVersion) {
+      if (!lifecycleWriteBinding || !copyLifecycle || !target.resourceVersion) {
         if (currentDirty) {
           showToast("当前版本有未保存编辑，但缺少可追溯版本状态，不能切换以免丢失内容");
           return;
@@ -903,7 +958,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           ? await saveRevisionAtBoundary(activeVersion, copyLifecycle)
           : copyLifecycle;
         const selected = await postCopyLifecycle("select", {
-          resourceId: copyResourceId,
+          resourceId: lifecycleWriteBinding.resourceId,
           resourceVersion: target.resourceVersion,
           expectedStateVersion: ready.stateVersion,
           label: target.label || v,
@@ -921,7 +976,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         lifecycleWriteBusyRef.current = false;
       }
     },
-    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, copyLifecycleStatus, copyResourceId, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, postCopyLifecycle, saveRevisionAtBoundary, setLocalEditState, showToast, t],
+    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, lifecycleWriteBinding, postCopyLifecycle, saveRevisionAtBoundary, setLocalEditState, showToast, t],
   );
 
   const adoptVersion = useCallback(
@@ -931,7 +986,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         return;
       }
       const saved = currentVersionSnapshot(v);
-      if (!copyResourceId || !copyLifecycle || copyLifecycleStatus !== "ready" || !saved?.resourceVersion) {
+      if (!lifecycleWriteBinding || !copyLifecycle || !saved?.resourceVersion) {
         showToast("当前草稿缺少可追溯的资源版本，暂不能采用");
         return;
       }
@@ -943,7 +998,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           ? ready.selectedVersion
           : saved.resourceVersion;
         const adopted = await postCopyLifecycle("adopt", {
-          resourceId: copyResourceId,
+          resourceId: lifecycleWriteBinding.resourceId,
           resourceVersion,
           expectedStateVersion: ready.stateVersion,
         });
@@ -960,7 +1015,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         lifecycleWriteBusyRef.current = false;
       }
     },
-    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, copyLifecycleStatus, copyResourceId, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, postCopyLifecycle, saveRevisionAtBoundary, setLocalEditState, showToast],
+    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, lifecycleWriteBinding, postCopyLifecycle, saveRevisionAtBoundary, setLocalEditState, showToast],
   );
 
   // schedule：乐观更新 + await POST /api/backend/schedule，成功保留、失败回滚。
@@ -971,7 +1026,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         return;
       }
       const selected = currentVersionSnapshot(activeVersion);
-      if (!copyResourceId) {
+      if (!lifecycleWriteBinding) {
         showToast("这篇草稿没有后端资源标识，无法安全排期，请重新生成后再试");
         return;
       }
@@ -979,7 +1034,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         showToast("当前版本缺少精确版本号，无法排期，不能用其他版本代替");
         return;
       }
-      if (!copyLifecycle || copyLifecycleStatus !== "ready") {
+      if (!copyLifecycle) {
         showToast("版本状态尚未就绪，暂不能排期，请稍后重试");
         return;
       }
@@ -1024,7 +1079,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       // requestId 绑定一次“脏稿定稿尝试”：同一内容、同一目标快照与 CAS 基线在网络
       // 失败/响应丢失后继续复用；任一版本维度变化时才生成新的 UUID。
       const attemptFingerprint = finalDraft == null ? null : JSON.stringify({
-        resourceId: copyResourceId,
+        resourceId: lifecycleWriteBinding.resourceId,
         ...versionContract,
         date: dateStr,
         time,
@@ -1046,7 +1101,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({
-            resourceId: copyResourceId,
+            resourceId: lifecycleWriteBinding.resourceId,
             ...versionContract,
             date: dateStr,
             time,
@@ -1085,7 +1140,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         lifecycleWriteBusyRef.current = false;
       }
     },
-    [activeVersion, calendar, selectedAccount, note.title, note.body, note.tags, note.cover, copyResourceId, copyLifecycle, copyLifecycleStatus, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, refreshCopyLifecycle, setLocalEditState, showToast, calendarRes, month.label, setCalendar],
+    [activeVersion, calendar, selectedAccount, note.title, note.body, note.tags, note.cover, copyLifecycle, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, lifecycleWriteBinding, refreshCopyLifecycle, setLocalEditState, showToast, calendarRes, month.label, setCalendar],
   );
 
   // backfillSave：先本地校验（口径同后端 _clean_metrics），再 await POST /api/backend/backfill。
@@ -1333,6 +1388,7 @@ function parseTopicsFromMessages(messages: ReturnType<typeof useThread>["message
         if (richEvidence) {
           const items: EvidenceItem[] = richEvidence.map((e) => ({
             resource_id: e.resource_id,
+            resource_version: e.resource_version,
             type: e.type ?? "资源",
             title: e.title,
             summary: e.summary,
@@ -1351,6 +1407,7 @@ function parseTopicsFromMessages(messages: ReturnType<typeof useThread>["message
         } else {
           const items: EvidenceItem[] = topicSeg.data.evidence.map((e) => ({
             resource_id: e.resource_id,
+            resource_version: e.resource_version,
             type: "资源",
             title: e.title,
             summary: e.summary,
@@ -1460,11 +1517,17 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
       if (lang === "xhs_imitation") {
         const td = obj.teardown;
         const refId = obj.reference_resource_id;
-        if (td && typeof td === "object") {
+        const refVersion = obj.reference_resource_version;
+        if (
+          td && typeof td === "object" &&
+          typeof refId === "string" && refId.trim() &&
+          typeof refVersion === "number" && Number.isInteger(refVersion) && refVersion > 0
+        ) {
           const t = td as Record<string, unknown>;
           const str = (v: unknown) => (typeof v === "string" ? v : "");
           imitation = {
-            referenceResourceId: typeof refId === "string" ? refId : "",
+            referenceResourceId: refId,
+            referenceResourceVersion: refVersion,
             referenceTitle: typeof obj.reference_title === "string" ? obj.reference_title : "",
             teardown: {
               angle: str(t.angle),
@@ -1494,7 +1557,7 @@ function parseCopyFromMessages(messages: ReturnType<typeof useThread>["messages"
 // ── studio overlay 本地持久化(按 threadId 隔离) ──────────────────────────────
 // 与 useThreadDraftState 的草稿 autosave 同思路:每个会话一份 overlay 快照,
 // 刷新/切会话后据此恢复选题绑定、版本选择、标签等,避免「内容消失」。
-const OVERLAY_LATEST_VERSION = 2;
+const OVERLAY_LATEST_VERSION = 4;
 
 interface StudioOverlaySnapshot {
   v: number;
@@ -1509,6 +1572,8 @@ interface StudioOverlaySnapshot {
   scheduled: boolean;
   // 用户在 Studio 画布上的编辑是否尚未形成后端不可变快照；刷新/切回时保护本地稿。
   hasLocalEdits: boolean;
+  // 当前画布绑定的后端文档 exact identity；普通非成品回合不得清空。
+  currentDocumentBinding: CurrentDocumentBinding | null;
 }
 
 function buildStudioOverlayKey(threadId: string | null): string {
@@ -1535,6 +1600,7 @@ function readStudioOverlay(threadId: string | null): StudioOverlaySnapshot | nul
       creationMode: o.creationMode === true,
       scheduled: o.scheduled === true,
       hasLocalEdits: o.hasLocalEdits === true,
+      currentDocumentBinding: parseCurrentDocumentBinding(o.currentDocumentBinding),
     };
   } catch {
     return null;

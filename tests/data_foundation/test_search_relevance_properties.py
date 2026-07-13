@@ -27,6 +27,7 @@ def _items(scores: list[float]) -> list[dict]:
     return [
         {
             "resource_id": f"r{i}",
+            "resource_version": 1,
             "title": f"标题-{i}",
             "summary": "s",
             "score": s,
@@ -86,7 +87,7 @@ class _GateRepo:
     def semantic_rows(self, **kwargs):
         self.calls.append("semantic")
         return [{
-            "id": "resource-1", "title": "x", "summary": None, "type": "topic",
+            "id": "resource-1", "resource_version": 1, "title": "x", "summary": None, "type": "topic",
             "visibility": "team", "score": self._top, "chunk_index": 0, "chunk_text": "c",
         }]
 

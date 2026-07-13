@@ -22,6 +22,7 @@ export function stripThinkingTags(text: string): string {
 export interface TextSegment { kind: "text"; text: string }
 export interface SourceEvidence {
   resource_id: string;
+  resource_version: number;
   title: string;
   summary: string;
   source_updated_at?: string;
@@ -38,6 +39,7 @@ export type RetrievalMode = "semantic" | "keyword_fallback" | "insufficient_rele
  */
 export interface RichEvidence {
   resource_id: string;
+  resource_version: number;
   type?: string;
   title: string;
   summary: string;
@@ -257,6 +259,7 @@ function parseEvidence(value: unknown): SourceEvidence[] {
     const source = item as Record<string, unknown>;
     if (
       typeof source.resource_id !== "string" || !source.resource_id.trim() ||
+      !Number.isInteger(source.resource_version) || Number(source.resource_version) <= 0 ||
       typeof source.title !== "string" || !source.title.trim() ||
       typeof source.summary !== "string" || !source.summary.trim()
     ) {
@@ -265,6 +268,7 @@ function parseEvidence(value: unknown): SourceEvidence[] {
 
     const evidence: SourceEvidence = {
       resource_id: source.resource_id,
+      resource_version: Number(source.resource_version),
       title: source.title,
       summary: source.summary,
     };
@@ -295,6 +299,7 @@ function toRichEvidence(items: SourceEvidence[]): RichEvidence[] {
   return items.map((item) => {
     const evidence: RichEvidence = {
       resource_id: item.resource_id,
+      resource_version: item.resource_version,
       title: item.title,
       summary: item.summary,
     };
@@ -314,6 +319,7 @@ function parseRichEvidence(value: unknown): RichEvidence[] {
     const source = item as Record<string, unknown>;
     if (
       typeof source.resource_id !== "string" || !source.resource_id.trim() ||
+      !Number.isInteger(source.resource_version) || Number(source.resource_version) <= 0 ||
       typeof source.title !== "string" || !source.title.trim() ||
       typeof source.summary !== "string" || !source.summary.trim()
     ) {
@@ -322,6 +328,7 @@ function parseRichEvidence(value: unknown): RichEvidence[] {
 
     const evidence: RichEvidence = {
       resource_id: source.resource_id,
+      resource_version: Number(source.resource_version),
       title: source.title,
       summary: source.summary,
     };

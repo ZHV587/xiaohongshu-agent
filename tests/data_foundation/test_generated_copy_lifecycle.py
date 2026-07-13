@@ -31,9 +31,68 @@ def _seed_copy(migrated_conn):
         body="先看这份清单。",
         tags=["#露营"],
         source_topic="轻量露营",
-        evidence=[{"resource_id": topic.id}],
+        evidence=[{"resource_id": topic.id, "resource_version": int(topic.version)}],
     )
     return repo, topic.id, saved["resource"]["resource_id"]
+
+
+def test_every_candidate_version_gets_exact_evidence_and_imitation_edges(migrated_conn):
+    repo = ResourceRepository(migrated_conn)
+    reference = repo.upsert_resource(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_type="xhs_online_note",
+        title="范本",
+        content_text="范本正文",
+        visibility="team",
+        owner_open_id="ou_user",
+        outbox_requests=[],
+    )
+    versions = [
+        {
+            "label": label,
+            "title": f"{label} 标题",
+            "body": f"{label} 正文",
+            "tags": ["#测试"],
+        }
+        for label in ("A", "B", "C")
+    ]
+
+    saved = save_generated_copy_resource(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_user",
+        title="A 标题",
+        body="A 正文",
+        tags=["#测试"],
+        versions=versions,
+        evidence=[{
+            "resource_id": reference.id,
+            "resource_version": int(reference.version),
+        }],
+        reference_resource_id=reference.id,
+        reference_resource_version=int(reference.version),
+    )
+
+    resource_id = saved["resource"]["resource_id"]
+    rows = migrated_conn.execute(
+        """
+        select source_resource_version, edge_type
+        from resource_edges
+        where source_resource_id = %s
+          and edge_type in ('derived_from', 'imitated_from')
+        order by source_resource_version, edge_type
+        """,
+        (resource_id,),
+    ).fetchall()
+    assert {
+        (int(row["source_resource_version"]), row["edge_type"])
+        for row in rows
+    } == {
+        (version, edge_type)
+        for version in (1, 2, 3)
+        for edge_type in ("derived_from", "imitated_from")
+    }
 
 
 def test_candidate_revision_adoption_and_attribution_share_one_resource(migrated_conn):
@@ -76,10 +135,31 @@ def test_candidate_revision_adoption_and_attribution_share_one_resource(migrated
     )
     assert revised.latest_resource_version == 2
     assert revised.selected_version == 2
-    assert migrated_conn.execute(
-        "select count(*) from resource_outbox where resource_id = %s and resource_version = 2",
+    revision_edges = migrated_conn.execute(
+        """
+        select edge_type, target_resource_id::text as target_resource_id,
+               target_resource_version, properties
+        from resource_edges
+        where source_resource_id = %s and source_resource_version = 2
+        order by edge_type
+        """,
         (resource_id,),
-    ).fetchone()[0] == 0
+    ).fetchall()
+    assert {row["edge_type"] for row in revision_edges} == {"derived_from", "revised_from"}
+    assert next(row for row in revision_edges if row["edge_type"] == "derived_from")[
+        "target_resource_id"
+    ] == topic_id
+    revised_from = next(row for row in revision_edges if row["edge_type"] == "revised_from")
+    assert revised_from["target_resource_id"] == resource_id
+    assert revised_from["target_resource_version"] == 1
+    assert revised_from["properties"]["relation_kind"] == "revision"
+    assert {
+        row[0]
+        for row in migrated_conn.execute(
+            "select topic from resource_outbox where resource_id = %s and resource_version = 2",
+            (resource_id,),
+        ).fetchall()
+    } == {"graph_ingest"}
 
     with pytest.raises(GeneratedCopyConflict, match="state version changed"):
         lifecycle.adopt_version(
@@ -104,7 +184,7 @@ def test_candidate_revision_adoption_and_attribution_share_one_resource(migrated
             "select topic from resource_outbox where resource_id = %s and resource_version = 2",
             (resource_id,),
         ).fetchall()
-    } == {"graph_ingest", "meili_index"}
+    } == {"graph_ingest", "knowledge_enrich"}
 
     finalized = lifecycle.finalize_for_schedule(
         tenant_id="default",
@@ -119,6 +199,16 @@ def test_candidate_revision_adoption_and_attribution_share_one_resource(migrated
     )
     assert finalized.finalized_version == 2
     assert published.published_version == 2
+    assert migrated_conn.execute(
+        """
+        select 1
+        from resource_outbox outbox
+        join resource_events event on event.id = outbox.event_id
+        where outbox.resource_id = %s and outbox.resource_version = 2
+          and outbox.topic = 'knowledge_enrich' and event.event_type = 'published'
+        """,
+        (resource_id,),
+    ).fetchone()
 
     metric = save_performance_metric_resource(
         repo,
@@ -128,6 +218,16 @@ def test_candidate_revision_adoption_and_attribution_share_one_resource(migrated
         target_resource_version=2,
         metrics={"views": 1000, "likes": 100},
     )
+    assert migrated_conn.execute(
+        """
+        select 1
+        from resource_outbox outbox
+        join resource_events event on event.id = outbox.event_id
+        where outbox.resource_id = %s and outbox.resource_version = 2
+          and outbox.topic = 'knowledge_enrich' and event.event_type = 'metrics_backfilled'
+        """,
+        (resource_id,),
+    ).fetchone()
     assert metric["target_resource_version"] == 2
     metric_json = migrated_conn.execute(
         "select content_json from resources where id = %s",

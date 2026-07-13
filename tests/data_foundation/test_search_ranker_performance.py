@@ -19,6 +19,7 @@ from data_foundation.search_ranker import (
 def _result(rid: str, score: float = 0.6):
     return {
         "resource_id": rid,
+        "resource_version": 1,
         "title": f"t-{rid}",
         "summary": "s",
         "score": score,

@@ -9,6 +9,7 @@ export type RetrievalMode = "semantic" | "keyword_fallback" | "insufficient_rele
  *  rank_evidence three-signal model (relevance / freshness / performance). */
 export interface EvidenceItem {
   resource_id: string;
+  resource_version: number;
   type: string;
   title: string;
   summary: string;
@@ -155,6 +156,7 @@ export interface ImitationTeardown {
  *  非仿写会话为 null。 */
 export interface StudioImitation {
   referenceResourceId: string;
+  referenceResourceVersion: number;
   referenceTitle: string;
   teardown: ImitationTeardown;
 }

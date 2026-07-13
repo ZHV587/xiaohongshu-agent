@@ -186,32 +186,18 @@ class EmbeddingProcessor:
         with self.conn.cursor(row_factory=dict_row) as cur:
             row = cur.execute(
                 """
-                select rv.content_text,
+                select target.content_text,
                        idx.embedding_model,
                        idx.dimensions,
                        idx.chunker_version,
                        idx.config_version
-                from resource_versions rv
-                join resources r
-                  on r.tenant_id = rv.tenant_id and r.id = rv.resource_id
-                left join generated_copy_states gcs
-                  on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+                from current_knowledge_targets target
                 join embedding_indexes idx
-                  on idx.tenant_id = rv.tenant_id
+                  on idx.tenant_id = target.tenant_id
                  and idx.id = %s
-                where rv.tenant_id = %s
-                  and rv.resource_id = %s
-                  and rv.version = %s
-                  and (
-                    (r.type = 'generated_copy' and gcs.knowledge_target_version = rv.version)
-                    or
-                    (r.type <> 'generated_copy' and rv.version = (
-                      select max(latest.version)
-                      from resource_versions latest
-                      where latest.tenant_id = rv.tenant_id
-                        and latest.resource_id = rv.resource_id
-                    ))
-                  )
+                where target.tenant_id = %s
+                  and target.resource_id = %s
+                  and target.resource_version = %s
                 """,
                 (embedding_index_id, tenant_id, resource_id, resource_version),
             ).fetchone()

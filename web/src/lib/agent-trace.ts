@@ -82,7 +82,7 @@ export function reduceTraceEvents(
   };
 }
 
-interface StageCopy {
+export interface ToolPresentation {
   title: string;
   summaryTitle: string;
   intent: string;
@@ -91,10 +91,10 @@ interface StageCopy {
 }
 
 // 工具调用链(§Bug1):思考链 = 真实"用了哪个工具、做了什么"。每一步的 title 直接是该工具的中文名
-// (与后端 TRACE_TOOL_STAGES / thinking-trace.ts 的 TOOL_LABELS 对齐,单一事实源口径),
+// thinking-trace.ts 的 fallback 也直接读取本注册表，避免两套中文名/意图再次漂移。
 // intent 说清这步在干嘛,fallbackResult 是无 metrics 时的兜底结果句。
 // 不再用「确认创作目标/核验素材依据」这类预设叙事阶段(那是编好的故事,不是真实工具链)。
-const TOOL_COPY: Record<string, StageCopy> = {
+const TOOL_COPY: Record<string, ToolPresentation> = {
   semantic_search_resources: {
     title: "按语义找相关素材",
     summaryTitle: "语义检索",
@@ -144,6 +144,34 @@ const TOOL_COPY: Record<string, StageCopy> = {
     action: "读取素材的互动/转化等效果数据。",
     fallbackResult: "已读取效果表现。",
   },
+  get_generated_copy_lifecycle: {
+    title: "读取文案生命周期",
+    summaryTitle: "文案版本状态",
+    intent: "读取文案的精确版本快照与生命周期状态。",
+    action: "核对当前文案的不可变版本与状态。",
+    fallbackResult: "已读取文案版本状态。",
+  },
+  get_data_foundation_status: {
+    title: "读取数据底座状态",
+    summaryTitle: "数据底座状态",
+    intent: "核对数据底座与索引处理状态。",
+    action: "读取数据底座当前运行状态。",
+    fallbackResult: "已读取数据底座状态。",
+  },
+  get_writing_profile: {
+    title: "加载写作偏好",
+    summaryTitle: "写作偏好",
+    intent: "加载当前用户从采纳与反馈中沉淀出的写作偏好。",
+    action: "读取当前用户的写作偏好画像。",
+    fallbackResult: "已加载当前用户的写作偏好。",
+  },
+  get_session_snapshots: {
+    title: "恢复会话快照",
+    summaryTitle: "会话恢复",
+    intent: "读取当前用户已保存的会话快照以恢复上下文。",
+    action: "查找当前用户可恢复的会话快照。",
+    fallbackResult: "已读取可恢复的会话快照。",
+  },
   save_generated_topic: {
     title: "保存选题",
     summaryTitle: "保存选题",
@@ -165,12 +193,40 @@ const TOOL_COPY: Record<string, StageCopy> = {
     action: "把用户反馈写入库。",
     fallbackResult: "已沉淀用户反馈。",
   },
+  save_writing_teardown: {
+    title: "归档写作拆解",
+    summaryTitle: "写作拆解",
+    intent: "把对范本写法的结构化拆解归档为可检索知识。",
+    action: "保存本轮写作拆解及其精确素材来源。",
+    fallbackResult: "已归档本轮写作拆解。",
+  },
   save_performance_metric: {
     title: "沉淀效果指标",
     summaryTitle: "沉淀效果",
     intent: "把发布后的效果数据回填沉淀。",
     action: "把效果指标回填入库。",
     fallbackResult: "已沉淀效果指标。",
+  },
+  save_session_snapshot: {
+    title: "保存会话快照",
+    summaryTitle: "保存会话",
+    intent: "保存当前诊断或创作状态，供后续接续处理。",
+    action: "把当前会话状态保存为私有快照。",
+    fallbackResult: "已保存当前会话快照。",
+  },
+  confirm_session_snapshot: {
+    title: "确认长期知识",
+    summaryTitle: "确认知识",
+    intent: "由当前用户确认快照内容后再纳入长期知识。",
+    action: "确认指定会话快照可进入长期知识。",
+    fallbackResult: "已确认该会话快照。",
+  },
+  sync_feishu_resources: {
+    title: "同步飞书资源",
+    summaryTitle: "同步资源",
+    intent: "把飞书内容资源同步到数据底座。",
+    action: "同步飞书资源及其最新内容。",
+    fallbackResult: "已同步飞书资源。",
   },
   sync_copy_to_feishu: {
     title: "同步文案到飞书",
@@ -214,7 +270,19 @@ const TOOL_COPY: Record<string, StageCopy> = {
     action: "在线检索小红书相关内容。",
     fallbackResult: "已完成线上素材搜索。",
   },
+  lark_cli: {
+    title: "飞书 CLI 操作",
+    summaryTitle: "飞书操作",
+    intent: "调用飞书能力完成当前明确的外部操作。",
+    action: "执行当前飞书操作。",
+    fallbackResult: "已完成飞书操作。",
+  },
 };
+
+/** 官方 trace 与消息回放 fallback 共用的唯一工具展示注册表。 */
+export function toolPresentation(name: string): ToolPresentation | undefined {
+  return TOOL_COPY[name];
+}
 
 // task 委派:按 subagent_type 给出"请了哪个子助手"。与 thinking-trace.ts SUBAGENT_LABELS 对齐。
 const SUBAGENT_TITLES: Record<string, string> = {
@@ -232,7 +300,7 @@ const ENGINEERING_WORD_RE = /\b(agent|trace|run|tool|custom|debug|schema|payload
 
 // 工具链口径:每步先按真实 tool_name 取该工具的中文语义;task 委派按 subagent_type 细化;
 // 都取不到才落到「处理当前步骤」的通用兜底(理论上不该出现,因为后端只 emit tool 事件)。
-function copyForTool(event: XhsTraceEvent): StageCopy | undefined {
+function copyForTool(event: XhsTraceEvent): ToolPresentation | undefined {
   if (event.tool_name === "task") {
     const sub =
       event.metrics && typeof event.metrics.subagent_type === "string"
@@ -247,11 +315,11 @@ function copyForTool(event: XhsTraceEvent): StageCopy | undefined {
       fallbackResult: "子助手已返回处理结果。",
     };
   }
-  if (event.tool_name && TOOL_COPY[event.tool_name]) return TOOL_COPY[event.tool_name];
+  if (event.tool_name) return toolPresentation(event.tool_name);
   return undefined;
 }
 
-const GENERIC_COPY: StageCopy = {
+const GENERIC_COPY: ToolPresentation = {
   title: "处理当前步骤",
   summaryTitle: "步骤处理",
   intent: "把当前任务继续往前推进。",
@@ -263,7 +331,7 @@ function userTitle(event: XhsTraceEvent): string {
   return (copyForTool(event) ?? GENERIC_COPY).title;
 }
 
-function userCopy(event: XhsTraceEvent): StageCopy {
+function userCopy(event: XhsTraceEvent): ToolPresentation {
   return copyForTool(event) ?? GENERIC_COPY;
 }
 
@@ -281,7 +349,7 @@ function metricsText(metrics: XhsTraceEvent["metrics"]): string | undefined {
   return parts.join("，") || undefined;
 }
 
-function resultText(event: XhsTraceEvent, copy: StageCopy): string {
+function resultText(event: XhsTraceEvent, copy: ToolPresentation): string {
   const metrics = event.metrics;
   if (metrics) {
     const parts: string[] = [];

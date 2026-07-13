@@ -8,8 +8,7 @@ CHUNKER_VERSION = "text-v1"
 
 def default_write_requests() -> list[OutboxRequest]:
     return [
-        OutboxRequest(topic="meili_index", dedupe_parts=("search",), payload={}),
-        OutboxRequest(topic="graph_ingest", dedupe_parts=("graph",), payload={}),
+        OutboxRequest(topic="knowledge_enrich", dedupe_parts=("knowledge",), payload={}),
     ]
 
 

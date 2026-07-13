@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { toolLabel, deriveTimeline, parseLatestAdoption, adoptedNoteResourceIds } from "./thinking-trace";
+import {
+  toolLabel,
+  deriveTimeline,
+  parseLatestAdoption,
+  adoptedNoteResourceIdentities,
+  mergeDiscoveryMaterials,
+  type TimelineItem,
+} from "./thinking-trace";
 
 test("toolLabel maps known data_foundation tools to Chinese", () => {
   assert.equal(toolLabel("semantic_search_resources", {}), "按语义找相关素材");
@@ -9,6 +16,10 @@ test("toolLabel maps known data_foundation tools to Chinese", () => {
   assert.equal(toolLabel("get_resource", {}), "打开原文细看");
   assert.equal(toolLabel("graph_expand", {}), "顺着图谱找关联");
   assert.equal(toolLabel("save_generated_topic", {}), "保存选题");
+  assert.equal(toolLabel("save_writing_teardown", {}), "归档写作拆解");
+  assert.equal(toolLabel("get_session_snapshots", {}), "恢复会话快照");
+  assert.equal(toolLabel("confirm_session_snapshot", {}), "确认长期知识");
+  assert.equal(toolLabel("get_writing_profile", {}), "加载写作偏好");
 });
 
 test("toolLabel maps feishu action tools", () => {
@@ -155,7 +166,7 @@ test("tool call without ToolMessage is active", () => {
   assert.ok(thinking && thinking.kind === "thinking");
   // 兜底轨道现在给每步补一句意图说明(Claude Code/Codex 式,消除黑盒感),故断言含 description。
   assert.deepEqual(thinking.run.steps, [
-    { label: "按语义找相关素材", state: "active", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
+    { label: "按语义找相关素材", state: "active", description: "从数据底座按语义相似度召回可用笔记和历史素材。" },
   ]);
   assert.equal(thinking.run.done, false);
 });
@@ -170,7 +181,7 @@ test("tool call with matching ToolMessage is done", () => {
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
   assert.deepEqual(thinking.run.steps, [
-    { label: "按语义找相关素材", state: "done", description: "从数据底座按语义相似度召回可用笔记和历史素材" },
+    { label: "按语义找相关素材", state: "done", description: "从数据底座按语义相似度召回可用笔记和历史素材。" },
   ]);
   assert.equal(thinking.run.done, true);
 });
@@ -692,6 +703,44 @@ test("discovery tool results become a discovery timeline item (materials, not ch
   assert.equal(disc.notes[0].note_id, "n1");
 });
 
+test("adjacent discovery results replace the same note with the newer exact pair", () => {
+  const result = (callId: string, version: number): Message => ({
+    id: `t-${callId}`,
+    type: "tool",
+    tool_call_id: callId,
+    content: JSON.stringify({
+      ok: true,
+      results: [{
+        note_id: "n1",
+        title: `版本${version}`,
+        source: "local",
+        already_local: true,
+        resource_id: "res-1",
+        resource_version: version,
+      }],
+    }),
+  } as unknown as Message);
+  const tl = deriveTimeline([
+    human("找素材"),
+    aiCall("c1", "search_local_note_cards", { keyword: "露营" }),
+    result("c1", 1),
+    aiCall("c2", "search_local_note_cards", { keyword: "露营" }),
+    result("c2", 2),
+  ]);
+  const disc = tl.find((item) => item.kind === "discovery");
+  assert.ok(disc && disc.kind === "discovery");
+  assert.equal(disc.notes.length, 1);
+  assert.equal(disc.notes[0].note_id, "n1");
+  assert.equal(disc.notes[0].title, "版本2");
+  assert.deepEqual(
+    {
+      resource_id: disc.notes[0].resource_id,
+      resource_version: disc.notes[0].resource_version,
+    },
+    { resource_id: "res-1", resource_version: 2 },
+  );
+});
+
 test("streaming (unclosed) rich xhs_topics does NOT leak flattened field garbage into prose", () => {
   // 富选题对象流式未闭合时,局部解析器会把 title/hotRate/angle/evidence/resource_id 等
   // key+value 打散;此处确认这些字段名不会作为正文糊屏(仍被当 topics 段从 prose 剥离)。
@@ -777,15 +826,72 @@ test("parseLatestAdoption returns null for empty/failed-shape payloads", () => {
   assert.equal(parseLatestAdoption(emptyBatch), null);
 });
 
-test("adoptedNoteResourceIds accumulates note_id → resource_id across all adopt results", () => {
+test("adoptedNoteResourceIdentities accumulates exact note identities", () => {
   const messages = [
     aiCall("c1", "adopt_online_notes", {}),
-    adoptResult("c1", { ok: true, results: [{ note_id: "n1", adopted: true, resource_id: "res-1" }], errors: [] }),
+    adoptResult("c1", { ok: true, results: [{ note_id: "n1", adopted: true, resource_id: "res-1", resource_version: 2 }], errors: [] }),
     aiCall("c2", "adopt_online_notes", {}),
-    adoptResult("c2", { ok: true, results: [{ note_id: "n2", adopted: true, resource_id: "res-2" }], errors: [] }),
+    adoptResult("c2", { ok: true, results: [{ note_id: "n2", adopted: true, resource_id: "res-2", resource_version: 5 }], errors: [] }),
   ];
-  const map = adoptedNoteResourceIds(messages);
-  assert.equal(map.get("n1"), "res-1");
-  assert.equal(map.get("n2"), "res-2");
+  const map = adoptedNoteResourceIdentities(messages);
+  assert.deepEqual(map.get("n1"), { resource_id: "res-1", resource_version: 2 });
+  assert.deepEqual(map.get("n2"), { resource_id: "res-2", resource_version: 5 });
   assert.equal(map.size, 2);
+});
+
+test("adoptedNoteResourceIdentities rejects partial and coerced versions", () => {
+  const messages = [
+    aiCall("c1", "adopt_online_notes", {}),
+    adoptResult("c1", {
+      ok: true,
+      results: [
+        { note_id: "missing-version", adopted: true, resource_id: "res-1" },
+        { note_id: "string-version", adopted: true, resource_id: "res-2", resource_version: "2" },
+        { note_id: "boolean-version", adopted: true, resource_id: "res-3", resource_version: true },
+      ],
+      errors: [],
+    }),
+  ];
+  assert.equal(adoptedNoteResourceIdentities(messages).size, 0);
+});
+
+test("mergeDiscoveryMaterials atomically replaces stale exact identity with newer discovery", () => {
+  const timeline: TimelineItem[] = [
+    {
+      kind: "discovery",
+      notes: [{ note_id: "n1", title: "旧标题", already_local: true, resource_id: "res-1", resource_version: 1 }],
+    },
+    {
+      kind: "discovery",
+      notes: [{ note_id: "n1", title: "新标题", already_local: true, resource_id: "res-1", resource_version: 2 }],
+    },
+  ];
+  assert.deepEqual(mergeDiscoveryMaterials(timeline, new Map()), [
+    { note_id: "n1", title: "新标题", already_local: true, resource_id: "res-1", resource_version: 2 },
+  ]);
+});
+
+test("mergeDiscoveryMaterials never splices partial identity and adoption result is authoritative", () => {
+  const timeline: TimelineItem[] = [
+    {
+      kind: "discovery",
+      notes: [{ note_id: "n1", title: "原卡", already_local: true, resource_id: "res-old", resource_version: 3 }],
+    },
+    {
+      kind: "discovery",
+      notes: [{ note_id: "n1", title: "展示字段更新", resource_id: "partial-id" }],
+    },
+  ];
+  const adopted = new Map([
+    ["n1", { resource_id: "res-new", resource_version: 7 }],
+  ]);
+  assert.deepEqual(mergeDiscoveryMaterials(timeline, adopted), [
+    {
+      note_id: "n1",
+      title: "展示字段更新",
+      already_local: true,
+      resource_id: "res-new",
+      resource_version: 7,
+    },
+  ]);
 });

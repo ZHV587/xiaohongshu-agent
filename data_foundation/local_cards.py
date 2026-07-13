@@ -149,11 +149,18 @@ def _hydrate_online_note(content_json: dict[str, Any]) -> dict[str, Any]:
 
 def hydrate_note_card(
     resource_id: str,
+    resource_version: int,
     resource_type: str,
     content_json: dict[str, Any] | None,
     *,
     score: float = 0.0,
 ) -> dict[str, Any] | None:
+    if (
+        not isinstance(resource_version, int)
+        or isinstance(resource_version, bool)
+        or resource_version <= 0
+    ):
+        raise ValueError("resource_version must be a positive integer")
     """把一条本地资源映射为统一卡片;非笔记类型 → None。"""
     if resource_type not in NOTE_CARD_TYPES:
         return None
@@ -174,6 +181,7 @@ def hydrate_note_card(
     base.update({
         "note_id": base.get("note_url") or resource_id,
         "resource_id": str(resource_id),
+        "resource_version": resource_version,
         "source": "local",
         "already_local": True,
         "score": round(float(score or 0.0), 4),

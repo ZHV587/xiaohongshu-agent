@@ -16,6 +16,7 @@ class FakeRepo:
         self.edges: dict[tuple, float] = {}
         self._metric_by_target: dict[str, str] = {}
         self._seq = 0
+        self.edge_versions: dict[tuple, tuple[int, int]] = {}
         self.unreadable: set = set()  # 放进来的 resource_id 视为 actor 不可读(测越权闸门)
 
     def unit_of_work(self):
@@ -34,7 +35,12 @@ class FakeRepo:
                 rid = self.mappings[key]
         if rid is None:
             rid = self._new_id("res")
-        self.resources[rid] = {"type": resource_type, "title": title, "content_json": content_json or {}}
+        self.resources[rid] = {
+            "type": resource_type,
+            "title": title,
+            "content_json": content_json or {},
+            "version": 1,
+        }
         if mapping is not None:
             self.mappings[(mapping["system"], mapping["external_type"], mapping["external_id"])] = rid
         if resource_type == "performance_metric":
@@ -56,8 +62,21 @@ class FakeRepo:
     def find_performance_metric_id(self, *, tenant_id, target_resource_id, conn=None):
         return self._metric_by_target.get(target_resource_id)
 
-    def add_edge(self, *, tenant_id, source_resource_id, target_resource_id, edge_type, weight=1.0):
-        self.edges[(source_resource_id, target_resource_id, edge_type)] = weight
+    def add_edge(
+        self,
+        *,
+        tenant_id,
+        source_resource_id,
+        source_resource_version,
+        target_resource_id,
+        target_resource_version,
+        edge_type,
+        weight=1.0,
+        properties=None,
+    ):
+        key = (source_resource_id, target_resource_id, edge_type)
+        self.edges[key] = weight
+        self.edge_versions[key] = (source_resource_version, target_resource_version)
 
     def existing_mapping_external_ids(self, *, tenant_id, system, external_type, external_ids):
         return {
@@ -78,6 +97,11 @@ class FakeRepo:
             raise PermissionError("not readable")
         return True
 
+    def get_resource_version(self, tenant_id, actor_open_id, resource_id, resource_version):
+        if resource_id in self.unreadable or resource_version <= 0:
+            return None
+        return SimpleNamespace(id=resource_id, version=resource_version)
+
 
 def _note(note_id="abc", **over):
     base = {
@@ -96,11 +120,25 @@ def _note(note_id="abc", **over):
 
 @pytest.fixture
 def patched(monkeypatch):
+    import data_foundation.preference_learning as preference_learning
+
+    class _PreferenceRecorder:
+        events = []
+
+        def __init__(self, _repo):
+            pass
+
+        def record_exact_event(self, **kwargs):
+            self.events.append(dict(kwargs))
+            return {"ok": True, "inserted": True}
+
     repo = FakeRepo()
     monkeypatch.setattr(oa, "connect", lambda: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(oa, "ResourceRepository", lambda conn: repo)
     monkeypatch.setattr(oa, "actor_from_config", lambda config: "ou_user")
     monkeypatch.setattr(oa, "default_tenant_id", lambda: "default")
+    monkeypatch.setattr(preference_learning, "PreferenceLearningService", _PreferenceRecorder)
+    repo.preference_events = _PreferenceRecorder.events
     return repo
 
 
@@ -231,7 +269,9 @@ def test_adopt_links_semantic_neighbors(patched, monkeypatch):
     # 先塞一条"已有素材"当邻居(真实检索命中的库内资源)。
     monkeypatch.setattr(
         oa, "_find_neighbors",
-        lambda query, config: [{"resource_id": "res-existing", "score": 0.83}],
+        lambda query, config: [
+            {"resource_id": "res-existing", "resource_version": 5, "score": 0.83}
+        ],
     )
     with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
         res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=False)
@@ -274,7 +314,9 @@ def test_adopt_skips_unreadable_neighbor(patched, monkeypatch):
     repo.unreadable.add("res-private")
     monkeypatch.setattr(
         oa, "_find_neighbors",
-        lambda query, config: [{"resource_id": "res-private", "score": 0.9}],
+        lambda query, config: [
+            {"resource_id": "res-private", "resource_version": 2, "score": 0.9}
+        ],
     )
     with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
         res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=False)

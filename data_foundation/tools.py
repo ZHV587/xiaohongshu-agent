@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
 import psycopg
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import tool
+from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 
 from data_foundation.creation_memory import (
@@ -29,6 +29,7 @@ from data_foundation.processors.embedding import EmbeddingProviderConfig, embedd
 from data_foundation.search import semantic_search
 from data_foundation.source_repository import SourceRepository
 from data_foundation.sync_service import sync_feishu_sources
+from data_foundation.writing_teardown import save_writing_teardown_resource
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ def _rows_to_payload(rows: list[Any]) -> list[dict[str, Any]]:
             meta["indexed_at"] = row["updated_at"].isoformat()
         payload.append({
             "resource_id": str(row["id"]),
+            "resource_version": int(row["resource_version"]),
             "title": row["title"],
             "summary": row["summary"],
             "score": float(row.get("score") or 0),
@@ -145,6 +147,7 @@ def search_local_note_cards(keyword: str, limit: int = 12, config: RunnableConfi
         content_json = dict(row["content_json"]) if row.get("content_json") is not None else {}
         card = hydrate_note_card(
             str(row["id"]),
+            int(row["resource_version"]),
             row["type"],
             content_json,
             score=score_by_id.get(str(row["id"]), 0.0),
@@ -303,9 +306,23 @@ def semantic_search_resources(query: str, top_k: int = 10, config: RunnableConfi
 
 
 @tool
-def get_resource(resource_id: str, config: RunnableConfig | None = None) -> dict[str, Any]:
-    """Read one resource body after tenant and permission filtering."""
+def get_resource(
+    resource_id: str,
+    resource_version: int,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Read one exact resource snapshot after tenant and permission filtering.
+
+    Both ``resource_id`` and ``resource_version`` must come from the same search or
+    graph result.  The tool never guesses a latest or knowledge-pointer version.
+    """
     actor = actor_from_config(config)
+    if (
+        not isinstance(resource_version, int)
+        or isinstance(resource_version, bool)
+        or resource_version <= 0
+    ):
+        raise ValueError("resource_version must be a positive integer")
     # resources.id 是 uuid 列,where r.id=%s 对非 UUID 串会抛 22P02 invalid uuid 并冒泡。
     # LLM 常传幻觉 id/标题(如 "generated-1"),按契约应返回 not found 而非把 SQL 错误回给模型。
     try:
@@ -313,7 +330,9 @@ def get_resource(resource_id: str, config: RunnableConfig | None = None) -> dict
     except (ValueError, TypeError, AttributeError):
         return {"ok": False, "error": "Resource not found or not permitted"}
     with _repository() as repo:
-        resource = repo.get_resource_for_knowledge(default_tenant_id(), actor, resource_id)
+        resource = repo.get_resource_for_knowledge(
+            default_tenant_id(), actor, resource_id, resource_version
+        )
     if resource is None:
         return {"ok": False, "error": "Resource not found or not permitted"}
     return {
@@ -398,13 +417,30 @@ def get_generated_copy_lifecycle(
 
 
 @tool
+def get_writing_profile(config: RunnableConfig | None = None) -> dict[str, Any]:
+    """Read the current actor's exact private writing-preference profile.
+
+    The profile is loaded through ``writing_profile_states`` rather than general
+    knowledge retrieval, so another user's private observations can never enter the
+    result and an outdated resource snapshot is never guessed from ``resources``.
+    """
+    actor = actor_from_config(config)
+    from data_foundation.preference_learning import PreferenceLearningService
+
+    with _repository() as repo:
+        return PreferenceLearningService(repo).get_profile(
+            tenant_id=default_tenant_id(), actor_open_id=actor
+        )
+
+
+@tool
 def graph_expand(
     resource_ids: list[str],
-    hops: int = 1,
+    resource_versions: list[int],
     edge_types: list[str] | None = None,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """Expand readable graph context from resource ids."""
+    """Expand one-hop graph context from aligned exact resource identities."""
     actor = actor_from_config(config)
     try:
         with _repository() as repo:
@@ -413,7 +449,7 @@ def graph_expand(
                 tenant_id=default_tenant_id(),
                 actor_open_id=actor,
                 resource_ids=resource_ids,
-                hops=hops,
+                resource_versions=resource_versions,
                 edge_types=edge_types,
             )
     except Exception as exc:  # noqa: BLE001
@@ -502,6 +538,7 @@ def save_generated_copy(
     source_topic: str | None = None,
     evidence: list[dict[str, Any]] | None = None,
     reference_resource_id: str | None = None,
+    reference_resource_version: int | None = None,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation.
@@ -538,6 +575,7 @@ def save_generated_copy(
             source_topic=source_topic,
             evidence=evidence,
             reference_resource_id=reference_resource_id,
+            reference_resource_version=reference_resource_version,
         )
 
 
@@ -545,11 +583,21 @@ def save_generated_copy(
 def save_user_feedback(
     feedback: str,
     target_resource_id: str | None = None,
+    target_resource_version: int | None = None,
     feedback_type: str = "user_feedback",
+    tool_call_id: Annotated[str, InjectedToolCallId] = "",
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Persist user feedback or a revision request into the shared Postgres data foundation."""
     actor = actor_from_config(config)
+    configurable = config.get("configurable", {}) if isinstance(config, dict) else {}
+    stable_request_id = (
+        tool_call_id.strip() if isinstance(tool_call_id, str) else ""
+    ) or (
+        str(configurable.get("turn_id") or "").strip()
+        if isinstance(configurable, dict)
+        else ""
+    ) or None
     with _repository() as repo:
         return save_user_feedback_resource(
             repo,
@@ -557,7 +605,45 @@ def save_user_feedback(
             actor_open_id=actor,
             feedback=feedback,
             target_resource_id=target_resource_id,
+            target_resource_version=target_resource_version,
             feedback_type=feedback_type,
+            idempotency_key=stable_request_id,
+        )
+
+
+@tool
+def save_writing_teardown(
+    source_resource_id: str,
+    source_resource_version: int,
+    niche: str,
+    hook: str,
+    cta: str,
+    structure: list[str],
+    success_factors: list[str],
+    style_tags: list[str],
+    quality: float,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """保存一份小红书文案拆解，并精确关联到真实来源版本。
+
+    source_resource_id 与 source_resource_version 必须来自检索/读取结果，禁止只凭资源 id
+    猜测最新版。工具会在同一事务内校验 ACL、创建拆解资源并写入 teardown_of 版本边。
+    """
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        return save_writing_teardown_resource(
+            repo,
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            source_resource_id=source_resource_id,
+            source_resource_version=source_resource_version,
+            niche=niche,
+            hook=hook,
+            cta=cta,
+            structure=structure,
+            success_factors=success_factors,
+            style_tags=style_tags,
+            quality=quality,
         )
 
 
@@ -653,13 +739,37 @@ def save_session_snapshot(
     project_name: str,
     title: str,
     content: str,
+    snapshot_kind: Literal[
+        "workflow_state",
+        "diagnosis",
+        "positioning",
+        "decision",
+        "learning_chapter",
+        "content_system",
+        "stage_report",
+        "migration_audit",
+    ],
     metadata: dict[str, Any] | None = None,
     config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
-    """Persist session state, account positioning, diagnosis, or report snapshots into the Postgres database.
-    Use this for session diagnostics database persistence instead of only saving locally.
+    """Persist an exact owner-scoped workflow checkpoint in Postgres.
+
+    Saving does not claim that model-authored content is user-confirmed knowledge.  Use
+    ``confirm_session_snapshot`` with the returned exact identity only after the user
+    explicitly confirms the conclusion.  Restore checkpoints with
+    ``get_session_snapshots`` rather than generic knowledge search.
     """
     actor = actor_from_config(config)
+    safe_metadata = {
+        key: value
+        for key, value in dict(metadata or {}).items()
+        if key not in {"confirmed", "confirmed_by"}
+    }
+    content_json = {
+        **safe_metadata,
+        "project_name": project_name,
+        "snapshot_kind": snapshot_kind,
+    }
     with _repository() as repo:
         resource = repo.upsert_resource(
             tenant_id=default_tenant_id(),
@@ -668,12 +778,86 @@ def save_session_snapshot(
             title=f"[{project_name}] {title}",
             summary=title,
             content_text=content,
-            content_json=metadata or {},
-            visibility="team",
+            content_json=content_json,
+            visibility="private",
             owner_open_id=actor,
             outbox_requests=default_write_requests(),
         )
-    return {"ok": True, "resource_id": str(resource.id)}
+    return {
+        "ok": True,
+        "resource_id": str(resource.id),
+        "resource_version": int(resource.version),
+        "snapshot_kind": snapshot_kind,
+        "confirmation_status": "unconfirmed",
+    }
+
+
+@tool
+def get_session_snapshots(
+    project_name: str | None = None,
+    limit: int = 10,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Restore the current actor's exact workflow checkpoints, including unconfirmed ones."""
+    actor = actor_from_config(config)
+    with _repository() as repo:
+        rows = repo.list_owned_session_snapshots(
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            project_name=project_name,
+            limit=limit,
+        )
+    return {
+        "ok": True,
+        "snapshots": [
+            {
+                "resource_id": row["resource_id"],
+                "resource_version": int(row["resource_version"]),
+                "title": row["title"],
+                "summary": row["summary"],
+                "content_text": row["content_text"],
+                "content_json": dict(row["content_json"] or {}),
+                "updated_at": (
+                    row["updated_at"].isoformat() if row.get("updated_at") else None
+                ),
+            }
+            for row in rows
+        ],
+    }
+
+
+@tool
+def confirm_session_snapshot(
+    resource_id: str,
+    resource_version: int,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Promote one exact checkpoint to strategy knowledge after explicit user confirmation.
+
+    Never call this merely because an agent generated a report.  The exact identity must
+    come from ``save_session_snapshot``/``get_session_snapshots`` and the user must have
+    explicitly accepted that conclusion in the current interaction.
+    """
+    actor = actor_from_config(config)
+    try:
+        uuid.UUID(str(resource_id))
+    except (ValueError, TypeError, AttributeError):
+        return {"ok": False, "error": "Session snapshot not found or not writable"}
+    from data_foundation.knowledge.repository import KnowledgeRepository
+
+    try:
+        with _repository() as repo:
+            result = KnowledgeRepository(repo.conn).confirm_exact_version(
+                default_tenant_id(),
+                actor,
+                resource_id,
+                resource_version,
+                "strategy_fact",
+                {},
+            )
+    except (PermissionError, ValueError):
+        return {"ok": False, "error": "Session snapshot not found or not writable"}
+    return {"ok": True, **result}
 
 
 data_foundation_tools = [
@@ -683,13 +867,17 @@ data_foundation_tools = [
     graph_expand,
     get_resource,
     get_generated_copy_lifecycle,
+    get_writing_profile,
     get_data_foundation_status,
     sync_feishu_resources,
     save_generated_topic,
     save_generated_copy,
     save_user_feedback,
+    save_writing_teardown,
     save_performance_metric,
     get_resource_performance,
     get_operations_data,
     save_session_snapshot,
+    get_session_snapshots,
+    confirm_session_snapshot,
 ]

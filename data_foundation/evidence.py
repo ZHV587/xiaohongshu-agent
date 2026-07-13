@@ -23,6 +23,10 @@ class EvidenceItem(BaseModel):
     """单条证据。字段口径与检索工具返回结构、xhs_topics/xhs_copy 的 evidence 块对齐。"""
 
     resource_id: str
+    resource_version: int = Field(
+        gt=0,
+        description="不可变资源版本；必须与 resource_id 成对使用，禁止按 id 猜 latest",
+    )
     title: str
     summary: str
     source_updated_at: str = Field(

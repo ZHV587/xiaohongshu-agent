@@ -133,9 +133,10 @@ def test_xhs_imitation_saves_before_emission_and_carries_exact_lifecycle_identit
     imitation_section = MAIN_SYSTEM_PROMPT[section_start:section_end]
 
     # 保存顺序与输入必须在仿写局部契约内明确,避免模型被就近示例引导成先输出后落库。
+    assert imitation_section.index("save_writing_teardown") < imitation_section.index("save_generated_copy")
     assert imitation_section.index("save_generated_copy") < imitation_section.index("保存成功后")
     assert "完整 A/B/C `versions`" in imitation_section
-    assert "真实 `reference_resource_id`" in imitation_section
+    assert "reference_resource_id" in imitation_section and "reference_resource_version" in imitation_section
     assert "唯一来源" in imitation_section and "禁止从 `ImitationReport` 推导" in imitation_section
     assert "保存失败时不得输出带伪造身份" in imitation_section
 
@@ -147,6 +148,7 @@ def test_xhs_imitation_saves_before_emission_and_carries_exact_lifecycle_identit
     for field in ("resource_id", "resource_version", "latest_resource_version", "state_version"):
         assert field in payload, f"xhs_imitation 顶层缺少生命周期字段 {field}"
     assert payload["reference_resource_id"]
+    assert payload["reference_resource_version"] > 0
     assert [version["label"] for version in payload["versions"]] == ["A", "B", "C"]
     assert [version["resource_version"] for version in payload["versions"]] == [1, 2, 3]
     assert payload["resource_version"] == payload["versions"][0]["resource_version"]

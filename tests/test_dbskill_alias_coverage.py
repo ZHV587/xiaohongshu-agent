@@ -27,11 +27,15 @@ ROUTED_SKILLS = [
     "xhs-slowisfast",
     "xhs-title",
     "xhs-hook",
-    "xhs-copywriting",
     "xhs-audit",
     "xhs-decision",
     "xhs-learning",
 ]
+
+# 仍由主提示词点名、但已经明确退出 SkillsMiddleware 路由的历史 Skill。
+# 它们只用于守护提示词引用确实指向存在的目录，不能再被“语义触发词”测试
+# 反向要求恢复为可路由状态。
+DEPRECATED_PROMPT_REFERENCES = ["xhs-copywriting"]
 
 # 飞书工具 skill 的 description 含 /base/ 链接路径、应用内/短信 等顿号词组,
 # 不是斜杠命令,扫描时豁免。
@@ -133,7 +137,7 @@ def test_prompt_routes_to_real_units_not_virtual_master_agents():
 def test_prompt_referenced_skills_have_real_directories():
     """prompt 中点名的 xhs-* skill 必须有真实 SKILL.md,防止虚拟路由。"""
     prompt = (ROOT / "prompts.py").read_text(encoding="utf-8")
-    for name in ROUTED_SKILLS:
+    for name in ROUTED_SKILLS + DEPRECATED_PROMPT_REFERENCES:
         skill_path = SKILLS_DIR / name / "SKILL.md"
         assert skill_path.exists(), f"prompt references {name}, but {skill_path} missing"
         assert name in prompt

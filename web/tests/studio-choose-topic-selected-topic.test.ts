@@ -30,12 +30,13 @@ test("chooseTopic 经 stateUpdate 直传 selected_topic(topic+evidence)", () => 
   assert.match(body, /evidence:\s*selectedEvidence/);
 });
 
-test("chooseTopic 从 evidence[topic.id] 取真实 resource_id,不编造", () => {
+test("chooseTopic 从 evidence[topic.id] 取精确素材身份,不编造", () => {
   const body = chooseTopicBody();
   // 从 evidence map 按 topic.id 取该题的依据
   assert.match(body, /evidence\[topic\.id\]/);
   // 逐条搬 resource_id / title / summary / 时效字段(对齐后端 _clean_evidence)
   assert.match(body, /resource_id:\s*it\.resource_id/);
+  assert.match(body, /resource_version:\s*it\.resource_version/);
   assert.match(body, /title:\s*it\.title/);
   assert.match(body, /summary:\s*it\.summary/);
   assert.match(body, /source_updated_at:\s*it\.source_updated_at/);

@@ -12,6 +12,7 @@ from data_foundation.evidence import EvidenceItem, EvidencePackage
 def _item(**over) -> dict:
     base = {
         "resource_id": "r1",
+        "resource_version": 1,
         "title": "标题",
         "summary": "摘要",
         "source_updated_at": "未知",
@@ -30,6 +31,12 @@ def test_evidence_item_uses_why_selected_not_why_relevant():
     # 时效字段恒为字符串
     assert isinstance(item.source_updated_at, str)
     assert isinstance(item.indexed_at, str)
+
+
+@pytest.mark.parametrize("resource_version", [None, 0, -1])
+def test_evidence_item_requires_exact_positive_resource_version(resource_version):
+    with pytest.raises(ValidationError):
+        EvidenceItem(**_item(resource_version=resource_version))
 
 
 def test_semantic_package_with_evidence_ok():

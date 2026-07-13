@@ -38,6 +38,7 @@ def _doc(resource_id, title, score, *, days_old=0, rtype="doc"):
     updated = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
     return {
         "resource_id": resource_id,
+        "resource_version": 1,
         "title": title,
         "summary": "s",
         "score": score,
@@ -76,6 +77,7 @@ def test_freshness_handles_naive_source_timestamp():
     naive_10d = (datetime.now(timezone.utc) - timedelta(days=10)).replace(tzinfo=None).isoformat()
     doc = {
         "resource_id": "res-naive",
+        "resource_version": 1,
         "title": "无时区时间戳的资源",
         "summary": "s",
         "score": 0.5,

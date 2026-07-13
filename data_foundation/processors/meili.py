@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from psycopg import Connection
 from psycopg.rows import dict_row
@@ -13,10 +14,9 @@ from data_foundation.processors.base import LeaseGuard, PermanentProcessingError
 
 class MeiliProcessor:
     topic = "meili_index"
+    max_reconcile_passes = 4
 
     def __init__(self, conn: Connection, *, index: MeiliResourceIndex | None, config: MeiliConfig):
-        # 不改写共享连接的 row_factory(会污染其它共用该连接、依赖默认/hybrid 行格式的组件);
-        # 本处理器所需的 dict 行按查询用 cursor(row_factory=dict_row) 局部声明。
         self.conn = conn
         self.index = index
         self.config = config
@@ -24,9 +24,18 @@ class MeiliProcessor:
 
     def state(self) -> ProcessorState:
         if self.config.state != "enabled" or self.index is None:
-            return ProcessorState(topic=self.topic, status="disabled",
-                                  config_version=None, reason_code="MEILI_CONFIG_MISSING")
-        return ProcessorState(topic=self.topic, status="active", config_version=None, reason_code=None)
+            return ProcessorState(
+                topic=self.topic,
+                status="disabled",
+                config_version=None,
+                reason_code="MEILI_CONFIG_MISSING",
+            )
+        return ProcessorState(
+            topic=self.topic,
+            status="active",
+            config_version=None,
+            reason_code=None,
+        )
 
     async def process(self, item: OutboxItem, lease: LeaseGuard) -> ProcessResult:
         if self.config.state != "enabled" or self.index is None:
@@ -35,66 +44,74 @@ class MeiliProcessor:
         resource_version = int(item.payload.get("version") or item.resource_version or 0)
         if not resource_id or resource_version <= 0:
             raise PermanentProcessingError("Meili outbox payload missing resource_id/version")
+
+        # Meili is keyed by stable resource_id, so every exact-version task is a
+        # resource-level reconciliation request. Reading only the task's historical
+        # version would let an older task overwrite or delete a newer current document.
+        desired = self._load_current_document(
+            tenant_id=item.tenant_id,
+            resource_id=resource_id,
+        )
+        for _attempt in range(self.max_reconcile_passes):
+            await lease.assert_owned()
+            if desired is None:
+                await asyncio.to_thread(self.index.delete, resource_id)
+            else:
+                await self._ensure_index(lease)
+                await asyncio.to_thread(self.index.upsert, desired)
+
+            # External writes are not atomic with PostgreSQL. Re-read the single
+            # current gate after Meili acknowledges the operation; if the desired
+            # state changed while I/O was in flight, repair it in this same lease.
+            await lease.assert_owned()
+            observed = self._load_current_document(
+                tenant_id=item.tenant_id,
+                resource_id=resource_id,
+            )
+            if observed == desired:
+                return ProcessResult(
+                    status="succeeded" if observed is not None else "superseded"
+                )
+            desired = observed
+
+        # Continuous churn is transient. Failing preserves this row for normal retry;
+        # every committed classification also owns a distinct generation row, so a
+        # final state cannot be swallowed by this processing item.
+        raise RuntimeError("MEILI_RECONCILE_UNSTABLE")
+
+    async def _ensure_index(self, lease: LeaseGuard) -> None:
+        if self._index_ensured:
+            return
+        await asyncio.to_thread(self.index.ensure_index)
+        await lease.assert_owned()
+        self._index_ensured = True
+
+    def _load_current_document(
+        self,
+        *,
+        tenant_id: str,
+        resource_id: str,
+    ) -> dict[str, Any] | None:
         with self.conn.cursor(row_factory=dict_row) as cur:
             row = cur.execute(
                 """
-                select r.id::text as id, r.tenant_id, r.type,
-                       coalesce(nullif(rv.content_json->>'title', ''), r.title) as title,
-                       r.summary, rv.content_text, rv.version as resource_version
-                from resources r
-                join resource_versions rv
-                  on rv.tenant_id = r.tenant_id
-                 and rv.resource_id = r.id
-                 and rv.version = %s
-                left join generated_copy_states gcs
-                  on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
-                where r.tenant_id = %s and r.id = %s
-                  and (
-                    (r.type = 'generated_copy' and gcs.knowledge_target_version = rv.version)
-                    or
-                    (r.type <> 'generated_copy' and rv.version = (
-                      select max(latest.version) from resource_versions latest
-                      where latest.tenant_id = r.tenant_id and latest.resource_id = r.id
-                    ))
-                  )
+                select target.resource_id::text as id, target.tenant_id,
+                       target.resource_type as type, target.title, target.summary,
+                       target.content_text, target.resource_version
+                from current_knowledge_targets target
+                where target.tenant_id = %s
+                  and target.resource_id = %s
                 """,
-                (resource_version, item.tenant_id, resource_id),
+                (tenant_id, resource_id),
             ).fetchone()
         if row is None:
-            with self.conn.cursor(row_factory=dict_row) as cur:
-                exists = cur.execute(
-                    "select 1 from resources where tenant_id = %s and id = %s",
-                    (item.tenant_id, resource_id),
-                ).fetchone()
-            if exists is not None:
-                # 资源仍在，但这条 outbox 指向旧版本、普通候选或已被新采纳版本替代。
-                # 绝不能删除当前 Meili 文档，也不能回退索引到错误快照。
-                return ProcessResult(status="superseded")
-            # 资源确已从核心库消失才物理删除索引文档。
-            await lease.assert_owned()
-            await asyncio.to_thread(self.index.delete, resource_id)
-            return ProcessResult(status="superseded")
-        # 确保索引 settings(filterable/searchable)就位,且只在本实例首次写入前调一次。
-        # Meili update settings 幂等;这保证容器/数据卷重建后 settings 自动恢复,
-        # 不依赖部署期手动 ensure_index(否则 search 的 tenant_id filter 会因未声明 filterable 而失败)。
-        # meilisearch 客户端是同步阻塞 I/O(requests 系)。本方法是 async 且跑在
-        # asyncio.wait_for(outbox_timeout) 之下:若直接在事件循环线程阻塞 socket,
-        # wait_for 的超时回调跑不动 → 超时形同虚设,Meili 卡顿会冻死整个调度 cycle。
-        # 故 ensure_index/upsert 一律 asyncio.to_thread 卸到工作线程。
-        if not self._index_ensured:
-            await asyncio.to_thread(self.index.ensure_index)
-            self._index_ensured = True
-        await lease.assert_owned()
-        await asyncio.to_thread(
-            self.index.upsert,
-            {
-                "resource_id": row["id"],
-                "tenant_id": row["tenant_id"],
-                "type": row["type"],
-                "title": row["title"],
-                "summary": row["summary"],
-                "content_text": row["content_text"],
-                "resource_version": int(row["resource_version"]),
-            },
-        )
-        return ProcessResult(status="succeeded")
+            return None
+        return {
+            "resource_id": row["id"],
+            "tenant_id": row["tenant_id"],
+            "type": row["type"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "content_text": row["content_text"],
+            "resource_version": int(row["resource_version"]),
+        }

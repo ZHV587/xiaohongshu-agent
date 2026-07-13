@@ -431,7 +431,13 @@ def _build_embedding_runtime(conn, *, config: SchedulerConfig) -> EmbeddingRunti
         )
     return EmbeddingRuntime(
         embedding_service=embedding_service,
-        outbox_registry=default_processor_registry(conn, embedding_config=embedding_config),
+        outbox_registry=default_processor_registry(
+            conn,
+            embedding_config=embedding_config,
+            # preference_synthesize runs in a worker thread and must own a connection
+            # separate from this scheduler/outbox lease connection.
+            preference_connection_factory=connect,
+        ),
         config_version=snapshot.version,
     )
 

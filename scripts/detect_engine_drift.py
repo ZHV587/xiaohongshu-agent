@@ -38,13 +38,10 @@ def _expected_by_topic(conn) -> dict[str, dict[str, int]]:
         """
         select r.tenant_id,
                count(*) as graph_n,
-               count(*) filter (
-                 where r.type <> 'generated_copy'
-                    or gcs.knowledge_target_version is not null
-               ) as meili_n
+               (select count(*)
+                from current_knowledge_targets target
+                where target.tenant_id = r.tenant_id) as meili_n
         from resources r
-        left join generated_copy_states gcs
-          on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
         group by r.tenant_id
         """
     ).fetchall()

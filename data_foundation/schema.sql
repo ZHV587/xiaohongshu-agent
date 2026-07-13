@@ -409,6 +409,219 @@ where r.type = 'generated_copy'
 group by r.tenant_id, r.id, r.owner_open_id
 on conflict (tenant_id, resource_id) do nothing;
 
+-- 知识资产的精确版本状态。正文是否可检索、是否可用于模式综合、去重家族与来源权威
+-- 都绑定 immutable resource_version，绝不靠 resources 最新行猜测。
+create table if not exists knowledge_families (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  canonical_resource_id uuid not null,
+  canonical_resource_version int not null check (canonical_resource_version > 0),
+  family_kind text not null default 'singleton'
+    check (family_kind in ('singleton', 'exact', 'near')),
+  canonical_hash text not null check (canonical_hash ~ '^[0-9a-f]{64}$'),
+  metadata jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, id),
+  foreign key (tenant_id, canonical_resource_id, canonical_resource_version)
+    references resource_versions(tenant_id, resource_id, version)
+);
+
+create index if not exists idx_knowledge_families_tenant_recent
+  on knowledge_families (tenant_id, updated_at desc, id);
+
+create table if not exists knowledge_asset_states (
+  tenant_id text not null,
+  resource_id uuid not null,
+  resource_version int not null check (resource_version > 0),
+  eligibility text not null
+    check (eligibility in ('pending', 'qualified', 'rejected')),
+  eligible_for_synthesis boolean not null default false,
+  asset_kind text not null check (asset_kind <> ''),
+  source_kind text not null check (source_kind <> ''),
+  source_authority jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(source_authority) = 'object'),
+  quality_score double precision not null default 0.0
+    check (quality_score >= 0.0 and quality_score <= 1.0),
+  normalized_text text not null default '',
+  normalized_hash text not null check (normalized_hash ~ '^[0-9a-f]{64}$'),
+  duplicate_family_id uuid,
+  duplicate_kind text
+    check (duplicate_kind is null or duplicate_kind in ('singleton', 'exact', 'near')),
+  variant_of_resource_id uuid,
+  variant_of_resource_version int,
+  visibility text not null check (visibility <> ''),
+  owner_open_id text,
+  metadata jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(metadata) = 'object'),
+  qualified_at timestamptz,
+  indexed_at timestamptz,
+  search_reconcile_generation bigint not null default 0
+    constraint knowledge_asset_states_search_generation_check
+    check (search_reconcile_generation >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, resource_id, resource_version),
+  foreign key (tenant_id, resource_id, resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  foreign key (tenant_id, duplicate_family_id)
+    references knowledge_families(tenant_id, id),
+  foreign key (tenant_id, variant_of_resource_id, variant_of_resource_version)
+    references resource_versions(tenant_id, resource_id, version),
+  constraint knowledge_asset_states_variant_pair_check check (
+    (variant_of_resource_id is null and variant_of_resource_version is null)
+    or
+    (variant_of_resource_id is not null and variant_of_resource_version is not null
+      and variant_of_resource_version > 0)
+  ),
+  constraint knowledge_asset_states_qualified_time_check check (
+    eligibility <> 'qualified' or qualified_at is not null
+  ),
+  constraint knowledge_asset_states_synthesis_qualification_check check (
+    eligible_for_synthesis is false or eligibility = 'qualified'
+  ),
+  constraint knowledge_asset_states_qualified_family_check check (
+    eligibility <> 'qualified' or duplicate_family_id is not null
+  )
+);
+
+-- 每次成功分类都产生独立的搜索对账 generation。旧 processing 任务因此不能吞掉
+-- 新的撤回/恢复事实；历史状态从 0 起步，下次分类时原子推进到 1。
+alter table knowledge_asset_states
+  add column if not exists search_reconcile_generation bigint not null default 0;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'knowledge_asset_states'::regclass
+      and conname = 'knowledge_asset_states_search_generation_check'
+  ) then
+    alter table knowledge_asset_states
+      add constraint knowledge_asset_states_search_generation_check
+      check (search_reconcile_generation >= 0);
+  end if;
+end $$;
+
+create index if not exists idx_knowledge_asset_states_tenant_eligibility
+  on knowledge_asset_states (tenant_id, eligibility, asset_kind, quality_score desc);
+create index if not exists idx_knowledge_asset_states_owner_visibility
+  on knowledge_asset_states (tenant_id, owner_open_id, visibility, updated_at desc);
+create index if not exists idx_knowledge_asset_states_hash
+  on knowledge_asset_states (tenant_id, normalized_hash);
+create index if not exists idx_knowledge_asset_states_family
+  on knowledge_asset_states (tenant_id, duplicate_family_id, resource_id, resource_version);
+create index if not exists idx_knowledge_asset_states_normalized_trgm
+  on knowledge_asset_states using gin (normalized_text public.gin_trgm_ops);
+
+create table if not exists knowledge_enrichments (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  resource_id uuid not null,
+  resource_version int not null check (resource_version > 0),
+  enrichment_type text not null check (enrichment_type <> ''),
+  pipeline_version text not null check (pipeline_version <> ''),
+  payload jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(payload) = 'object'),
+  content_hash text not null check (content_hash ~ '^[0-9a-f]{64}$'),
+  created_by text not null,
+  created_at timestamptz not null default now(),
+  foreign key (tenant_id, resource_id, resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  unique (
+    tenant_id, resource_id, resource_version,
+    enrichment_type, pipeline_version, content_hash
+  )
+);
+
+create index if not exists idx_knowledge_enrichments_exact_recent
+  on knowledge_enrichments (tenant_id, resource_id, resource_version, created_at desc);
+
+create or replace function reject_knowledge_enrichment_mutation()
+returns trigger as $$
+begin
+  raise exception 'knowledge_enrichments rows are immutable; append a new row instead'
+    using errcode = '55000';
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_knowledge_enrichments_immutable on knowledge_enrichments;
+create trigger trg_knowledge_enrichments_immutable
+  before update or delete on knowledge_enrichments
+  for each row execute function reject_knowledge_enrichment_mutation();
+
+create table if not exists preference_observations (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  owner_open_id text not null,
+  resource_id uuid not null,
+  resource_version int not null check (resource_version > 0),
+  observation_type text not null check (observation_type <> ''),
+  signal jsonb not null default '{}'::jsonb check (jsonb_typeof(signal) = 'object'),
+  weight double precision not null default 1.0 check (weight >= -1.0 and weight <= 1.0),
+  idempotency_key text not null check (idempotency_key <> ''),
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  observed_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  foreign key (tenant_id, resource_id, resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  unique (tenant_id, owner_open_id, idempotency_key)
+);
+
+create index if not exists idx_preference_observations_owner_recent
+  on preference_observations (tenant_id, owner_open_id, observed_at desc, id desc);
+
+create table if not exists writing_profile_states (
+  tenant_id text not null,
+  owner_open_id text not null,
+  profile_resource_id uuid,
+  profile_resource_version int,
+  input_digest text not null default '' check (input_digest = '' or input_digest ~ '^[0-9a-f]{64}$'),
+  observation_count int not null default 0 check (observation_count >= 0),
+  profile jsonb not null default '{}'::jsonb check (jsonb_typeof(profile) = 'object'),
+  evidence_count int not null default 0 check (evidence_count >= 0),
+  revision bigint not null default 1 check (revision > 0),
+  rebuilt_through timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, owner_open_id),
+  foreign key (tenant_id, profile_resource_id, profile_resource_version)
+    references resource_versions(tenant_id, resource_id, version),
+  constraint writing_profile_states_exact_pair_check check (
+    (profile_resource_id is null and profile_resource_version is null)
+    or
+    (profile_resource_id is not null and profile_resource_version is not null
+      and profile_resource_version > 0)
+  )
+);
+
+create table if not exists preference_synthesis_states (
+  tenant_id text not null,
+  owner_open_id text not null,
+  requested_revision bigint not null default 0 check (requested_revision >= 0),
+  completed_revision bigint not null default 0 check (
+    completed_revision >= 0 and completed_revision <= requested_revision
+  ),
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, owner_open_id)
+);
+
+create table if not exists preference_synthesis_events (
+  tenant_id text not null,
+  owner_open_id text not null,
+  trigger_key text not null,
+  trigger_payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  primary key (tenant_id, owner_open_id, trigger_key),
+  foreign key (tenant_id, owner_open_id)
+    references preference_synthesis_states(tenant_id, owner_open_id)
+    deferrable initially deferred
+);
+
+-- 每租户唯一的 system 图根；它只用于 no-island 关联，不进入正文资格或检索。
+create unique index if not exists uq_resources_tenant_knowledge_anchor
+  on resources (tenant_id) where type = 'knowledge_anchor';
+
 create table if not exists resource_events (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
@@ -468,20 +681,192 @@ create table if not exists resource_edges (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
   source_resource_id uuid not null,
+  source_resource_version int not null,
   target_resource_id uuid not null,
+  target_resource_version int not null,
   edge_type text not null,
   weight double precision not null default 1.0,
   properties jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  foreign key (tenant_id, source_resource_id)
-    references resources(tenant_id, id) on delete cascade,
-  foreign key (tenant_id, target_resource_id)
-    references resources(tenant_id, id) on delete cascade,
-  unique (tenant_id, source_resource_id, target_resource_id, edge_type)
+  constraint resource_edges_source_exact_fkey
+  foreign key (tenant_id, source_resource_id, source_resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  constraint resource_edges_target_exact_fkey
+  foreign key (tenant_id, target_resource_id, target_resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  constraint resource_edges_source_version_positive_check
+    check (source_resource_version > 0),
+  constraint resource_edges_target_version_positive_check
+    check (target_resource_version > 0),
+  constraint uq_resource_edges_exact unique (
+    tenant_id,
+    source_resource_id, source_resource_version,
+    target_resource_id, target_resource_version,
+    edge_type
+  )
 );
+
+-- 既有边没有版本身份。升级时只能把两端回填为当时可确定的最新版本，并在 properties
+-- 明示这是迁移推断；完成 NOT NULL/FK 后所有新写入都必须提供 exact version，不再推断。
+alter table resource_edges add column if not exists source_resource_version int;
+alter table resource_edges add column if not exists target_resource_version int;
+update resource_edges edge
+set source_resource_version = coalesce(
+      edge.source_resource_version,
+      (select max(rv.version) from resource_versions rv
+       where rv.tenant_id = edge.tenant_id and rv.resource_id = edge.source_resource_id)
+    ),
+    target_resource_version = coalesce(
+      edge.target_resource_version,
+      (select max(rv.version) from resource_versions rv
+       where rv.tenant_id = edge.tenant_id and rv.resource_id = edge.target_resource_id)
+    ),
+    properties = coalesce(edge.properties, '{}'::jsonb)
+      || jsonb_build_object('legacy_version_inferred', true)
+where edge.source_resource_version is null
+   or edge.target_resource_version is null;
+alter table resource_edges alter column source_resource_version set not null;
+alter table resource_edges alter column target_resource_version set not null;
+
+do $$
+declare old_unique text;
+begin
+  for old_unique in
+    select conname
+    from pg_constraint
+    where conrelid = 'resource_edges'::regclass
+      and contype = 'u'
+      and pg_get_constraintdef(oid) not ilike '%source_resource_version%'
+  loop
+    execute format('alter table resource_edges drop constraint %I', old_unique);
+  end loop;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'resource_edges'::regclass
+      and conname = 'resource_edges_source_exact_fkey'
+  ) then
+    alter table resource_edges add constraint resource_edges_source_exact_fkey
+      foreign key (tenant_id, source_resource_id, source_resource_version)
+      references resource_versions(tenant_id, resource_id, version) on delete cascade;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'resource_edges'::regclass
+      and conname = 'resource_edges_target_exact_fkey'
+  ) then
+    alter table resource_edges add constraint resource_edges_target_exact_fkey
+      foreign key (tenant_id, target_resource_id, target_resource_version)
+      references resource_versions(tenant_id, resource_id, version) on delete cascade;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'resource_edges'::regclass
+      and conname = 'resource_edges_source_version_positive_check'
+  ) then
+    alter table resource_edges add constraint resource_edges_source_version_positive_check
+      check (source_resource_version > 0);
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'resource_edges'::regclass
+      and conname = 'resource_edges_target_version_positive_check'
+  ) then
+    alter table resource_edges add constraint resource_edges_target_version_positive_check
+      check (target_resource_version > 0);
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'resource_edges'::regclass
+      and conname = 'uq_resource_edges_exact'
+  ) then
+    alter table resource_edges add constraint uq_resource_edges_exact unique (
+      tenant_id,
+      source_resource_id, source_resource_version,
+      target_resource_id, target_resource_version,
+      edge_type
+    );
+  end if;
+end $$;
 
 create index if not exists idx_resource_edges_tenant_recent
   on resource_edges (tenant_id, created_at desc);
+create index if not exists idx_resource_edges_source_exact
+  on resource_edges (tenant_id, source_resource_id, source_resource_version);
+create index if not exists idx_resource_edges_target_exact
+  on resource_edges (tenant_id, target_resource_id, target_resource_version);
+
+create or replace view qualified_knowledge_versions as
+select kas.tenant_id,
+       kas.resource_id,
+       kas.resource_version,
+       r.type as resource_type,
+       r.title,
+       r.summary,
+       rv.content_text,
+       rv.content_json,
+       kas.asset_kind,
+       kas.source_kind,
+       kas.source_authority,
+       kas.quality_score,
+       kas.normalized_hash,
+       kas.duplicate_family_id,
+       kas.eligible_for_synthesis,
+       kas.visibility,
+       kas.owner_open_id,
+       kas.metadata,
+       kas.qualified_at,
+       kas.indexed_at
+from knowledge_asset_states kas
+join resources r
+  on r.tenant_id = kas.tenant_id and r.id = kas.resource_id
+join resource_versions rv
+  on rv.tenant_id = kas.tenant_id
+ and rv.resource_id = kas.resource_id
+ and rv.version = kas.resource_version
+where kas.eligibility = 'qualified'
+  and kas.asset_kind not in ('signal', 'knowledge_anchor');
+
+-- 当前稳定版本指针的基础门。拆解还要在下一层验证它依赖的精确来源仍是当前知识，
+-- 因而不能直接把本视图暴露给检索。
+create or replace view base_current_knowledge_targets as
+select qkv.*
+from qualified_knowledge_versions qkv
+join resources r
+  on r.tenant_id = qkv.tenant_id and r.id = qkv.resource_id
+left join generated_copy_states gcs
+  on gcs.tenant_id = qkv.tenant_id and gcs.resource_id = qkv.resource_id
+where r.status = 'active'
+  and (
+    (r.type = 'generated_copy' and qkv.resource_version = gcs.knowledge_target_version)
+    or
+    (r.type <> 'generated_copy' and qkv.resource_version = (
+      select max(latest.version)
+      from resource_versions latest
+      where latest.tenant_id = qkv.tenant_id
+        and latest.resource_id = qkv.resource_id
+    ))
+  );
+
+-- 对外唯一知识门。拆解不是独立事实：只有且必须有一条 teardown_of 边，而且目标
+-- exact version 仍通过基础 current gate 时才可继续检索。禁止拆解链式充当来源。
+create or replace view current_knowledge_targets as
+select base.*
+from base_current_knowledge_targets base
+where base.asset_kind <> 'teardown'
+   or (
+     select count(*)
+     from resource_edges edge
+     join base_current_knowledge_targets target
+       on target.tenant_id = edge.tenant_id
+      and target.resource_id = edge.target_resource_id
+      and target.resource_version = edge.target_resource_version
+      and target.asset_kind <> 'teardown'
+     where edge.tenant_id = base.tenant_id
+       and edge.source_resource_id = base.resource_id
+       and edge.source_resource_version = base.resource_version
+       and edge.edge_type = 'teardown_of'
+   ) = 1;
 
 create table if not exists resource_permissions (
   id uuid primary key default gen_random_uuid(),
@@ -758,8 +1143,19 @@ create trigger trg_resource_outbox_notify_update
 -- 全部进入 outbox、要么连迁移标记一起回滚；服务重启不会重复全表扫描或重复投递。
 create table if not exists data_foundation_migrations (
   migration_key text primary key,
-  applied_at timestamptz not null default now()
+  status text not null default 'complete'
+    check (status in ('backfilling', 'complete')),
+  applied_at timestamptz not null default now(),
+  completed_at timestamptz default now()
 );
+
+-- Existing installations already have the one-column migration ledger.  The status
+-- is a transient cutover gate, not a compatibility flag: backfilling is completed in
+-- the same transaction by db._complete_knowledge_gate and never remains after commit.
+alter table data_foundation_migrations
+  add column if not exists status text not null default 'complete';
+alter table data_foundation_migrations
+  add column if not exists completed_at timestamptz default now();
 
 -- 2026-07:历史 Meili 文档没有 resource_version。新检索契约会拒绝这些无法精确回表的
 -- 文档，因此升级时必须为每个当前可检索的精确版本做一次 outbox 重建：
@@ -845,6 +1241,113 @@ and not exists (
     and active.topic = 'meili_index'
     and active.status in ('pending', 'retry', 'processing', 'blocked')
 )
+on conflict (tenant_id, dedupe_key) do nothing;
+
+-- Falkor 旧 REL 没有精确端点版本，运行时已 fail-closed 排除。为当前可用版本重新
+-- materialize 节点和边：普通资源取 latest；generated_copy 若已有 knowledge target
+-- 只取该精确版本，尚未采纳的历史候选取 latest 且仍只进图，不进入知识检索。
+with claimed as (
+  insert into data_foundation_migrations (migration_key)
+  values ('20260713_graph_exact_versions_v1')
+  on conflict (migration_key) do nothing
+  returning migration_key
+),
+targets as materialized (
+  select r.tenant_id,
+         r.id as resource_id,
+         case
+           when r.type = 'generated_copy' then coalesce(
+             gcs.knowledge_target_version,
+             (select max(rv.version) from resource_versions rv
+              where rv.tenant_id = r.tenant_id and rv.resource_id = r.id)
+           )
+           else (
+             select max(rv.version) from resource_versions rv
+             where rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+           )
+         end as resource_version
+  from claimed
+  join resources r on true
+  left join generated_copy_states gcs
+    on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+)
+insert into resource_outbox (
+  tenant_id, resource_id, resource_version, topic, dedupe_key, payload
+)
+select target.tenant_id,
+       target.resource_id,
+       target.resource_version,
+       'graph_ingest',
+       encode(
+         digest(
+           concat_ws(
+             '|', 'graph-exact-versions-v1', target.tenant_id,
+             target.resource_id::text, target.resource_version::text
+           ),
+           'sha256'
+         ),
+         'hex'
+       ),
+       jsonb_build_object(
+         'resource_id', target.resource_id::text,
+         'version', target.resource_version
+       )
+from targets target
+where target.resource_version is not null
+on conflict (tenant_id, dedupe_key) do nothing;
+
+-- Existing resources predate the knowledge qualification gate.  This transient marker
+-- and its exact tasks are created inside the schema transaction. db.run_migrations then
+-- runs the same deterministic KnowledgeService synchronously and changes the marker to
+-- complete before committing the new views, so there is no retrieval-empty cutover.
+-- The outbox tasks remain for normal post-cutover pattern synthesis/reconciliation.
+-- generated_copy candidates remain graph-only: only knowledge_target_version is a target.
+with claimed as (
+  insert into data_foundation_migrations (migration_key, status, completed_at)
+  values ('20260713_knowledge_gate_v2', 'backfilling', null)
+  on conflict (migration_key) do nothing
+  returning migration_key
+),
+targets as materialized (
+  select r.tenant_id,
+         r.id as resource_id,
+         case
+           when r.type = 'generated_copy' then gcs.knowledge_target_version
+           else (
+             select max(rv.version)
+             from resource_versions rv
+             where rv.tenant_id = r.tenant_id and rv.resource_id = r.id
+           )
+         end as resource_version
+  from claimed
+  join resources r on true
+  left join generated_copy_states gcs
+    on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
+  where r.type <> 'knowledge_anchor'
+)
+insert into resource_outbox (
+  tenant_id, resource_id, resource_version, topic, dedupe_key, payload
+)
+select target.tenant_id,
+       target.resource_id,
+       target.resource_version,
+       'knowledge_enrich',
+       encode(
+         digest(
+           concat_ws(
+             '|', 'knowledge-enrich-v1', target.tenant_id,
+             target.resource_id::text, target.resource_version::text
+           ),
+           'sha256'
+         ),
+         'hex'
+       ),
+       jsonb_build_object(
+         'resource_id', target.resource_id::text,
+         'version', target.resource_version
+       )
+from targets target
+where target.resource_version is not null
 on conflict (tenant_id, dedupe_key) do nothing;
 
 create table if not exists service_error_aggregates (

@@ -117,7 +117,7 @@ def test_disabled_engine_topic_is_skipped_not_reported_as_full_loss():
 def test_drift_expected_sql_keeps_graph_candidates_but_excludes_them_from_meili():
     source = inspect.getsource(_expected_by_topic)
     assert "count(*) as graph_n" in source
-    assert "gcs.knowledge_target_version is not null" in source
+    assert "from current_knowledge_targets target" in source
     assert "as meili_n" in source
 
 

@@ -65,6 +65,8 @@ agent = create_deep_agent(
         "sync_topic_to_feishu": True,
         "sync_diagnosis_to_feishu": True,
         "send_review_notification": True,
+        # 会话结论升格为长期知识必须经过 DeepAgents HITL；不能只靠模型遵守 prompt。
+        "confirm_session_snapshot": {"allowed_decisions": ["approve", "reject"]},
         # 采纳:笔记数据由前端经 InjectedState 直传(权威),编辑无意义,只允许批准/驳回。
         "adopt_online_notes": {"allowed_decisions": ["approve", "reject"]},
     },

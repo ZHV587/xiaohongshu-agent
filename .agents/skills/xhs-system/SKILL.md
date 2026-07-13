@@ -18,10 +18,11 @@ description: |
 **操作**：
 1. 询问 project_name（如未提供）
 2. 整理本次会话的关键结论（定位/选题/文案/决策中的任何有价值的部分）
-3. 调用 `save_session_snapshot(project_name, title, content)` 存入数据库
-4. 调用 `sync_diagnosis_to_feishu(project_name, title, content)` 同步飞书
+3. 调用 `save_session_snapshot(project_name, title, content, snapshot_kind="workflow_state")` 存入数据库，保留返回的精确 `(resource_id, resource_version)`
+4. 因本功能由用户明确发出“保存/存档”触发，调用 `confirm_session_snapshot(resource_id, resource_version)` 将该精确版本升格为确认知识；类型只从保存时的 exact snapshot 读取，不重复传入
+5. 调用 `sync_diagnosis_to_feishu(project_name, title, content)` 同步飞书
 
-**返回**：数据库 resource_id + 飞书表格链接
+**返回**：数据库精确 `(resource_id, resource_version)` + 飞书表格链接
 
 ---
 
@@ -30,7 +31,7 @@ description: |
 拉取最近一份存档，恢复上下文。
 
 **操作**：
-1. 调用 `get_resource` 查询最近的 session snapshot（按 project_name 过滤）
+1. 调用 `get_session_snapshots(project_name)` 查询当前用户最近的精确 session snapshot；不要用通用知识检索替代
 2. 读取存档内容，注入到当前会话上下文
 3. 告诉用户：「上次的结论是…，我们接着聊。」
 
@@ -47,9 +48,9 @@ description: |
 
 **操作**：
 1. 询问 project_name（如未提供）
-2. 调用 `search_resources` 查找该项目最近的 session snapshot、诊断记录、选题记录
+2. 调用 `get_session_snapshots(project_name)` 取会话检查点；需要已确认选题/文案证据时再用 `search_resources`
 3. 按时间线整理：背景 → 已否决方向 → 已确认判断 → 当前策略 → 下一步动作
-4. 调用 `save_session_snapshot(project_name, "阶段报告-{日期}", content)` 保存报告
+4. 调用 `save_session_snapshot(project_name, "阶段报告-{日期}", content, snapshot_kind="stage_report")` 保存报告并保留精确身份；报告由 Agent 汇总时保持未确认，用户明确认可后才调用 `confirm_session_snapshot`
 5. 调用 `sync_diagnosis_to_feishu(project_name, "阶段报告-{日期}", content)` 同步飞书
 
 **报告结构**：
@@ -87,7 +88,7 @@ description: |
 
 **输出**：审计清单 + 修复建议
 
-调用 `save_session_snapshot(project_name, "Agent工作台迁移审计-{日期}", content)` 保存数据库版本，再调用 `sync_diagnosis_to_feishu(project_name, "Agent工作台迁移审计-{日期}", content)` 同步飞书。
+调用 `save_session_snapshot(project_name, "Agent工作台迁移审计-{日期}", content, snapshot_kind="migration_audit")` 保存数据库精确版本；审计报告默认是可恢复检查点，不自报用户确认。随后调用 `sync_diagnosis_to_feishu(project_name, "Agent工作台迁移审计-{日期}", content)` 同步飞书。
 
 ---
 

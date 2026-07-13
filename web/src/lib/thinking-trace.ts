@@ -1,6 +1,6 @@
 import type { Message } from "@langchain/langgraph-sdk";
 import { getContentString } from "@/components/thread/utils";
-import type { TracePresentation } from "@/lib/agent-trace";
+import { toolPresentation, type TracePresentation } from "@/lib/agent-trace";
 import { parseXhsBlocks } from "@/lib/xhs-blocks";
 
 export interface ThinkingStep {
@@ -42,6 +42,8 @@ export interface DiscoveryNote {
   /** 已入库素材(本地卡)的真实资源 id;线上未采纳的瞬态笔记无此字段(需先收录才有)。
    *  仿写要求范本可追溯到库内 resource_id,故本地卡直接用它,线上卡走「先收录再仿」。 */
   resource_id?: string;
+  /** 本地素材卡对应的不可变版本；与 resource_id 成对传给仿写链路。 */
+  resource_version?: number;
 }
 
 /** 意图分流按钮(§2):模糊创作请求时,模型用 xhs_panel 块给出可点选项,用户点一下直接进
@@ -97,8 +99,10 @@ const WRITE_TOOLS = new Set([
   "save_generated_topic",
   "save_generated_copy",
   "save_user_feedback",
+  "save_writing_teardown",
   "save_performance_metric",
   "save_session_snapshot",
+  "confirm_session_snapshot",
   "sync_feishu_resources",
   "sync_copy_to_feishu",
   "sync_topic_to_feishu",
@@ -110,31 +114,6 @@ const WRITE_TOOLS = new Set([
 
 // 敏感键名模式(大小写不敏感)：剥除读类工具 args 里的此类字段后再 stringify。
 const SENSITIVE_KEY_RE = /credential|token|authorization|secret|password|dsn|uat/i;
-
-// 工具名 → 中文语义。覆盖 data_foundation/tools.py 与 tools/feishu_actions.py 两来源。
-const TOOL_LABELS: Record<string, string> = {
-  semantic_search_resources: "按语义找相关素材",
-  search_resources: "按关键词补查素材",
-  search_local_note_cards: "检索本地笔记卡",
-  get_resource: "打开原文细看",
-  graph_expand: "顺着图谱找关联",
-  save_generated_topic: "保存选题",
-  save_generated_copy: "保存文案",
-  save_user_feedback: "沉淀反馈",
-  save_performance_metric: "沉淀效果指标",
-  save_session_snapshot: "保存会话快照",
-  get_resource_performance: "读取效果表现",
-  get_operations_data: "读取运营数据",
-  get_data_foundation_status: "读取数据底座状态",
-  sync_feishu_resources: "同步飞书资源",
-  sync_copy_to_feishu: "同步文案到飞书",
-  sync_topic_to_feishu: "同步选题到飞书",
-  sync_diagnosis_to_feishu: "同步诊断到飞书",
-  send_review_notification: "发送审阅通知",
-  adopt_online_notes: "采纳线上笔记",
-  search_xhs_online: "搜索小红书线上",
-  lark_cli: "飞书 CLI 操作",
-};
 
 // task 委派:按 subagent_type 细化;未知/缺失回退通用。
 const SUBAGENT_LABELS: Record<string, string> = {
@@ -148,38 +127,6 @@ const SUBAGENT_LABELS: Record<string, string> = {
   "imitation-writer": "请仿写助手照范本写成品",
 };
 
-// 步骤一句话意图(按中文 label 键):让「兜底轨道」也像 Claude Code/Codex 那样每步说清
-// "为什么做这一步",而不是只甩一个动作名(黑盒感的主因)。仅补真实工具/委派对应的说明,
-// 不虚构内容;缺失则不显示描述。
-const STEP_DESCRIPTIONS: Record<string, string> = {
-  "按语义找相关素材": "从数据底座按语义相似度召回可用笔记和历史素材",
-  "按关键词补查素材": "用关键词补一轮检索,避免只依赖语义相似的一组",
-  "检索本地笔记卡": "在本地素材库里找能支撑本轮主题的历史笔记",
-  "打开原文细看": "打开候选素材原文,核对关键表达、数据与上下文",
-  "顺着图谱找关联": "沿素材关联图找相邻线索,补单条素材的信息盲区",
-  "保存选题": "把本轮生成的选题沉淀入库,便于后续继续编辑/同步",
-  "保存文案": "把本轮文案草稿沉淀入库",
-  "沉淀反馈": "把用户反馈沉淀下来,供后续学习复用",
-  "沉淀效果指标": "把发布后的效果数据回填沉淀",
-  "同步文案到飞书": "把文案同步到飞书生产线",
-  "同步选题到飞书": "把选题同步到飞书生产线",
-  "同步诊断到飞书": "把诊断结果同步到飞书生产线",
-  "发送审阅通知": "在飞书发起人工审阅通知",
-  "采纳线上笔记": "把线上检索到的可用笔记收录进素材库(可追溯)",
-  "搜索小红书线上": "在线检索小红书,补本地库之外的新鲜样本",
-  "读取运营数据": "读取账号运营数据用于判断",
-  "飞书 CLI 操作": "调用飞书 CLI 执行外部动作",
-  "请知识检索助手查证据": "委派子助手隔离上下文,专门检索并核验证据",
-  "请风格提炼助手看样本": "委派子助手提炼账号既有风格样本",
-  "请对标分析助手拆爆款": "委派子助手拆解对标爆款的套路",
-  "请专家会商助手给判断": "委派多角色专家会商给出判断",
-  "请内容入库助手收录素材": "委派子助手把素材规范化收录入库",
-  "请课程设计助手搭框架": "委派子助手搭内容框架",
-  "请文案协处理助手起稿": "委派子助手起草并打磨文案",
-  "请仿写助手照范本写成品": "委派子助手照范本套路仿写成品",
-  "请子任务助手处理": "委派子助手在隔离上下文中处理这步重活",
-};
-
 export function toolLabel(name: string, args: unknown): string {
   if (name === "task") {
     const sub =
@@ -189,7 +136,7 @@ export function toolLabel(name: string, args: unknown): string {
     if (typeof sub === "string" && SUBAGENT_LABELS[sub]) return SUBAGENT_LABELS[sub];
     return "请子任务助手处理";
   }
-  return TOOL_LABELS[name] ?? name;
+  return toolPresentation(name)?.title ?? name;
 }
 
 interface ToolCall {
@@ -325,6 +272,16 @@ function toDiscoveryNote(raw: unknown): DiscoveryNote | null {
   const title = typeof r.title === "string" ? r.title : "";
   if (!noteId || !title) return null;
   const num = (v: unknown): number | undefined => (typeof v === "number" && isFinite(v) ? v : undefined);
+  const resourceId =
+    typeof r.resource_id === "string" && r.resource_id.trim()
+      ? r.resource_id.trim()
+      : null;
+  const resourceVersion =
+    typeof r.resource_version === "number" &&
+    Number.isInteger(r.resource_version) &&
+    r.resource_version > 0
+      ? r.resource_version
+      : null;
   return {
     note_id: noteId,
     title,
@@ -338,8 +295,10 @@ function toDiscoveryNote(raw: unknown): DiscoveryNote | null {
     tags: Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === "string") : undefined,
     source: r.source === "local" || r.source === "online" ? r.source : undefined,
     already_local: typeof r.already_local === "boolean" ? r.already_local : undefined,
-    // 本地卡带真实 resource_id(local_cards.hydrate_note_card 输出);线上卡通常没有。
-    resource_id: typeof r.resource_id === "string" && r.resource_id.trim() ? r.resource_id.trim() : undefined,
+    // exact identity 是一个原子值：只有 id/version 同时合法才接纳，绝不保留半对身份。
+    ...(resourceId != null && resourceVersion != null
+      ? { resource_id: resourceId, resource_version: resourceVersion }
+      : {}),
   };
 }
 
@@ -551,7 +510,7 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         j++;
       }
       // 兜底轨道也带一句意图说明(有则显示),让每步读起来是"在干什么/为什么",不再是裸动作名。
-      const description = narration ?? STEP_DESCRIPTIONS[name];
+      const description = narration;
       const state: ThinkingStep["state"] = hasError ? "error" : allDone ? "done" : "active";
       steps.push({ label: name, state, ...(description ? { description } : {}) });
       i = j;
@@ -697,7 +656,12 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
             // 同一条 AI 消息并行调用多个工具时只挂一次过程说明，避免重复刷屏。
             ...(!narrationAttached && (narration || queuedNarration)
               ? { description: narration ?? queuedNarration }
-              : {}),
+              : {
+                  description:
+                    c.name === "task"
+                      ? "委派子助手在隔离上下文中处理这步重活。"
+                      : toolPresentation(c.name)?.intent,
+                }),
           });
           narrationAttached = true;
           queuedNarration = undefined;
@@ -731,8 +695,8 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
       continue;
     }
     if (m.type === "tool") {
-      // 发现工具(本地/线上笔记检索)的结果渲染成可勾选采纳的卡片网格。合并相邻的发现结果
-      // (本地+线上两路)到同一 discovery 项,按 note_id 去重,保留最先出现的(通常本地在前)。
+      // 发现工具(本地/线上笔记检索)的结果渲染成可勾选采纳的卡片网格。相邻结果仍合并为
+      // 一个 discovery 项，但同 note_id 必须走 exact-pair 合并：后到的完整身份整体覆盖。
       const cid = (m as { tool_call_id?: string }).tool_call_id;
       const toolName = cid ? toolNameById.get(cid) : undefined;
       if (toolName && DISCOVERY_TOOLS.has(toolName)) {
@@ -740,8 +704,11 @@ export function deriveTimeline(messages: Message[], context: TimelineContext = {
         if (notes.length) {
           const last = out[out.length - 1];
           if (last && last.kind === "discovery") {
-            const seen = new Set(last.notes.map((n) => n.note_id));
-            for (const n of notes) if (!seen.has(n.note_id)) { last.notes.push(n); seen.add(n.note_id); }
+            const merged = mergeDiscoveryMaterials(
+              [last, { kind: "discovery", notes }],
+              new Map(),
+            );
+            last.notes.splice(0, last.notes.length, ...merged);
           } else {
             out.push({ kind: "discovery", notes });
           }
@@ -794,6 +761,7 @@ interface AdoptResultRow {
   adopted?: unknown;
   already_adopted?: unknown;
   resource_id?: unknown;
+  resource_version?: unknown;
 }
 interface AdoptErrorRow {
   note_id?: unknown;
@@ -891,11 +859,15 @@ export function parseLatestAdoption(messages: Message[]): AdoptionOutcome | null
   return null;
 }
 
-/** 全流程里已成功采纳的线上笔记 note_id → resource_id 映射(跨所有 adopt 结果累积)。
- *  供素材栏把这些笔记标为「已入库」(already_local)并带上真实 resource_id(可直接仿写)。 */
-export function adoptedNoteResourceIds(messages: Message[]): Map<string, string> {
+export interface AdoptedResourceIdentity {
+  resource_id: string;
+  resource_version: number;
+}
+
+/** 全流程里已成功采纳的线上笔记 note_id → 精确资源身份映射(跨所有 adopt 结果累积)。 */
+export function adoptedNoteResourceIdentities(messages: Message[]): Map<string, AdoptedResourceIdentity> {
   const toolNameById = buildToolNameById(messages);
-  const out = new Map<string, string>();
+  const out = new Map<string, AdoptedResourceIdentity>();
   for (const m of messages) {
     if (m.type !== "tool") continue;
     const cid = (m as { tool_call_id?: string }).tool_call_id;
@@ -907,13 +879,84 @@ export function adoptedNoteResourceIds(messages: Message[]): Map<string, string>
       const results = Array.isArray(payload.results) ? (payload.results as AdoptResultRow[]) : [];
       for (const r of results) {
         if (!r || r.adopted !== true) continue;
-        const id = str(r.note_id);
-        const rid = str(r.resource_id);
-        if (id) out.set(id, rid);
+        const id = str(r.note_id).trim();
+        const rid = str(r.resource_id).trim();
+        const version = r.resource_version;
+        if (
+          id && rid &&
+          typeof version === "number" &&
+          Number.isInteger(version) &&
+          version > 0
+        ) {
+          out.set(id, { resource_id: rid, resource_version: version });
+        }
       }
     } catch {
       continue;
     }
   }
   return out;
+}
+
+function exactNoteIdentity(note: DiscoveryNote): AdoptedResourceIdentity | null {
+  return typeof note.resource_id === "string" &&
+    note.resource_id.trim().length > 0 &&
+    typeof note.resource_version === "number" &&
+    Number.isInteger(note.resource_version) &&
+    note.resource_version > 0
+    ? {
+        resource_id: note.resource_id.trim(),
+        resource_version: note.resource_version,
+      }
+    : null;
+}
+
+/**
+ * 按消息时间顺序合并素材工作台。后到的完整 exact identity 是更新后的权威身份，必须整对
+ * 覆盖；缺 id 或缺 version 的记录只能更新展示字段，绝不能与旧字段拼成一对。采纳工具的
+ * 返回值是最终写库结果，优先级最高并无条件整体覆盖 discovery 身份。
+ */
+export function mergeDiscoveryMaterials(
+  timeline: TimelineItem[],
+  adoptedIdentities: ReadonlyMap<string, AdoptedResourceIdentity>,
+): DiscoveryNote[] {
+  const byId = new Map<string, DiscoveryNote>();
+  for (const item of timeline) {
+    if (item.kind !== "discovery") continue;
+    for (const incoming of item.notes) {
+      const existing = byId.get(incoming.note_id);
+      const incomingIdentity = exactNoteIdentity(incoming);
+      const existingIdentity = existing ? exactNoteIdentity(existing) : null;
+      const merged: DiscoveryNote = {
+        ...(existing ?? {}),
+        ...incoming,
+        ...(existing?.already_local === true || incoming.already_local === true
+          ? { already_local: true }
+          : {}),
+      };
+      if (incomingIdentity) {
+        merged.resource_id = incomingIdentity.resource_id;
+        merged.resource_version = incomingIdentity.resource_version;
+      } else if (existingIdentity) {
+        merged.resource_id = existingIdentity.resource_id;
+        merged.resource_version = existingIdentity.resource_version;
+      } else {
+        delete merged.resource_id;
+        delete merged.resource_version;
+      }
+      byId.set(incoming.note_id, merged);
+    }
+  }
+
+  for (const [noteId, identity] of adoptedIdentities) {
+    const existing = byId.get(noteId);
+    if (!existing) continue;
+    byId.set(noteId, {
+      ...existing,
+      already_local: true,
+      resource_id: identity.resource_id,
+      resource_version: identity.resource_version,
+    });
+  }
+  return Array.from(byId.values());
 }

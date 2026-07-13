@@ -229,7 +229,7 @@ description: |
 {犀利直接的总结}
 ```
 
-报告完成后调用 `save_session_snapshot` + `sync_diagnosis_to_feishu`（后者会触发审批确认）。
+报告完成后调用 `save_session_snapshot(..., snapshot_kind="diagnosis")` 保存当前用户可恢复的精确检查点，再调用 `sync_diagnosis_to_feishu`（后者会触发审批确认）。飞书审批不等于知识确认；只有用户在对话中明确认可结论后，才对精确身份调用 `confirm_session_snapshot(resource_id, resource_version)`；确认类型由已保存 exact snapshot 决定。
 
 ---
 

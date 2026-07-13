@@ -90,6 +90,13 @@ class FalkorResourceGraph:
 
     def merge_edge(self, *, source_id: str, target_id: str, edge_type: str,
                    weight: float, properties: dict[str, Any], tenant_id: str) -> None:
+        if not isinstance(properties, dict):
+            raise ValueError("edge properties must be an object")
+        edge_properties = dict(properties)
+        for field in ("source_resource_version", "target_resource_version"):
+            value = edge_properties.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"{field} must be a positive integer")
         # source 节点应已 merge_node;target 仅占位 MERGE(后续其任务补属性)。
         # 占位节点必须立刻带上 tenant_id:expand/count 全部按 tenant 过滤,没有 tenant 的
         # 占位节点在其补属性任务跑完前是"隐形"的 —— 无向遍历也永远召不回(线上曾积累 12 个)。
@@ -100,11 +107,20 @@ class FalkorResourceGraph:
             ON CREATE SET s.tenant_id = $tenant
             MERGE (t:Resource {id: $tid})
             ON CREATE SET t.tenant_id = $tenant
-            MERGE (s)-[e:REL {edge_type: $etype}]->(t)
-            SET e.weight = $weight
+            MERGE (s)-[e:REL {
+              edge_type: $etype,
+              source_resource_version: $source_version,
+              target_resource_version: $target_version
+            }]->(t)
+            SET e += $properties,
+                e.edge_type = $etype,
+                e.weight = $weight
             """,
             {"sid": source_id, "tid": target_id, "etype": edge_type, "weight": weight,
-             "tenant": tenant_id},
+             "tenant": tenant_id,
+             "source_version": edge_properties["source_resource_version"],
+             "target_version": edge_properties["target_resource_version"],
+             "properties": edge_properties},
         )
 
     def delete_node(self, resource_id: str) -> None:
@@ -118,6 +134,27 @@ class FalkorResourceGraph:
             {"id": resource_id},
         )
 
+    def delete_outgoing_version_edges(
+        self, *, source_id: str, source_resource_version: int, tenant_id: str
+    ) -> None:
+        """Remove one exact source version's materialized edges before reconciliation."""
+        self.graph.query(
+            """
+            MATCH (s:Resource {id: $id})-[rel:REL]->()
+            WHERE s.tenant_id = $tenant
+              AND (
+                rel.source_resource_version = $version
+                OR rel.source_resource_version IS NULL
+              )
+            DELETE rel
+            """,
+            {
+                "id": source_id,
+                "tenant": tenant_id,
+                "version": source_resource_version,
+            },
+        )
+
     def count(self, *, tenant_id: str) -> int:
         """按 tenant 统计图中 Resource 节点数(对账用)。"""
         rows = self.graph.query(
@@ -128,47 +165,88 @@ class FalkorResourceGraph:
             return int(rows[0][0] or 0)
         return 0
 
-    def expand(self, *, resource_ids: list[str], hops: int, edge_types: list[str] | None,
-               tenant_id: str) -> tuple[list[dict], list[dict]]:
-        params: dict[str, Any] = {"ids": resource_ids, "tenant": tenant_id}
+    def expand(self, *, resource_ids: list[str], resource_versions: list[int],
+               edge_types: list[str] | None, tenant_id: str) -> tuple[list[dict], list[dict]]:
+        if len(resource_ids) != len(resource_versions):
+            raise ValueError("resource_versions must align with resource_ids")
+        if any(not isinstance(version, int) or isinstance(version, bool) or version <= 0
+               for version in resource_versions):
+            raise ValueError("resource_versions must contain positive integers")
+        params: dict[str, Any] = {
+            "ids": resource_ids,
+            "versions": resource_versions,
+            "tenant": tenant_id,
+        }
         et_clause = ""
         if edge_types:
-            et_clause = "WHERE all(rel IN relationships(p) WHERE rel.edge_type IN $etypes)"
+            et_clause = "AND rel.edge_type IN $etypes"
             params["etypes"] = edge_types
-        # 无向遍历(-[:REL*1..hops]-,不再限定 ->):素材关联是双向语义(同垂类/同选题/仿写自
-        # 等),原先只沿 -> 方向扩展,会漏掉"只作为关联目标"的节点(它们的入边邻居永远召不回)。
-        # 无向后,从种子出发正反向邻居都能被扩展到,显著提召回;边仍按其存储的 source/target
-        # 原方向返回(startNode/endNode 给的是关系本身的两端,不因无向匹配而翻转)。
+        # 图节点仍承载稳定 resource 身份，关系属性承载不可变版本身份。因此扩展入口必须是
+        # (id, version) 对，并只沿种子这一精确端点版本的一跳关系走；若只按 id 起步，会把同一
+        # 资源其它历史版本的边混进当前证据。多跳会在中间节点产生同样歧义，统一检索层负责按需
+        # 逐跳调用并重新做 PG 资格/ACL 校验。
         rows = self.graph.query(
             f"""
-            MATCH p = (s:Resource)-[:REL*1..{hops}]-(t:Resource)
-            WHERE s.id IN $ids AND s.tenant_id = $tenant AND t.tenant_id = $tenant
-            WITH p {et_clause}
-            UNWIND relationships(p) as rel
+            UNWIND range(0, size($ids) - 1) AS i
+            MATCH (s:Resource)-[rel:REL]-(t:Resource)
+            WHERE s.id = $ids[i]
+              AND s.tenant_id = $tenant AND t.tenant_id = $tenant
+              AND rel.source_resource_version IS NOT NULL
+              AND rel.target_resource_version IS NOT NULL
+              AND (
+                (startNode(rel).id = s.id AND rel.source_resource_version = $versions[i])
+                OR
+                (endNode(rel).id = s.id AND rel.target_resource_version = $versions[i])
+              )
+              {et_clause}
             RETURN startNode(rel).id, startNode(rel).title, startNode(rel).type,
-                   startNode(rel).resource_version,
+                   rel.source_resource_version,
                    endNode(rel).id, endNode(rel).title, endNode(rel).type,
-                   endNode(rel).resource_version,
-                   rel.edge_type, rel.weight
+                   rel.target_resource_version,
+                   rel.edge_type, rel.weight, properties(rel)
             """,
             params,
         ).result_set
-        nodes: dict[str, dict] = {}
+        nodes: dict[tuple[str, int], dict] = {}
         edges: list[dict] = []
-        seen_edges: set[tuple[str, str, str]] = set()
+        seen_edges: set[tuple[str, int | None, str, int | None, str]] = set()
         for r in rows:
-            sid, stitle, stype, sversion, tid, ttitle, ttype, tversion, etype, weight = r
-            nodes[sid] = {
+            (
+                sid, stitle, stype, sversion,
+                tid, ttitle, ttype, tversion,
+                etype, weight, raw_properties,
+            ) = r
+            nodes[(sid, int(sversion))] = {
                 "id": sid, "title": stitle, "type": stype,
                 "resource_version": sversion,
             }
-            nodes[tid] = {
+            nodes[(tid, int(tversion))] = {
                 "id": tid, "title": ttitle, "type": ttype,
                 "resource_version": tversion,
             }
-            key = (sid, tid, etype)
+            relationship_properties = dict(raw_properties or {})
+            relationship_properties.pop("edge_type", None)
+            relationship_properties.pop("weight", None)
+            source_edge_version = relationship_properties.get("source_resource_version")
+            target_edge_version = relationship_properties.get("target_resource_version")
+            for field, value in (
+                ("source_resource_version", source_edge_version),
+                ("target_resource_version", target_edge_version),
+            ):
+                if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                    raise ValueError(f"Falkor relationship missing exact {field}")
+            key = (sid, source_edge_version, tid, target_edge_version, etype)
             if key not in seen_edges:
                 seen_edges.add(key)
-                edges.append({"source": sid, "target": tid, "edge_type": etype,
-                              "weight": float(weight or 1.0)})
+                edges.append(
+                    {
+                        "source": sid,
+                        "source_resource_version": source_edge_version,
+                        "target": tid,
+                        "target_resource_version": target_edge_version,
+                        "edge_type": etype,
+                        "weight": float(weight or 1.0),
+                        "properties": relationship_properties,
+                    }
+                )
         return list(nodes.values()), edges

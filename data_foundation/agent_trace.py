@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import hashlib
 import json
+import re
 import threading
 import uuid
 from typing import Any
@@ -11,12 +13,81 @@ from typing import Any
 SENSITIVE_KEY_MARKERS = (
     "token",
     "credential",
+    "api_key",
+    "apikey",
+    "client_secret",
+    "clientsecret",
+    "private_key",
+    "privatekey",
+    "secret_key",
+    "secretkey",
     "authorization",
     "secret",
     "password",
     "dsn",
     "uat",
     "payload",
+    # 用户正文、反馈、画像与 Skill 指令不得进入持久化 trace safe_args/safe_result。
+    "content",
+    "body",
+    "feedback",
+    "instruction",
+    "profile",
+    "preference",
+    "metadata",
+    "hook",
+    "cta",
+    "structure",
+    "success_factor",
+    "style_tag",
+)
+
+# 这些字段本身就是未经约束的原始输出。即使当前值看起来无害，也不能进入 trace；
+# 上游 CLI/HTTP 错误很可能把命令、响应体或凭据原样塞进来。
+SENSITIVE_EXACT_KEYS = frozenset(
+    {
+        "raw",
+        "exception",
+        "traceback",
+        "stack",
+        "stacktrace",
+        "stderr",
+        "stdout",
+    }
+)
+
+REDACTED_VALUE = "[REDACTED]"
+REDACTED_URL = "[REDACTED_URL]"
+
+# URL 的 path/query 也可能承载 app_token（飞书 Base redirect_url 就是这种形态），
+# 不能只清 query 参数；trace 并不需要可点击链接，因此整段 URL 一律替换。
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)(?<![\w])[\"']?("
+    r"(?:access|refresh|app)[_-]?tokens?|tokens?|authorization|uat|credentials?|"
+    r"client[_-]?secret|api[_-]?keys?|private[_-]?key|secret[_-]?key|"
+    r"secret|password|dsn"
+    r")[\"']?\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)"
+)
+
+TRACE_OPTIONAL_FIELDS = frozenset(
+    {
+        "thread_id",
+        "stage_id",
+        "tool_call_id",
+        "tool_name",
+        "attempt",
+        "parent_id",
+        "status",
+        "summary",
+        "metrics",
+        "safe_args",
+        "error",
+        "started_at",
+        "ended_at",
+        "duration_ms",
+    }
 )
 
 TERMINAL_EVENT_TYPES = {
@@ -48,16 +119,63 @@ class TraceSequencer:
 _GLOBAL_SEQUENCER = TraceSequencer()
 
 
+def _sensitive_key(key: Any) -> bool:
+    lowered = str(key).strip().lower()
+    normalized = lowered.replace("-", "_")
+    return normalized in SENSITIVE_EXACT_KEYS or any(
+        marker in normalized for marker in SENSITIVE_KEY_MARKERS
+    )
+
+
+def _sanitize_string(value: str) -> str:
+    value = _URL_RE.sub(REDACTED_URL, value)
+    value = _BEARER_RE.sub(f"Bearer {REDACTED_VALUE}", value)
+    return _SECRET_ASSIGNMENT_RE.sub(
+        lambda match: f"{match.group(1)}={REDACTED_VALUE}", value
+    )
+
+
+def _sanitize_identifier(value: Any, *, prefix: str) -> str:
+    """Keep ordinary correlation ids stable but never persist a secret-bearing id."""
+
+    raw = str(value)
+    clean = _sanitize_string(raw)
+    if clean != raw or any(character.isspace() for character in raw) or len(raw) > 256:
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+        return f"{prefix}-{digest}"
+    return clean
+
+
+def sanitize_exception(exc: BaseException) -> dict[str, str]:
+    """Return a stable failure shape without persisting the exception message.
+
+    Exception text is an untrusted raw channel: database drivers, HTTP clients and CLIs
+    can echo URLs, request bodies or credentials.  The class name is enough for admin
+    classification; users already receive the tool's generic failure presentation.
+    """
+
+    return {
+        "code": exc.__class__.__name__,
+        "message": "tool execution failed",
+    }
+
+
 def sanitize_payload(value: Any) -> Any:
+    if isinstance(value, BaseException):
+        return sanitize_exception(value)
     if isinstance(value, dict):
         clean: dict[str, Any] = {}
         for key, item in value.items():
-            if any(marker in key.lower() for marker in SENSITIVE_KEY_MARKERS):
+            if _sensitive_key(key):
                 continue
             clean[key] = sanitize_payload(item)
         return clean
     if isinstance(value, list):
         return [sanitize_payload(item) for item in value[:20]]
+    if isinstance(value, tuple):
+        return [sanitize_payload(item) for item in value[:20]]
+    if isinstance(value, str):
+        return _sanitize_string(value)
     return value
 
 
@@ -75,26 +193,32 @@ def build_trace_event(
 ) -> dict[str, Any]:
     if not trace_id or not run_id or not turn_id:
         raise ValueError("trace_id, run_id and turn_id are required")
+    safe_trace_id = _sanitize_identifier(trace_id, prefix="trace")
+    safe_run_id = _sanitize_identifier(run_id, prefix="run")
+    safe_turn_id = _sanitize_identifier(turn_id, prefix="turn")
     if seq is None:
         if sequencer is None:
             raise ValueError("seq or sequencer is required")
-        seq = sequencer.next(trace_id)
+        seq = sequencer.next(safe_trace_id)
     if seq <= 0:
         raise ValueError("seq must be positive")
     event = {
-        "type": type,
+        "type": _sanitize_string(str(type)),
         "schema_version": 1,
-        "event_id": kwargs.pop("event_id", f"xhs-trace-{uuid.uuid4().hex}"),
-        "trace_id": trace_id,
-        "run_id": run_id,
-        "turn_id": turn_id,
+        "event_id": _sanitize_identifier(
+            kwargs.pop("event_id", f"xhs-trace-{uuid.uuid4().hex}"),
+            prefix="event",
+        ),
+        "trace_id": safe_trace_id,
+        "run_id": safe_run_id,
+        "turn_id": safe_turn_id,
         "seq": seq,
-        "label": label,
-        "visibility": visibility,
+        "label": _sanitize_string(str(label)),
+        "visibility": _sanitize_string(str(visibility)),
         "ts": datetime.now(UTC).isoformat(),
     }
     for key, value in kwargs.items():
-        if value is not None:
+        if key in TRACE_OPTIONAL_FIELDS and not _sensitive_key(key) and value is not None:
             event[key] = sanitize_payload(value)
     return event
 
@@ -296,7 +420,14 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
             label=label,
             visibility="user",
             sequencer=_GLOBAL_SEQUENCER,
-            safe_args=sanitize_payload({"args": args, "kwargs": kwargs}),
+            # 参数值不是 trace 的业务事实。无论位置/关键字调用都只记录结构，不保存
+            # 标题、正文、查询词、CLI 命令或未来新增字段里的任意用户值。
+            safe_args={
+                "positional_arg_count": len(args),
+                "keyword_arg_names": sorted(
+                    str(key) for key in kwargs if not _sensitive_key(key)
+                ),
+            },
             **identity,
         )
         emit_trace(started)
@@ -312,7 +443,7 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
                 visibility="user",
                 sequencer=_GLOBAL_SEQUENCER,
                 parent_id=started["event_id"],
-                error={"code": exc.__class__.__name__, "message": str(exc)},
+                error=sanitize_exception(exc),
                 **identity,
             )
             emit_trace(failed)
@@ -328,7 +459,8 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
             sequencer=_GLOBAL_SEQUENCER,
             parent_id=started["event_id"],
             metrics=_metrics_from_result(result),
-            safe_result=sanitize_payload(result if isinstance(result, dict) else {}),
+            # 工具返回结构不受统一契约约束，无法证明未来嵌套字段和值都安全。前端只需
+            # 结构化 metrics 呈现结果，因此 trace 不记录任意 raw safe_result。
             **identity,
         )
         emit_trace(completed)
@@ -350,16 +482,25 @@ TRACE_TOOL_STAGES: dict[str, tuple[str, str]] = {
     "graph_expand": ("retrieve", "顺着图谱找关联"),
     "get_operations_data": ("retrieve", "读取运营数据"),
     "get_resource_performance": ("retrieve", "读取效果表现"),
+    "get_data_foundation_status": ("retrieve", "读取数据底座状态"),
+    "get_generated_copy_lifecycle": ("retrieve", "读取文案生命周期"),
+    "get_writing_profile": ("retrieve", "加载写作偏好"),
+    "get_session_snapshots": ("retrieve", "恢复会话快照"),
     "save_generated_topic": ("persist", "保存选题"),
     "save_generated_copy": ("persist", "保存文案"),
     "save_user_feedback": ("persist", "沉淀反馈"),
+    "save_writing_teardown": ("persist", "归档写作拆解"),
     "save_performance_metric": ("persist", "沉淀效果指标"),
+    "save_session_snapshot": ("persist", "保存会话快照"),
+    "confirm_session_snapshot": ("persist", "确认长期知识"),
+    "sync_feishu_resources": ("persist", "同步飞书资源"),
     "sync_copy_to_feishu": ("persist", "同步文案到飞书"),
     "sync_topic_to_feishu": ("persist", "同步选题到飞书"),
     "sync_diagnosis_to_feishu": ("persist", "同步诊断到飞书"),
     "send_review_notification": ("persist", "发送审阅通知"),
     "adopt_online_notes": ("persist", "采纳线上笔记"),
     "search_xhs_online": ("retrieve", "搜索小红书线上"),
+    "lark_cli": ("persist", "执行飞书操作"),
 }
 
 

@@ -38,17 +38,33 @@ def test_process_merges_node_and_its_edges():
         "title": "T", "resource_version": 1,
     }
     cur.execute.return_value.fetchall.return_value = [
-        {"source_resource_id": "r1", "target_resource_id": "r2", "edge_type": "derived_from",
-         "weight": 1.0, "properties": {}}]
+        {
+            "source_resource_id": "r1",
+            "source_resource_version": 1,
+            "target_resource_id": "r2",
+            "target_resource_version": 3,
+            "edge_type": "derived_from",
+            "weight": 1.0,
+            "properties": {"reason": "same_topic"},
+        }
+    ]
     graph = MagicMock()
     p = GraphProcessor(conn=conn, graph=graph, config=FalkorConfig(state="enabled", url="u", graph_name="xhs"))
     result = asyncio.run(p.process(_item({"resource_id": "r1", "version": 1}), _Lease()))
     assert result.status == "succeeded"
     graph.merge_node.assert_called_once()
+    graph.delete_outgoing_version_edges.assert_called_once_with(
+        source_id="r1", source_resource_version=1, tenant_id="default"
+    )
     graph.merge_edge.assert_called_once()
     assert graph.merge_edge.call_args.kwargs["edge_type"] == "derived_from"
     # 占位节点补 tenant 的前提:处理器必须把 outbox item 的 tenant 传给 merge_edge。
     assert graph.merge_edge.call_args.kwargs["tenant_id"] == "default"
+    assert graph.merge_edge.call_args.kwargs["properties"] == {
+        "reason": "same_topic",
+        "source_resource_version": 1,
+        "target_resource_version": 3,
+    }
 
 
 def test_process_deletes_node_when_resource_gone():
@@ -68,7 +84,7 @@ def test_process_deletes_node_when_resource_gone():
 def test_process_stale_version_does_not_overwrite_or_delete_existing_graph_node():
     conn = MagicMock()
     cur = conn.cursor.return_value.__enter__.return_value
-    cur.execute.return_value.fetchone.side_effect = [None, {"exists": 1}]
+    cur.execute.return_value.fetchone.side_effect = [None, {"status": "active"}]
     graph = MagicMock()
     processor = GraphProcessor(
         conn=conn,
@@ -85,6 +101,25 @@ def test_process_stale_version_does_not_overwrite_or_delete_existing_graph_node(
     graph.delete_node.assert_not_called()
     first_sql = cur.execute.call_args_list[0].args[0]
     assert "knowledge_target_version" in first_sql
+
+
+def test_process_inactive_resource_deletes_stale_graph_node():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.execute.return_value.fetchone.side_effect = [None, {"status": "inactive"}]
+    graph = MagicMock()
+    processor = GraphProcessor(
+        conn=conn,
+        graph=graph,
+        config=FalkorConfig(state="enabled", url="u", graph_name="xhs"),
+    )
+
+    result = asyncio.run(
+        processor.process(_item({"resource_id": "retired-1", "version": 2}), _Lease())
+    )
+
+    assert result.status == "superseded"
+    graph.delete_node.assert_called_once_with("retired-1")
 
 
 def test_process_missing_resource_id_is_permanent():

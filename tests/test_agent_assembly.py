@@ -185,6 +185,8 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
         "save_generated_topic",
         "save_generated_copy",
         "save_user_feedback",
+        "save_writing_teardown",
+        "get_writing_profile",
         "save_performance_metric",
         "get_resource_performance",
     } <= tool_names
@@ -255,6 +257,9 @@ def test_agent_write_tools_have_interrupts_and_checkpointer(monkeypatch):
     assert interrupts["sync_topic_to_feishu"] is True
     assert interrupts["sync_diagnosis_to_feishu"] is True
     assert interrupts["send_review_notification"] is True
+    assert interrupts["confirm_session_snapshot"] == {
+        "allowed_decisions": ["approve", "reject"]
+    }
 
 
 def test_agent_does_not_import_scheduler_daemon_entrypoint(monkeypatch):
