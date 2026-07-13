@@ -1,4 +1,5 @@
 from typing import Optional, Any
+import uuid
 from psycopg import Connection
 from psycopg.rows import dict_row
 
@@ -208,3 +209,117 @@ class PerformanceRepository(BaseRepository):
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                     })
                 return result
+
+    def bulk_exact_performance_metrics(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_ids: list[str],
+        resource_versions: list[int],
+        conn: Optional[Connection] = None,
+    ) -> dict[tuple[str, int], list[dict[str, Any]]]:
+        """读取与目标 exact version 真实相连且双方均可读的效果快照。
+
+        ``resources.content_json`` 是可变 latest 投影，不能用于历史效果排序。本查询沿
+        ``measured_by`` 边的两端版本进入 ``resource_versions``，保证效果事实与被评价文案
+        是同一精确版本；目标再次经过 ``current_knowledge_targets``，避免生命周期切换后把
+        旧版本效果灌入当前证据。
+        """
+        if len(resource_ids) != len(resource_versions):
+            raise ValueError("resource_ids and resource_versions must be aligned")
+        if not resource_ids:
+            return {}
+        normalized_ids: list[str] = []
+        for resource_id in resource_ids:
+            try:
+                normalized_ids.append(str(uuid.UUID(str(resource_id))))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValueError("resource_ids must contain UUID values") from exc
+        if any(
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version <= 0
+            for version in resource_versions
+        ):
+            raise ValueError("resource_versions must contain positive integers")
+
+        target_where = self.readable_resource_where("target_resource")
+        metric_where = self.readable_resource_where("metric_resource")
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                rows = cursor.execute(
+                    f"""
+                    with requested(resource_id, resource_version) as (
+                      select distinct *
+                      from unnest(
+                        %(resource_ids)s::uuid[],
+                        %(resource_versions)s::int[]
+                      )
+                    )
+                    select requested.resource_id::text as target_resource_id,
+                           requested.resource_version as target_resource_version,
+                           metric_resource.id::text as metric_resource_id,
+                           metric_version.version as metric_resource_version,
+                           metric_version.content_json,
+                           edge.weight,
+                           metric_version.created_at
+                    from requested
+                    join current_knowledge_targets target
+                      on target.resource_id = requested.resource_id
+                     and target.resource_version = requested.resource_version
+                    join resources target_resource
+                      on target_resource.tenant_id = target.tenant_id
+                     and target_resource.id = target.resource_id
+                    join resource_edges edge
+                      on edge.tenant_id = target.tenant_id
+                     and edge.source_resource_id = target.resource_id
+                     and edge.source_resource_version = target.resource_version
+                     and edge.edge_type = 'measured_by'
+                    join resources metric_resource
+                      on metric_resource.tenant_id = edge.tenant_id
+                     and metric_resource.id = edge.target_resource_id
+                     and metric_resource.type = 'performance_metric'
+                     and metric_resource.status = 'active'
+                    join resource_versions metric_version
+                      on metric_version.tenant_id = edge.tenant_id
+                     and metric_version.resource_id = edge.target_resource_id
+                     and metric_version.version = edge.target_resource_version
+                    where {target_where}
+                      and {metric_where}
+                    order by requested.resource_id, requested.resource_version,
+                             metric_version.created_at desc,
+                             metric_resource.id desc,
+                             metric_version.version desc
+                    """,
+                    {
+                        "resource_ids": normalized_ids,
+                        "resource_versions": resource_versions,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                    },
+                ).fetchall()
+
+        result: dict[tuple[str, int], list[dict[str, Any]]] = {
+            (resource_id, version): []
+            for resource_id, version in zip(normalized_ids, resource_versions)
+        }
+        for row in rows:
+            content = dict(row["content_json"] or {})
+            identity = (
+                str(row["target_resource_id"]),
+                int(row["target_resource_version"]),
+            )
+            result.setdefault(identity, []).append(
+                {
+                    "resource_id": str(row["metric_resource_id"]),
+                    "resource_version": int(row["metric_resource_version"]),
+                    "score": float(content.get("score", row["weight"] or 0.0)),
+                    "metrics": dict(content.get("metrics") or {}),
+                    "channel": content.get("channel"),
+                    "updated_at": (
+                        row["created_at"].isoformat() if row["created_at"] else None
+                    ),
+                }
+            )
+        return result

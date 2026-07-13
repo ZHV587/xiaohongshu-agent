@@ -1243,6 +1243,57 @@ and not exists (
 )
 on conflict (tenant_id, dedupe_key) do nothing;
 
+-- Rebuild every current knowledge target with the hybrid keyword schema.  This has
+-- its own migration marker and dedupe namespace: reusing the resource-version-v1
+-- task would leave an already-succeeded row untouched.  The classification
+-- generation is carried into both the key and payload, while the processor performs
+-- resource-level final-state reconciliation, so an older migration task cannot
+-- overwrite a concurrently qualified/withdrawn state.
+with claimed as (
+  insert into data_foundation_migrations (migration_key)
+  values ('20260713_meili_knowledge_hybrid_v2')
+  on conflict (migration_key) do nothing
+  returning migration_key
+),
+targets as materialized (
+  select target.tenant_id,
+         target.resource_id,
+         target.resource_version,
+         state.search_reconcile_generation
+  from claimed
+  join current_knowledge_targets target on true
+  join knowledge_asset_states state
+    on state.tenant_id = target.tenant_id
+   and state.resource_id = target.resource_id
+   and state.resource_version = target.resource_version
+)
+insert into resource_outbox (
+  tenant_id, resource_id, resource_version, topic, dedupe_key, payload
+)
+select target.tenant_id,
+       target.resource_id,
+       target.resource_version,
+       'meili_index',
+       encode(
+         digest(
+           concat_ws(
+             '|', 'meili-knowledge-hybrid-v2', target.tenant_id,
+             target.resource_id::text, target.resource_version::text,
+             target.search_reconcile_generation::text
+           ),
+           'sha256'
+         ),
+         'hex'
+       ),
+       jsonb_build_object(
+         'resource_id', target.resource_id::text,
+         'version', target.resource_version,
+         'reconcile_generation', target.search_reconcile_generation,
+         'index_schema_version', 'knowledge-hybrid-v2'
+       )
+from targets target
+on conflict (tenant_id, dedupe_key) do nothing;
+
 -- Falkor 旧 REL 没有精确端点版本，运行时已 fail-closed 排除。为当前可用版本重新
 -- materialize 节点和边：普通资源取 latest；generated_copy 若已有 knowledge target
 -- 只取该精确版本，尚未采纳的历史候选取 latest 且仍只进图，不进入知识检索。

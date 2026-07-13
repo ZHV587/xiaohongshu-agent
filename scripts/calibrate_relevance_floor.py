@@ -105,19 +105,19 @@ def recommend_floor(
 def _top_cosine_for_query(repo, *, tenant_id: str, actor_open_id: str, query: str, top_k: int) -> float:
     """按生产查询路径取一条查询的 top 绝对余弦(active index + 中文指令前缀 + pgvector)。
 
-    复用 data_foundation.tools 的私有 helper 是**有意为之**:标定必须走与线上 semantic_search_resources
-    完全一致的 embedding 路径(同 active index profile、同中文指令模板),否则标出的阈值无法迁移到生产。
+    复用统一检索领域层公开的 embedding helper：标定必须走与线上
+    ``retrieve_knowledge`` 完全一致的 active index profile 与查询指令，否则阈值无法迁移到生产。
     """
     from data_foundation.config import resolve_query_instruction
     from data_foundation.search import semantic_search
-    from data_foundation.tools import _embed_query, _embedding_query_config_for_index
+    from data_foundation.retrieval import embed_query, embedding_query_config_for_index
 
     active_index = repo.active_embedding_index(tenant_id)
     if active_index is None:
         raise RuntimeError("没有 active embedding index;先让 scheduler 建好索引再标定。")
-    query_config = _embedding_query_config_for_index(active_index)
+    query_config = embedding_query_config_for_index(active_index)
     instruction = resolve_query_instruction(query_config.model)
-    embedding = _embed_query(query, config=query_config, query_instruction=instruction)
+    embedding = embed_query(query, config=query_config, query_instruction=instruction)
     results = semantic_search(
         repo,
         tenant_id=tenant_id,

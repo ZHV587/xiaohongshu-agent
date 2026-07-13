@@ -29,27 +29,36 @@ export interface SourceEvidence {
   indexed_at?: string;
 }
 
-/** 检索模式，与 data_foundation 证据契约及 web/src/components/studio/types.ts 对齐。 */
-export type RetrievalMode = "semantic" | "keyword_fallback" | "insufficient_relevance";
+/** 统一知识检索模式，与 data_foundation EvidencePackage 契约严格对齐。 */
+export type RetrievalMode =
+  | "hybrid"
+  | "semantic_only"
+  | "keyword_only"
+  | "insufficient_relevance";
 
 /**
- * 富证据：对齐后端 search_ranker.rank_evidence 输出与 evidence.py 的 EvidenceItem。
- * 数值三信号 relevance/freshness/performance ∈ [0,1]，score 为加权总分。
+ * 富证据：对齐后端统一 retrieve_knowledge EvidenceItem。
+ * quality/relevance/freshness/performance ∈ [0,1]，score 为综合排序分。
  * 严格区分 source_updated_at（源端更新）与 indexed_at（本地索引）两个时间字段。
  */
 export interface RichEvidence {
   resource_id: string;
   resource_version: number;
-  type?: string;
+  type: string;
+  asset_kind: string;
+  source_kind: string;
+  niche?: string;
   title: string;
   summary: string;
-  score?: number;
-  relevance?: number;
-  freshness?: number;
-  performance?: number;
-  why_selected?: string;
-  source_updated_at?: string;
-  indexed_at?: string;
+  score: number;
+  quality: number;
+  relevance: number;
+  freshness: number;
+  performance: number;
+  retrieval_sources: ("semantic" | "keyword" | "graph")[];
+  why_selected: string;
+  source_updated_at: string;
+  indexed_at: string;
 }
 
 /**
@@ -64,7 +73,7 @@ export interface RichTopic {
   rationale?: string;
   emotional?: string;
   evidence?: RichEvidence[];
-  evidence_mode?: RetrievalMode;
+  retrieval_mode?: RetrievalMode;
   gaps?: string;
 }
 
@@ -188,13 +197,12 @@ function tryParse(lang: string, inner: string): TopicsSegment | CopySegment | Pa
   if (lang === "xhs_topics") {
     if (obj && Array.isArray(obj.topics)) {
       const topLevelEvidence = parseEvidence(obj.evidence);
-      const fallbackRich = toRichEvidence(topLevelEvidence);
       const topics = obj.topics.map((t: unknown): string | RichTopic => {
-        // 字符串走旧格式（富字段缺省、证据取顶层共享数组）
+        // 字符串选题不携带统一检索证据。
         if (typeof t === "string") return t;
-        // 对象走富选题（读富字段，证据优先选题内、否则回退顶层）
+        // 对象走富选题；证据只能来自该选题自身的完整统一检索契约。
         if (t && typeof t === "object") {
-          return parseRichTopic(t as Record<string, unknown>, fallbackRich);
+          return parseRichTopic(t as Record<string, unknown>);
         }
         // 其它类型按降级处理，保证选题数量守恒、不抛错
         return String(t);
@@ -282,11 +290,23 @@ function parseEvidence(value: unknown): SourceEvidence[] {
 
 function parseIsoTimestamp(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
-  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    return undefined;
+  }
   return Number.isNaN(Date.parse(value)) ? undefined : value;
 }
 
-const RETRIEVAL_MODES: readonly RetrievalMode[] = ["semantic", "keyword_fallback", "insufficient_relevance"];
+function parseEvidenceTimestamp(value: unknown): string | undefined {
+  if (value === "未知") return value;
+  return parseIsoTimestamp(value);
+}
+
+const RETRIEVAL_MODES: readonly RetrievalMode[] = [
+  "hybrid",
+  "semantic_only",
+  "keyword_only",
+  "insufficient_relevance",
+];
 
 function parseRetrievalMode(value: unknown): RetrievalMode | undefined {
   return typeof value === "string" && (RETRIEVAL_MODES as readonly string[]).includes(value)
@@ -294,22 +314,41 @@ function parseRetrievalMode(value: unknown): RetrievalMode | undefined {
     : undefined;
 }
 
-/** 顶层共享证据（SourceEvidence）转富证据，供富选题缺省时回退使用。 */
-function toRichEvidence(items: SourceEvidence[]): RichEvidence[] {
-  return items.map((item) => {
-    const evidence: RichEvidence = {
-      resource_id: item.resource_id,
-      resource_version: item.resource_version,
-      title: item.title,
-      summary: item.summary,
-    };
-    if (item.source_updated_at) evidence.source_updated_at = item.source_updated_at;
-    if (item.indexed_at) evidence.indexed_at = item.indexed_at;
-    return evidence;
-  });
+function isUnitScore(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-/** 解析每选题独立的富证据列表，对齐 rank_evidence 三信号；缺/错字段降级而非抛错。 */
+function parseRetrievalSources(value: unknown): ("semantic" | "keyword" | "graph")[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const allowed = new Set(["semantic", "keyword", "graph"]);
+  if (value.some((item) => typeof item !== "string" || !allowed.has(item))) return undefined;
+  const sources = value as ("semantic" | "keyword" | "graph")[];
+  return new Set(sources).size === sources.length ? sources : undefined;
+}
+
+function evidenceMatchesMode(
+  mode: RetrievalMode,
+  evidence: RichEvidence[],
+  gaps: string | undefined,
+): boolean {
+  if (mode === "insufficient_relevance") {
+    return evidence.length === 0 && typeof gaps === "string" && gaps.trim().length > 0;
+  }
+  if (evidence.length === 0) return false;
+  const primary = new Set(
+    evidence.flatMap((item) => item.retrieval_sources).filter((source) => source !== "graph"),
+  );
+  if (mode === "hybrid") return primary.has("semantic") && primary.has("keyword");
+  if (mode === "semantic_only") return primary.size === 1 && primary.has("semantic");
+  return primary.size === 1 && primary.has("keyword");
+}
+
+/**
+ * 解析每选题独立的富证据列表。
+ *
+ * 精确身份与质量信号是一个不可拆分的证据原子：任一字段缺失或越界都拒绝整条证据，
+ * 不能用 0 补齐，否则 UI 会把“后端没有给出质量判断”伪装成低质量判断。
+ */
 function parseRichEvidence(value: unknown): RichEvidence[] {
   if (!Array.isArray(value)) return [];
 
@@ -317,11 +356,26 @@ function parseRichEvidence(value: unknown): RichEvidence[] {
     if (!item || typeof item !== "object") return [];
 
     const source = item as Record<string, unknown>;
+    const sourceUpdatedAt = parseEvidenceTimestamp(source.source_updated_at);
+    const indexedAt = parseEvidenceTimestamp(source.indexed_at);
+    const retrievalSources = parseRetrievalSources(source.retrieval_sources);
     if (
       typeof source.resource_id !== "string" || !source.resource_id.trim() ||
       !Number.isInteger(source.resource_version) || Number(source.resource_version) <= 0 ||
+      typeof source.type !== "string" || !source.type.trim() ||
+      typeof source.asset_kind !== "string" || !source.asset_kind.trim() ||
+      typeof source.source_kind !== "string" || !source.source_kind.trim() ||
       typeof source.title !== "string" || !source.title.trim() ||
-      typeof source.summary !== "string" || !source.summary.trim()
+      typeof source.summary !== "string" || !source.summary.trim() ||
+      !isUnitScore(source.score) ||
+      !isUnitScore(source.quality) ||
+      !isUnitScore(source.relevance) ||
+      !isUnitScore(source.freshness) ||
+      !isUnitScore(source.performance) ||
+      !retrievalSources ||
+      typeof source.why_selected !== "string" || !source.why_selected.trim() ||
+      !sourceUpdatedAt ||
+      !indexedAt
     ) {
       return [];
     }
@@ -329,19 +383,22 @@ function parseRichEvidence(value: unknown): RichEvidence[] {
     const evidence: RichEvidence = {
       resource_id: source.resource_id,
       resource_version: Number(source.resource_version),
+      type: source.type,
+      asset_kind: source.asset_kind,
+      source_kind: source.source_kind,
       title: source.title,
       summary: source.summary,
+      score: source.score,
+      quality: source.quality,
+      relevance: source.relevance,
+      freshness: source.freshness,
+      performance: source.performance,
+      retrieval_sources: retrievalSources,
+      why_selected: source.why_selected,
+      source_updated_at: sourceUpdatedAt,
+      indexed_at: indexedAt,
     };
-    if (typeof source.type === "string") evidence.type = source.type;
-    if (typeof source.score === "number" && Number.isFinite(source.score)) evidence.score = source.score;
-    if (typeof source.relevance === "number" && Number.isFinite(source.relevance)) evidence.relevance = source.relevance;
-    if (typeof source.freshness === "number" && Number.isFinite(source.freshness)) evidence.freshness = source.freshness;
-    if (typeof source.performance === "number" && Number.isFinite(source.performance)) evidence.performance = source.performance;
-    if (typeof source.why_selected === "string") evidence.why_selected = source.why_selected;
-    const sourceUpdatedAt = parseIsoTimestamp(source.source_updated_at);
-    const indexedAt = parseIsoTimestamp(source.indexed_at);
-    if (sourceUpdatedAt) evidence.source_updated_at = sourceUpdatedAt;
-    if (indexedAt) evidence.indexed_at = indexedAt;
+    if (typeof source.niche === "string" && source.niche.trim()) evidence.niche = source.niche;
     return [evidence];
   });
 }
@@ -349,10 +406,10 @@ function parseRichEvidence(value: unknown): RichEvidence[] {
 /**
  * 解析单个富选题对象。
  * - hotRate 仅当为 1≤n≤100 的整数时保留，否则省略（绝不渲染 🔥0）。
- * - 证据优先取选题内 evidence（含空数组，如 insufficient_relevance）；缺省该键时回退顶层共享证据。
+ * - 证据只取选题内 evidence（含空数组，如 insufficient_relevance），不从无质量信号的旧顶层字段回退。
  * - 富字段缺失/类型错配按降级处理（省略对应键），不抛错。
  */
-function parseRichTopic(source: Record<string, unknown>, fallbackEvidence: RichEvidence[]): RichTopic {
+function parseRichTopic(source: Record<string, unknown>): RichTopic {
   const topic: RichTopic = {
     title: typeof source.title === "string" ? source.title : "",
   };
@@ -366,14 +423,15 @@ function parseRichTopic(source: Record<string, unknown>, fallbackEvidence: RichE
   if (typeof source.rationale === "string") topic.rationale = source.rationale;
   if (typeof source.emotional === "string") topic.emotional = source.emotional;
 
-  const mode = parseRetrievalMode(source.evidence_mode);
-  if (mode) topic.evidence_mode = mode;
-  if (typeof source.gaps === "string") topic.gaps = source.gaps;
-
-  if (Array.isArray(source.evidence)) {
-    topic.evidence = parseRichEvidence(source.evidence);
-  } else if (fallbackEvidence.length > 0) {
-    topic.evidence = fallbackEvidence;
+  const mode = parseRetrievalMode(source.retrieval_mode);
+  const gaps = typeof source.gaps === "string" ? source.gaps : undefined;
+  if (mode && Array.isArray(source.evidence)) {
+    const evidence = parseRichEvidence(source.evidence);
+    if (evidenceMatchesMode(mode, evidence, gaps)) {
+      topic.retrieval_mode = mode;
+      topic.evidence = evidence;
+      if (gaps) topic.gaps = gaps;
+    }
   }
 
   return topic;

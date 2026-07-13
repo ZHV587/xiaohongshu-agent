@@ -3,13 +3,13 @@
 // Validates: design-system-hardening Requirements 3.3, 3.1, 3.7
 //
 // 对任意随机生成的富选题载荷（intro? + topics: (string|RichTopic)[]，每选题携带
-// RichEvidence + evidence_mode，以及顶层共享 SourceEvidence），执行:
+// RichEvidence + retrieval_mode，以及顶层共享 SourceEvidence），执行:
 //   parse(content) -> segment1
 //   parse(serialize(segment1.data)) -> segment2
 // 断言 segment1.data 与 segment2.data 为等价对象（字段值逐一相等、忽略键顺序）。
 //
 // 由于 parseXhsBlocks 是一个「归一化/净化」解析器（hotRate 仅保留 1–100 整数、
-// 证据要求 resource_id/title/summary 非空、无效检索模式被丢弃、缺字段回退顶层证据），
+// 证据要求 exact identity 与质量字段完整、无效检索模式被丢弃、旧顶层证据不冒充富证据），
 // 正确且良定义的往返是「解析结果为再序列化→再解析的不动点」：segment1 == segment2。
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -18,7 +18,7 @@ import fc from "fast-check";
 
 import { parseXhsBlocks, type TopicsSegment } from "../src/lib/xhs-blocks";
 
-const RETRIEVAL_MODES = ["semantic", "keyword_fallback", "insufficient_relevance"] as const;
+const RETRIEVAL_MODES = ["hybrid", "semantic_only", "keyword_only", "insufficient_relevance"] as const;
 
 // 生成的字符串剔除反引号,避免污染 ```xhs_topics ... ``` 围栏定界符
 // （本属性验证的是 JSON 契约的往返,而非围栏转义）。
@@ -59,12 +59,17 @@ const richEvidenceArb = fc.record(
     resource_id: textArb,
     resource_version: fc.integer({ min: 1, max: 10_000 }),
     type: textArb,
+    asset_kind: textArb,
+    source_kind: textArb,
+    niche: textArb,
     title: textArb,
     summary: textArb,
     score: numberArb,
+    quality: numberArb,
     relevance: numberArb,
     freshness: numberArb,
     performance: numberArb,
+    retrieval_sources: fc.array(fc.constantFrom("semantic", "keyword", "graph"), { maxLength: 4 }),
     why_selected: textArb,
     source_updated_at: timestampArb,
     indexed_at: timestampArb,
@@ -85,7 +90,7 @@ const sourceEvidenceArb = fc.record(
   { requiredKeys: ["resource_id", "resource_version", "title", "summary"] },
 );
 
-// 富选题原始形态:所有键可选,以覆盖「缺字段降级 + 证据回退顶层」等分支。
+// 富选题原始形态:所有键可选,以覆盖「缺字段降级 + 证据严格拒绝」等分支。
 const richTopicArb = fc.record(
   {
     title: textArb,
@@ -100,9 +105,9 @@ const richTopicArb = fc.record(
     kw: textArb,
     rationale: textArb,
     emotional: textArb,
-    // 含空数组（对应 insufficient_relevance 的证据为空）与缺失（触发顶层回退）。
+    // 含空数组（对应 insufficient_relevance 的证据为空）与缺失（不从旧顶层证据回退）。
     evidence: fc.array(richEvidenceArb, { maxLength: 4 }),
-    evidence_mode: fc.constantFrom<string>(...RETRIEVAL_MODES, "invalid_mode", ""),
+    retrieval_mode: fc.constantFrom<string>(...RETRIEVAL_MODES, "invalid_mode", ""),
     gaps: textArb,
   },
   { requiredKeys: [] },

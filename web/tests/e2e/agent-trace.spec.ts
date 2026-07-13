@@ -23,7 +23,7 @@ function traceEvent(overrides: Record<string, unknown>) {
     ts: "2026-07-03T12:00:00.000Z",
     label: "tool completed",
     visibility: "user",
-    tool_name: "semantic_search_resources",
+    tool_name: "retrieve_knowledge",
     metrics: { found_count: 12, used_count: 3 },
     ...overrides,
   };

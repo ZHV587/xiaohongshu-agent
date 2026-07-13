@@ -17,7 +17,7 @@ def test_stage_mapping_lives_in_agent_trace() -> None:
     src = Path("data_foundation/agent_trace.py").read_text(encoding="utf-8")
     assert "TRACE_TOOL_STAGES" in src
     for name in (
-        "semantic_search_resources",
+        "retrieve_knowledge",
         "sync_copy_to_feishu",
         "adopt_online_notes",
         "search_local_note_cards",

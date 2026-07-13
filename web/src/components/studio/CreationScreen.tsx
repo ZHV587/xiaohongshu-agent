@@ -10,7 +10,7 @@ import { useStudio } from "@/components/studio/useStudio";
 import { useDismiss } from "@/components/studio/useDismiss";
 import { Recents } from "./Shell";
 import { DeepEditor } from "./DeepEditor";
-import type { Topic } from "@/components/studio/types";
+import type { RetrievalMode, Topic } from "@/components/studio/types";
 import type { HITLRequest, HITLDecision } from "@/components/thread/ThreadContext";
 import { coverProxyUrl } from "@/lib/cover-image";
 import type { DiscoveryNote, AdoptionRow } from "@/lib/thinking-trace";
@@ -589,6 +589,13 @@ function PosterTopicCard({
   );
 }
 
+const RETRIEVAL_MODE_LABELS: Record<RetrievalMode, string> = {
+  hybrid: "混合检索",
+  semantic_only: "仅语义检索",
+  keyword_only: "仅关键词检索",
+  insufficient_relevance: "相关证据不足",
+};
+
 // 选题卡上的「创作依据」chips → 打开依据相关度分析
 export function EvidenceChips({ topicId }: { topicId: number | null }) {
   const { evidence, actions } = useStudio();
@@ -597,13 +604,18 @@ export function EvidenceChips({ topicId }: { topicId: number | null }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", paddingTop: 2 }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, color: "var(--text-subtle)" }}><Icon name="database" size={10} /> 依据 {ev.items.length} 条</span>
+      <span data-testid="evidence-mode" style={{ fontSize: 9, color: ev.mode === "insufficient_relevance" ? "var(--warning)" : "var(--text-subtle)" }}>
+        · {RETRIEVAL_MODE_LABELS[ev.mode]}
+      </span>
       {ev.items.map((it) => (
-        <button key={it.resource_id} data-testid="evidence-chip" onClick={(e) => { e.stopPropagation(); actions.openEvidence({ ...it, mode: ev.mode }); }} title={it.title}
+        <button key={`${it.resource_id}:${it.resource_version}`} data-testid="evidence-chip" onClick={(e) => { e.stopPropagation(); actions.openEvidence({ ...it, mode: ev.mode }); }} title={it.title}
           style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, color: "var(--topicblue-default)", background: "var(--topicblue-light)", border: "1px solid color-mix(in srgb, var(--topicblue-default) 20%, transparent)", borderRadius: 999, padding: "1px 6px", cursor: "pointer" }}>
-          {it.type}
+          {it.type} · 质量 {(it.quality * 100).toFixed(0)}%
         </button>
       ))}
-      {ev.mode === "keyword_fallback" && <span style={{ fontSize: 9, color: "var(--warning)" }}>· 关键词兜底</span>}
+      {ev.mode === "insufficient_relevance" && ev.gaps && (
+        <span style={{ fontSize: 9, color: "var(--warning)" }}>{ev.gaps}</span>
+      )}
     </div>
   );
 }
@@ -612,7 +624,7 @@ export function EvidenceChips({ topicId }: { topicId: number | null }) {
 export function EvidencePanel() {
   const { selectedEvidence: e, actions } = useStudio();
   if (!e) return null;
-  const modeLabel = ({ semantic: "语义检索 (pgvector)", keyword_fallback: "关键词兜底 (Meilisearch)", insufficient_relevance: "数据不足" } as Record<string, string>)[e.mode] || "检索";
+  const modeLabel = RETRIEVAL_MODE_LABELS[e.mode];
   const card: CSSProperties = { background: "var(--surface-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 12, boxShadow: "var(--shadow-xs)" };
   return (
     <div onClick={actions.closeEvidence} style={{ position: "fixed", inset: 0, background: "rgba(15,15,16,0.35)", zIndex: 55, display: "flex", justifyContent: "flex-end" }}>
@@ -627,8 +639,8 @@ export function EvidencePanel() {
             <p style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.6, margin: "6px 0 0" }}>{e.summary}</p>
             <div style={{ display: "flex", gap: 6, marginTop: 9, alignItems: "center" }}>
               <Badge tone="topic" shape="chip">{e.type}</Badge>
-              <Badge tone={e.mode === "keyword_fallback" ? "neutral" : "synced"} shape="chip">{modeLabel}</Badge>
-              <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--text-subtle)", marginLeft: "auto" }}>{e.resource_id}</span>
+              <Badge tone={e.mode === "hybrid" || e.mode === "semantic_only" ? "synced" : "neutral"} shape="chip">{modeLabel}</Badge>
+              <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--text-subtle)", marginLeft: "auto" }}>{e.resource_id}@{e.resource_version}</span>
             </div>
           </div>
           <div style={{ background: "var(--accent-surface)", border: "1px solid var(--border-coral)", borderRadius: "var(--radius-md)", padding: 12 }}>
@@ -638,9 +650,10 @@ export function EvidencePanel() {
           <div style={card}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", paddingBottom: 8, marginBottom: 12 }}><span style={{ fontSize: "var(--text-xs)", fontWeight: 700 }}>综合排序得分</span><span className="font-tabular" style={{ fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--primary)", fontSize: "var(--text-base)" }}>{e.score.toFixed(4)}</span></div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <EvidenceScoreBar label="知识质量 Quality" val={e.quality} color="var(--topicblue-default)" testid="evidence-quality" />
               <EvidenceScoreBar label="相关度 Relevance" val={e.relevance} color="var(--primary)" testid="evidence-relevance" />
-              <EvidenceScoreBar label="时效性 Freshness · e⁻⁰·⁰⁵ᵗ" val={e.freshness} color="var(--success)" />
-              <EvidenceScoreBar label="爆款表现 Engagement · tanh" val={e.performance} color="var(--amber-500)" />
+              <EvidenceScoreBar label="时效性 Freshness · 180天半衰期" val={e.freshness} color="var(--success)" />
+              <EvidenceScoreBar label="效果表现 Performance · 对数归一" val={e.performance} color="var(--amber-500)" />
             </div>
           </div>
           <div style={{ ...card, fontSize: 10 }}>
@@ -809,7 +822,7 @@ function TopicDetailBody({ topicId, onClose }: { topicId: number; onClose: () =>
           </div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <Eyebrow>支撑素材（{evCount}）· 数据底座检索</Eyebrow>
+          <Eyebrow>支撑素材（{evCount}）· {ev ? RETRIEVAL_MODE_LABELS[ev.mode] : "暂无可验证证据"}</Eyebrow>
           {ev && ev.mode === "insufficient_relevance" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 10, borderRadius: "var(--radius-md)", border: "1px solid var(--border-coral)", background: "var(--accent-surface)" }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>当前数据不足</span>
@@ -817,14 +830,14 @@ function TopicDetailBody({ topicId, onClose }: { topicId: number; onClose: () =>
             </div>
           )}
           {ev && ev.items.map((it) => (
-            <button key={it.resource_id} data-testid="detail-evidence-item" onClick={() => actions.openEvidence({ ...it, mode: ev.mode })} style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 10, background: "var(--oats-light)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 5 }}>
+            <button key={`${it.resource_id}:${it.resource_version}`} data-testid="detail-evidence-item" onClick={() => actions.openEvidence({ ...it, mode: ev.mode })} style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 10, background: "var(--oats-light)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 5 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 9, fontWeight: 700, color: "var(--topicblue-default)", background: "var(--topicblue-light)", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>{it.type}</span>
                 <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{it.title}</span>
                 <span className="font-tabular" style={{ fontSize: 10, color: "var(--primary)", fontWeight: 700 }}>{it.score.toFixed(2)}</span>
               </div>
               <div style={{ display: "flex", gap: 10, fontSize: 9, color: "var(--text-subtle)" }}>
-                <span>相关 {(it.relevance * 100).toFixed(0)}%</span><span>时效 {(it.freshness * 100).toFixed(0)}%</span><span>表现 {(it.performance * 100).toFixed(0)}%</span>
+                <span>质量 {(it.quality * 100).toFixed(0)}%</span><span>相关 {(it.relevance * 100).toFixed(0)}%</span><span>时效 {(it.freshness * 100).toFixed(0)}%</span><span>表现 {(it.performance * 100).toFixed(0)}%</span>
               </div>
             </button>
           ))}

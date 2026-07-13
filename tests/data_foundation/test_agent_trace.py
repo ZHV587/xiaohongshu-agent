@@ -290,6 +290,28 @@ def test_trace_tool_wrapper_records_no_argument_or_result_values(monkeypatch) ->
     assert secret not in str(emitted)
 
 
+def test_trace_metrics_summarize_unified_retrieval_without_evidence_values() -> None:
+    from data_foundation.agent_trace import _metrics_from_result
+
+    secret = "private-evidence-title"
+    metrics = _metrics_from_result(
+        {
+            "retrieval_mode": "hybrid",
+            "evidence": [{"title": secret}, {"title": "another"}],
+            "engines_used": ["semantic", "keyword", "graph"],
+            "degraded_engines": [{"engine": "graph", "reason_code": "UNAVAILABLE"}],
+        }
+    )
+
+    assert metrics == {
+        "found_count": 2,
+        "retrieval_mode": "hybrid",
+        "engine_count": 3,
+        "degraded_engine_count": 1,
+    }
+    assert secret not in str(metrics)
+
+
 def test_trace_tool_wrapper_never_emits_raw_exception_text(monkeypatch) -> None:
     from langchain_core.tools import tool
 

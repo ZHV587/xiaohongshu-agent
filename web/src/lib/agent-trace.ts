@@ -95,19 +95,12 @@ export interface ToolPresentation {
 // intent 说清这步在干嘛,fallbackResult 是无 metrics 时的兜底结果句。
 // 不再用「确认创作目标/核验素材依据」这类预设叙事阶段(那是编好的故事,不是真实工具链)。
 const TOOL_COPY: Record<string, ToolPresentation> = {
-  semantic_search_resources: {
-    title: "按语义找相关素材",
-    summaryTitle: "语义检索",
-    intent: "从数据底座按语义相似度召回可用笔记和历史素材。",
-    action: "按语义相似度召回与本轮主题相关的素材。",
-    fallbackResult: "已完成语义检索。",
-  },
-  search_resources: {
-    title: "按关键词补查素材",
-    summaryTitle: "关键词检索",
-    intent: "用关键词补一轮检索，避免只依赖语义相似的一组。",
-    action: "用关键词补充检索素材。",
-    fallbackResult: "已完成关键词检索。",
+  retrieve_knowledge: {
+    title: "检索知识库",
+    summaryTitle: "知识库检索",
+    intent: "从统一知识库召回语义、关键词与图关联证据，并核验可用性。",
+    action: "检索与本轮任务相关的知识证据，合并排序后返回精确素材版本。",
+    fallbackResult: "已完成知识库检索。",
   },
   search_local_note_cards: {
     title: "检索本地笔记卡",
@@ -122,13 +115,6 @@ const TOOL_COPY: Record<string, ToolPresentation> = {
     intent: "打开候选素材原文，核对关键表达、数据与上下文。",
     action: "打开候选素材原文，核对关键表达、数据和上下文。",
     fallbackResult: "已核对候选素材原文。",
-  },
-  graph_expand: {
-    title: "顺着图谱找关联",
-    summaryTitle: "关联扩展",
-    intent: "沿素材关联图找相邻线索，补单条素材的信息盲区。",
-    action: "顺着主题、账号、标签和内容关系扩展关联素材。",
-    fallbackResult: "已完成关联素材扩展。",
   },
   get_operations_data: {
     title: "读取运营数据",
@@ -340,12 +326,26 @@ function userSummary(event: XhsTraceEvent, title: string): string {
   return title;
 }
 
+function safeMetricCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function evidenceCount(metrics: XhsTraceEvent["metrics"]): number | undefined {
+  if (!metrics) return undefined;
+  return safeMetricCount(metrics.found_count) ?? safeMetricCount(metrics.evidence_count);
+}
+
 function metricsText(metrics: XhsTraceEvent["metrics"]): string | undefined {
   if (!metrics) return undefined;
   const parts: string[] = [];
-  if (typeof metrics.found_count === "number") parts.push(`找到 ${metrics.found_count} 条`);
-  if (typeof metrics.used_count === "number") parts.push(`采用 ${metrics.used_count} 条`);
-  if (typeof metrics.excluded_count === "number") parts.push(`排除 ${metrics.excluded_count} 条`);
+  const found = evidenceCount(metrics);
+  const used = safeMetricCount(metrics.used_count);
+  const excluded = safeMetricCount(metrics.excluded_count);
+  if (found !== undefined) parts.push(`找到 ${found} 条`);
+  if (used !== undefined) parts.push(`采用 ${used} 条`);
+  if (excluded !== undefined) parts.push(`排除 ${excluded} 条`);
   return parts.join("，") || undefined;
 }
 
@@ -353,9 +353,12 @@ function resultText(event: XhsTraceEvent, copy: ToolPresentation): string {
   const metrics = event.metrics;
   if (metrics) {
     const parts: string[] = [];
-    if (typeof metrics.found_count === "number") parts.push(`找到 ${metrics.found_count} 条相关素材`);
-    if (typeof metrics.used_count === "number") parts.push(`采用 ${metrics.used_count} 条作为本次回答依据`);
-    if (typeof metrics.excluded_count === "number") parts.push(`排除 ${metrics.excluded_count} 条不适合本轮使用的素材`);
+    const found = evidenceCount(metrics);
+    const used = safeMetricCount(metrics.used_count);
+    const excluded = safeMetricCount(metrics.excluded_count);
+    if (found !== undefined) parts.push(`找到 ${found} 条相关素材`);
+    if (used !== undefined) parts.push(`采用 ${used} 条作为本次回答依据`);
+    if (excluded !== undefined) parts.push(`排除 ${excluded} 条不适合本轮使用的素材`);
     if (parts.length) return `${parts.join("，")}。`;
     const genericMetrics = metricsText(metrics);
     if (genericMetrics) return genericMetrics;

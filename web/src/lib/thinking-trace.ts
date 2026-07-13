@@ -330,8 +330,7 @@ interface TodoItem {
 const COUNTABLE_TOOLS = new Set([
   "search_local_note_cards",
   "search_xhs_online",
-  "semantic_search_resources",
-  "search_resources",
+  "retrieve_knowledge",
 ]);
 
 // 从一条 write_todos 工具调用的 args 里解析 todos 数组(args 可能是对象或 JSON 串)。非法 → null。
@@ -362,7 +361,8 @@ function countResults(content: Message["content"]): number | null {
   const text = getContentString(content);
   if (!text) return null;
   try {
-    const parsed = JSON.parse(text) as { results?: unknown };
+    const parsed = JSON.parse(text) as { results?: unknown; evidence?: unknown };
+    if (Array.isArray(parsed.evidence)) return parsed.evidence.length;
     return Array.isArray(parsed.results) ? parsed.results.length : null;
   } catch {
     return null;

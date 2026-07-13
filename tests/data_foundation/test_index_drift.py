@@ -121,7 +121,7 @@ def test_drift_expected_sql_keeps_graph_candidates_but_excludes_them_from_meili(
     assert "as meili_n" in source
 
 
-def test_meili_drift_uses_version_complete_count_not_raw_document_count(monkeypatch):
+def test_meili_drift_uses_current_schema_count_not_raw_document_count(monkeypatch):
     from data_foundation.meili_client import MeiliResourceIndex, MeiliTenantAudit
     import scripts.detect_engine_drift as drift_script
 
@@ -129,7 +129,7 @@ def test_meili_drift_uses_version_complete_count_not_raw_document_count(monkeypa
         ensure_index=lambda: None,
         audit_tenant=lambda *, tenant_id: MeiliTenantAudit(
             total_documents=5,
-            versioned_documents=4,
+            current_schema_documents=4,
         ),
     )
     monkeypatch.setattr(

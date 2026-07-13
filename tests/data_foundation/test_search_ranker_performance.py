@@ -1,89 +1,97 @@
-"""rank_evidence 效果分去饱和测试(feishu-performance-metrics)。
-
-根因:tanh((likes+2collects+5comments)/500) 对万级对标爆款全部饱和到 ≈1.0,
-爆款间无区分。改对数归一化后须跨 10²~10⁶ 单调可分、∈[0,1]、无指标→0。
-"""
-import math
+from datetime import datetime, timezone
+import uuid
 
 from hypothesis import given, strategies as st
+import pytest
 
-from data_foundation.search_ranker import (
-    WEIGHT_FRESHNESS,
-    WEIGHT_PERFORMANCE,
-    WEIGHT_RELEVANCE,
-    WEIGHT_TYPE,
-    rank_evidence,
-)
+from data_foundation.search_ranker import RecallHit, rank_knowledge_candidates
 
 
-def _result(rid: str, score: float = 0.6):
-    return {
-        "resource_id": rid,
-        "resource_version": 1,
-        "title": f"t-{rid}",
-        "summary": "s",
-        "score": score,
-        "metadata": {"type": "feishu_base_record"},
-    }
+RESOURCE_ID = str(uuid.UUID(int=1))
+IDENTITY = (RESOURCE_ID, 1)
 
 
-def _perf(likes=0, collects=0, comments=0):
-    return [{"metrics": {"likes": likes, "collects": collects, "comments": comments}}]
+def _rank(metrics: dict) -> float:
+    rows = [
+        {
+            "resource_id": RESOURCE_ID,
+            "resource_version": 1,
+            "resource_type": "xhs_online_note",
+            "asset_kind": "benchmark",
+            "source_kind": "viral_teardown",
+            "title": "同一素材",
+            "summary": "同一摘要",
+            "quality_score": 0.8,
+            "qualified_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+            "indexed_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+        }
+    ]
+    ranked = rank_knowledge_candidates(
+        rows=rows,
+        semantic_hits=[RecallHit(RESOURCE_ID, 1, 0.9)],
+        keyword_hits=[],
+        active_sources=["semantic"],
+        performance_data={IDENTITY: [{"metrics": metrics}]},
+        now=datetime(2026, 7, 13, tzinfo=timezone.utc),
+    )
+    return ranked[0].performance
 
 
-def _p_score_of(rid, perf):
-    ranked = rank_evidence("default", [_result(rid)], {rid: perf}, score_kind="cosine")
-    return ranked[0]["rank_signals"]["performance"]
+def test_no_effect_facts_produce_zero_performance() -> None:
+    assert _rank({}) == 0.0
+    assert _rank({"likes": 0, "collects": 0, "comments": 0}) == 0.0
 
 
-def test_weights_sum_to_one():
-    assert abs(WEIGHT_RELEVANCE + WEIGHT_FRESHNESS + WEIGHT_TYPE + WEIGHT_PERFORMANCE - 1.0) < 1e-9
+def test_performance_is_monotonic_but_not_immediately_saturated() -> None:
+    scores = [
+        _rank({"likes": 10}),
+        _rank({"likes": 1_000}),
+        _rank({"likes": 100_000}),
+        _rank({"likes": 1_000_000}),
+    ]
+    assert scores == sorted(scores)
+    assert len(set(scores)) == len(scores)
+    assert scores[-1] <= 1.0
 
 
-def test_no_metrics_zero():
-    assert _p_score_of("a", []) == 0.0
-    assert _p_score_of("a", _perf()) == 0.0  # engagement=0
-
-
-def test_monotonic_across_magnitudes():
-    p100 = _p_score_of("a", _perf(likes=100))
-    p10k = _p_score_of("b", _perf(likes=10_000))
-    p1m = _p_score_of("c", _perf(likes=1_000_000))
-    assert 0.0 < p100 < p10k < p1m <= 1.0
-
-
-def test_viral_no_longer_saturated_to_same_value():
-    """万级与十万级爆款不再同分(旧 tanh 会都 ≈1.0)。"""
-    p1 = _p_score_of("a", _perf(likes=10_000, collects=10_000))
-    p2 = _p_score_of("b", _perf(likes=300_000, collects=200_000))
-    assert p2 > p1
-    assert p1 < 1.0  # 万级未顶到上界
-
-
-def test_bounded_unit_interval():
-    huge = _p_score_of("a", _perf(likes=10**9, collects=10**9, comments=10**9))
-    assert 0.0 <= huge <= 1.0
+def test_best_exact_effect_snapshot_wins() -> None:
+    low = _rank({"likes": 20})
+    rows = [
+        {
+            "resource_id": RESOURCE_ID,
+            "resource_version": 1,
+            "resource_type": "xhs_online_note",
+            "asset_kind": "benchmark",
+            "source_kind": "viral_teardown",
+            "title": "素材",
+            "summary": "摘要",
+            "quality_score": 0.8,
+            "qualified_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+            "indexed_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+        }
+    ]
+    ranked = rank_knowledge_candidates(
+        rows=rows,
+        semantic_hits=[RecallHit(RESOURCE_ID, 1, 0.9)],
+        keyword_hits=[],
+        active_sources=["semantic"],
+        performance_data={
+            IDENTITY: [
+                {"metrics": {"likes": 20}},
+                {"metrics": {"likes": 20_000}},
+            ]
+        },
+    )
+    assert ranked[0].performance > low
 
 
 @given(
-    likes=st.integers(min_value=0, max_value=10**7),
-    collects=st.integers(min_value=0, max_value=10**7),
-    comments=st.integers(min_value=0, max_value=10**6),
+    likes=st.integers(min_value=0, max_value=10_000_000),
+    collects=st.integers(min_value=0, max_value=10_000_000),
+    comments=st.integers(min_value=0, max_value=10_000_000),
 )
-def test_property_bounded_and_zero_iff_no_engagement(likes, collects, comments):
-    p = _p_score_of("x", _perf(likes=likes, collects=collects, comments=comments))
-    assert 0.0 <= p <= 1.0
-    # 统一系数(单一事实源 weighted_engagement):likes + 2*collects + 3*comments
-    engagement = likes + 2 * collects + 3 * comments
-    assert (p == 0.0) == (engagement == 0)
-
-
-@given(
-    e1=st.integers(min_value=0, max_value=10**6),
-    e2=st.integers(min_value=0, max_value=10**6),
-)
-def test_property_monotonic_in_engagement(e1, e2):
-    p1 = _p_score_of("a", _perf(likes=e1))
-    p2 = _p_score_of("b", _perf(likes=e2))
-    if e1 < e2:
-        assert p1 <= p2
+def test_performance_property_is_bounded(likes: int, collects: int, comments: int) -> None:
+    score = _rank({"likes": likes, "collects": collects, "comments": comments})
+    assert 0.0 <= score <= 1.0
+    if likes == collects == comments == 0:
+        assert score == pytest.approx(0.0)

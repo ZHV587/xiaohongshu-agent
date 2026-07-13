@@ -389,6 +389,23 @@ def _metrics_from_result(result: Any) -> dict[str, Any]:
     results = result.get("results")
     if isinstance(results, list):
         metrics["found_count"] = len(results)
+    evidence = result.get("evidence")
+    if isinstance(evidence, list):
+        metrics["found_count"] = len(evidence)
+    retrieval_mode = result.get("retrieval_mode")
+    if retrieval_mode in {
+        "hybrid",
+        "semantic_only",
+        "keyword_only",
+        "insufficient_relevance",
+    }:
+        metrics["retrieval_mode"] = retrieval_mode
+    engines_used = result.get("engines_used")
+    if isinstance(engines_used, list):
+        metrics["engine_count"] = len(engines_used)
+    degraded_engines = result.get("degraded_engines")
+    if isinstance(degraded_engines, list):
+        metrics["degraded_engine_count"] = len(degraded_engines)
     for key in ("used_count", "excluded_count"):
         value = result.get(key)
         if isinstance(value, int):
@@ -475,11 +492,9 @@ def trace_tool(tool_obj: Any, *, stage_id: str, label: str) -> Any:
 # 工具名 → (stage_id, 中文 label)。主 agent 与执行型子代理共用同一份映射,避免两处漂移。
 # stage_id 归类 retrieve/persist,供前端把同类步骤折叠;label 是链上显示的"用了哪个工具"。
 TRACE_TOOL_STAGES: dict[str, tuple[str, str]] = {
-    "semantic_search_resources": ("retrieve", "按语义找相关素材"),
-    "search_resources": ("retrieve", "按关键词补查素材"),
+    "retrieve_knowledge": ("retrieve", "检索知识库"),
     "search_local_note_cards": ("retrieve", "检索本地笔记卡"),
     "get_resource": ("retrieve", "打开原文细看"),
-    "graph_expand": ("retrieve", "顺着图谱找关联"),
     "get_operations_data": ("retrieve", "读取运营数据"),
     "get_resource_performance": ("retrieve", "读取效果表现"),
     "get_data_foundation_status": ("retrieve", "读取数据底座状态"),

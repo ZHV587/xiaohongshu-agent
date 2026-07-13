@@ -1,195 +1,316 @@
-"""属性测试(Hypothesis):retrieval-relevance-overhaul 的正确性属性。
+from datetime import datetime, timezone
+import uuid
 
-覆盖设计 Testing Strategy 的方向:
-- Property 2:余弦 relevance 与候选集无关(绝对相关度不被抹除)
-- Property 1:闸门单调性(数据不足必明说)
-- Property 3 / Property 6:口径隔离 / 降级语义保持
-"""
-from __future__ import annotations
+from hypothesis import given, strategies as st
+import pytest
 
-from contextlib import contextmanager
-from types import SimpleNamespace
-
-from hypothesis import given, settings
-from hypothesis import strategies as st
-
-from data_foundation import tools as df_tools
 from data_foundation.processors.embedding import EmbeddingProviderConfig
-from data_foundation.search_ranker import rank_evidence
+from data_foundation.retrieval import (
+    EmbeddingSearchUnavailable,
+    RetrievalSecurityGateError,
+    RetrievalService,
+    embed_query,
+)
+from data_foundation.search_ranker import RecallHit
 
 
-def _clamp(x: float) -> float:
-    return min(max(x, 0.0), 1.0)
+def _id(seed: int) -> str:
+    return str(uuid.UUID(int=seed))
 
 
-def _items(scores: list[float]) -> list[dict]:
-    # 每条唯一标题/ID,避免标题模糊去重影响"逐条 relevance"断言
-    return [
-        {
-            "resource_id": f"r{i}",
-            "resource_version": 1,
-            "title": f"标题-{i}",
-            "summary": "s",
-            "score": s,
-            "metadata": {"type": "doc", "visibility": "team"},
+def _row(seed: int, *, version: int = 1, family: str | None = None) -> dict:
+    return {
+        "resource_id": _id(seed),
+        "resource_version": version,
+        "resource_type": "generated_copy",
+        "asset_kind": "copy",
+        "source_kind": "user_adopted",
+        "niche": "职场",
+        "title": f"标题 {seed}",
+        "summary": f"摘要 {seed}",
+        "content_text": f"正文 {seed}",
+        "quality_score": 0.9,
+        "duplicate_family_id": family,
+        "qualified_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+        "indexed_at": datetime(2026, 7, 2, tzinfo=timezone.utc),
+        "source_updated_at": datetime(2026, 6, 30, tzinfo=timezone.utc),
+    }
+
+
+class _Repo:
+    def __init__(self, rows: list[dict], *, fail_gate: bool = False):
+        self.rows = {
+            (row["resource_id"], row["resource_version"]): row for row in rows
         }
-        for i, s in enumerate(scores)
-    ]
+        self.fail_gate = fail_gate
+        self.gate_calls: list[dict] = []
+        self.performance_calls: list[dict] = []
+
+    def current_knowledge_rows(self, **kwargs):
+        self.gate_calls.append(kwargs)
+        if self.fail_gate:
+            raise RuntimeError("postgres://user:secret@db/private")
+        identities = zip(kwargs["resource_ids"], kwargs["resource_versions"])
+        return [self.rows[identity] for identity in identities if identity in self.rows]
+
+    def bulk_exact_performance_metrics(self, **kwargs):
+        self.performance_calls.append(kwargs)
+        return {
+            (resource_id, version): []
+            for resource_id, version in zip(
+                kwargs["resource_ids"], kwargs["resource_versions"]
+            )
+        }
 
 
-# --- Property 2:余弦 relevance == clamp(自身分数, 0, 1),不随候选集最大值变化 ---
-@settings(max_examples=200)
-@given(st.lists(st.floats(min_value=-5.0, max_value=5.0, allow_nan=False, allow_infinity=False),
-                min_size=1, max_size=8))
-def test_cosine_relevance_is_absolute_and_independent_of_candidate_set(scores):
-    items = _items(scores)
-    ranked = rank_evidence("default", items, performance_data={}, limit=100, score_kind="cosine")
-    rel_by_id = {r["resource_id"]: r["rank_signals"]["relevance"] for r in ranked}
-    for i, s in enumerate(scores):
-        # rank_signals.relevance 以 4 位四舍五入存储
-        assert rel_by_id[f"r{i}"] == round(_clamp(s), 4)
-
-
-# --- Property 3:BM25 路径候选集内归一化,且永不被绝对相关度下限闸门作用(不会因分数低而清空)---
-@settings(max_examples=150)
-@given(st.lists(st.floats(min_value=0.001, max_value=100.0, allow_nan=False, allow_infinity=False),
-                min_size=1, max_size=8))
-def test_bm25_path_normalizes_and_is_never_gated_by_floor(scores):
-    items = _items(scores)
-    ranked = rank_evidence("default", items, performance_data={}, limit=100, score_kind="bm25")
-    # 唯一标题 → 不去重,全部保留(BM25 不施加绝对下限,即便分数都远低于 0.5)
-    assert len(ranked) == len(items)
-    max_raw = max(scores)
-    rel_by_id = {r["resource_id"]: r["rank_signals"]["relevance"] for r in ranked}
-    for i, s in enumerate(scores):
-        assert rel_by_id[f"r{i}"] == round(s / max_raw, 4)
-
-
-# ---------- 工具级闸门:夹具 ----------
-class _User:
-    identity = "ou_owner"
-
-
-class _Config:
-    server_info = SimpleNamespace(user=_User())
-
-
-class _GateRepo:
-    def __init__(self, top_score: float):
-        self._top = top_score
-        self.calls: list[str] = []
-        self.active_index = SimpleNamespace(embedding_model="model-a", dimensions=1536, config_version="cfg")
-
-    def active_embedding_index(self, tenant_id):
-        self.calls.append("active_index")
-        return self.active_index
-
-    def semantic_rows(self, **kwargs):
-        self.calls.append("semantic")
-        return [{
-            "id": "resource-1", "resource_version": 1, "title": "x", "summary": None, "type": "topic",
-            "visibility": "team", "score": self._top, "chunk_index": 0, "chunk_text": "c",
-        }]
-
-    def bulk_performance_metrics(self, tenant_id, resource_ids):
-        self.calls.append("perf")
-        return {rid: [] for rid in resource_ids}
-
-
-def _run_gate(monkeypatch, top_score: float, floor: float):
-    repo = _GateRepo(top_score)
-
-    @contextmanager
-    def repository():
-        yield repo
-
-    monkeypatch.setattr(df_tools, "_repository", repository)
-    monkeypatch.setattr(
-        df_tools, "_embedding_query_config_for_index",
-        lambda idx: EmbeddingProviderConfig(base_url="https://e/v1", api_key="k",
-                                            model="model-a", config_version="cfg", dimensions=1536),
+def _service(
+    repo: _Repo,
+    *,
+    semantic,
+    keyword,
+    graph=None,
+    floor: float = 0.5,
+) -> RetrievalService:
+    return RetrievalService(
+        repo,
+        semantic_recall=semantic,
+        keyword_recall=keyword,
+        graph_expand=graph,
+        relevance_floor=floor,
     )
-    monkeypatch.setattr(df_tools, "_embed_query", lambda *a, **k: [0.1] * 1536)
-    monkeypatch.setattr("data_foundation.config.resolve_query_instruction", lambda model: None)
-    monkeypatch.setattr("data_foundation.config.current_relevance_floor", lambda: floor)
-    return df_tools.semantic_search_resources.func("q", top_k=3, config=_Config()), repo
 
 
-# --- Property 1:闸门单调性 —— top_score < floor 当且仅当返回 insufficient_relevance ---
-@settings(max_examples=150, deadline=None)
-@given(st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False))
-def test_gate_monotonic_around_floor(monkeypatch_factory_score):
-    # pytest 的 monkeypatch 不能直接用于 @given;用 hypothesis 内建上下文逐例打补丁
-    from _pytest.monkeypatch import MonkeyPatch
-    score = monkeypatch_factory_score
-    floor = 0.5
-    mp = MonkeyPatch()
-    try:
-        out, repo = _run_gate(mp, score, floor)
-    finally:
-        mp.undo()
-    if score < floor:
-        assert out["mode"] == "insufficient_relevance"
-        assert out["results"] == []
-        assert out["threshold"] == floor
-        # 数据不足:不降级到全文(不查 perf / 不进 BM25)
-        assert "perf" not in repo.calls
-    else:
-        assert out["mode"] == "semantic"
+def test_hybrid_mode_requires_evidence_from_both_primary_engines() -> None:
+    repo = _Repo([_row(1)])
+    service = _service(
+        repo,
+        semantic=lambda **_: [RecallHit(_id(1), 1, 0.91)],
+        keyword=lambda **_: [RecallHit(_id(1), 1, 0.88)],
+    )
+
+    package = service.retrieve(
+        tenant_id="default", actor_open_id="ou_user", query="职场写作"
+    )
+
+    assert package.retrieval_mode == "hybrid"
+    assert package.engines_used == ["semantic", "keyword"]
+    assert package.evidence[0].retrieval_sources == ["semantic", "keyword"]
+    assert package.degraded_engines[0].engine == "graph"
 
 
-# --- Property 6:降级语义保持 —— 无 active 索引恒走 keyword_fallback,不被误判为 insufficient ---
-@settings(max_examples=50, deadline=None)
-@given(st.text(min_size=1, max_size=12).filter(lambda s: s.strip()))
-def test_no_active_index_always_keyword_fallback(query):
-    from _pytest.monkeypatch import MonkeyPatch
+def test_healthy_engine_without_usable_hits_does_not_mislabel_mode() -> None:
+    repo = _Repo([_row(1)])
+    package = _service(
+        repo,
+        semantic=lambda **_: [RecallHit(_id(1), 1, 0.9)],
+        keyword=lambda **_: [],
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="职场")
 
-    class _NoIndexRepo:
-        def active_embedding_index(self, tenant_id):
-            return None
-
-    mp = MonkeyPatch()
-    try:
-        @contextmanager
-        def repository():
-            yield _NoIndexRepo()
-
-        mp.setattr(df_tools, "_repository", repository)
-        # 全文降级走 search_resources;此处让 Meili 不可用,得到确定的 keyword_fallback
-        mp.delenv("XHS_MEILI_URL", raising=False)
-        mp.delenv("XHS_MEILI_KEY", raising=False)
-        out = df_tools.semantic_search_resources.func(query, top_k=3, config=_Config())
-    finally:
-        mp.undo()
-    assert out["mode"] == "keyword_fallback"
-    assert out["mode"] != "insufficient_relevance"
+    assert package.retrieval_mode == "semantic_only"
+    assert package.engines_used == ["semantic"]
+    assert not any(item.engine == "keyword" for item in package.degraded_engines)
 
 
-def test_rank_evidence_tolerates_non_numeric_metrics():
-    """回归:performance_metric 含真正不可解析的脏值(None/乱码)时,rank_evidence 不得崩,
-    脏值按 0 计、排序照常完成。(带单位的 "1.2万" 现在会被正确解析,见 test_rank_evidence_parses_unit_metrics。)"""
-    items = _items([0.9, 0.8])
-    dirty_perf = {
-        "r0": [{"metrics": {"likes": "乱码", "collects": None, "comments": "abc"}}],
-        "r1": [{"metrics": {"likes": 100, "collects": 5, "comments": 2}}],
+def test_semantic_failure_degrades_safely_to_keyword_only() -> None:
+    repo = _Repo([_row(1)])
+
+    def semantic(**_):
+        raise RuntimeError("Authorization: Bearer top-secret query=隐私正文")
+
+    package = _service(
+        repo,
+        semantic=semantic,
+        keyword=lambda **_: [RecallHit(_id(1), 1, 0.7)],
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="职场")
+
+    assert package.retrieval_mode == "keyword_only"
+    reason = package.degraded_engines[0].reason_code
+    assert reason == "SEMANTIC_QUERY_FAILED_RUNTIMEERROR"
+    assert "SECRET" not in reason and "隐私" not in reason
+
+
+def test_low_semantic_candidates_and_no_keyword_evidence_are_insufficient() -> None:
+    repo = _Repo([_row(1)])
+    package = _service(
+        repo,
+        semantic=lambda **_: [RecallHit(_id(1), 1, 0.49)],
+        keyword=lambda **_: [],
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="无关问题")
+
+    assert package.retrieval_mode == "insufficient_relevance"
+    assert package.evidence == []
+    assert package.gaps
+
+
+def test_zero_score_keyword_candidate_cannot_be_promoted_by_rrf() -> None:
+    repo = _Repo([_row(1)])
+    package = _service(
+        repo,
+        semantic=lambda **_: [],
+        keyword=lambda **_: [RecallHit(_id(1), 1, 0.0)],
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="不命中")
+    assert package.retrieval_mode == "insufficient_relevance"
+    assert package.evidence == []
+
+
+def test_filters_reach_keyword_prefilter_and_postgres_final_gate() -> None:
+    repo = _Repo([_row(1)])
+    keyword_calls: list[dict] = []
+
+    def keyword(**kwargs):
+        keyword_calls.append(kwargs)
+        return [RecallHit(_id(1), 1, 0.8)]
+
+    package = _service(repo, semantic=lambda **_: [], keyword=keyword).retrieve(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        query="职场",
+        filters={
+            "asset_kinds": ["copy"],
+            "source_kinds": ["user_adopted"],
+            "niches": ["职场"],
+            "min_quality": 0.8,
+            "updated_after": "2026-07-01T00:00:00Z",
+        },
+    )
+
+    assert package.retrieval_mode == "keyword_only"
+    assert keyword_calls[0]["filters"]["updated_after"].endswith("Z")
+    gate = repo.gate_calls[0]
+    assert gate["asset_kinds"] == ["copy"]
+    assert gate["source_kinds"] == ["user_adopted"]
+    assert gate["niches"] == ["职场"]
+    assert gate["min_quality"] == pytest.approx(0.8)
+    assert gate["updated_after"].tzinfo is not None
+
+
+def test_graph_neighbors_are_rechecked_by_same_postgres_gate() -> None:
+    repo = _Repo([_row(1), _row(2)])
+
+    def graph(**_):
+        return {
+            "edges": [
+                {
+                    "source": _id(1),
+                    "source_resource_version": 1,
+                    "target": _id(2),
+                    "target_resource_version": 1,
+                    "weight": 0.9,
+                },
+                {
+                    "source": _id(1),
+                    "source_resource_version": 1,
+                    "target": _id(3),
+                    "target_resource_version": 1,
+                    "weight": 0.99,
+                },
+            ]
+        }
+
+    package = _service(
+        repo,
+        semantic=lambda **_: [RecallHit(_id(1), 1, 0.9)],
+        keyword=lambda **_: [],
+        graph=graph,
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="职场")
+
+    identities = {
+        (item.resource_id, item.resource_version) for item in package.evidence
     }
-    ranked = rank_evidence("default", items, performance_data=dirty_perf, limit=10, score_kind="cosine")
-    assert len(ranked) == 2  # 没崩
-    by_id = {r["resource_id"]: r for r in ranked}
-    # r0 全脏值 → performance 信号为 0;r1 正常数值 → performance 信号 > 0
-    assert by_id["r0"]["rank_signals"]["performance"] == 0.0
-    assert by_id["r1"]["rank_signals"]["performance"] > 0.0
+    assert (_id(2), 1) in identities
+    assert (_id(3), 1) not in identities
+    assert len(repo.gate_calls) == 2
+    assert repo.gate_calls[1]["resource_ids"] == [_id(3), _id(2)]
+    assert "graph" in package.engines_used
 
 
-def test_rank_evidence_parses_unit_metrics():
-    """C-2 回归:带中文单位的爆款数值("1.2万")必须被正确解析为大数,贡献高 performance 信号,
-    而非旧行为里被丢成 0(导致爆款效果排序反转)。"""
-    items = _items([0.9, 0.9])
-    perf = {
-        "r0": [{"metrics": {"likes": "1.2万"}}],   # 爆款:12000
-        "r1": [{"metrics": {"likes": "8000"}}],     # 平庸:8000
-    }
-    ranked = rank_evidence("default", items, performance_data=perf, limit=10, score_kind="cosine")
-    by_id = {r["resource_id"]: r for r in ranked}
-    # 爆款(万级)的 performance 信号必须 > 平庸笔记,而非被丢成 0 反转
-    assert by_id["r0"]["rank_signals"]["performance"] > by_id["r1"]["rank_signals"]["performance"]
+def test_postgres_gate_failure_fails_closed() -> None:
+    repo = _Repo([_row(1)], fail_gate=True)
+    service = _service(
+        repo,
+        semantic=lambda **_: [RecallHit(_id(1), 1, 0.9)],
+        keyword=lambda **_: [],
+    )
+    with pytest.raises(RetrievalSecurityGateError) as exc_info:
+        service.retrieve(
+            tenant_id="default", actor_open_id="ou_user", query="职场"
+        )
+    assert str(exc_info.value) == "POSTGRES_KNOWLEDGE_GATE_FAILED"
+    assert "secret" not in str(exc_info.value).lower()
+
+
+@given(score=st.floats(min_value=-1, max_value=1, allow_nan=False, allow_infinity=False))
+def test_semantic_floor_is_monotonic(score: float) -> None:
+    repo = _Repo([_row(1)])
+    package = _service(
+        repo,
+        semantic=lambda **_: [RecallHit(_id(1), 1, score)],
+        keyword=lambda **_: [],
+        floor=0.5,
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="q")
+    assert bool(package.evidence) is (score >= 0.5)
+
+
+class _Response:
+    status_code = 200
+
+    def __init__(self, dimensions: int):
+        self.dimensions = dimensions
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {"data": [{"embedding": [0.1] * self.dimensions}]}
+
+
+def test_embed_query_uses_instruction_and_requested_dimensions() -> None:
+    calls: list[dict] = []
+    config = EmbeddingProviderConfig(
+        state="enabled",
+        reason_code=None,
+        base_url="https://embedding.invalid/v1",
+        api_key="secret",
+        model="text-embedding",
+        config_version="test",
+        dimensions=3,
+        timeout_seconds=12.0,
+        batch_size=8,
+    )
+
+    def post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return _Response(3)
+
+    vector = embed_query(
+        "露营",
+        config=config,
+        query_instruction="检索：{query}",
+        post=post,
+    )
+
+    assert vector == [0.1, 0.1, 0.1]
+    assert calls[0]["json"]["input"] == ["检索：露营"]
+    assert calls[0]["json"]["dimensions"] == 3
+
+
+def test_embed_query_rejects_wrong_dimensions_without_exposing_payload() -> None:
+    config = EmbeddingProviderConfig(
+        state="enabled",
+        reason_code=None,
+        base_url="https://embedding.invalid/v1",
+        api_key="secret",
+        model="text-embedding",
+        config_version="test",
+        dimensions=3,
+        timeout_seconds=12.0,
+        batch_size=8,
+    )
+    with pytest.raises(EmbeddingSearchUnavailable) as exc_info:
+        embed_query(
+            "隐私查询",
+            config=config,
+            query_instruction=None,
+            post=lambda *_, **__: _Response(2),
+        )
+    assert str(exc_info.value) == "EMBEDDING_QUERY_BAD_DIMENSIONS"

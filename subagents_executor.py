@@ -14,9 +14,7 @@ from data_foundation.evidence import EvidencePackage
 from data_foundation.tools import (
     get_operations_data,
     get_resource,
-    graph_expand,
-    search_resources,
-    semantic_search_resources,
+    retrieve_knowledge,
 )
 
 
@@ -189,21 +187,20 @@ def build_knowledge_atom_retriever(
 任务:围绕主控给出的问题/主题/创作目标,从数据底座大规模召回并精读,返回结构化证据包。
 
 严格遵循主控《检索与证据规约》的检索顺序与口径(本子代理是"重检索"路径,适合精读大量全文):
-1. `semantic_search_resources(query, top_k=10)` 语义召回为主
-2. 语义不足/关键词明确时 `search_resources(query, limit=10)` 补全文
-3. 选最相关的 3~8 个 `(resource_id, resource_version)`；需要关联上下文时调用 `graph_expand(resource_ids, resource_versions)`，两个数组必须一一对应精确身份
-4. 对最关键的若干精确身份调 `get_resource(resource_id, resource_version)` 精读正文
+1. 调用一次 `retrieve_knowledge(query, limit=10)`；统一工具内部完成语义、关键词、图一跳、ACL 与当前知识门融合，不得自行拆成多工具编排
+2. 从返回证据中选最相关的 3~8 个精确 `(resource_id, resource_version)`
+3. 对最关键的若干精确身份调 `get_resource(resource_id, resource_version)` 精读正文
 
 按 EvidencePackage 结构返回(response_format 已强制):
-- `retrieval_mode`:semantic / keyword_fallback / insufficient_relevance
-- `evidence[]`:每条含 resource_id、resource_version、title、summary、source_updated_at、indexed_at、score、why_selected
+- `retrieval_mode`:hybrid / semantic_only / keyword_only / insufficient_relevance
+- `evidence[]`:逐字段照搬工具结果，完整保留 resource_id、resource_version、type、asset_kind、source_kind、niche、title、summary、source_updated_at、indexed_at、score、relevance、freshness、quality、performance、retrieval_sources、why_selected
 - `gaps`:证据不足或 retrieval_mode 为 insufficient_relevance 时,明确说明缺什么
 
 时效/防伪:source_updated_at 与 indexed_at 严格区分,未知写"未知"不猜;
 数据不足(insufficient_relevance)时 evidence 留空、gaps 说明,不编造、不强行用关键词凑。
 只返回证据包,不写最终小红书文案、不保存数据、不同步飞书。""",
         "model": initial_model,
-        "tools": [semantic_search_resources, search_resources, graph_expand, get_resource],
+        "tools": [retrieve_knowledge, get_resource],
         "response_format": _structured(EvidencePackage),
         "middleware": build_subagent_middleware(registry),
     }
@@ -248,13 +245,13 @@ def build_benchmark_analyst(
 
 任务：
 1. 围绕主控提供的主题或精确 `(resource_id, resource_version)`，检索并分析爆款内容。
-   - `semantic_search_resources(query, top_k=5)` 语义召回对标文章。
+   - `retrieve_knowledge(query, limit=5)` 统一召回对标文章。
    - 对命中结果调 `get_resource(resource_id, resource_version)` 深入阅读不可变版本，缺版本的候选直接丢弃。
 2. 提炼其核心写作模式、高频使用的心理触发器（如好奇、痛点刺激等）、Emoji及段落排版习惯，找出差异化切入缺口。
 3. 对每篇实际精读的范本填写 `source_teardowns`，精确身份与结构化字段必须可直接机械传给 `save_writing_teardown`；不得把多篇共性冒充单篇事实。
 4. 严格按 BenchmarkReport 契约格式返回结果。不得编造依据，无数据时 `source_teardowns=[]` 并在内容缺口中明说。""",
         "model": initial_model,
-        "tools": [semantic_search_resources, search_resources, get_resource],
+        "tools": [retrieve_knowledge, get_resource],
         "response_format": _structured(BenchmarkReport),
         "middleware": build_subagent_middleware(registry),
     }
@@ -272,11 +269,11 @@ def build_expert_panel_debater(
 
 流程：
 1. 优先调用 `get_operations_data` 获取创作者当前真实的账号表现与指标。
-2. 调用 `search_resources` 获取当前项目相关的背景素材。
+2. 调用 `retrieve_knowledge` 获取当前项目相关的背景素材。
 3. 调度四方专家进行论战，提炼他们的核心洞察与论点。
 4. 汇总为 DebateVerdictReport，共识中若有推荐选题，必须用标准的 JSON 结构格式化。""",
         "model": initial_model,
-        "tools": [get_operations_data, get_resource, search_resources],
+        "tools": [get_operations_data, get_resource, retrieve_knowledge],
         "response_format": _structured(DebateVerdictReport),
         "middleware": build_subagent_middleware(registry),
     }
@@ -298,7 +295,7 @@ def build_content_system_ingestor(
 3. 诊断当前已沉淀内容地图相比行业爆款缺少的关键漏洞板块。
 4. 严格按照 ContentSystemReport 结构化返回。""",
         "model": initial_model,
-        "tools": [get_operations_data, get_resource, search_resources],
+        "tools": [get_operations_data, get_resource, retrieve_knowledge],
         "response_format": _structured(ContentSystemReport),
         "middleware": build_subagent_middleware(registry),
     }
@@ -315,12 +312,12 @@ def build_curriculum_designer(
         "system_prompt": """你是自适应教学大纲规划专家。你需要在隔离上下文中精心设计博主的自适应学习章节。
 
 任务：
-1. 通过 `search_resources` 取得精确身份，再用 `get_resource(resource_id, resource_version)` 深入理解博主的定位盲区、痛点表现及历史反馈；禁止读取 latest。
+1. 通过 `retrieve_knowledge` 取得精确身份，再用 `get_resource(resource_id, resource_version)` 深入理解博主的定位盲区、痛点表现及历史反馈；禁止读取 latest。
 2. 做出客观的水位认知评估。
 3. 规划 5-10 章节自适应大纲，每个章节必须明确指出：核心概念、课后可否证的行动待办 (learning_action)。
 4. 严格按照 CurriculumReport 结构化返回。""",
         "model": initial_model,
-        "tools": [get_resource, search_resources],
+        "tools": [get_resource, retrieve_knowledge],
         "response_format": _structured(CurriculumReport),
         "middleware": build_subagent_middleware(registry),
     }
@@ -384,7 +381,7 @@ def build_copywriting_coprocessor(
 4. 每个 version 必须含 `label/title/body/tags/cover/note` 六个字段照填;主控会**机械映射**进 xhs_copy 块,你**不要**自己再加任何 markdown 包装、不要把 outline/自审写进 body。
 5. 严格按 CopywritingReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。""",
         "model": initial_model,
-        "tools": [get_resource, search_resources, semantic_search_resources],
+        "tools": [get_resource, retrieve_knowledge],
         "response_format": _structured(CopywritingReport),
         "middleware": build_subagent_middleware(registry),
     }
@@ -447,7 +444,7 @@ def build_imitation_writer(
 - 每个 version 含 `label/title/body/tags/cover/note` 六字段照填;主控会**机械映射**进 xhs_imitation 块,你**不要**自己加任何 markdown 包装、不要把 teardown/outline/自审写进 body。
 - 严格按 ImitationReport 结构化返回。`body` 是纯笔记正文(空行+Emoji),不含任何 markdown/report 骨架。""",
         "model": initial_model,
-        "tools": [get_resource, search_resources, semantic_search_resources],
+        "tools": [get_resource, retrieve_knowledge],
         "response_format": _structured(ImitationReport),
         "middleware": build_subagent_middleware(registry),
     }

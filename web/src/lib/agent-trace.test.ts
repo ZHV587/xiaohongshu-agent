@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isXhsTraceEvent,
   reduceTraceEvents,
+  toolPresentation,
   toTracePresentation,
   type XhsTraceEvent,
 } from "./agent-trace";
@@ -51,7 +52,7 @@ test("presentation names the real tool and preserves source ids", () => {
       seq: 2,
       type: "xhs.trace.tool.completed",
       stage_id: "retrieve",
-      tool_name: "semantic_search_resources",
+      tool_name: "retrieve_knowledge",
       metrics: { found_count: 12, used_count: 3 },
     }),
     event({ event_id: "e3", seq: 3, type: "xhs.trace.run.completed", label: "处理完成" }),
@@ -60,10 +61,34 @@ test("presentation names the real tool and preserves source ids", () => {
   const presentation = toTracePresentation(state);
 
   assert.equal(presentation.traceId, "trace-1");
-  assert.match(presentation.userSummary, /已完成语义检索/);
-  assert.equal(presentation.userStages[0].title, "按语义找相关素材");
+  assert.match(presentation.userSummary, /已完成知识库检索/);
+  assert.equal(presentation.userStages[0].title, "检索知识库");
   assert.equal(presentation.userStages[0].metricsText, "找到 12 条，采用 3 条");
   assert.deepEqual(presentation.userStages[0].sourceEventIds, ["e2"]);
+});
+
+test("unified retrieval is the only knowledge-search presentation", () => {
+  assert.equal(toolPresentation("retrieve_knowledge")?.title, "检索知识库");
+  assert.equal(toolPresentation("semantic_search_resources"), undefined);
+  assert.equal(toolPresentation("search_resources"), undefined);
+  assert.equal(toolPresentation("graph_expand"), undefined);
+});
+
+test("presentation counts evidence_count and ignores unsafe numeric metrics", () => {
+  const state = reduceTraceEvents(undefined, [
+    event({
+      tool_name: "retrieve_knowledge",
+      metrics: {
+        evidence_count: 4,
+        found_count: -1,
+        used_count: Number.NaN,
+        excluded_count: "7",
+      },
+    }),
+  ]);
+  const [stage] = toTracePresentation(state).userStages;
+  assert.equal(stage.metricsText, "找到 4 条");
+  assert.equal(stage.resultText, "找到 4 条相关素材。");
 });
 
 test("presentation is a real tool-call chain: each step names its tool + what it did", () => {
@@ -72,7 +97,7 @@ test("presentation is a real tool-call chain: each step names its tool + what it
     event({
       event_id: "e2",
       seq: 2,
-      tool_name: "semantic_search_resources",
+      tool_name: "retrieve_knowledge",
       label: "tool completed",
       metrics: { found_count: 12, used_count: 3 },
     }),
@@ -82,10 +107,10 @@ test("presentation is a real tool-call chain: each step names its tool + what it
   const presentation = toTracePresentation(state);
   const [stage] = presentation.userStages;
 
-  assert.equal(presentation.userSummary, "已完成语义检索：找到 12 条，采用 3 条");
-  assert.equal(stage.title, "按语义找相关素材");
-  assert.equal(stage.intent, "从数据底座按语义相似度召回可用笔记和历史素材。");
-  assert.equal(stage.action, "按语义相似度召回与本轮主题相关的素材。");
+  assert.equal(presentation.userSummary, "已完成知识库检索：找到 12 条，采用 3 条");
+  assert.equal(stage.title, "检索知识库");
+  assert.equal(stage.intent, "从统一知识库召回语义、关键词与图关联证据，并核验可用性。");
+  assert.equal(stage.action, "检索与本轮任务相关的知识证据，合并排序后返回精确素材版本。");
   assert.equal(stage.resultText, "找到 12 条相关素材，采用 3 条作为本次回答依据。");
 });
 
@@ -122,7 +147,7 @@ test("presentation folds started and completed events into one user step", () =>
       type: "xhs.trace.tool.started",
       stage_id: "retrieve",
       tool_call_id: "call-1",
-      tool_name: "semantic_search_resources",
+      tool_name: "retrieve_knowledge",
       label: "tool started",
     }),
     event({
@@ -131,7 +156,7 @@ test("presentation folds started and completed events into one user step", () =>
       type: "xhs.trace.tool.completed",
       stage_id: "retrieve",
       tool_call_id: "call-1",
-      tool_name: "semantic_search_resources",
+      tool_name: "retrieve_knowledge",
       label: "tool completed",
       metrics: { found_count: 12, used_count: 3 },
     }),
@@ -152,7 +177,7 @@ test("each stage carries its own real state (done vs active), not one run-level 
     event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
     event({
       event_id: "e2", seq: 2, type: "xhs.trace.tool.completed",
-      stage_id: "retrieve", tool_call_id: "call-1", tool_name: "semantic_search_resources",
+      stage_id: "retrieve", tool_call_id: "call-1", tool_name: "retrieve_knowledge",
       metrics: { found_count: 8, used_count: 3 },
     }),
     event({
@@ -173,7 +198,7 @@ test("a failed stage surfaces as error state on that step", () => {
     event({ event_id: "e1", seq: 1, type: "xhs.trace.run.started", label: "run started" }),
     event({
       event_id: "e2", seq: 2, type: "xhs.trace.tool.failed",
-      stage_id: "retrieve", tool_call_id: "call-1", tool_name: "semantic_search_resources",
+      stage_id: "retrieve", tool_call_id: "call-1", tool_name: "retrieve_knowledge",
       status: "error",
     }),
   ]);
@@ -187,7 +212,7 @@ test("ordinary presentation hides engineering words", () => {
     event({
       event_id: "e2",
       seq: 2,
-      tool_name: "semantic_search_resources",
+      tool_name: "retrieve_knowledge",
       label: "tool completed",
       metrics: { found_count: 12, used_count: 3 },
     }),
@@ -212,6 +237,6 @@ test("ordinary presentation hides engineering words", () => {
   ]) {
     assert.equal(visible.includes(word), false, `ordinary UI leaked ${word}`);
   }
-  assert.match(visible, /按语义找相关素材/);
+  assert.match(visible, /检索知识库/);
   assert.match(visible, /找到 12 条/);
 });

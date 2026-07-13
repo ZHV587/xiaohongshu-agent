@@ -49,7 +49,8 @@ def test_imitation_writer_tools_and_contract():
     ag = build_imitation_writer(_registry(), Mock())
     assert ag["name"] == "imitation-writer"
     names = {t.name for t in ag["tools"]}
-    assert {"get_resource", "search_resources", "semantic_search_resources"} <= names
+    assert {"get_resource", "retrieve_knowledge"} <= names
+    assert {"search_resources", "semantic_search_resources", "graph_expand"}.isdisjoint(names)
     sp = ag["system_prompt"]
     # 范本原文原样铁律 + 两段式 + 学套路(形似不照抄)
     assert "范本原文" in sp or "原文" in sp
@@ -78,7 +79,8 @@ def test_persona_distiller_tools():
 def test_knowledge_atom_retriever_tools():
     ag = build_knowledge_atom_retriever(_registry(), Mock())
     names = {t.name for t in ag["tools"]}
-    assert {"semantic_search_resources", "search_resources", "graph_expand", "get_resource"} <= names
+    assert {"retrieve_knowledge", "get_resource"} <= names
+    assert {"semantic_search_resources", "search_resources", "graph_expand"}.isdisjoint(names)
     assert "save_generated_topic" not in names
     assert "save_generated_copy" not in names
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import meilisearch
@@ -10,22 +13,45 @@ import meilisearch
 from data_foundation.engine_config import MeiliConfig
 
 
-# 模块级底层 client 缓存:按 (url, api_key) 复用 meilisearch.Client,避免每次工具调用/
-# 每 cycle 新建 HTTP 客户端。config 变化(换地址/key)自动建新实例。
+MEILI_KNOWLEDGE_INDEX_SCHEMA_VERSION = "knowledge-hybrid-v2"
+
+# Reuse the underlying HTTP client for a deployment config. A URL/key change creates
+# a new client naturally; no secret is ever included in logs or exceptions here.
 _client_cache: dict[tuple[str, str], Any] = {}
 _cache_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
 class MeiliTenantAudit:
-    """A tenant's total documents and documents safe for exact-version hydration."""
+    """Tenant cardinality split by the currently deployable index schema."""
 
     total_documents: int
-    versioned_documents: int
+    current_schema_documents: int
 
     @property
-    def malformed_documents(self) -> int:
-        return max(0, self.total_documents - self.versioned_documents)
+    def stale_schema_documents(self) -> int:
+        return max(0, self.total_documents - self.current_schema_documents)
+
+
+@dataclass(frozen=True)
+class MeiliSearchHit:
+    """Typed keyword candidate; PostgreSQL still owns ACL and final hydration."""
+
+    resource_id: str
+    resource_version: int
+    score: float
+    resource_type: str
+    asset_kind: str
+    source_kind: str
+    niche: str | None
+    quality_score: float
+    qualified_at_epoch: int
+    tags: tuple[str, ...] = ()
+    hook_types: tuple[str, ...] = ()
+    cta_types: tuple[str, ...] = ()
+    structure_tags: tuple[str, ...] = ()
+    style_tags: tuple[str, ...] = ()
+    success_factors: tuple[str, ...] = ()
 
 
 def _reset_client_cache() -> None:
@@ -38,16 +64,129 @@ def _get_client(config: MeiliConfig) -> Any:
     with _cache_lock:
         client = _client_cache.get(key)
         if client is None:
-            # timeout(秒):防 Meili 卡顿时工作线程无限阻塞。即便已 asyncio.to_thread 卸到线程,
-            # 无超时的 hung socket 会永久占用线程、积压重试也卡住,故必须有硬上限。
             client = meilisearch.Client(config.url, config.api_key, timeout=30)
             _client_cache[key] = client
         return client
 
 
+def _json_literal(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _validated_string_list(value: Any, *, field: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{field} must be a list of strings")
+    if len(value) > 50:
+        raise ValueError(f"{field} accepts at most 50 values")
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"{field} must contain only strings")
+        text = item.strip()
+        if not text or len(text) > 128:
+            raise ValueError(f"{field} values must be 1..128 characters")
+        if text not in seen:
+            seen.add(text)
+            result.append(text)
+    return tuple(result)
+
+
+def _updated_after_epoch(value: Any) -> int:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("updated_after must be an ISO 8601 string")
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("updated_after must be an ISO 8601 string") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("updated_after must include a timezone")
+    epoch = int(parsed.timestamp())
+    if epoch < 0:
+        raise ValueError("updated_after must not precede the Unix epoch")
+    return epoch
+
+
+def _compile_metadata_filters(filters: Mapping[str, Any] | None) -> list[str]:
+    if filters is None:
+        return []
+    if not isinstance(filters, Mapping):
+        raise ValueError("filters must be an object")
+    allowed = {
+        "asset_kinds",
+        "source_kinds",
+        "niches",
+        "min_quality",
+        "updated_after",
+    }
+    unknown = set(filters) - allowed
+    if unknown:
+        raise ValueError(f"unsupported Meili filters: {', '.join(sorted(unknown))}")
+
+    clauses: list[str] = []
+    for public_name, document_name in (
+        ("asset_kinds", "asset_kind"),
+        ("source_kinds", "source_kind"),
+        ("niches", "niche"),
+    ):
+        values = _validated_string_list(filters.get(public_name), field=public_name)
+        if values:
+            literals = ", ".join(_json_literal(value) for value in values)
+            clauses.append(f"{document_name} IN [{literals}]")
+
+    min_quality = filters.get("min_quality")
+    if min_quality is not None:
+        if (
+            isinstance(min_quality, bool)
+            or not isinstance(min_quality, (int, float))
+            or not math.isfinite(float(min_quality))
+            or not 0.0 <= float(min_quality) <= 1.0
+        ):
+            raise ValueError("min_quality must be a finite number between 0 and 1")
+        clauses.append(f"quality_score >= {float(min_quality):.12g}")
+
+    updated_after = filters.get("updated_after")
+    if updated_after is not None:
+        clauses.append(f"qualified_at_epoch >= {_updated_after_epoch(updated_after)}")
+    return clauses
+
+
+def _hit_strings(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
+
+
 class MeiliResourceIndex:
-    SEARCHABLE = ["title", "summary", "content_text"]
-    FILTERABLE = ["tenant_id", "type", "resource_version"]
+    SEARCHABLE = [
+        "title",
+        "summary",
+        "content_text",
+        "normalized_text",
+        "niche",
+        "tags",
+        "hook_types",
+        "cta_types",
+        "structure_tags",
+        "style_tags",
+        "success_factors",
+    ]
+    FILTERABLE = [
+        "tenant_id",
+        "resource_version",
+        "type",
+        "asset_kind",
+        "source_kind",
+        "niche",
+        "quality_score",
+        "qualified_at_epoch",
+        "index_schema_version",
+    ]
 
     def __init__(self, *, client: Any, index_uid: str = "resources"):
         self.client = client
@@ -63,9 +202,6 @@ class MeiliResourceIndex:
             ("filterable attributes", index.update_filterable_attributes(self.FILTERABLE)),
             ("searchable attributes", index.update_searchable_attributes(self.SEARCHABLE)),
         )
-        # Settings updates are asynchronous just like document writes.  Drift audit
-        # immediately filters on resource_version, so returning before the settings
-        # task is applied would turn a healthy index into a false-negative audit.
         for operation, info in tasks:
             task = index.wait_for_task(info.task_uid, timeout_in_ms=30000)
             status = getattr(task, "status", None)
@@ -76,9 +212,6 @@ class MeiliResourceIndex:
                 )
 
     def upsert(self, document: dict[str, Any]) -> None:
-        # add_documents 是**异步入队**:返回 TaskInfo 即返回,Meili 端任务可能稍后才应用甚至失败。
-        # 若不等待,outbox 会在文档实际入库前就被标 succeeded —— 任务失败时 PG 说成功、Meili 里没有,
-        # 且无 reconcile 重推 → 永久静默空洞。故等任务终态并校验,失败抛出让 outbox 重试。
         index = self.client.index(self.index_uid)
         info = index.add_documents([document], primary_key="resource_id")
         task = index.wait_for_task(info.task_uid, timeout_in_ms=30000)
@@ -90,12 +223,6 @@ class MeiliResourceIndex:
             )
 
     def delete(self, resource_id: str) -> None:
-        """物理删除单个资源文档,使 Meili 与核心库一致(资源已从 PG 消失时调用)。
-
-        与 upsert 同理:delete_document 是异步入队,须等任务终态并校验,否则 outbox 会在文档
-        实际删除前就被标记完成 —— 删除失败时核心库已无、Meili 仍残留,且无重推路径 → 永久脏数据。
-        对不存在的文档,Meili 删除任务同样返回 succeeded(幂等),故重复删除安全。
-        """
         index = self.client.index(self.index_uid)
         info = index.delete_document(resource_id)
         task = index.wait_for_task(info.task_uid, timeout_in_ms=30000)
@@ -107,14 +234,8 @@ class MeiliResourceIndex:
             )
 
     def audit_tenant(self, *, tenant_id: str) -> MeiliTenantAudit:
-        """Count all documents and documents carrying a valid immutable version.
-
-        Old Meili documents can have the right cardinality while lacking
-        ``resource_version``.  Those documents are unusable because the Postgres ACL
-        hydrator must never guess the latest version.  Counting the valid subset makes
-        this schema drift visible even when the raw document total still matches PG.
-        """
-        tenant_literal = json.dumps(tenant_id, ensure_ascii=False)
+        """Count only exact documents written with the active hybrid schema."""
+        tenant_literal = _json_literal(tenant_id)
         index = self.client.index(self.index_uid)
 
         def _count(filter_expression: str) -> int:
@@ -125,38 +246,102 @@ class MeiliResourceIndex:
             return int(result.get("estimatedTotalHits") or result.get("totalHits") or 0)
 
         total = _count(f"tenant_id = {tenant_literal}")
-        versioned = _count(
-            f"tenant_id = {tenant_literal} AND resource_version >= 1"
+        current = _count(
+            f"tenant_id = {tenant_literal} "
+            f"AND index_schema_version = {_json_literal(MEILI_KNOWLEDGE_INDEX_SCHEMA_VERSION)} "
+            "AND resource_version >= 1"
         )
         return MeiliTenantAudit(
             total_documents=total,
-            versioned_documents=versioned,
+            current_schema_documents=current,
         )
 
-    def search(self, query: str, *, tenant_id: str, limit: int) -> list[tuple[str, float, int]]:
-        # showRankingScore:让 Meili 返回 _rankingScore(0~1 归一化相关度),
-        # 贯通到 rank_evidence 作 BM25 口径排序依据;否则全文相关度信号丢失。
+    def search(
+        self,
+        query: str,
+        *,
+        tenant_id: str,
+        limit: int,
+        filters: Mapping[str, Any] | None = None,
+    ) -> list[MeiliSearchHit]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        clauses = [
+            f"tenant_id = {_json_literal(tenant_id)}",
+            "index_schema_version = "
+            f"{_json_literal(MEILI_KNOWLEDGE_INDEX_SCHEMA_VERSION)}",
+            *_compile_metadata_filters(filters),
+        ]
         result = self.client.index(self.index_uid).search(
             query,
             opt_params={
-                "filter": f"tenant_id = {json.dumps(tenant_id, ensure_ascii=False)}",
+                "filter": " AND ".join(clauses),
                 "limit": limit,
                 "showRankingScore": True,
             },
         )
-        hits: list[tuple[str, float, int]] = []
+        hits: list[MeiliSearchHit] = []
         for hit in result.get("hits", []):
             version = hit.get("resource_version")
-            # Old/incomplete documents have no immutable-version identity.  Returning
-            # them would force the PG ACL hydrator to guess "latest", which can expose
-            # an unadopted generated-copy candidate.  Fail closed until reindexing.
-            if not isinstance(version, int) or isinstance(version, bool) or version <= 0:
+            qualified_at_epoch = hit.get("qualified_at_epoch")
+            quality_score = hit.get("quality_score")
+            asset_kind = hit.get("asset_kind")
+            source_kind = hit.get("source_kind")
+            resource_type = hit.get("type")
+            if (
+                hit.get("index_schema_version") != MEILI_KNOWLEDGE_INDEX_SCHEMA_VERSION
+                or not isinstance(version, int)
+                or isinstance(version, bool)
+                or version <= 0
+                or not isinstance(qualified_at_epoch, int)
+                or isinstance(qualified_at_epoch, bool)
+                or qualified_at_epoch < 0
+                or isinstance(quality_score, bool)
+                or not isinstance(quality_score, (int, float))
+                or not math.isfinite(float(quality_score))
+                or not 0.0 <= float(quality_score) <= 1.0
+                or not isinstance(asset_kind, str)
+                or not asset_kind
+                or not isinstance(source_kind, str)
+                or not source_kind
+                or not isinstance(resource_type, str)
+                or not resource_type
+                or not hit.get("resource_id")
+            ):
                 continue
+            score = hit.get("_rankingScore") or 0.0
+            if (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not math.isfinite(float(score))
+            ):
+                score = 0.0
+            niche = hit.get("niche")
             hits.append(
-                (
-                    str(hit["resource_id"]),
-                    float(hit.get("_rankingScore") or 0.0),
-                    version,
+                MeiliSearchHit(
+                    resource_id=str(hit["resource_id"]),
+                    resource_version=version,
+                    score=float(score),
+                    resource_type=resource_type,
+                    asset_kind=asset_kind,
+                    source_kind=source_kind,
+                    niche=niche if isinstance(niche, str) and niche else None,
+                    quality_score=float(quality_score),
+                    qualified_at_epoch=qualified_at_epoch,
+                    tags=_hit_strings(hit.get("tags")),
+                    hook_types=_hit_strings(hit.get("hook_types")),
+                    cta_types=_hit_strings(hit.get("cta_types")),
+                    structure_tags=_hit_strings(hit.get("structure_tags")),
+                    style_tags=_hit_strings(hit.get("style_tags")),
+                    success_factors=_hit_strings(hit.get("success_factors")),
                 )
             )
         return hits
+
+
+__all__ = [
+    "MEILI_KNOWLEDGE_INDEX_SCHEMA_VERSION",
+    "MeiliResourceIndex",
+    "MeiliSearchHit",
+    "MeiliTenantAudit",
+]

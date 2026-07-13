@@ -175,9 +175,7 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
     tool_names = {getattr(tool, "name", "") for tool in agent_module.data_foundation_tools}
 
     assert {
-        "search_resources",
-        "semantic_search_resources",
-        "graph_expand",
+        "retrieve_knowledge",
         "get_resource",
         "get_generated_copy_lifecycle",
         "get_data_foundation_status",
@@ -190,6 +188,7 @@ def test_agent_registers_data_foundation_tools(monkeypatch):
         "save_performance_metric",
         "get_resource_performance",
     } <= tool_names
+    assert {"search_resources", "semantic_search_resources", "graph_expand"}.isdisjoint(tool_names)
 
 
 def test_agent_does_not_expose_raw_feishu_readers(monkeypatch):
@@ -404,11 +403,10 @@ def test_knowledge_retriever_subagent_uses_data_foundation_retrieval_tools(monke
     tool_names = {getattr(t, "name", "") for t in retriever["tools"]}
 
     assert {
-        "semantic_search_resources",
-        "search_resources",
-        "graph_expand",
+        "retrieve_knowledge",
         "get_resource",
     } <= tool_names
+    assert {"search_resources", "semantic_search_resources", "graph_expand"}.isdisjoint(tool_names)
     assert "save_generated_topic" not in tool_names
     assert "save_generated_copy" not in tool_names
 

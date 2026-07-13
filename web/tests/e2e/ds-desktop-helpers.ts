@@ -10,15 +10,21 @@ export type Diagnostics = {
 
 const topicEvidence = {
   resource_id: "res-camp-001",
+  resource_version: 3,
   type: "爆款笔记",
+  asset_kind: "example",
+  source_kind: "user_adopted",
+  niche: "户外露营",
   title: "露营装备清单高收藏样本",
   summary: "评论集中在轻量化、收纳和新手避坑。",
   score: 0.92,
+  quality: 0.84,
   relevance: 0.88,
   freshness: 0.76,
   performance: 0.81,
-  source_updated_at: "2026-07-01",
-  indexed_at: "2026-07-02",
+  retrieval_sources: ["semantic", "keyword"],
+  source_updated_at: "2026-07-01T00:00:00Z",
+  indexed_at: "2026-07-02T00:00:00Z",
   why_selected: "与用户输入的露营装备选题高度相关，且收藏表现高。",
 };
 
@@ -28,14 +34,14 @@ export const fixtureMessages = [
     id: "m-ai-tool-1",
     type: "ai",
     content: "",
-    tool_calls: [{ id: "call-search-1", name: "semantic_search_resources", args: { query: "露营装备 新手 避坑" } }],
+    tool_calls: [{ id: "call-search-1", name: "retrieve_knowledge", args: { query: "露营装备 新手 避坑" } }],
   },
   {
     id: "m-tool-1",
     type: "tool",
-    name: "search_data_foundation",
+    name: "retrieve_knowledge",
     tool_call_id: "call-search-1",
-    content: JSON.stringify({ matched: 3, top_resource: topicEvidence.resource_id }),
+    content: JSON.stringify({ retrieval_mode: "hybrid", evidence: [topicEvidence] }),
   },
   {
     id: "m-ai-final-1",
@@ -51,7 +57,7 @@ export const fixtureMessages = [
             angle: "新手避坑",
             kw: "露营 装备 清单 新手",
             emotional: "省钱安心",
-            evidence_mode: "semantic",
+            retrieval_mode: "hybrid",
             evidence: [topicEvidence],
           },
           {
@@ -60,7 +66,7 @@ export const fixtureMessages = [
             hotRate: 78,
             angle: "收纳整理",
             kw: "露营 收纳 装备",
-            evidence_mode: "semantic",
+            retrieval_mode: "hybrid",
             evidence: [topicEvidence],
           },
           {
@@ -69,7 +75,7 @@ export const fixtureMessages = [
             hotRate: 72,
             angle: "轻量出行",
             kw: "轻露营 周末 装备",
-            evidence_mode: "semantic",
+            retrieval_mode: "hybrid",
             evidence: [topicEvidence],
           },
         ],

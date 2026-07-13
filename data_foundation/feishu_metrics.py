@@ -25,7 +25,7 @@ NOTE_LEVEL_TABLE_IDS: frozenset[str] = frozenset({
 # 明确排除(由"不在白名单"自然排除,此处仅作语义备注):
 #   tblZgH0SF0AfYIpV 💬评论采集库 —— "点赞数"是评论点赞、非笔记效果,必须排除。
 
-# 列名 → 标准 metric。取值为 performance_feedback.ALLOWED_METRICS 子集,与 rank_evidence 口径一致。
+# 列名 → 标准 metric。取值为 performance_feedback.ALLOWED_METRICS 子集，与统一精排口径一致。
 COLUMN_TO_METRIC: dict[str, str] = {
     "点赞数": "likes",
     "收藏数": "collects",

@@ -269,7 +269,7 @@ def test_adopt_links_semantic_neighbors(patched, monkeypatch):
     # 先塞一条"已有素材"当邻居(真实检索命中的库内资源)。
     monkeypatch.setattr(
         oa, "_find_neighbors",
-        lambda query, config: [
+        lambda repo, *, query, tenant_id, actor_open_id: [
             {"resource_id": "res-existing", "resource_version": 5, "score": 0.83}
         ],
     )
@@ -286,7 +286,11 @@ def test_adopt_links_semantic_neighbors(patched, monkeypatch):
 def test_adopt_batch_co_ingested_fallback(patched, monkeypatch):
     """无语义邻居(空库)但同批多条:退化为 co_ingested 互挂,保证不孤岛。"""
     repo = patched
-    monkeypatch.setattr(oa, "_find_neighbors", lambda query, config: [])
+    monkeypatch.setattr(
+        oa,
+        "_find_neighbors",
+        lambda repo, *, query, tenant_id, actor_open_id: [],
+    )
     notes = [_note(note_id="a"), _note(note_id="b")]
     with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
         res = oa.adopt_online_notes.func(selected_notes=notes, sync_feishu=False)
@@ -301,7 +305,11 @@ def test_adopt_batch_co_ingested_fallback(patched, monkeypatch):
 def test_adopt_single_note_empty_library_is_isolated(patched, monkeypatch):
     """全库第一条素材(无邻居、无同批伙伴):唯一允许无边的情形,如实标 isolated。"""
     repo = patched
-    monkeypatch.setattr(oa, "_find_neighbors", lambda query, config: [])
+    monkeypatch.setattr(
+        oa,
+        "_find_neighbors",
+        lambda repo, *, query, tenant_id, actor_open_id: [],
+    )
     with patch.object(oa, "create_online_note_record", return_value={"ok": True, "record_id": "r"}):
         res = oa.adopt_online_notes.func(selected_notes=[_note()], sync_feishu=False)
     assert not [e for e in repo.edges if e[2] in ("semantically_related", "co_ingested")]
@@ -314,7 +322,7 @@ def test_adopt_skips_unreadable_neighbor(patched, monkeypatch):
     repo.unreadable.add("res-private")
     monkeypatch.setattr(
         oa, "_find_neighbors",
-        lambda query, config: [
+        lambda repo, *, query, tenant_id, actor_open_id: [
             {"resource_id": "res-private", "resource_version": 2, "score": 0.9}
         ],
     )
@@ -329,7 +337,7 @@ def test_adopt_association_failure_does_not_break_adopt(patched, monkeypatch):
     """关联建边报错绝不影响采纳:采纳仍成功,错误进 errors。"""
     repo = patched
 
-    def boom(query, config):
+    def boom(repo, *, query, tenant_id, actor_open_id):
         raise RuntimeError("neighbor search exploded")
 
     monkeypatch.setattr(oa, "_find_neighbors", boom)

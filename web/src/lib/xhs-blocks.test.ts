@@ -46,6 +46,131 @@ test("preserves valid topic evidence", () => {
   ]);
 });
 
+test("parses four retrieval modes and keeps authoritative quality signals", () => {
+  const modes = ["hybrid", "semantic_only", "keyword_only", "insufficient_relevance"] as const;
+  const topics = modes.map((retrieval_mode, index) => ({
+    title: `选题${index + 1}`,
+    retrieval_mode,
+    evidence: retrieval_mode === "insufficient_relevance" ? [] : [{
+      resource_id: `note-${index + 1}`,
+      resource_version: index + 1,
+      type: "知识资产",
+      asset_kind: "writing_pattern",
+      source_kind: "user_adopted",
+      title: "知识标题",
+      summary: "知识摘要",
+      score: 0.91,
+      quality: 0.86,
+      relevance: 0.9,
+      freshness: 0.7,
+      performance: 0.8,
+      retrieval_sources: retrieval_mode === "keyword_only"
+        ? ["keyword"]
+        : retrieval_mode === "semantic_only"
+          ? ["semantic"]
+          : ["semantic", "keyword"],
+      why_selected: "与当前选题相关且质量达标",
+      source_updated_at: "2026-07-01T00:00:00Z",
+      indexed_at: "2026-07-02T00:00:00Z",
+    }],
+    ...(retrieval_mode === "insufficient_relevance" ? { gaps: "没有达到相关度阈值的证据" } : {}),
+  }));
+
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_topics\n${JSON.stringify({ topics })}\n\`\`\``);
+  assert.equal(segment.kind, "topics");
+  if (segment.kind !== "topics") return;
+
+  assert.deepEqual(
+    segment.data.topics.map((topic) => typeof topic === "string" ? undefined : topic.retrieval_mode),
+    modes,
+  );
+  const first = segment.data.topics[0];
+  assert.equal(typeof first === "string" ? undefined : first.evidence?.[0]?.quality, 0.86);
+});
+
+test("rejects evidence with missing or out-of-range quality instead of fabricating defaults", () => {
+  const base = {
+    resource_id: "note-exact",
+    resource_version: 7,
+    type: "知识资产",
+    asset_kind: "writing_pattern",
+    source_kind: "user_adopted",
+    title: "知识标题",
+    summary: "知识摘要",
+    score: 0.8,
+    relevance: 0.8,
+    freshness: 0.8,
+    performance: 0.8,
+    retrieval_sources: ["semantic", "keyword"],
+    why_selected: "与当前任务相关",
+    source_updated_at: "未知",
+    indexed_at: "2026-07-02T00:00:00Z",
+  };
+  const topics = [{
+    title: "质量信号必须完整",
+    retrieval_mode: "hybrid",
+    evidence: [{ ...base }, { ...base, resource_version: 8, quality: 1.2 }],
+  }];
+
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_topics\n${JSON.stringify({ topics })}\n\`\`\``);
+  assert.equal(segment.kind, "topics");
+  if (segment.kind !== "topics") return;
+  const topic = segment.data.topics[0];
+  assert.equal(typeof topic, "object");
+  if (typeof topic === "string") return;
+  assert.equal(topic.evidence, undefined);
+  assert.equal(topic.retrieval_mode, undefined);
+});
+
+test("rejects retrieval_mode that contradicts actual evidence sources", () => {
+  const base = {
+    resource_id: "note-mode",
+    resource_version: 1,
+    type: "知识资产",
+    asset_kind: "copy",
+    source_kind: "user_adopted",
+    title: "知识标题",
+    summary: "知识摘要",
+    score: 0.8,
+    quality: 0.8,
+    relevance: 0.8,
+    freshness: 0.8,
+    performance: 0.8,
+    retrieval_sources: ["keyword"],
+    why_selected: "关键词命中",
+    source_updated_at: "未知",
+    indexed_at: "2026-07-02T00:00:00Z",
+  };
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_topics\n${JSON.stringify({
+    topics: [{ title: "模式不一致", retrieval_mode: "semantic_only", evidence: [base] }],
+  })}\n\`\`\``);
+  assert.equal(segment.kind, "topics");
+  if (segment.kind !== "topics") return;
+  const topic = segment.data.topics[0];
+  assert.equal(typeof topic === "string" ? undefined : topic.retrieval_mode, undefined);
+  assert.equal(typeof topic === "string" ? undefined : topic.evidence, undefined);
+});
+
+test("requires nonblank gaps for insufficient_relevance", () => {
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_topics
+{"topics":[{"title":"缺口不明","retrieval_mode":"insufficient_relevance","evidence":[],"gaps":"   "}]}
+\`\`\``);
+  assert.equal(segment.kind, "topics");
+  if (segment.kind !== "topics") return;
+  const topic = segment.data.topics[0];
+  assert.equal(typeof topic === "string" ? undefined : topic.retrieval_mode, undefined);
+});
+
+test("does not accept removed evidence_mode contract", () => {
+  const [segment] = parseXhsBlocks(`\`\`\`xhs_topics
+{"topics":[{"title":"旧契约","evidence_mode":"semantic","evidence":[]}]}
+\`\`\``);
+  assert.equal(segment.kind, "topics");
+  if (segment.kind !== "topics") return;
+  const topic = segment.data.topics[0];
+  assert.equal(typeof topic === "string" ? undefined : topic.retrieval_mode, undefined);
+});
+
 test("preserves valid copy evidence and filters malformed entries", () => {
   const [segment] = parseXhsBlocks(`\`\`\`xhs_copy
 {"title":"周末轻装出发","body":"正文","tags":["#露营"],"evidence":[{"resource_id":"note-2","resource_version":4,"title":"露营标题样本","summary":"数字和场景组合表现突出"},{"resource_id":"","resource_version":1,"title":"无效来源","summary":"缺少资源标识"},{"resource_id":"note-3","resource_version":1,"title":"无效来源","summary":42}]}
@@ -63,7 +188,7 @@ test("preserves valid copy evidence and filters malformed entries", () => {
   ]);
 });
 
-test("keeps payloads without evidence backward compatible", () => {
+test("keeps payloads without evidence parseable", () => {
   const [topics, copy] = parseXhsBlocks(`\`\`\`xhs_topics
 {"topics":["旧选题"]}
 \`\`\`

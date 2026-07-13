@@ -14,7 +14,7 @@ import {
 
 const NUM_RUNS = 200;
 
-// parseIsoTimestamp 仅保留匹配 /^\d{4}-\d{2}-\d{2}T/ 且 Date.parse 可解析的字符串。
+// parseIsoTimestamp 仅保留带明确时区且 Date.parse 可解析的完整 ISO 时间串。
 // Date#toISOString() 产出形如 "2023-01-01T00:00:00.000Z"，恰好满足两项约束。
 // 约束到合法可 ISO 化的范围（1970–2100），且用 noInvalidDate:true 禁止边界处生成
 // Invalid Date（否则 .toISOString() 会抛 RangeError: Invalid time value）。
@@ -80,11 +80,22 @@ test("Property 2: 富选题内证据的 source_updated_at / indexed_at 往返后
         topics: [
           {
             title: "选题标题",
+            retrieval_mode: "hybrid",
             evidence: specs.map((s) => ({
               resource_id: s.rid,
               resource_version: s.version,
+              type: "知识资产",
+              asset_kind: "writing_pattern",
+              source_kind: "user_adopted",
               title: s.title,
               summary: s.summary,
+              score: 0.9,
+              quality: 0.8,
+              relevance: 0.9,
+              freshness: 0.7,
+              performance: 0.6,
+              retrieval_sources: ["semantic", "keyword"],
+              why_selected: "与当前选题相关",
               source_updated_at: s.src,
               indexed_at: s.idx,
             })),

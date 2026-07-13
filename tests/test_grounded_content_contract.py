@@ -1,7 +1,7 @@
 """选题/文案契约回归测试。
 
 单一数据源边界(2026-06-25 retrieval-flow-consolidation 后):
-- **检索口径**(检索顺序、检索工具、mode 三态、时效/防伪)是 MAIN_SYSTEM_PROMPT §6
+- **检索口径**(统一检索工具、mode 四态、时效/防伪)是 MAIN_SYSTEM_PROMPT §6
   《检索与证据规约》的**唯一事实源**。各创作技能不再重述检索口径,只引用 §6。
 - **输出协议契约**(xhs_topics/xhs_copy fence + evidence schema)是 MAIN_SYSTEM_PROMPT 的
   唯一事实源 —— 前端 xhs-blocks.ts 与持久化工具硬依赖,渐进式披露下 agent 可能不读 skill,
@@ -27,9 +27,7 @@ SKILL_CONTRACT = _topic_content + "\n" + _xhs_copywriting
 
 # 检索口径里的工具名 —— 唯一源是 MAIN_SYSTEM_PROMPT §6《检索与证据规约》。
 RETRIEVAL_TOOLS = {
-    "search_resources",
-    "semantic_search_resources",
-    "graph_expand",
+    "retrieve_knowledge",
     "get_resource",
     "sync_feishu_resources",
 }
@@ -45,6 +43,7 @@ EVIDENCE_FIELDS = {
     "resource_id",
     "title",
     "summary",
+    "quality",
     "source_updated_at",
     "indexed_at",
 }
@@ -74,7 +73,7 @@ def test_prompt_owns_output_protocol_with_evidence_schema():
 def test_output_protocol_shape_matches_frontend_renderer():
     """回归(Q-1):§5 模板结构必须与前端 xhs-blocks.ts 渲染器一致,否则照权威 prompt 写卡片必渲染失败。
     渲染器要求(富选题契约):topics 是**对象数组**,每个选题对象带 title + 富字段 + 每选题独立 evidence
-    (含 rank_evidence 三信号 relevance/freshness/performance);文案用 title/body/tags(非 copy_text)。"""
+    (含 relevance/freshness/quality/performance);文案用 title/body/tags(非 copy_text)。"""
     topics_start = MAIN_SYSTEM_PROMPT.index("```xhs_topics")
     copy_start = MAIN_SYSTEM_PROMPT.index("```xhs_copy")
     topics_block = MAIN_SYSTEM_PROMPT[topics_start:copy_start]
@@ -95,8 +94,8 @@ def test_output_protocol_shape_matches_frontend_renderer():
     for field in ('"title"', '"hotRate"', '"angle"', '"kw"', '"rationale"', '"emotional"'):
         assert field in topics_block, f"xhs_topics 富选题缺字段 {field}"
 
-    # 每选题独立 evidence 必带 rank_evidence 三信号 + score,口径对齐 search_ranker
-    for field in ('"score"', '"relevance"', '"freshness"', '"performance"', '"evidence_mode"'):
+    # 每选题独立 evidence 必带统一检索信号 + score
+    for field in ('"score"', '"relevance"', '"freshness"', '"quality"', '"performance"', '"retrieval_mode"'):
         assert field in topics_block, f"xhs_topics evidence 缺三信号字段 {field}"
 
     # 数据不足分支:insufficient_relevance 时空 evidence + 非空 gaps
@@ -174,12 +173,13 @@ def test_prompt_owns_retrieval_protocol_as_single_source():
     """检索顺序/工具/mode/时效防伪集中在 §6,是唯一事实源。"""
     assert "检索与证据规约" in MAIN_SYSTEM_PROMPT
     for tool in RETRIEVAL_TOOLS:
-        # §6 里工具名可能带调用签名(如 `search_resources(query, limit)`),用代码span前缀匹配
+        # §6 里工具名可能带调用签名,用代码 span 前缀匹配。
         assert f"`{tool}" in MAIN_SYSTEM_PROMPT, tool
-    # mode 三态措辞只在 prompt
-    assert "semantic" in MAIN_SYSTEM_PROMPT
+    # mode 四态措辞只在 prompt
+    assert "hybrid" in MAIN_SYSTEM_PROMPT
+    assert "semantic_only" in MAIN_SYSTEM_PROMPT
     assert "insufficient_relevance" in MAIN_SYSTEM_PROMPT
-    assert "keyword_fallback" in MAIN_SYSTEM_PROMPT
+    assert "keyword_only" in MAIN_SYSTEM_PROMPT
     # 时效防伪集中在 §6
     assert "源端" in MAIN_SYSTEM_PROMPT and "本地索引" in MAIN_SYSTEM_PROMPT
 
@@ -189,7 +189,7 @@ def test_skill_references_retrieval_protocol_not_restates_it():
     assert "检索与证据规约" in SKILL_CONTRACT  # 引用钩子
     # mode 字面量只在 prompt §6,技能正文不重述(避免双份维护漂移)
     assert "insufficient_relevance" not in SKILL_CONTRACT
-    assert "keyword_fallback" not in SKILL_CONTRACT
+    assert "keyword_only" not in SKILL_CONTRACT
 
 
 # ── 差异化工作流 know-how:唯一源是 topic-content/SKILL.md ──

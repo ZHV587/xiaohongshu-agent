@@ -3,8 +3,7 @@
 把本地已收录资源(feishu_base_record / xhs_online_note)的 content_json 映射成与线上
 统一的细致卡片形状(封面/互动/标签),供发现面板渲染。
 
-**独立于** rank_evidence / EvidencePackage 证据链:那条路径(search_resources /
-semantic_search_resources)的返回结构不受本模块影响。
+**独立于** EvidencePackage 证据链:`retrieve_knowledge` 的返回结构不受本模块影响。
 """
 from __future__ import annotations
 

@@ -857,6 +857,151 @@ class ResourceRepository(BaseRepository):
                 ).fetchall()
                 return sorted([dict(row) for row in rows], key=lambda row: ordering.get(str(row["id"]), len(ordering)))
 
+    def current_knowledge_rows(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_ids: list[str],
+        resource_versions: list[int],
+        asset_kinds: list[str] | None = None,
+        source_kinds: list[str] | None = None,
+        niches: list[str] | None = None,
+        min_quality: float | None = None,
+        updated_after: Any | None = None,
+        conn: Optional[Connection] = None,
+    ) -> list[dict[str, Any]]:
+        """按 exact identity 回表执行当前知识资格、ACL 与用户过滤条件。
+
+        Meilisearch 与 FalkorDB 均不承担行级权限。任何召回结果（包括图扩展节点）都必须
+        经过本方法才能成为证据。返回正文与元数据全部来自同一不可变
+        ``resource_versions`` / ``current_knowledge_targets`` 行，不猜 latest。
+        """
+        if len(resource_ids) != len(resource_versions):
+            raise ValueError("resource_ids and resource_versions must be aligned")
+        if not resource_ids:
+            return []
+        normalized_ids: list[str] = []
+        for resource_id in resource_ids:
+            try:
+                normalized_ids.append(str(uuid.UUID(str(resource_id))))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValueError("resource_ids must contain UUID values") from exc
+        if any(
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version <= 0
+            for version in resource_versions
+        ):
+            raise ValueError("resource_versions must contain positive integers")
+
+        asset_kinds = [value.strip() for value in (asset_kinds or []) if value.strip()]
+        source_kinds = [value.strip() for value in (source_kinds or []) if value.strip()]
+        niches = [value.strip() for value in (niches or []) if value.strip()]
+        if min_quality is not None and not 0.0 <= float(min_quality) <= 1.0:
+            raise ValueError("min_quality must be between 0 and 1")
+
+        readable = self.readable_resource_where("r")
+        with self.connection_context(conn) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                rows = cursor.execute(
+                    f"""
+                    with requested(resource_id, resource_version, ordinal) as (
+                      select *
+                      from unnest(
+                        %(resource_ids)s::uuid[],
+                        %(resource_versions)s::int[]
+                      ) with ordinality
+                    )
+                    select target.resource_id::text as resource_id,
+                           target.resource_version,
+                           target.resource_type,
+                           target.title,
+                           target.summary,
+                           target.content_text,
+                           target.content_json,
+                           target.asset_kind,
+                           target.source_kind,
+                           target.source_authority,
+                           target.quality_score,
+                           target.duplicate_family_id::text as duplicate_family_id,
+                           target.qualified_at,
+                           target.indexed_at,
+                           target.metadata || coalesce(enrichment.payload, '{{}}'::jsonb)
+                             as metadata,
+                           coalesce(
+                             nullif(enrichment.payload->>'niche', ''),
+                             nullif(target.content_json->>'niche', ''),
+                             nullif(target.content_json->>'vertical', '')
+                           ) as niche,
+                           (
+                             select max(mapping.external_updated_at)
+                             from resource_mappings mapping
+                             where mapping.tenant_id = target.tenant_id
+                               and mapping.resource_id = target.resource_id
+                           ) as source_updated_at
+                    from requested req
+                    join current_knowledge_targets target
+                      on target.resource_id = req.resource_id
+                     and target.resource_version = req.resource_version
+                    join resources r
+                      on r.tenant_id = target.tenant_id
+                     and r.id = target.resource_id
+                    left join lateral (
+                      select knowledge_enrichments.payload
+                      from knowledge_enrichments
+                      where knowledge_enrichments.tenant_id = target.tenant_id
+                        and knowledge_enrichments.resource_id = target.resource_id
+                        and knowledge_enrichments.resource_version = target.resource_version
+                        and knowledge_enrichments.enrichment_type = 'deterministic_metadata'
+                      order by knowledge_enrichments.created_at desc,
+                               knowledge_enrichments.id desc
+                      limit 1
+                    ) enrichment on true
+                    where {readable}
+                      and (
+                        not %(has_asset_kinds)s
+                        or target.asset_kind = any(%(asset_kinds)s::text[])
+                      )
+                      and (
+                        not %(has_source_kinds)s
+                        or target.source_kind = any(%(source_kinds)s::text[])
+                      )
+                      and (
+                        not %(has_niches)s
+                        or coalesce(
+                          nullif(enrichment.payload->>'niche', ''),
+                          nullif(target.content_json->>'niche', ''),
+                          nullif(target.content_json->>'vertical', '')
+                        ) = any(%(niches)s::text[])
+                      )
+                      and (
+                        %(min_quality)s::double precision is null
+                        or target.quality_score >= %(min_quality)s
+                      )
+                      and (
+                        %(updated_after)s::timestamptz is null
+                        or target.qualified_at >= %(updated_after)s
+                      )
+                    order by req.ordinal
+                    """,
+                    {
+                        "resource_ids": normalized_ids,
+                        "resource_versions": resource_versions,
+                        "tenant_id": tenant_id,
+                        "actor_open_id": actor_open_id,
+                        "has_asset_kinds": bool(asset_kinds),
+                        "asset_kinds": asset_kinds,
+                        "has_source_kinds": bool(source_kinds),
+                        "source_kinds": source_kinds,
+                        "has_niches": bool(niches),
+                        "niches": niches,
+                        "min_quality": min_quality,
+                        "updated_after": updated_after,
+                    },
+                ).fetchall()
+        return [dict(row) for row in rows]
+
     def _vector_literal(self, embedding: list[float]) -> str:
         return "[" + ",".join(str(float(x)) for x in embedding) + "]"
 
@@ -877,7 +1022,7 @@ class ResourceRepository(BaseRepository):
         where_clause = self.readable_resource_where("r")
         # HNSW 召回宽度 ef_search:pgvector 默认 40,当 top_k 上探到 100(工具层 5× over-fetch
         # 的候选头寸)时,默认 40 会让候选池在近邻图上过早收敛、召回不足。按 top_k 放宽 ef_search
-        # (且 ef_search 需 ≥ limit),让候选真正取满再交给 rank_evidence 精排 —— 直接提召回。
+        # (且 ef_search 需 ≥ limit),让候选真正取满再交给统一 RRF 精排 —— 直接提召回。
         # 上限 400 兜住极端 top_k 的查询开销。连接非 autocommit,SET LOCAL 作用于本次隐式事务。
         # 注意:该参数只对 HNSW 索引生效 —— schema.sql 的条件升级块负责 ivfflat→HNSW,
         # 且 http_app 启动时显式跑迁移保证生产已升级(否则这里是 no-op 死代码)。
@@ -1556,6 +1701,25 @@ class ResourceRepository(BaseRepository):
             tenant_id=tenant_id,
             resource_ids=resource_ids,
             actor=actor,
+            conn=conn or self.conn,
+        )
+
+    def bulk_exact_performance_metrics(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_ids: list[str],
+        resource_versions: list[int],
+        conn: Optional[Connection] = None,
+    ) -> dict[tuple[str, int], list[dict[str, Any]]]:
+        from data_foundation.repositories.performance import PerformanceRepository
+
+        return PerformanceRepository(conn or self.conn).bulk_exact_performance_metrics(
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            resource_ids=resource_ids,
+            resource_versions=resource_versions,
             conn=conn or self.conn,
         )
 

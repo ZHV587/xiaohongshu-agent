@@ -1,137 +1,167 @@
-from __future__ import annotations
+from datetime import datetime, timezone
+import math
+import uuid
+
 import pytest
-from datetime import datetime, timezone, timedelta
+
 from data_foundation.search_ranker import (
-    DEFAULT_RELEVANCE_FLOOR,
+    RRF_ENGINE_WEIGHTS,
+    RecallHit,
     WEIGHT_FRESHNESS,
     WEIGHT_PERFORMANCE,
+    WEIGHT_QUALITY,
     WEIGHT_RELEVANCE,
-    WEIGHT_TYPE,
-    rank_evidence,
+    rank_knowledge_candidates,
+    weighted_rrf_order,
 )
 
 
-def test_weights_sum_to_one():
-    assert abs((WEIGHT_RELEVANCE + WEIGHT_FRESHNESS + WEIGHT_TYPE + WEIGHT_PERFORMANCE) - 1.0) < 1e-9
-    assert WEIGHT_RELEVANCE == 0.70
-    assert WEIGHT_FRESHNESS == 0.15
-    assert WEIGHT_TYPE == 0.10
-    assert WEIGHT_PERFORMANCE == 0.05
+def _id(seed: int) -> str:
+    return str(uuid.UUID(int=seed))
 
 
-def test_default_relevance_floor_value():
-    assert DEFAULT_RELEVANCE_FLOOR == 0.50
-
-
-def test_score_kind_is_required_keyword_only():
-    with pytest.raises(TypeError):
-        # score_kind 无默认值,必须显式传入
-        rank_evidence("default", [], performance_data={})  # type: ignore[call-arg]
-
-
-def test_invalid_score_kind_raises():
-    with pytest.raises(ValueError):
-        rank_evidence("default", [], performance_data={}, score_kind="bogus")
-
-
-def _doc(resource_id, title, score, *, days_old=0, rtype="doc"):
-    updated = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+def _row(
+    seed: int,
+    *,
+    version: int = 1,
+    family: str | None = None,
+    quality: float = 0.8,
+) -> dict:
     return {
-        "resource_id": resource_id,
-        "resource_version": 1,
-        "title": title,
-        "summary": "s",
-        "score": score,
-        "metadata": {
-            "type": rtype,
-            "visibility": "private",
-            "source_updated_at": updated,
-            "indexed_at": datetime.now(timezone.utc).isoformat(),
-        },
+        "resource_id": _id(seed),
+        "resource_version": version,
+        "resource_type": "generated_copy",
+        "asset_kind": "copy",
+        "source_kind": "user_adopted",
+        "niche": "职场",
+        "title": f"标题 {seed}",
+        "summary": f"摘要 {seed}",
+        "quality_score": quality,
+        "duplicate_family_id": family,
+        "qualified_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+        "indexed_at": datetime(2026, 7, 2, tzinfo=timezone.utc),
+        "source_updated_at": datetime(2026, 6, 30, tzinfo=timezone.utc),
     }
 
 
-def test_cosine_relevance_is_absolute_not_normalized():
-    """score_kind='cosine':relevance 等于绝对余弦(clamp 0~1),不随候选集最大值归一化。"""
-    raw_results = [
-        _doc("res-1", "露营装备挑选指南", 0.9),
-        _doc("res-2", "露营装备挑选指南", 0.8),  # 标题模糊重复,应被去重
-        _doc("res-3", "如何搭建一个坚固的帐篷", 0.5, days_old=10),
-    ]
-    res = rank_evidence("default", raw_results, performance_data={}, limit=10, score_kind="cosine")
-
-    assert len(res) == 2  # res-2 去重
-    assert res[0]["resource_id"] == "res-1"
-    assert res[1]["resource_id"] == "res-3"
-
-    # 关键:res-1 relevance == 0.9(绝对余弦),而非旧的归一化 1.0
-    assert res[0]["rank_signals"]["relevance"] == 0.9
-    assert res[1]["rank_signals"]["relevance"] == 0.5
-    # freshness:res-3 源端 10 天前 → e^(-0.5) ≈ 0.6065
-    assert abs(res[1]["rank_signals"]["freshness"] - 0.6065) < 0.001
+def test_rank_weights_are_normalized() -> None:
+    assert sum(
+        (WEIGHT_RELEVANCE, WEIGHT_QUALITY, WEIGHT_FRESHNESS, WEIGHT_PERFORMANCE)
+    ) == pytest.approx(1.0)
+    assert RRF_ENGINE_WEIGHTS["semantic"] > RRF_ENGINE_WEIGHTS["keyword"]
+    assert RRF_ENGINE_WEIGHTS["graph"] < RRF_ENGINE_WEIGHTS["keyword"]
 
 
-def test_freshness_handles_naive_source_timestamp():
-    """source_updated_at 无时区(naive,外部同步常见)时,时效分应正常按 UTC 计算,
-    而不是因 naive/aware 相减抛 TypeError 被吞掉、静默退化成固定 0.7。"""
-    naive_10d = (datetime.now(timezone.utc) - timedelta(days=10)).replace(tzinfo=None).isoformat()
-    doc = {
-        "resource_id": "res-naive",
-        "resource_version": 1,
-        "title": "无时区时间戳的资源",
-        "summary": "s",
-        "score": 0.5,
-        "metadata": {"type": "doc", "visibility": "private", "source_updated_at": naive_10d},
-    }
-    res = rank_evidence("default", [doc], performance_data={}, limit=10, score_kind="cosine")
-    # 10 天前 → e^(-0.5) ≈ 0.6065,绝不能是退化默认值 0.7
-    assert abs(res[0]["rank_signals"]["freshness"] - 0.6065) < 0.001
+@pytest.mark.parametrize("score", [math.nan, math.inf, -math.inf])
+def test_recall_hit_rejects_non_finite_scores(score: float) -> None:
+    with pytest.raises(ValueError):
+        RecallHit(_id(1), 1, score)
 
 
-def test_cosine_relevance_clamped_to_unit_interval():
-    raw_results = [_doc("a", "标题A", 1.2), _doc("b", "标题B", -0.1)]
-    res = rank_evidence("default", raw_results, performance_data={}, limit=10, score_kind="cosine")
-    rel = {r["resource_id"]: r["rank_signals"]["relevance"] for r in res}
-    assert rel["a"] == 1.0   # 夹紧上界
-    assert rel["b"] == 0.0   # 夹紧下界
+@pytest.mark.parametrize("resource_version", [None, 0, -1, True, 1.5])
+def test_recall_hit_requires_exact_positive_version(resource_version) -> None:
+    with pytest.raises(ValueError):
+        RecallHit(_id(1), resource_version, 0.8)
 
 
-def test_bm25_relevance_is_candidate_set_normalized():
-    """score_kind='bm25':保留候选集内归一化(无固定上界)。"""
-    raw_results = [_doc("a", "标题A", 4.0), _doc("b", "标题B", 2.0)]
-    res = rank_evidence("default", raw_results, performance_data={}, limit=10, score_kind="bm25")
-    rel = {r["resource_id"]: r["rank_signals"]["relevance"] for r in res}
-    assert rel["a"] == 1.0     # 4.0 / 4.0
-    assert rel["b"] == 0.5     # 2.0 / 4.0
+def test_weighted_rrf_prefers_candidate_recalled_by_both_primary_engines() -> None:
+    semantic = [RecallHit(_id(1), 1, 0.9), RecallHit(_id(2), 1, 0.8)]
+    keyword = [RecallHit(_id(2), 1, 0.7), RecallHit(_id(3), 1, 0.6)]
+
+    ordered = weighted_rrf_order(
+        semantic_hits=semantic,
+        keyword_hits=keyword,
+        active_sources=["semantic", "keyword"],
+    )
+
+    assert ordered[0] == (_id(2), 1)
+    assert set(ordered) == {(_id(1), 1), (_id(2), 1), (_id(3), 1)}
 
 
-def test_rank_evidence_incorporates_performance_log_score():
-    """效果分对数归一化(去饱和):engagement=460 → log10(461)/log10(1+1e6)。"""
-    import math
-    from data_foundation.search_ranker import P_SCORE_LOG_CAP
+def test_rank_returns_complete_exact_evidence_signals() -> None:
+    identity = (_id(1), 2)
+    ranked = rank_knowledge_candidates(
+        rows=[_row(1, version=2)],
+        semantic_hits=[RecallHit(*identity, 0.91)],
+        keyword_hits=[RecallHit(*identity, 0.77)],
+        active_sources=["semantic", "keyword"],
+        performance_data={identity: [{"metrics": {"likes": 1200, "collects": 400}}]},
+        now=datetime(2026, 7, 13, tzinfo=timezone.utc),
+    )
 
-    raw_results = [_doc("res-1", "爆款文案1", 0.5, rtype="generated_copy")]
-    performance_data = {
-        "res-1": [{"metrics": {"likes": 200, "collects": 100, "comments": 20}}]
-        # 统一系数:engagement = 200 + 2*100 + 3*20 = 460
-    }
-    res = rank_evidence("default", raw_results, performance_data=performance_data, limit=10, score_kind="cosine")
-    assert len(res) == 1
-    expected = math.log10(1.0 + 460) / math.log10(1.0 + P_SCORE_LOG_CAP)
-    assert abs(res[0]["rank_signals"]["performance"] - expected) < 0.0001
+    assert len(ranked) == 1
+    item = ranked[0]
+    assert (item.resource_id, item.resource_version) == identity
+    assert item.retrieval_sources == ("semantic", "keyword")
+    assert item.type == "generated_copy"
+    assert item.asset_kind == "copy"
+    assert item.source_kind == "user_adopted"
+    assert item.source_updated_at.startswith("2026-06-30")
+    assert item.indexed_at.startswith("2026-07-02")
+    assert item.performance > 0
+    assert all(
+        0.0 <= value <= 1.0
+        for value in (
+            item.score,
+            item.relevance,
+            item.quality,
+            item.freshness,
+            item.performance,
+        )
+    )
 
 
-def test_rank_evidence_performance_not_saturated_for_viral():
-    """万级与十万级爆款效果分不同(旧 tanh 会都 ≈1.0)。"""
-    r1 = rank_evidence("default", [_doc("a", "爆款A", 0.5)],
-                       {"a": [{"metrics": {"likes": 10_000}}]}, score_kind="cosine")
-    r2 = rank_evidence("default", [_doc("b", "爆款B", 0.5)],
-                       {"b": [{"metrics": {"likes": 300_000}}]}, score_kind="cosine")
-    p1 = r1[0]["rank_signals"]["performance"]
-    p2 = r2[0]["rank_signals"]["performance"]
-    assert p1 < p2 <= 1.0
-    assert p1 < 1.0  # 万级未饱和到上界
+def test_rank_uses_exact_performance_identity_not_other_version() -> None:
+    identity = (_id(1), 1)
+    other_version = (_id(1), 2)
+    ranked = rank_knowledge_candidates(
+        rows=[_row(1, version=1)],
+        semantic_hits=[RecallHit(*identity, 0.9)],
+        keyword_hits=[],
+        active_sources=["semantic"],
+        performance_data={other_version: [{"metrics": {"likes": 999999}}]},
+    )
+    assert ranked[0].performance == 0.0
 
 
-def test_empty_results_returns_empty():
-    assert rank_evidence("default", [], performance_data={}, score_kind="cosine") == []
+def test_rank_deduplicates_only_by_persisted_family() -> None:
+    family = str(uuid.uuid4())
+    rows = [_row(1, family=family), _row(2, family=family), _row(3, family=None)]
+    hits = [RecallHit(_id(seed), 1, 1.0 - seed / 10) for seed in (1, 2, 3)]
+
+    ranked = rank_knowledge_candidates(
+        rows=rows,
+        semantic_hits=hits,
+        keyword_hits=[],
+        active_sources=["semantic"],
+        performance_data={},
+        limit=10,
+    )
+
+    identities = {(item.resource_id, item.resource_version) for item in ranked}
+    assert len(identities & {(_id(1), 1), (_id(2), 1)}) == 1
+    assert (_id(3), 1) in identities
+
+
+def test_rank_ignores_rows_that_no_engine_recalled() -> None:
+    ranked = rank_knowledge_candidates(
+        rows=[_row(1)],
+        semantic_hits=[],
+        keyword_hits=[],
+        active_sources=[],
+        performance_data={},
+    )
+    assert ranked == []
+
+
+def test_rank_fails_on_missing_authoritative_classification_fields() -> None:
+    row = _row(1)
+    row.pop("asset_kind")
+    with pytest.raises(ValueError, match="asset_kind"):
+        rank_knowledge_candidates(
+            rows=[row],
+            semantic_hits=[RecallHit(_id(1), 1, 0.9)],
+            keyword_hits=[],
+            active_sources=["semantic"],
+            performance_data={},
+        )

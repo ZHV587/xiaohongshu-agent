@@ -1382,44 +1382,34 @@ function parseTopicsFromMessages(messages: ReturnType<typeof useThread>["message
           draft: { title: "", cover: "", body: "", tags: [] },
         });
 
-        // 每选题独立证据：优先用富选题内 evidence；旧格式回退顶层共享证据。
-        const richEvidence = isRich && topic.evidence ? topic.evidence : null;
-        const mode: EvidenceBundle["mode"] = isRich && topic.evidence_mode ? topic.evidence_mode : "semantic";
-        if (richEvidence) {
+        // 统一检索证据只接受完整 EvidencePackage 子契约：精确身份、四项质量信号和
+        // retrieval_mode 缺一不可。旧顶层共享 evidence 没有质量信号，不能再补 0 冒充证据。
+        const richEvidence = isRich && Array.isArray(topic.evidence) ? topic.evidence : null;
+        const mode = isRich ? topic.retrieval_mode : undefined;
+        if (richEvidence && mode) {
           const items: EvidenceItem[] = richEvidence.map((e) => ({
             resource_id: e.resource_id,
             resource_version: e.resource_version,
-            type: e.type ?? "资源",
+            type: e.type,
+            asset_kind: e.asset_kind,
+            source_kind: e.source_kind,
+            ...(e.niche ? { niche: e.niche } : {}),
             title: e.title,
             summary: e.summary,
-            score: e.score ?? 0,
-            relevance: e.relevance ?? 0,
-            freshness: e.freshness ?? 0,
-            performance: e.performance ?? 0,
-            source_updated_at: e.source_updated_at ?? "",
-            indexed_at: e.indexed_at ?? "",
-            why_selected: e.why_selected ?? "",
+            score: e.score,
+            quality: e.quality,
+            relevance: e.relevance,
+            freshness: e.freshness,
+            performance: e.performance,
+            source_updated_at: e.source_updated_at,
+            indexed_at: e.indexed_at,
+            retrieval_sources: e.retrieval_sources,
+            why_selected: e.why_selected,
           }));
           const bundle: EvidenceBundle = { mode, items };
           if (isRich && typeof topic.gaps === "string" && topic.gaps) bundle.gaps = topic.gaps;
           // 数据不足或有证据条目都暴露 bundle（面板据 mode/gaps 渲染「当前数据不足」）。
           if (items.length || bundle.gaps || mode === "insufficient_relevance") evidence[id] = bundle;
-        } else {
-          const items: EvidenceItem[] = topicSeg.data.evidence.map((e) => ({
-            resource_id: e.resource_id,
-            resource_version: e.resource_version,
-            type: "资源",
-            title: e.title,
-            summary: e.summary,
-            score: 0,
-            relevance: 0,
-            freshness: 0,
-            performance: 0,
-            source_updated_at: e.source_updated_at ?? "",
-            indexed_at: e.indexed_at ?? "",
-            why_selected: "",
-          }));
-          if (items.length) evidence[id] = { mode, items };
         }
       });
       break;

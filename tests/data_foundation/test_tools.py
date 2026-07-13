@@ -548,57 +548,89 @@ def test_get_resource_performance_tool_reads_for_current_actor(monkeypatch):
     }
 
 
-def test_search_resources_integrates_ranking_fields(monkeypatch):
+def test_retrieve_knowledge_delegates_to_unified_domain_service(monkeypatch):
     from data_foundation import tools as df_tools
+    import data_foundation.retrieval as retrieval
+    from data_foundation.evidence import EvidenceItem, EvidencePackage, RetrievalFilters
 
     repo = RecordingRepository()
-
-    # Define bulk_performance_metrics on our mock RecordingRepository
-    def _bulk_perf(tenant_id, resource_ids):
-        return {rid: [{"metrics": {"likes": 100}}] for rid in resource_ids}
-    repo.bulk_performance_metrics = _bulk_perf
-
-    def _readable_rows(tenant_id, actor_open_id, resource_ids, resource_versions):
-        assert resource_versions == [1]
-        return [
-            {
-                "id": rid,
-                "resource_version": 1,
-                "type": "doc",
-                "title": "露营装备",
-                "summary": "露营",
-                "visibility": "team",
-                "updated_at": None,
-                "source_updated_at": None,
-                "score": 1.0
-            }
-            for rid in resource_ids
-        ]
-    repo.readable_rows_by_ids = _readable_rows
-
     monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
-    import data_foundation.engine_config as engine_config
-    monkeypatch.setattr(engine_config, "meili_config_from_env", lambda: type("Cfg", (), {"state": "enabled"})())
+    calls = []
+    package = EvidencePackage(
+        retrieval_mode="semantic_only",
+        evidence=[
+            EvidenceItem(
+                resource_id="00000000-0000-0000-0000-000000000001",
+                resource_version=1,
+                type="generated_copy",
+                asset_kind="copy",
+                source_kind="user_adopted",
+                niche="露营",
+                title="露营装备",
+                summary="露营",
+                source_updated_at="未知",
+                indexed_at="2026-07-13T00:00:00Z",
+                score=0.8,
+                relevance=1.0,
+                freshness=0.5,
+                quality=0.8,
+                performance=0.0,
+                retrieval_sources=["semantic"],
+                why_selected="语义召回",
+            )
+        ],
+        engines_used=["semantic"],
+    )
 
-    class MockIndex:
-        @classmethod
-        def from_config(cls, cfg):
-            return cls()
-        def search(self, query, tenant_id, limit):
-            return [("res-1", 0.8, 1)]
-        def ensure_index(self):
-            pass
+    def _retrieve(repo_arg, **kwargs):
+        assert repo_arg is repo
+        calls.append(kwargs)
+        return package
 
-    import data_foundation.meili_client as meili_client
-    monkeypatch.setattr(meili_client, "MeiliResourceIndex", MockIndex)
+    monkeypatch.setattr(retrieval, "retrieve_for_actor", _retrieve)
 
-    result = df_tools.search_resources.func(query="露营", config=identity_config("ou_user"))
+    result = df_tools.retrieve_knowledge.func(
+        query="露营",
+        filters={"niches": ["露营"]},
+        config=identity_config("ou_user"),
+    )
 
-    assert result["ok"] is True
-    assert len(result["results"]) == 1
-    assert result["results"][0]["resource_version"] == 1
-    assert "why_selected" in result["results"][0]
-    assert "rank_signals" in result["results"][0]
+    assert result == package.model_dump(mode="json")
+    assert calls == [
+        {
+            "tenant_id": "default",
+            "actor_open_id": "ou_user",
+            "query": "露营",
+            "limit": 10,
+            "filters": RetrievalFilters(niches=["露营"]),
+        }
+    ]
+    assert not hasattr(df_tools, "search_resources")
+    assert not hasattr(df_tools, "semantic_search_resources")
+    assert not hasattr(df_tools, "graph_expand")
+
+
+def test_retrieve_knowledge_returns_only_safe_error_codes(monkeypatch):
+    from data_foundation import tools as df_tools
+    import data_foundation.retrieval as retrieval
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+
+    invalid = df_tools.retrieve_knowledge.func(
+        query="   ", config=identity_config("ou_user")
+    )
+    assert invalid == {"error": "INVALID_RETRIEVAL_REQUEST"}
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("Authorization: Bearer must-not-leak")
+
+    monkeypatch.setattr(retrieval, "retrieve_for_actor", _explode)
+    failed = df_tools.retrieve_knowledge.func(
+        query="露营", config=identity_config("ou_user")
+    )
+    assert failed == {"error": "KNOWLEDGE_RETRIEVAL_FAILED"}
+    assert "must-not-leak" not in str(failed)
 
 
 
@@ -644,7 +676,21 @@ def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
         def from_config(cls, cfg):
             return cls()
         def search(self, query, tenant_id, limit):
-            return [("res-1", 0.8, 1)]
+            from data_foundation.meili_client import MeiliSearchHit
+
+            return [
+                MeiliSearchHit(
+                    resource_id="res-1",
+                    resource_version=1,
+                    score=0.8,
+                    resource_type="feishu_base_record",
+                    asset_kind="benchmark",
+                    source_kind="feishu_sync",
+                    niche="护肤",
+                    quality_score=0.8,
+                    qualified_at_epoch=1,
+                )
+            ]
 
     import data_foundation.meili_client as meili_client
     monkeypatch.setattr(meili_client, "MeiliResourceIndex", MockIndex)
@@ -655,7 +701,7 @@ def test_search_local_note_cards_returns_detailed_cards(monkeypatch):
     assert len(result["results"]) == 1
     card = result["results"][0]
     assert card["resource_version"] == 1
-    # 细致字段(rank_evidence 路径拿不到的)
+    # 细致字段（统一 EvidencePackage 不承载发现卡片媒体字段）
     assert card["cover_url"] == "http://sns-webpic-qc.xhscdn.com/a.jpg"
     assert card["note_url"] == "http://xhslink.com/o/abc"
     assert card["likes"] == 3000 and card["collects"] == 1500

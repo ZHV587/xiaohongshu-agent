@@ -1,174 +1,336 @@
+"""Postgres 安全门之后的统一混合检索精排。
+
+召回引擎只负责给出精确资源身份及排序。这里用 weighted RRF 合并各引擎名次，再叠加
+知识质量、时效和该精确文案版本的效果事实。去重只依赖入库阶段形成的
+``duplicate_family_id``，不再用标题模糊相似度临时猜测。
+"""
 from __future__ import annotations
-import math
+
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
-from typing import Any
+import math
+from typing import Any, Collection, Iterable, Literal, Mapping, Sequence
+import uuid
 
 from data_foundation.metric_parse import weighted_engagement
 
-# 绝对相关度下限闸门默认值(仅作用于语义/余弦路径)。
-# 经验依据(生产实测,租户 default,Qwen3-Embedding-4B):
-#   - 相关查询"护肤"(语料内)加前缀后 top 余弦 ≈ 0.65
-#   - 无关查询"露营装备推荐"(语料外)加前缀后 top 余弦 ≈ 0.46
-# 默认取 0.50,落在 0.46(应拒) 与 0.65(应纳) 之间。
-# ⚠️ 标定口径警示:上述 0.46/0.65 是用标定期临时英文前缀测得,上线默认模板为中文,
-# 前缀文本不同会改变余弦分布。0.50 是初值,需在最终中文模板下用多组真实查询重新标定;
-# 阈值可经 XHS_EMBEDDING_RELEVANCE_FLOOR 配置覆盖(由 tools 层在查询路径从当前配置解析)。
+
 DEFAULT_RELEVANCE_FLOOR: float = 0.50
+RRF_K: int = 60
+RRF_ENGINE_WEIGHTS: dict[str, float] = {
+    "semantic": 0.55,
+    "keyword": 0.45,
+    # 图谱是一跳上下文增强，不应盖过查询本身的两路召回。
+    "graph": 0.15,
+}
 
-# rank_evidence 最终加权配比(四者之和 == 1.0)。
-# 去归一化后 relevance 承载真实绝对相关度信号(且闸门已滤掉无关项),故提高其权重。
-WEIGHT_RELEVANCE: float = 0.70
-WEIGHT_FRESHNESS: float = 0.15
-WEIGHT_TYPE: float = 0.10
-WEIGHT_PERFORMANCE: float = 0.05
+WEIGHT_RELEVANCE: float = 0.72
+WEIGHT_QUALITY: float = 0.12
+WEIGHT_FRESHNESS: float = 0.08
+WEIGHT_PERFORMANCE: float = 0.08
 
-# 效果分对数归一化上界(明文常量)。tanh(.../500) 对对标爆款(万级)恒饱和到 ≈1.0、
-# 爆款间无区分;改对数归一化使 10²~10⁶ 量级单调可分。
-# log10(1+1e2)/log10(1+1e6)=0.33;1e4→0.67;1e6→1.0,跨 4 个数量级仍单调。
 P_SCORE_LOG_CAP: float = 1_000_000.0
 _P_SCORE_LOG_DENOM: float = math.log10(1.0 + P_SCORE_LOG_CAP)
+_FRESHNESS_HALF_LIFE_DAYS: float = 180.0
 
-_VALID_SCORE_KINDS = {"cosine", "bm25"}
-
-
-def _parse_aware(value: str) -> datetime:
-    """把 source_updated_at 解析为 offset-aware(UTC)datetime。
-
-    外部同步来的时间戳可能不带时区(naive,如本地/裸时间戳)。直接与 offset-aware 的 now 相减会抛
-    `TypeError: can't subtract offset-naive and offset-aware datetimes`,被上层 try/except 吞掉后
-    时效分静默退化成固定 0.7,使时效加权形同虚设。此处把 naive 一律按 UTC 补齐时区,保证可运算。
-    """
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
+RetrievalSource = Literal["semantic", "keyword", "graph"]
+ExactIdentity = tuple[str, int]
 
 
-def _relevance_score(raw: float, score_kind: str, max_raw_score: float) -> float:
-    """relevance 口径分支。
+def _validate_identity(resource_id: str, resource_version: int) -> ExactIdentity:
+    try:
+        normalized_id = str(uuid.UUID(str(resource_id)))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("resource_id must be a UUID") from exc
+    if (
+        not isinstance(resource_version, int)
+        or isinstance(resource_version, bool)
+        or resource_version <= 0
+    ):
+        raise ValueError("resource_version must be a positive integer")
+    return normalized_id, resource_version
 
-    - cosine:绝对余弦相似度,夹紧到 [0, 1],**不做候选集内归一化**(保留绝对相关度信号)。
-    - bm25:无固定上界,候选集内归一化(保留既有行为)。
-    """
-    if score_kind == "cosine":
-        return min(max(raw, 0.0), 1.0)
-    return raw / max_raw_score
+
+@dataclass(frozen=True)
+class RecallHit:
+    resource_id: str
+    resource_version: int
+    score: float
+
+    def __post_init__(self) -> None:
+        resource_id, resource_version = _validate_identity(
+            self.resource_id, self.resource_version
+        )
+        score = float(self.score)
+        if not math.isfinite(score):
+            raise ValueError("recall score must be finite")
+        object.__setattr__(self, "resource_id", resource_id)
+        object.__setattr__(self, "resource_version", resource_version)
+        object.__setattr__(self, "score", score)
+
+    @property
+    def identity(self) -> ExactIdentity:
+        return self.resource_id, self.resource_version
 
 
-def rank_evidence(
-    tenant_id: str,
-    results: list[dict[str, Any]],
-    performance_data: dict[str, list[dict[str, Any]]],
-    limit: int = 10,
+@dataclass(frozen=True)
+class RankedKnowledge:
+    resource_id: str
+    resource_version: int
+    type: str
+    asset_kind: str
+    source_kind: str
+    niche: str | None
+    title: str
+    summary: str
+    source_updated_at: str
+    indexed_at: str
+    score: float
+    relevance: float
+    freshness: float
+    quality: float
+    performance: float
+    retrieval_sources: tuple[RetrievalSource, ...]
+    why_selected: str
+    duplicate_family_id: str | None
+
+
+def _first_rank(hits: Sequence[RecallHit]) -> dict[ExactIdentity, int]:
+    ranks: dict[ExactIdentity, int] = {}
+    for rank, hit in enumerate(hits, start=1):
+        ranks.setdefault(hit.identity, rank)
+    return ranks
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _iso_or_unknown(value: Any) -> str:
+    parsed = _parse_datetime(value)
+    return "未知" if parsed is None else parsed.isoformat()
+
+
+def _freshness_score(row: Mapping[str, Any], *, now: datetime) -> float:
+    observed = _parse_datetime(row.get("source_updated_at")) or _parse_datetime(
+        row.get("qualified_at")
+    )
+    if observed is None:
+        return 0.5
+    age_days = max(0.0, (now - observed).total_seconds() / 86_400.0)
+    return math.exp(-math.log(2.0) * age_days / _FRESHNESS_HALF_LIFE_DAYS)
+
+
+def _performance_score(rows: Sequence[Mapping[str, Any]]) -> float:
+    best_engagement = 0.0
+    for row in rows:
+        engagement = weighted_engagement(dict(row.get("metrics") or {}))
+        best_engagement = max(best_engagement, engagement)
+    if best_engagement <= 0:
+        return 0.0
+    return min(
+        math.log10(1.0 + best_engagement) / _P_SCORE_LOG_DENOM,
+        1.0,
+    )
+
+
+def _clamp_unit(value: Any, *, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed):
+        return default
+    return min(max(parsed, 0.0), 1.0)
+
+
+def _required_text(row: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raise ValueError(f"ranked knowledge row is missing required field: {'/'.join(keys)}")
+
+
+def weighted_rrf_order(
     *,
-    score_kind: str,
-) -> list[dict[str, Any]]:
-    if score_kind not in _VALID_SCORE_KINDS:
-        raise ValueError(f"score_kind must be one of {_VALID_SCORE_KINDS}, got {score_kind!r}")
-    if not results:
-        return []
+    semantic_hits: Sequence[RecallHit],
+    keyword_hits: Sequence[RecallHit],
+    graph_hits: Sequence[RecallHit] = (),
+    active_sources: Collection[RetrievalSource] | None = None,
+) -> list[ExactIdentity]:
+    """返回候选的纯 RRF 顺序，供图扩展挑选种子与最终精排共同复用。"""
 
-    max_raw_score = max((float(r.get("score") or 0.0) for r in results), default=1.0)
-    if max_raw_score <= 0:
-        max_raw_score = 1.0
+    hits_by_source: dict[RetrievalSource, Sequence[RecallHit]] = {
+        "semantic": semantic_hits,
+        "keyword": keyword_hits,
+        "graph": graph_hits,
+    }
+    sources = set(active_sources or ())
+    if not sources:
+        sources = {source for source, hits in hits_by_source.items() if hits}
+    sources &= set(RRF_ENGINE_WEIGHTS)  # type: ignore[arg-type]
+    rank_maps = {source: _first_rank(hits_by_source[source]) for source in sources}
+    identities = {
+        identity
+        for rank_map in rank_maps.values()
+        for identity in rank_map
+    }
 
-    candidates = []
-    now = datetime.now(timezone.utc)
-
-    for item in results:
-        resource_id = item["resource_id"]
-        meta = item.get("metadata") or {}
-        resource_version = item.get("resource_version", meta.get("resource_version"))
-        if (
-            not isinstance(resource_version, int)
-            or isinstance(resource_version, bool)
-            or resource_version <= 0
-        ):
-            raise ValueError("ranked evidence must carry an exact resource_version")
-
-        # 1. Relevance Score(按 score_kind 口径)
-        relevance = _relevance_score(float(item.get("score") or 0.0), score_kind, max_raw_score)
-
-        # 2. Freshness Score
-        source_updated_str = meta.get("source_updated_at")
-        delta_days = 0.0
-        if source_updated_str:
-            try:
-                dt = _parse_aware(source_updated_str)
-                delta_days = max(0.0, (now - dt).total_seconds() / 86400.0)
-                freshness = math.exp(-0.05 * delta_days)
-            except Exception:
-                freshness = 0.7
-        else:
-            freshness = 0.7
-
-        # 3. Type Weight
-        rtype = meta.get("type", "doc")
-        if rtype in {"performance_metric", "generated_copy"}:
-            type_weight = 1.0
-        elif rtype == "generated_topic":
-            type_weight = 0.8
-        else:
-            type_weight = 0.6
-
-        # 4. Performance Weight
-        p_rows = performance_data.get(resource_id) or []
-        p_score = 0.0
-        if p_rows:
-            best_p = p_rows[0]
-            metrics = best_p.get("metrics") or {}
-            # 加权互动系数走单一事实源 weighted_engagement(与效果回填 _score 同口径,含单位文本
-            # 安全解析)。此处的归一化是对数归一化(去饱和、绝对声量),与回填的÷播放量各自保留。
-            engagement = weighted_engagement(metrics)
-            if engagement > 0:
-                p_score = min(math.log10(1.0 + engagement) / _P_SCORE_LOG_DENOM, 1.0)
-
-        # Final Weighted Score
-        final_score = (
-            WEIGHT_RELEVANCE * relevance
-            + WEIGHT_FRESHNESS * freshness
-            + WEIGHT_TYPE * type_weight
-            + WEIGHT_PERFORMANCE * p_score
+    def score(identity: ExactIdentity) -> float:
+        return sum(
+            RRF_ENGINE_WEIGHTS[source] / (RRF_K + rank_map[identity])
+            for source, rank_map in rank_maps.items()
+            if identity in rank_map
         )
 
-        why = f"根据相关度得分归一化 {relevance:.2f}"
-        if source_updated_str:
-            why += f"，源端更新于 {delta_days:.1f} 天前 (时效得分 {freshness:.2f})"
-        else:
-            why += f"，源端更新时间未知 (默认时效得分 {freshness:.2f})"
-        if p_score > 0.01:
-            why += f"，历史效果良好 (表现分 {p_score:.2f})"
+    return sorted(identities, key=lambda identity: (-score(identity), identity))
 
-        candidates.append({
-            "resource_id": resource_id,
-            "resource_version": resource_version,
-            "title": item["title"],
-            "summary": item["summary"],
-            "score": round(final_score, 4),
-            "why_selected": why,
-            "rank_signals": {
-                "relevance": round(relevance, 4),
-                "freshness": round(freshness, 4),
-                "performance": round(p_score, 4)
-            },
-            "metadata": meta,
-        })
 
-    # Sort by Score Descending
-    candidates.sort(key=lambda x: x["score"], reverse=True)
+def rank_knowledge_candidates(
+    *,
+    rows: Sequence[Mapping[str, Any]],
+    semantic_hits: Sequence[RecallHit],
+    keyword_hits: Sequence[RecallHit],
+    graph_hits: Sequence[RecallHit] = (),
+    active_sources: Collection[RetrievalSource],
+    performance_data: Mapping[ExactIdentity, Sequence[Mapping[str, Any]]],
+    limit: int = 10,
+    now: datetime | None = None,
+) -> list[RankedKnowledge]:
+    """对已经过 current knowledge + ACL 门的行进行确定性精排。"""
 
-    # Prune & Deduplicate
-    final_results = []
-    for cand in candidates:
-        duplicate = False
-        # Title Fuzzy Deduplication
-        for existing in final_results:
-            ratio = SequenceMatcher(None, cand["title"], existing["title"]).ratio()
-            if ratio > 0.90:
-                duplicate = True
-                break
-        if not duplicate:
-            final_results.append(cand)
+    safe_limit = min(max(int(limit), 1), 50)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
 
-    return final_results[:limit]
+    hits_by_source: dict[RetrievalSource, Sequence[RecallHit]] = {
+        "semantic": semantic_hits,
+        "keyword": keyword_hits,
+        "graph": graph_hits,
+    }
+    sources = set(active_sources) & set(RRF_ENGINE_WEIGHTS)  # type: ignore[arg-type]
+    rank_maps = {source: _first_rank(hits_by_source[source]) for source in sources}
+    denominator = sum(
+        RRF_ENGINE_WEIGHTS[source] / (RRF_K + 1)
+        for source in sources
+    )
+    if denominator <= 0:
+        return []
+
+    candidates: list[RankedKnowledge] = []
+    for row in rows:
+        identity = _validate_identity(
+            str(row["resource_id"]), int(row["resource_version"])
+        )
+        retrieval_sources = tuple(
+            source
+            for source in ("semantic", "keyword", "graph")
+            if identity in rank_maps.get(source, {})
+        )
+        if not retrieval_sources:
+            continue
+        rrf_raw = sum(
+            RRF_ENGINE_WEIGHTS[source]
+            / (RRF_K + rank_maps[source][identity])
+            for source in retrieval_sources
+        )
+        relevance = min(max(rrf_raw / denominator, 0.0), 1.0)
+        quality = _clamp_unit(row.get("quality_score"))
+        freshness = _freshness_score(row, now=now)
+        performance = _performance_score(performance_data.get(identity, ()))
+        final_score = (
+            WEIGHT_RELEVANCE * relevance
+            + WEIGHT_QUALITY * quality
+            + WEIGHT_FRESHNESS * freshness
+            + WEIGHT_PERFORMANCE * performance
+        )
+
+        source_label = "+".join(retrieval_sources)
+        why = (
+            f"{source_label} 召回；RRF {relevance:.2f}，质量 {quality:.2f}，"
+            f"时效 {freshness:.2f}，效果 {performance:.2f}"
+        )
+        summary = str(row.get("summary") or "").strip()
+        if not summary:
+            summary = str(row.get("content_text") or "").strip()[:240]
+        duplicate_family_id = row.get("duplicate_family_id")
+        candidates.append(
+            RankedKnowledge(
+                resource_id=identity[0],
+                resource_version=identity[1],
+                type=_required_text(row, "resource_type", "type"),
+                asset_kind=_required_text(row, "asset_kind"),
+                source_kind=_required_text(row, "source_kind"),
+                niche=(str(row["niche"]).strip() or None) if row.get("niche") else None,
+                title=str(row.get("title") or ""),
+                summary=summary,
+                source_updated_at=_iso_or_unknown(row.get("source_updated_at")),
+                indexed_at=_iso_or_unknown(row.get("indexed_at")),
+                score=round(min(max(final_score, 0.0), 1.0), 6),
+                relevance=round(relevance, 6),
+                freshness=round(freshness, 6),
+                quality=round(quality, 6),
+                performance=round(performance, 6),
+                retrieval_sources=retrieval_sources,
+                why_selected=why,
+                duplicate_family_id=(
+                    str(duplicate_family_id) if duplicate_family_id is not None else None
+                ),
+            )
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            -item.score,
+            -item.relevance,
+            -item.quality,
+            item.resource_id,
+            item.resource_version,
+        )
+    )
+
+    # 家族是入库清洗阶段的稳定事实。每个家族只保留精排最高的一条；无家族数据不互相误杀。
+    result: list[RankedKnowledge] = []
+    seen_families: set[str] = set()
+    for item in candidates:
+        family = item.duplicate_family_id
+        if family is not None:
+            if family in seen_families:
+                continue
+            seen_families.add(family)
+        result.append(item)
+        if len(result) >= safe_limit:
+            break
+    return result
+
+
+__all__ = [
+    "DEFAULT_RELEVANCE_FLOOR",
+    "ExactIdentity",
+    "P_SCORE_LOG_CAP",
+    "RRF_ENGINE_WEIGHTS",
+    "RRF_K",
+    "RankedKnowledge",
+    "RecallHit",
+    "WEIGHT_FRESHNESS",
+    "WEIGHT_PERFORMANCE",
+    "WEIGHT_QUALITY",
+    "WEIGHT_RELEVANCE",
+    "rank_knowledge_candidates",
+    "weighted_rrf_order",
+]

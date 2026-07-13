@@ -42,32 +42,38 @@ def _neighbor_query(note: dict[str, Any]) -> str:
     return " ".join(parts).strip()
 
 
-def _find_neighbors(query: str, config: RunnableConfig | None) -> list[dict[str, Any]]:
-    """用全文检索(Meili,不依赖 embedding,永远可用)找已有素材作关联候选。
+def _find_neighbors(
+    repo: ResourceRepository,
+    *,
+    query: str,
+    tenant_id: str,
+    actor_open_id: str,
+) -> list[dict[str, Any]]:
+    """通过统一检索领域服务找已有素材作关联候选。
 
-    只取 resource_id + score;检索失败/无命中返回空(由 associate_ingested_resource 退化到
-    同批 co_ingested 兜底)。关联绝不能让采纳主流程失败,故此处吞掉一切异常。
+    只取精确身份与分数；候选已通过当前知识门和 ACL。检索失败或无命中返回空，由
+    ``associate_ingested_resource`` 使用同批弱关联兜底。关联不能阻断采纳主流程。
     """
     try:
-        # 延迟导入避免与 data_foundation.tools 的循环依赖(tools 层互相引用)。
-        from data_foundation.tools import search_resources
+        from data_foundation.retrieval import retrieve_for_actor
 
-        res = search_resources.func(query, limit=6, config=config)
+        package = retrieve_for_actor(
+            repo,
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            query=query,
+            limit=6,
+        )
     except Exception:  # noqa: BLE001 - 关联候选检索失败不影响采纳
         return []
-    if not isinstance(res, dict) or not res.get("ok"):
-        return []
-    out: list[dict[str, Any]] = []
-    for item in res.get("results", []) or []:
-        if isinstance(item, dict) and item.get("resource_id"):
-            out.append(
-                {
-                    "resource_id": item["resource_id"],
-                    "resource_version": item.get("resource_version"),
-                    "score": item.get("score"),
-                }
-            )
-    return out
+    return [
+        {
+            "resource_id": item.resource_id,
+            "resource_version": item.resource_version,
+            "score": item.score,
+        }
+        for item in package.evidence
+    ]
 
 
 @tool
@@ -184,7 +190,12 @@ def adopt_online_notes(
         by_resource = {r["resource_id"]: r for r in results if r.get("resource_id")}
         for rid, resource_version, note in adopted_pairs:
             try:
-                neighbors = _find_neighbors(_neighbor_query(note), config)
+                neighbors = _find_neighbors(
+                    repo,
+                    query=_neighbor_query(note),
+                    tenant_id=tenant_id,
+                    actor_open_id=actor,
+                )
                 assoc = associate_ingested_resource(
                     repo,
                     tenant_id=tenant_id,
@@ -209,7 +220,7 @@ def adopt_online_notes(
     next_step = (
         f"已收录 {adopted_count} 条到库"
         + (f"(其中 {new_count} 条新入库、{skipped_count} 条库里早有)" if skipped_count else "")
-        + "(均已进检索)。可基于这批 + 本地相关内容出选题:"
+        + "(均已进入知识治理)。可基于这批 + 本地相关内容出选题:"
         "按 topic-content 流程检索取证后产出带 resource_id 依据的选题卡。"
         if adopted_count
         else None

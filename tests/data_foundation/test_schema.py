@@ -164,6 +164,17 @@ def test_meili_resource_version_backfill_is_once_only_and_uses_outbox():
     assert "when r.type = 'generated_copy' then gcs.knowledge_target_version" in schema
 
 
+def test_meili_hybrid_v2_backfill_has_independent_generation_safe_dedupe():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    assert "20260713_meili_knowledge_hybrid_v2" in schema
+    assert "from claimed" in schema
+    assert "join current_knowledge_targets target on true" in schema
+    assert "state.search_reconcile_generation" in schema
+    assert "'meili-knowledge-hybrid-v2'" in schema
+    assert "'reconcile_generation', target.search_reconcile_generation" in schema
+    assert "'index_schema_version', 'knowledge-hybrid-v2'" in schema
+
+
 def test_meili_resource_version_backfill_requeues_or_inserts_once(migrated_conn):
     # The fixture migrated an empty schema, so remove the marker to simulate an
     # existing deployment upgrading after resources and legacy outbox rows exist.
@@ -216,6 +227,85 @@ def test_meili_resource_version_backfill_requeues_or_inserts_once(migrated_conn)
         where tenant_id = 'tenant-reindex' and topic = 'meili_index'
         """
     ).fetchone()["n"] == 2
+
+
+def test_meili_hybrid_v2_backfill_requeues_each_current_target_once(migrated_conn):
+    migration_key = "20260713_meili_knowledge_hybrid_v2"
+    migrated_conn.execute(
+        "delete from data_foundation_migrations where migration_key = %s",
+        (migration_key,),
+    )
+    resource_id, version = _insert_resource_version(migrated_conn, "tenant-hybrid")
+    family_id = migrated_conn.execute(
+        """
+        insert into knowledge_families (
+          tenant_id, canonical_resource_id, canonical_resource_version,
+          family_kind, canonical_hash
+        ) values ('tenant-hybrid', %s, %s, 'singleton', repeat('a', 64))
+        returning id
+        """,
+        (resource_id, version),
+    ).fetchone()[0]
+    migrated_conn.execute(
+        """
+        insert into knowledge_asset_states (
+          tenant_id, resource_id, resource_version, eligibility,
+          eligible_for_synthesis, asset_kind, source_kind, quality_score,
+          normalized_hash, duplicate_family_id, duplicate_kind,
+          visibility, qualified_at, search_reconcile_generation
+        ) values (
+          'tenant-hybrid', %s, %s, 'qualified', true,
+          'reference', 'manual', 0.8, repeat('b', 64), %s,
+          'singleton', 'team', now(), 7
+        )
+        """,
+        (resource_id, version, family_id),
+    )
+    old_id = migrated_conn.execute(
+        """
+        insert into resource_outbox (
+          tenant_id, resource_id, resource_version, topic, dedupe_key, payload, status
+        ) values (
+          'tenant-hybrid', %s, %s, 'meili_index', 'old-resource-version-dedupe',
+          jsonb_build_object('resource_id', %s::text, 'version', %s), 'succeeded'
+        ) returning id
+        """,
+        (resource_id, version, resource_id, version),
+    ).fetchone()[0]
+
+    db.run_migrations(migrated_conn)
+
+    rows = migrated_conn.execute(
+        """
+        select id, status, dedupe_key, payload
+        from resource_outbox
+        where tenant_id = 'tenant-hybrid' and topic = 'meili_index'
+        order by created_at, id
+        """
+    ).fetchall()
+    hybrid_rows = [
+        row for row in rows
+        if row["payload"].get("index_schema_version") == "knowledge-hybrid-v2"
+    ]
+    assert len(hybrid_rows) == 1
+    assert hybrid_rows[0]["id"] != old_id
+    assert hybrid_rows[0]["status"] == "pending"
+    assert hybrid_rows[0]["dedupe_key"] != "old-resource-version-dedupe"
+    assert int(hybrid_rows[0]["payload"]["reconcile_generation"]) == 7
+
+    migrated_conn.execute(
+        "update resource_outbox set status = 'succeeded' where id = %s",
+        (hybrid_rows[0]["id"],),
+    )
+    db.run_migrations(migrated_conn)
+    assert migrated_conn.execute(
+        """
+        select count(*) as n
+        from resource_outbox
+        where tenant_id = 'tenant-hybrid'
+          and payload->>'index_schema_version' = 'knowledge-hybrid-v2'
+        """
+    ).fetchone()["n"] == 1
 
 
 def test_knowledge_gate_synchronously_classifies_legacy_targets_before_return(migrated_conn):
@@ -927,7 +1017,7 @@ def test_sync_run_running_indexes_cover_status_and_stale_recovery(migrated_conn)
     assert "where (status = 'running'" in indexes["idx_sync_runs_stale_running"]
 
 
-def test_resource_content_trigram_index_supports_keyword_fallback(migrated_conn):
+def test_resource_content_trigram_index_supports_near_family_matching(migrated_conn):
     rows = migrated_conn.execute(
         """
         select indexname, indexdef

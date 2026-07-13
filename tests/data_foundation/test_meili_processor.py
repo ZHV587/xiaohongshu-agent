@@ -23,6 +23,34 @@ class _Lease:
         return None
 
 
+def _knowledge_row(**overrides):
+    row = {
+        "id": "r1",
+        "tenant_id": "default",
+        "type": "feishu_base_record",
+        "title": "减脂笔记",
+        "summary": None,
+        "content_text": "正文",
+        "resource_version": 1,
+        "asset_kind": "reference",
+        "source_kind": "feishu_sync",
+        "quality_score": 0.8,
+        "normalized_text": "正文",
+        "metadata": {
+            "niche": "健身",
+            "tags": ["减脂", "实测"],
+            "hook_types": ["数字清单"],
+            "cta_types": ["收藏"],
+            "structure_tags": ["清单体"],
+            "style_tags": ["第一人称"],
+            "success_factors": ["有数据"],
+        },
+        "qualified_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
+    }
+    row.update(overrides)
+    return row
+
+
 def test_state_disabled_when_no_config():
     p = MeiliProcessor(conn=MagicMock(), index=MagicMock(),
                        config=MeiliConfig(state="disabled", url="", api_key=""))
@@ -42,9 +70,7 @@ def _conn_returning(row):
 
 
 def test_process_upserts_resource_document():
-    conn = _conn_returning({
-        "id": "r1", "tenant_id": "default", "type": "feishu_base_record",
-        "title": "减脂笔记", "summary": None, "content_text": "正文", "resource_version": 1})
+    conn = _conn_returning(_knowledge_row())
     index = MagicMock()
     p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
     result = asyncio.run(p.process(_item({"resource_id": "r1", "version": 1}), _Lease()))
@@ -54,6 +80,53 @@ def test_process_upserts_resource_document():
     assert doc["title"] == "减脂笔记"
     assert doc["tenant_id"] == "default"
     assert doc["resource_version"] == 1
+    assert doc["asset_kind"] == "reference"
+    assert doc["source_kind"] == "feishu_sync"
+    assert doc["niche"] == "健身"
+    assert doc["quality_score"] == 0.8
+    assert doc["qualified_at_epoch"] == 1782864000
+    assert doc["normalized_text"] == "正文"
+    assert doc["tags"] == ["减脂", "实测"]
+    assert doc["hook_types"] == ["数字清单"]
+    assert doc["cta_types"] == ["收藏"]
+    assert doc["structure_tags"] == ["清单体"]
+    assert doc["style_tags"] == ["第一人称"]
+    assert doc["success_factors"] == ["有数据"]
+    assert doc["index_schema_version"] == "knowledge-hybrid-v2"
+    sql = conn.cursor.return_value.__enter__.return_value.execute.call_args.args[0]
+    assert "knowledge_enrichments" in sql
+    assert "enrichment_type = 'deterministic_metadata'" in sql
+
+
+def test_process_indexes_only_cleaned_whitelisted_metadata():
+    conn = _conn_returning(
+        _knowledge_row(
+            metadata={
+                "niche": "  健身  ",
+                "tags": [" 减脂 ", "减脂", 3, ""],
+                "hook_types": "not-a-list",
+                "credentials": {"token": "must-never-enter-meili"},
+            }
+        )
+    )
+    index = MagicMock()
+    processor = MeiliProcessor(
+        conn=conn,
+        index=index,
+        config=MeiliConfig(state="enabled", url="u", api_key="k"),
+    )
+
+    asyncio.run(
+        processor.process(_item({"resource_id": "r1", "version": 1}), _Lease())
+    )
+
+    document = index.upsert.call_args.args[0]
+    assert document["niche"] == "健身"
+    assert document["tags"] == ["减脂"]
+    assert document["hook_types"] == []
+    assert "credentials" not in document
+    assert "visibility" not in document
+    assert "owner_open_id" not in document
 
 
 def test_process_missing_resource_id_is_permanent():
@@ -79,9 +152,7 @@ def test_process_deletes_document_when_resource_gone():
 
 
 def test_process_ensures_index_settings_once_before_upsert():
-    conn = _conn_returning({
-        "id": "r1", "tenant_id": "default", "type": "feishu_base_record",
-        "title": "t", "summary": None, "content_text": "body", "resource_version": 1})
+    conn = _conn_returning(_knowledge_row(title="t", content_text="body"))
     index = MagicMock()
     p = MeiliProcessor(conn=conn, index=index, config=MeiliConfig(state="enabled", url="u", api_key="k"))
     # 两次 process:ensure_index 只应调用一次(实例级幂等),每次都 upsert
@@ -93,15 +164,12 @@ def test_process_ensures_index_settings_once_before_upsert():
 
 def test_stale_exact_task_reconciles_the_resource_level_current_document():
     conn = _conn_returning(
-        {
-            "id": "r1",
-            "tenant_id": "default",
-            "type": "feishu_base_record",
-            "title": "current-v2",
-            "summary": None,
-            "content_text": "current body",
-            "resource_version": 2,
-        }
+        _knowledge_row(
+            title="current-v2",
+            content_text="current body",
+            normalized_text="current body",
+            resource_version=2,
+        )
     )
     index = MagicMock()
     processor = MeiliProcessor(
@@ -193,15 +261,16 @@ class _BarrierIndex:
 
 
 def _current_document(version=1):
-    return {
-        "id": "race-1",
-        "tenant_id": "default",
-        "type": "writing_teardown",
-        "title": f"teardown-v{version}",
-        "summary": None,
-        "content_text": "body",
-        "resource_version": version,
-    }
+    return _knowledge_row(
+        id="race-1",
+        type="writing_teardown",
+        title=f"teardown-v{version}",
+        content_text="body",
+        normalized_text="body",
+        resource_version=version,
+        asset_kind="teardown",
+        source_kind="viral_teardown",
+    )
 
 
 def test_upsert_in_flight_then_withdrawn_is_rechecked_and_deleted():

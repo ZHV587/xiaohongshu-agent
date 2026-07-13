@@ -1,24 +1,33 @@
 // Typed data contracts for the 创作运营工作室. These mirror the REAL
-// backend models (data_foundation: resources, evidence.py rank_evidence,
+// backend models (data_foundation: resources, EvidencePackage,
 // performance_metric, accounts) — NOT the prototype's mock shapes. The
 // StudioProvider fills them from the live LangGraph stream + /api/backend/*.
 
-export type RetrievalMode = "semantic" | "keyword_fallback" | "insufficient_relevance";
+export type RetrievalMode =
+  | "hybrid"
+  | "semantic_only"
+  | "keyword_only"
+  | "insufficient_relevance";
 
-/** One ranked evidence resource — aligns with evidence.py EvidenceItem +
- *  rank_evidence three-signal model (relevance / freshness / performance). */
+/** One ranked evidence resource — all four signals are authoritative backend values. */
 export interface EvidenceItem {
   resource_id: string;
   resource_version: number;
   type: string;
+  asset_kind: string;
+  source_kind: string;
+  niche?: string;
   title: string;
   summary: string;
   score: number;
+  /** 知识资产质量；正式检索必填且只能在 [0,1]，前端不得补默认值。 */
+  quality: number;
   relevance: number;
   freshness: number;
   performance: number;
   source_updated_at: string;
   indexed_at: string;
+  retrieval_sources: ("semantic" | "keyword" | "graph")[];
   why_selected: string;
 }
 

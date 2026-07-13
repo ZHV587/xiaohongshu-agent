@@ -8,14 +8,14 @@ import { parseXhsBlocks, type RichTopic } from "../src/lib/xhs-blocks";
 // Property 5: 数据不足明示
 // Validates: Requirements 3.1, 3.7 (studio-data-integration 16.2)
 //
-// 对任意 evidence_mode = "insufficient_relevance"、evidence 为空数组 []、gaps 非空的
+// 对任意 retrieval_mode = "insufficient_relevance"、evidence 为空数组 []、gaps 非空的
 // 富选题载荷，解析后应满足：
-//   - topic.evidence_mode === "insufficient_relevance"（检索模式如实保留）；
+//   - topic.retrieval_mode === "insufficient_relevance"（检索模式如实保留）；
 //   - topic.evidence 为空数组（不产出任何弱相关/虚构证据条目）；
 //   - topic.gaps 保留为可渲染的非空字符串。
 //
 // 关键对齐 parseRichTopic：当 source.evidence 为「数组」（含空数组）时，
-// topic.evidence = parseRichEvidence(source.evidence)；仅当该键缺失/非数组时才回退顶层证据。
+// topic.evidence = parseRichEvidence(source.evidence)；统一契约禁止从旧顶层字段回退。
 // 因此本测试在顶层放入「非空」共享证据 —— 若解析器错误地对空 evidence 走了回退，
 // topic.evidence 将变为非空，从而被断言捕获。这保证「数据不足时不掺入证据」为真属性而非巧合。
 
@@ -35,7 +35,7 @@ const nonEmptyRenderable = (fallback: string) =>
 // gaps：非空可渲染字符串（数据不足时向用户明示的缺口说明）。
 const gapsArb = nonEmptyRenderable("相关语料不足，暂无法给出高置信证据");
 
-// 数据不足的富选题：evidence_mode 固定 insufficient_relevance、evidence 为空数组、gaps 非空。
+// 数据不足的富选题：retrieval_mode 固定 insufficient_relevance、evidence 为空数组、gaps 非空。
 const insufficientTopicArb = fc.record({
   title: safeString,
   angle: safeString,
@@ -66,7 +66,7 @@ function buildTopicsContent(
       title: t.title,
       angle: t.angle,
       kw: t.kw,
-      evidence_mode: "insufficient_relevance",
+      retrieval_mode: "insufficient_relevance",
       evidence: [] as unknown[], // 空证据数组
       gaps: t.gaps,
     })),
@@ -96,9 +96,9 @@ test("Property 5: 数据不足明示（证据为空、gaps 保留、检索模式
 
         // (1) 检索模式如实保留为 insufficient_relevance。
         assert.equal(
-          topic.evidence_mode,
+          topic.retrieval_mode,
           "insufficient_relevance",
-          "evidence_mode 应保留为 insufficient_relevance",
+          "retrieval_mode 应保留为 insufficient_relevance",
         );
 
         // (2) 证据为空数组：不产出任何弱相关/虚构证据，且不回退顶层非空共享证据。

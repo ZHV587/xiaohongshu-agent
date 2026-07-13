@@ -58,15 +58,15 @@ def _meili_counts(tenants: list[str]) -> tuple[dict[str, int], dict[str, int]] |
     from data_foundation.meili_client import MeiliResourceIndex
 
     index = MeiliResourceIndex.from_config(cfg)
-    # resource_version 是本次精确版本回表的硬契约。先等待 filterable settings
-    # 生效，再按租户同时数总文档和版本完整文档；漂移口径使用后者。
+    # 先等待 filterable settings 生效，再按租户分别统计总文档和当前 hybrid
+    # schema 文档；旧结构即便有 resource_version 也不能掩盖 v2 重建缺失。
     index.ensure_index()
     usable: dict[str, int] = {}
     malformed: dict[str, int] = {}
     for tenant_id in tenants:
         audit = index.audit_tenant(tenant_id=tenant_id)
-        usable[tenant_id] = audit.versioned_documents
-        malformed[tenant_id] = audit.malformed_documents
+        usable[tenant_id] = audit.current_schema_documents
+        malformed[tenant_id] = audit.stale_schema_documents
     return usable, malformed
 
 
@@ -123,8 +123,8 @@ def main() -> int:
         for tenant_id, malformed in sorted(meili_malformed.items()):
             if malformed > 0:
                 print(
-                    f"Meili 版本字段缺失: tenant={tenant_id} "
-                    f"malformed_documents={malformed}"
+                    f"Meili 旧索引结构残留: tenant={tenant_id} "
+                    f"stale_schema_documents={malformed}"
                 )
         if not drift:
             print("对账通过:未检测到引擎数据丢失(已计入在途任务)。")

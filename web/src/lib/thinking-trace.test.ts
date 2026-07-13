@@ -11,10 +11,8 @@ import {
 } from "./thinking-trace";
 
 test("toolLabel maps known data_foundation tools to Chinese", () => {
-  assert.equal(toolLabel("semantic_search_resources", {}), "按语义找相关素材");
-  assert.equal(toolLabel("search_resources", {}), "按关键词补查素材");
+  assert.equal(toolLabel("retrieve_knowledge", {}), "检索知识库");
   assert.equal(toolLabel("get_resource", {}), "打开原文细看");
-  assert.equal(toolLabel("graph_expand", {}), "顺着图谱找关联");
   assert.equal(toolLabel("save_generated_topic", {}), "保存选题");
   assert.equal(toolLabel("save_writing_teardown", {}), "归档写作拆解");
   assert.equal(toolLabel("get_session_snapshots", {}), "恢复会话快照");
@@ -64,6 +62,8 @@ const aiTodos = (id: string, todos: Array<{ content: string; status: string }>):
 // 带命中结果的工具消息(results 数组用于工作流阶段结果行"命中 N 条")。
 const toolMsgResults = (callId: string, n: number): Message =>
   ({ id: "t" + callId, type: "tool", tool_call_id: callId, content: JSON.stringify({ results: Array.from({ length: n }, (_, i) => ({ note_id: "n" + i, title: "t" + i })) }) } as unknown as Message);
+const toolMsgEvidence = (callId: string, n: number): Message =>
+  ({ id: "t" + callId, type: "tool", tool_call_id: callId, content: JSON.stringify({ retrieval_mode: "hybrid", evidence: Array.from({ length: n }, (_, i) => ({ resource_id: "r" + i, resource_version: 1 })) }) } as unknown as Message);
 
 test("write_todos plan renders as the primary workflow-phase track (generic phases, not tool names)", () => {
   const tl = deriveTimeline([
@@ -117,16 +117,29 @@ test("workflow track suppresses the fallback tool track (only one thinking item,
   assert.deepEqual(thinkingItems[0].run.steps.map((s) => s.label), ["检索爆款素材依据"]);
 });
 
+test("workflow track counts unified EvidencePackage evidence", () => {
+  const tl = deriveTimeline([
+    human("出选题"),
+    aiTodos("p1", [{ content: "检索知识依据", status: "in_progress" }]),
+    toolMsg("p1"),
+    aiCall("c1", "retrieve_knowledge", { query: "露营" }),
+    toolMsgEvidence("c1", 3),
+  ], { loading: true });
+  const thinking = tl.find((item) => item.kind === "thinking");
+  assert.ok(thinking && thinking.kind === "thinking");
+  assert.equal(thinking.run.steps[0].result, "命中 3 条相关素材");
+});
+
 test("no write_todos → falls back to the tool-name track (short tasks keep working)", () => {
   const tl = deriveTimeline([
     human("出选题"),
-    aiCall("c1", "semantic_search_resources", { query: "x" }),
+    aiCall("c1", "retrieve_knowledge", { query: "x" }),
     toolMsg("c1"),
     aiText("答案"),
   ]);
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
-  assert.deepEqual(thinking.run.steps.map((s) => s.label), ["按语义找相关素材"]);
+  assert.deepEqual(thinking.run.steps.map((s) => s.label), ["检索知识库"]);
 });
 
 const officialPresentation: TracePresentation = {
@@ -161,12 +174,12 @@ test("plain text turn yields user + ai bubble, no thinking", () => {
 });
 
 test("tool call without ToolMessage is active", () => {
-  const tl = deriveTimeline([human("出选题"), aiCall("c1", "semantic_search_resources", { query: "露营" })]);
+  const tl = deriveTimeline([human("出选题"), aiCall("c1", "retrieve_knowledge", { query: "露营" })]);
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
   // 兜底轨道现在给每步补一句意图说明(Claude Code/Codex 式,消除黑盒感),故断言含 description。
   assert.deepEqual(thinking.run.steps, [
-    { label: "按语义找相关素材", state: "active", description: "从数据底座按语义相似度召回可用笔记和历史素材。" },
+    { label: "检索知识库", state: "active", description: "从统一知识库召回语义、关键词与图关联证据，并核验可用性。" },
   ]);
   assert.equal(thinking.run.done, false);
 });
@@ -174,14 +187,14 @@ test("tool call without ToolMessage is active", () => {
 test("tool call with matching ToolMessage is done", () => {
   const tl = deriveTimeline([
     human("出选题"),
-    aiCall("c1", "semantic_search_resources", { query: "露营" }),
+    aiCall("c1", "retrieve_knowledge", { query: "露营" }),
     toolMsg("c1"),
     aiText("这是选题建议"),
   ]);
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
   assert.deepEqual(thinking.run.steps, [
-    { label: "按语义找相关素材", state: "done", description: "从数据底座按语义相似度召回可用笔记和历史素材。" },
+    { label: "检索知识库", state: "done", description: "从统一知识库召回语义、关键词与图关联证据，并核验可用性。" },
   ]);
   assert.equal(thinking.run.done, true);
 });
@@ -189,7 +202,7 @@ test("tool call with matching ToolMessage is done", () => {
 test("completed thinking run appears between the user message and the final AI output", () => {
   const tl = deriveTimeline([
     human("出选题"),
-    aiCall("c1", "semantic_search_resources", { query: "露营" }),
+    aiCall("c1", "retrieve_knowledge", { query: "露营" }),
     toolMsg("c1"),
     aiText("这是选题建议"),
   ]);
@@ -250,7 +263,7 @@ test("tool-call progress prose stays inside the trace; only the final answer bec
     {
       type: "ai",
       content: "我先检索相关素材作为选题依据。",
-      tool_calls: [{ id: "c1", name: "semantic_search_resources", args: { query: "职场穿搭" } }],
+      tool_calls: [{ id: "c1", name: "retrieve_knowledge", args: { query: "职场穿搭" } }],
     } as unknown as Message,
     toolMsg("c1"),
     aiText("这是最终选题建议"),
@@ -263,7 +276,7 @@ test("tool-call progress prose stays inside the trace; only the final answer bec
   const thinking = tl[1];
   assert.ok(thinking.kind === "thinking");
   assert.equal(thinking.run.done, true);
-  assert.equal(thinking.run.steps[0].label, "按语义找相关素材");
+  assert.equal(thinking.run.steps[0].label, "检索知识库");
   assert.equal(thinking.run.steps[0].description, "我先检索相关素材作为选题依据。");
   assert.ok(thinking.run.logs.some((log) => log.text === "我先检索相关素材作为选题依据。"));
   const answer = tl[2];
@@ -394,7 +407,7 @@ test("per-turn fallback: a turn without official trace still shows its fallback 
       human("第一轮"),
       aiText("第一轮回答"),
       h2,
-      aiCall("c9", "semantic_search_resources", { query: "x" }),
+      aiCall("c9", "retrieve_knowledge", { query: "x" }),
       toolMsg("c9"),
       { id: "a2", type: "ai", content: "第二轮回答", tool_calls: [] } as unknown as Message,
     ],
@@ -402,7 +415,7 @@ test("per-turn fallback: a turn without official trace still shows its fallback 
   );
   const thinkingItems = tl.filter((i) => i.kind === "thinking");
   assert.equal(thinkingItems.length, 2, "官方轨道一条 + 第二轮兜底轨道一条");
-  assert.equal(thinkingItems[1].run.steps[0].label, "按语义找相关素材");
+  assert.equal(thinkingItems[1].run.steps[0].label, "检索知识库");
 });
 
 test("fallback track marks a failed tool step as error, not done", () => {
@@ -427,12 +440,12 @@ test("empty official presentation falls back to the richer fallback track", () =
     userStages: [], adminDetails: [],
   };
   const tl = deriveTimeline(
-    [human("出选题"), aiCall("c1", "semantic_search_resources", { query: "x" })],
+    [human("出选题"), aiCall("c1", "retrieve_knowledge", { query: "x" })],
     { loading: true, tracePresentationsByTurnId: { h: empty } },
   );
   const thinking = tl.find((i) => i.kind === "thinking");
   assert.ok(thinking && thinking.kind === "thinking");
-  assert.equal(thinking.run.steps[0].label, "按语义找相关素材", "空 presentation 不压制兜底轨道");
+  assert.equal(thinking.run.steps[0].label, "检索知识库", "空 presentation 不压制兜底轨道");
 });
 
 test("consecutive same-name tools fold into one step but keep per-call logs", () => {
@@ -454,7 +467,7 @@ test("consecutive same-name tools fold into one step but keep per-call logs", ()
 test("intermediate tool-only ai does not produce ai bubble; only final text does", () => {
   const tl = deriveTimeline([
     human("出选题"),
-    aiCall("c1", "search_resources", { query: "x" }),
+    aiCall("c1", "retrieve_knowledge", { query: "x" }),
     toolMsg("c1"),
     aiText("最终选题"),
   ]);
@@ -590,7 +603,7 @@ test("write tool log contains only Chinese label, not payload value", () => {
 test("read tool log still includes truncated args detail", () => {
   const tl = deriveTimeline([
     human("搜索"),
-    aiCall("r1", "semantic_search_resources", { query: "露营攻略" }),
+    aiCall("r1", "retrieve_knowledge", { query: "露营攻略" }),
     toolMsg("r1"),
     aiText("结果"),
   ]);
@@ -603,7 +616,7 @@ test("read tool log still includes truncated args detail", () => {
 test("read tool log strips sensitive key fields (token/credential etc) before stringify", () => {
   const tl = deriveTimeline([
     human("搜索"),
-    aiCall("r1", "semantic_search_resources", { query: "露营", token: "SECRET_TOKEN_VALUE" }),
+    aiCall("r1", "retrieve_knowledge", { query: "露营", token: "SECRET_TOKEN_VALUE" }),
     toolMsg("r1"),
     aiText("结果"),
   ]);
@@ -619,7 +632,7 @@ test("read tool log strips sensitive key fields (token/credential etc) before st
 test("thinking run with all tools done but no prose text has done=true", () => {
   const tl = deriveTimeline([
     human("执行"),
-    aiCall("t1", "semantic_search_resources", { query: "x" }),
+    aiCall("t1", "retrieve_knowledge", { query: "x" }),
     toolMsg("t1"),
     // No final aiText — run ends with all tools answered but no prose
   ]);

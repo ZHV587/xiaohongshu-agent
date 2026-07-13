@@ -48,7 +48,7 @@ description: |
 
 **操作**：
 1. 询问 project_name（如未提供）
-2. 调用 `get_session_snapshots(project_name)` 取会话检查点；需要已确认选题/文案证据时再用 `search_resources`
+2. 调用 `get_session_snapshots(project_name)` 取会话检查点；需要已确认选题/文案证据时再用 `retrieve_knowledge`
 3. 按时间线整理：背景 → 已否决方向 → 已确认判断 → 当前策略 → 下一步动作
 4. 调用 `save_session_snapshot(project_name, "阶段报告-{日期}", content, snapshot_kind="stage_report")` 保存报告并保留精确身份；报告由 Agent 汇总时保持未确认，用户明确认可后才调用 `confirm_session_snapshot`
 5. 调用 `sync_diagnosis_to_feishu(project_name, "阶段报告-{日期}", content)` 同步飞书
