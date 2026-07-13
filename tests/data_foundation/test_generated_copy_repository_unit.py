@@ -196,6 +196,51 @@ def _repo_with_locked_state(monkeypatch, current):
     return repo
 
 
+def test_exact_adopted_retry_ignores_stale_cas_without_side_effects(monkeypatch):
+    current = SimpleNamespace(
+        lifecycle_status="adopted",
+        adopted_version=2,
+        state_version=8,
+        latest_resource_version=3,
+    )
+    repo = _repo_with_locked_state(monkeypatch, current)
+    assert_version = MagicMock()
+    event_and_index = MagicMock()
+    monkeypatch.setattr(repo, "_assert_version", assert_version)
+    monkeypatch.setattr(repo, "_event_and_index", event_and_index)
+
+    replay = repo.adopt_version(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_id="copy-1",
+        resource_version=2,
+        expected_state_version=7,
+    )
+
+    assert replay is current
+    repo.conn.execute.assert_not_called()
+    assert_version.assert_not_called()
+    event_and_index.assert_not_called()
+
+    with pytest.raises(GeneratedCopyConflict, match="state version changed"):
+        repo.adopt_version(
+            tenant_id="default",
+            actor_open_id="ou_owner",
+            resource_id="copy-1",
+            resource_version=1,
+            expected_state_version=7,
+        )
+    for invalid_version in (True, 0, -1, "2"):
+        with pytest.raises(ValueError, match="resource_version must be a positive integer"):
+            repo.adopt_version(
+                tenant_id="default",
+                actor_open_id="ou_owner",
+                resource_id="copy-1",
+                resource_version=invalid_version,
+                expected_state_version=7,
+            )
+
+
 def test_final_draft_retry_replays_before_stale_cas_and_does_not_append(monkeypatch):
     draft = {"title": "Final", "body": "Exact body", "tags": ["#final"]}
     normalized = GeneratedCopyRepository._normalize_revision_payload(draft)

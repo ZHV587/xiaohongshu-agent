@@ -239,6 +239,74 @@ def test_candidate_revision_adoption_and_attribution_share_one_resource(migrated
     ).lifecycle_status == "measured"
 
 
+def test_exact_adopted_retry_preserves_state_and_single_downstream_fact(migrated_conn):
+    repo, _topic_id, resource_id = _seed_copy(migrated_conn)
+    lifecycle = GeneratedCopyRepository(repo)
+    initial = lifecycle.get_state(
+        tenant_id="default", actor_open_id="ou_user", resource_id=resource_id
+    )
+    target_version = int(initial.selected_version)
+
+    adopted = lifecycle.adopt_version(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id=resource_id,
+        resource_version=target_version,
+        expected_state_version=initial.state_version,
+    )
+    stale_replay = lifecycle.adopt_version(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id=resource_id,
+        resource_version=target_version,
+        expected_state_version=initial.state_version,
+    )
+    current_replay = lifecycle.adopt_version(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id=resource_id,
+        resource_version=target_version,
+        expected_state_version=adopted.state_version,
+    )
+
+    assert stale_replay == adopted
+    assert current_replay == adopted
+    persisted = lifecycle.get_state(
+        tenant_id="default", actor_open_id="ou_user", resource_id=resource_id
+    )
+    assert persisted == adopted
+    assert migrated_conn.execute(
+        """
+        select count(*) as count
+        from resource_events
+        where tenant_id = 'default' and resource_id = %s
+          and event_type = 'adopted'
+        """,
+        (resource_id,),
+    ).fetchone()["count"] == 1
+    assert migrated_conn.execute(
+        """
+        select count(*) as count
+        from resource_outbox outbox
+        join resource_events event
+          on event.tenant_id = outbox.tenant_id and event.id = outbox.event_id
+        where outbox.tenant_id = 'default' and outbox.resource_id = %s
+          and outbox.topic = 'knowledge_enrich' and event.event_type = 'adopted'
+        """,
+        (resource_id,),
+    ).fetchone()["count"] == 1
+    assert migrated_conn.execute(
+        """
+        select count(*) as count
+        from preference_observations
+        where tenant_id = 'default' and owner_open_id = 'ou_user'
+          and resource_id = %s and resource_version = %s
+          and observation_type = 'adopted'
+        """,
+        (resource_id, target_version),
+    ).fetchone()["count"] == 1
+
+
 def test_schedule_final_draft_appends_snapshot_and_finalizes_atomically(migrated_conn):
     repo, _topic_id, resource_id = _seed_copy(migrated_conn)
     lifecycle = GeneratedCopyRepository(repo)

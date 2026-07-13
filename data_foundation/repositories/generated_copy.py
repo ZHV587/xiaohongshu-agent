@@ -410,6 +410,20 @@ class GeneratedCopyRepository:
             current = self._lock_and_authorize(
                 tenant_id=tenant_id, actor_open_id=actor_open_id, resource_id=resource_id
             )
+            if (
+                not isinstance(resource_version, int)
+                or isinstance(resource_version, bool)
+                or resource_version <= 0
+            ):
+                raise ValueError("resource_version must be a positive integer")
+            # A committed response can be lost and retried with the now-stale CAS
+            # token. The locked lifecycle fact is the idempotency authority: only an
+            # exact adopted target is a no-op; every other transition still uses CAS.
+            if (
+                current.lifecycle_status == "adopted"
+                and current.adopted_version == resource_version
+            ):
+                return current
             self._expect_state(current, expected_state_version)
             self._ensure_mutable(current, action="adopt")
             self._assert_version(
