@@ -593,14 +593,17 @@ def test_generated_target_revisit_creates_new_meili_reconciliation(migrated_conn
 
     rows = migrated_conn.execute(
         """
-        select dedupe_key, status from resource_outbox
+        select dedupe_key, status,
+               (payload->>'reconcile_generation')::bigint as reconcile_generation
+        from resource_outbox
         where tenant_id = %s and resource_id = %s
           and resource_version = 1 and topic = 'meili_index'
-        order by created_at, id
+        order by reconcile_generation
         """,
         ("tenant-a", first.id),
     ).fetchall()
     assert len(rows) == 2
+    assert [row["reconcile_generation"] for row in rows] == [1, 2]
     assert rows[0]["status"] == "succeeded"
     assert rows[1]["status"] == "pending"
     assert rows[0]["dedupe_key"] != rows[1]["dedupe_key"]
