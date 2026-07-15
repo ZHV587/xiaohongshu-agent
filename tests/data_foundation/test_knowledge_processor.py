@@ -219,6 +219,12 @@ def test_registry_declares_knowledge_enrich_as_first_class_topic():
 
 
 def test_default_registry_installs_always_active_knowledge_processor(monkeypatch):
+    # The registry eagerly creates configured external engines. This unit test only
+    # exercises always-active local processors and must not inherit production .env.
+    monkeypatch.setenv("XHS_MEILI_URL", "")
+    monkeypatch.setenv("XHS_MEILI_KEY", "")
+    monkeypatch.setenv("XHS_FALKOR_URL", "")
+    monkeypatch.setenv("XHS_FALKOR_GRAPH", "")
     monkeypatch.setattr(
         "data_foundation.processors.registry.embedding_config_from_runtime",
         lambda: None,

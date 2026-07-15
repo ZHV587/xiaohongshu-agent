@@ -47,15 +47,13 @@ def check_health(base_url: str, env: dict[str, str]) -> bool:
         print("Missing XHS_INTERNAL_SECRET or XHS_ADMIN_OPEN_IDS.", file=sys.stderr)
         return False
 
+    headers = {
+        "X-XHS-Internal-Key": secret,
+        "X-XHS-Open-Id": admin_open_ids.split(",")[0],
+        "X-XHS-Is-Admin": "true",
+    }
     health_url = base_url.rstrip("/") + "/internal/health/facts"
-    data = _request_json(
-        health_url,
-        {
-            "X-XHS-Internal-Key": secret,
-            "X-XHS-Open-Id": admin_open_ids.split(",")[0],
-            "X-XHS-Is-Admin": "true",
-        },
-    )
+    data = _request_json(health_url, headers)
 
     modules = data.get("modules")
     if not isinstance(modules, dict):
@@ -73,6 +71,22 @@ def check_health(base_url: str, env: dict[str, str]) -> bool:
         actual = _module_status(modules.get(module_name))
         print(f"module.{module_name}={actual}")
         ok = ok and actual == expected_status
+
+    # A config-center deployment can report healthy infrastructure while its
+    # process-local model registry is empty after a failed cold-start discovery.
+    # In that state every chat request falls through to a stale import-time model,
+    # so deployment must fail instead of producing a false-green handoff.
+    model_url = base_url.rstrip("/") + "/internal/model/status"
+    model_data = _request_json(model_url, headers)
+    config_center_enabled = model_data.get("config_center_enabled") is True
+    registry = model_data.get("registry")
+    active_models = registry.get("active_models") if isinstance(registry, dict) else None
+    last_error = registry.get("last_error") if isinstance(registry, dict) else None
+    print(f"model.config_center_enabled={config_center_enabled}")
+    print(f"model.active_count={len(active_models) if isinstance(active_models, list) else 0}")
+    print(f"model.last_error_present={bool(last_error)}")
+    if config_center_enabled:
+        ok = ok and model_data.get("ok") is True and bool(active_models)
 
     return ok
 

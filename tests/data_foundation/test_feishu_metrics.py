@@ -1,5 +1,5 @@
 """飞书效果列抽取纯函数测试(feishu-performance-metrics)。"""
-from hypothesis import given, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 
 from data_foundation.feishu_metrics import (
     COLUMN_TO_METRIC,
@@ -62,6 +62,7 @@ def test_deterministic():
     assert a == b
 
 
+@settings(suppress_health_check=[HealthCheck.too_slow])
 @given(
     st.dictionaries(
         st.sampled_from(list(COLUMN_TO_METRIC) + ["噪声列", "标题"]),

@@ -62,9 +62,15 @@ def test_execute_commands_aborts_on_first_failure() -> None:
 
 def test_health_check_accepts_healthy_runtime(monkeypatch) -> None:
     def fake_request_json(url: str, headers: dict[str, str]) -> dict:
-        assert url == "http://127.0.0.1:2030/internal/health/facts"
         assert headers["X-XHS-Internal-Key"] == "secret"
         assert headers["X-XHS-Open-Id"] == "ou_admin"
+        if url == "http://127.0.0.1:2030/internal/model/status":
+            return {
+                "ok": True,
+                "config_center_enabled": True,
+                "registry": {"active_models": ["model-a"], "last_error": None},
+            }
+        assert url == "http://127.0.0.1:2030/internal/health/facts"
         return {
             "ok": True,
             "modules": {
@@ -83,7 +89,13 @@ def test_health_check_accepts_healthy_runtime(monkeypatch) -> None:
 
 
 def test_health_check_rejects_degraded_database(monkeypatch) -> None:
-    def fake_request_json(_url: str, _headers: dict[str, str]) -> dict:
+    def fake_request_json(url: str, _headers: dict[str, str]) -> dict:
+        if url.endswith("/internal/model/status"):
+            return {
+                "ok": True,
+                "config_center_enabled": True,
+                "registry": {"active_models": ["model-a"], "last_error": None},
+            }
         return {
             "ok": True,
             "modules": {
@@ -96,6 +108,56 @@ def test_health_check_rejects_degraded_database(monkeypatch) -> None:
     monkeypatch.setattr(deploy_health_check, "_request_json", fake_request_json)
 
     assert not deploy_health_check.check_health(
+        "http://127.0.0.1:2030",
+        {"XHS_INTERNAL_SECRET": "secret", "XHS_ADMIN_OPEN_IDS": "ou_admin"},
+    )
+
+
+def test_health_check_rejects_empty_config_center_model_pool(monkeypatch) -> None:
+    def fake_request_json(url: str, _headers: dict[str, str]) -> dict:
+        if url.endswith("/internal/model/status"):
+            return {
+                "ok": True,
+                "config_center_enabled": True,
+                "registry": {"active_models": [], "last_error": "discovery failed"},
+            }
+        return {
+            "ok": True,
+            "modules": {
+                "startup": {"status": "running"},
+                "scheduler": {"status": "healthy"},
+                "database": {"status": "healthy"},
+            },
+        }
+
+    monkeypatch.setattr(deploy_health_check, "_request_json", fake_request_json)
+
+    assert not deploy_health_check.check_health(
+        "http://127.0.0.1:2030",
+        {"XHS_INTERNAL_SECRET": "secret", "XHS_ADMIN_OPEN_IDS": "ou_admin"},
+    )
+
+
+def test_health_check_allows_env_mode_without_registry_pool(monkeypatch) -> None:
+    def fake_request_json(url: str, _headers: dict[str, str]) -> dict:
+        if url.endswith("/internal/model/status"):
+            return {
+                "ok": True,
+                "config_center_enabled": False,
+                "registry": {"active_models": [], "last_error": None},
+            }
+        return {
+            "ok": True,
+            "modules": {
+                "startup": {"status": "running"},
+                "scheduler": {"status": "healthy"},
+                "database": {"status": "healthy"},
+            },
+        }
+
+    monkeypatch.setattr(deploy_health_check, "_request_json", fake_request_json)
+
+    assert deploy_health_check.check_health(
         "http://127.0.0.1:2030",
         {"XHS_INTERNAL_SECRET": "secret", "XHS_ADMIN_OPEN_IDS": "ou_admin"},
     )
