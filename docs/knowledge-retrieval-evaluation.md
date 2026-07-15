@@ -132,3 +132,21 @@ docker compose exec -T langgraph python scripts/evaluate_retrieval.py qdrant-gat
 
 “Qdrant 更流行”或单次压测更快都不能触发引入。先积累连续窗口，再做隔离影子实验，
 最后由同一离线标注集验证相关性和安全性。
+
+## 知识增强生产上线门
+
+`production-gate` 不读取原始查询或文案，只接收真实配对检索报告与生成盲测的聚合计数：
+
+```bash
+docker compose exec -T langgraph python scripts/evaluate_retrieval.py production-gate \
+  --input /private-eval/knowledge-quality-gate.json
+```
+
+输入使用 `knowledge-quality-gate-v1`。`baseline_retrieval` 与 `candidate_retrieval` 必须绑定
+同一个真实 `dataset_id`；两侧均至少 200 条查询，候选 `no_answer_accuracy` 不低于 0.90，
+精确版本和 ACL 违规必须为 0，候选 nDCG 相对同批基线至少提升 5%。生成侧必须至少完成
+120 条盲测，去掉平局后的候选偏好率不低于 0.55，原工作流完成率不低于 0.98，版本与
+ACL 违规同样必须为 0。任一条件失败时 CLI 返回退出码 4。
+
+仓库不提供“通过门槛”的生产样本，也不允许把真实查询、用户身份或文案提交进 Git。
+真实标注、逐条结果和盲测记录留在租户私有评测存储；只有聚合报告进入 CI 门禁。

@@ -71,3 +71,42 @@ def test_qdrant_cli_outputs_decision_only_without_input_fingerprints(capsys) -> 
     assert "corpus_snapshot_fingerprint" not in captured.out
     assert "embedding_profile_fingerprint" not in captured.out
     assert "qdrant-shadow-2026-07" not in captured.out
+
+
+def test_production_gate_cli_returns_four_when_real_sample_threshold_is_not_met(
+    tmp_path, capsys
+) -> None:
+    retrieval = {
+        "dataset_id": "paired-private-eval",
+        "query_count": 199,
+        "ndcg_at_k": 0.75,
+        "no_answer_accuracy": 0.93,
+        "exact_version_violation_count": 0,
+        "acl_violation_count": 0,
+        "hard_failure": False,
+    }
+    payload = {
+        "schema_version": "knowledge-quality-gate-v1",
+        "baseline_retrieval": {**retrieval, "query_count": 220, "ndcg_at_k": 0.70},
+        "candidate_retrieval": retrieval,
+        "generation": {
+            "evaluation_id": "paired-private-generation",
+            "sample_count": 120,
+            "candidate_preferred_count": 66,
+            "baseline_preferred_count": 44,
+            "tied_count": 10,
+            "workflow_completed_count": 119,
+            "exact_version_violation_count": 0,
+            "acl_violation_count": 0,
+        },
+    }
+    input_path = tmp_path / "production-gate.json"
+    input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    code = main(["production-gate", "--input", str(input_path)])
+    decision = json.loads(capsys.readouterr().out)
+    assert code == 4
+    assert decision["passed"] is False
+    assert decision["reasons"] == ["CANDIDATE_RETRIEVAL_SAMPLE_TOO_SMALL"]
+    assert "dataset_id" not in decision
+    assert "evaluation_id" not in decision

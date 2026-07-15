@@ -24,6 +24,10 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from data_foundation.qdrant_gate import QdrantDecisionInput, decide_qdrant
+from data_foundation.knowledge_quality_gate import (
+    KnowledgeQualityGateInput,
+    evaluate_knowledge_quality_gate,
+)
 from data_foundation.retrieval_eval import (
     RetrievalEvaluationDataset,
     RetrievalEvaluationResults,
@@ -65,6 +69,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gate.add_argument("--input", required=True, help="qdrant-decision-v1 输入")
     gate.add_argument("--output", help="决策 JSON 输出路径；省略时写到 stdout")
+    production_gate = subparsers.add_parser(
+        "production-gate",
+        help="用真实检索报告与生成盲测聚合指标执行知识增强上线门",
+    )
+    production_gate.add_argument(
+        "--input", required=True, help="knowledge-quality-gate-v1 输入"
+    )
+    production_gate.add_argument(
+        "--output", help="决策 JSON 输出路径；省略时写到 stdout"
+    )
     return parser
 
 
@@ -84,9 +98,15 @@ def main(argv: list[str] | None = None) -> int:
             # 版本、ACL、家族重复或引擎契约违规是 CI 硬失败。
             return 3 if report.hard_failure else 0
 
-        decision_input = QdrantDecisionInput.model_validate(_read_json(args.input))
-        _emit(decide_qdrant(decision_input), args.output)
-        return 0
+        if args.command == "qdrant-gate":
+            decision_input = QdrantDecisionInput.model_validate(_read_json(args.input))
+            _emit(decide_qdrant(decision_input), args.output)
+            return 0
+
+        gate_input = KnowledgeQualityGateInput.model_validate(_read_json(args.input))
+        decision = evaluate_knowledge_quality_gate(gate_input)
+        _emit(decision, args.output)
+        return 0 if decision.passed else 4
     except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
         # 不回显原始 JSON；输入可能来自真实租户并含用户文案。
         sys.stderr.write(f"评测输入无效（{type(exc).__name__}）\n")
