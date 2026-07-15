@@ -4,6 +4,22 @@ from data_foundation.knowledge.models import KnowledgeSnapshot
 from data_foundation.knowledge.policy import classify_knowledge_asset
 
 
+def _structured_teardown_content(**overrides):
+    content = {
+        "analysis_schema_version": 1,
+        "analysis_kind": "writing_teardown",
+        "metadata_provenance": "model_analysis_exact_source",
+        "niche": "职场",
+        "hook": "三年后才知道",
+        "cta": "收藏检查",
+        "structure": ["钩子", "证据", "行动"],
+        "success_factors": ["具体证据"],
+        "style_tags": ["口语"],
+    }
+    content.update(overrides)
+    return content
+
+
 def _snapshot(**overrides):
     base = KnowledgeSnapshot(
         tenant_id="tenant-a",
@@ -80,13 +96,12 @@ def test_writing_pattern_requires_three_distinct_families_and_exact_edges():
     assert decision.asset_kind == "pattern"
 
 
-def test_metrics_topics_and_anchor_are_never_writing_knowledge():
+def test_metrics_topics_and_behavior_signals_are_never_writing_knowledge():
     for resource_type in (
         "performance_metric",
         "generated_topic",
         "revision_request",
         "writing_preference_profile",
-        "knowledge_anchor",
     ):
         decision = classify_knowledge_asset(
             _snapshot(resource_type=resource_type),
@@ -96,18 +111,32 @@ def test_metrics_topics_and_anchor_are_never_writing_knowledge():
         assert decision.eligible_for_synthesis is False
 
 
-def test_teardown_quality_is_normalized_from_product_scale():
+def test_teardown_model_self_score_cannot_change_knowledge_quality():
     decision = classify_knowledge_asset(
         _snapshot(
             resource_type="writing_teardown",
-            content_json={"quality_score": 82},
+            content_json=_structured_teardown_content(model_assessed_quality=100),
             teardown_source_count=1,
         ),
         normalized_text="结构化拆解",
     )
 
     assert decision.eligibility == "qualified"
-    assert decision.quality_score == 0.82
+    assert decision.quality_score == 0.8
+
+
+def test_teardown_requires_versioned_structured_analysis_schema():
+    decision = classify_knowledge_asset(
+        _snapshot(
+            resource_type="writing_teardown",
+            content_json={"model_assessed_quality": 100},
+            teardown_source_count=1,
+        ),
+        normalized_text="看似完整但没有结构化来源声明",
+    )
+
+    assert decision.eligibility == "rejected"
+    assert decision.reason_code == "TEARDOWN_SCHEMA_INCOMPLETE"
 
 
 def test_session_snapshot_cannot_self_confirm_in_model_authored_content():
@@ -129,7 +158,7 @@ def test_session_snapshot_cannot_self_confirm_in_model_authored_content():
 def test_teardown_requires_one_exact_source_edge():
     missing = _snapshot(
         resource_type="writing_teardown",
-        content_json={"quality_score": 0.82},
+        content_json=_structured_teardown_content(),
         teardown_source_count=0,
     )
     ambiguous = replace(missing, teardown_source_count=2)

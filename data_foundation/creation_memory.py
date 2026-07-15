@@ -16,6 +16,7 @@ FEEDBACK_EDGE = "feedback_on"
 #   保证同批入库的素材彼此挂边,不成孤岛)。
 SEMANTIC_EDGE = "semantically_related"
 CO_INGEST_EDGE = "co_ingested"
+CO_GENERATED_EDGE = "co_generated_variant"
 # 仿写自 — 成品文案 → 其范本素材的行为关联(§5 可追溯)。
 IMITATED_EDGE = "imitated_from"
 FEEDBACK_NAMESPACE = uuid.UUID("a7cd925a-6978-43c2-9ba5-b5648c30d2ad")
@@ -92,6 +93,7 @@ def save_generated_copy_resource(
     tags: list[str],
     source_topic: str | None = None,
     evidence: list[dict[str, Any]] | None = None,
+    grounding: dict[str, Any] | None = None,
     reference_resource_id: str | None = None,
     reference_resource_version: int | None = None,
     versions: list[dict[str, Any]] | None = None,
@@ -210,7 +212,12 @@ def save_generated_copy_resource(
             title=canonical["title"],
             summary=source_topic,
             content_text=_copy_text(canonical),
-            content_json=_copy_json(canonical, source_topic=source_topic, evidence=cleaned_evidence),
+            content_json=_copy_json(
+                canonical,
+                source_topic=source_topic,
+                evidence=cleaned_evidence,
+                grounding=grounding,
+            ),
             visibility="team",
             owner_open_id=actor_open_id,
             # 普通文案候选不进入可检索知识；只同步图，明确采纳/定稿后再索引精确版本。
@@ -234,7 +241,10 @@ def save_generated_copy_resource(
                 summary=source_topic,
                 content_text=_copy_text(candidate),
                 content_json=_copy_json(
-                    candidate, source_topic=source_topic, evidence=cleaned_evidence
+                    candidate,
+                    source_topic=source_topic,
+                    evidence=cleaned_evidence,
+                    grounding=grounding,
                 ),
                 visibility="team",
                 owner_open_id=actor_open_id,
@@ -341,9 +351,13 @@ def _clean_copy_candidates(
 
 
 def _copy_json(
-    candidate: dict[str, Any], *, source_topic: str | None, evidence: list[dict[str, str]]
+    candidate: dict[str, Any],
+    *,
+    source_topic: str | None,
+    evidence: list[dict[str, str]],
+    grounding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "title": candidate["title"],
         "body": candidate["body"],
         "tags": candidate["tags"],
@@ -353,6 +367,9 @@ def _copy_json(
         "source_topic": source_topic,
         "evidence": evidence,
     }
+    if grounding:
+        payload["knowledge_grounding"] = dict(grounding)
+    return payload
 
 
 def _copy_text(candidate: dict[str, Any]) -> str:
@@ -567,7 +584,7 @@ def _link_copy_versions(
             reference_resource_version, field="reference_resource_version"
         )
     ensure_link = getattr(repo, "ensure_resource_association", None)
-    for candidate in candidate_versions:
+    for index, candidate in enumerate(candidate_versions):
         version = _required_version(
             candidate.get("resource_version"), field="candidate resource_version"
         )
@@ -588,6 +605,27 @@ def _link_copy_versions(
                 copy_resource_version=version,
                 reference_resource_id=reference_resource_id,
                 reference_resource_version=exact_reference_version,
+            )
+        # A/B/C 是同一轮、同一 stable resource 的真实变体。让每个不可变版本都有
+        # outgoing 图边（首版指向次版，其余指回首版），不再依赖 synthetic anchor。
+        if len(candidate_versions) > 1:
+            related = candidate_versions[1] if index == 0 else candidate_versions[0]
+            related_version = _required_version(
+                related.get("resource_version"), field="related candidate resource_version"
+            )
+            repo.add_edge(
+                tenant_id=tenant_id,
+                source_resource_id=copy_resource_id,
+                source_resource_version=version,
+                target_resource_id=copy_resource_id,
+                target_resource_version=related_version,
+                edge_type=CO_GENERATED_EDGE,
+                weight=1.0,
+                properties={
+                    "strength": "strong",
+                    "system_generated": True,
+                    "basis": "same_generation_batch",
+                },
             )
         # Strong provenance wins; without one, attach the exact candidate to a weak
         # existing neighbour so B/C candidates do not become version-level islands.

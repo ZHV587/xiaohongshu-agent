@@ -88,7 +88,6 @@ def test_rank_returns_complete_exact_evidence_signals() -> None:
         performance_data={identity: [{"metrics": {"likes": 1200, "collects": 400}}]},
         now=datetime(2026, 7, 13, tzinfo=timezone.utc),
     )
-
     assert len(ranked) == 1
     item = ranked[0]
     assert (item.resource_id, item.resource_version) == identity
@@ -109,6 +108,19 @@ def test_rank_returns_complete_exact_evidence_signals() -> None:
             item.performance,
         )
     )
+
+
+def test_keyword_raw_score_is_preserved_in_relevance_instead_of_rank_one_becoming_one():
+    identity = (_id(1), 1)
+    ranked = rank_knowledge_candidates(
+        rows=[_row(1)],
+        semantic_hits=[],
+        keyword_hits=[RecallHit(*identity, 0.2)],
+        active_sources=["keyword"],
+        performance_data={},
+    )
+
+    assert ranked[0].relevance == pytest.approx(0.2)
 
 
 def test_rank_uses_exact_performance_identity_not_other_version() -> None:

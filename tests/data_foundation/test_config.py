@@ -106,12 +106,16 @@ def test_embedding_snapshot_for_version_rejects_unavailable_env_history(monkeypa
 
 from data_foundation.config import (  # noqa: E402
     _model_aware_query_instruction,
+    current_keyword_relevance_floor,
     current_query_instruction,
     current_relevance_floor,
     query_instruction_template_valid,
     resolve_query_instruction,
 )
-from data_foundation.search_ranker import DEFAULT_RELEVANCE_FLOOR  # noqa: E402
+from data_foundation.search_ranker import (  # noqa: E402
+    DEFAULT_KEYWORD_RELEVANCE_FLOOR,
+    DEFAULT_RELEVANCE_FLOOR,
+)
 
 
 def test_model_aware_instruction_qwen3_gets_default_prefix():
@@ -164,6 +168,16 @@ def test_current_relevance_floor_invalid_falls_back(monkeypatch):
     for bad in ("abc", "1.5", "-0.1"):
         monkeypatch.setenv("XHS_EMBEDDING_RELEVANCE_FLOOR", bad)
         assert current_relevance_floor() == DEFAULT_RELEVANCE_FLOOR
+
+
+def test_current_keyword_relevance_floor_is_independently_configurable(monkeypatch):
+    monkeypatch.delenv("XHS_KEYWORD_RELEVANCE_FLOOR", raising=False)
+    assert current_keyword_relevance_floor() == DEFAULT_KEYWORD_RELEVANCE_FLOOR
+    monkeypatch.setenv("XHS_KEYWORD_RELEVANCE_FLOOR", "0.25")
+    assert current_keyword_relevance_floor() == 0.25
+    for bad in ("bad", "-0.1", "1.1"):
+        monkeypatch.setenv("XHS_KEYWORD_RELEVANCE_FLOOR", bad)
+        assert current_keyword_relevance_floor() == DEFAULT_KEYWORD_RELEVANCE_FLOOR
 
 
 def test_current_query_instruction_reads_env(monkeypatch):

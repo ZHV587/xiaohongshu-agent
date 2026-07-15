@@ -19,11 +19,26 @@ class SyncResult:
     errors: list[str]
 
 
+def _field_texts(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [str(value)]
+    if isinstance(value, (list, tuple)):
+        return [text for item in value for text in _field_texts(item)]
+    if isinstance(value, dict):
+        result: list[str] = []
+        for key in ("text", "name", "value", "label"):
+            result.extend(_field_texts(value.get(key)))
+        return result
+    return []
+
+
 def _field(fields: dict[str, Any], names: list[str]) -> str:
     for name in names:
-        value = fields.get(name)
-        if value:
-            return str(value)
+        values = _field_texts(fields.get(name))
+        if values:
+            return "\n".join(dict.fromkeys(values))
     return ""
 
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -21,7 +20,6 @@ from data_foundation.preference_outbox import enqueue_preference_synthesis
 
 
 PIPELINE_VERSION = "knowledge-enrich-v1"
-ANCHOR_NAMESPACE = uuid.UUID("8b45980a-c51b-4ffd-9169-7db5b2848bc6")
 SIMILARITY_DECIMAL_PLACES = 6
 # pg_trgm returns ``real``.  For very long texts with only a tiny difference its
 # single-precision result can round up to 1.0 even though the strings are not
@@ -168,7 +166,7 @@ class KnowledgeRepository:
         digest = normalized_hash(normalized_text)
         with self.conn.transaction():
             with self.conn.cursor(row_factory=dict_row) as cur:
-                # Family matching and anchor creation must serialize within a tenant.
+                # Family matching and material association must serialize within a tenant.
                 # The service already owns the exact-resource classification lock; this
                 # consistently second lock protects cross-resource family assignment.
                 cur.execute(
@@ -306,7 +304,9 @@ class KnowledgeRepository:
                     canonical_resource_version=variant_version,
                     similarity=duplicate_similarity,
                 )
-                anchor_id, anchor_version, edge_created = self._ensure_no_island(cur, snapshot=snapshot)
+                related_id, related_version, edge_created = self._ensure_no_island(
+                    cur, snapshot=snapshot
+                )
                 topics: list[str] = []
                 self._enqueue_exact(
                     cur,
@@ -366,10 +366,11 @@ class KnowledgeRepository:
                     self._enqueue_exact(
                         cur,
                         tenant_id=snapshot.tenant_id,
-                        resource_id=anchor_id,
-                        resource_version=anchor_version,
+                        resource_id=related_id,
+                        resource_version=related_version,
                         topic="graph_ingest",
-                        suffix=("knowledge-anchor",),
+                        suffix=("material-association-backfill", snapshot.resource_id),
+                        requeue_terminal=True,
                     )
 
                 current = False
@@ -845,9 +846,143 @@ class KnowledgeRepository:
                 snapshot.tenant_id, snapshot.resource_id, snapshot.resource_version,
             ),
         ).fetchone()
-        if existing is not None or snapshot.resource_type == "knowledge_anchor":
+        if existing is not None:
             return "", 0, False
-        anchor_id, anchor_version = self._ensure_anchor(cur, tenant_id=snapshot.tenant_id)
+        # 只建立有事实依据的素材→素材边。可接受依据：同一飞书表/知识空间、同垂类、
+        # 共享结构化标签，或清洗文本达到弱相似阈值。禁止再用 synthetic anchor 掩盖孤岛。
+        target = cur.execute(
+            """
+            with current_asset as (
+              select state.normalized_text,
+                     version.content_json,
+                     coalesce(enrichment.payload, '{}'::jsonb) as metadata
+              from knowledge_asset_states state
+              join resource_versions version
+                on version.tenant_id = state.tenant_id
+               and version.resource_id = state.resource_id
+               and version.version = state.resource_version
+              left join lateral (
+                select item.payload
+                from knowledge_enrichments item
+                where item.tenant_id = state.tenant_id
+                  and item.resource_id = state.resource_id
+                  and item.resource_version = state.resource_version
+                  and item.enrichment_type = 'deterministic_metadata'
+                order by item.created_at desc, item.id desc
+                limit 1
+              ) enrichment on true
+              where state.tenant_id = %s
+                and state.resource_id = %s
+                and state.resource_version = %s
+            ), candidates as (
+              select target.resource_id::text as resource_id,
+                     target.resource_version,
+                     target.normalized_text,
+                     target.quality_score,
+                     target_version.content_json,
+                     coalesce(target_enrichment.payload, '{}'::jsonb) as metadata,
+                     current_asset.normalized_text as current_text,
+                     current_asset.content_json as current_content,
+                     current_asset.metadata as current_metadata
+              from current_knowledge_targets target
+              join resources live
+                on live.tenant_id = target.tenant_id and live.id = target.resource_id
+              join resource_versions target_version
+                on target_version.tenant_id = target.tenant_id
+               and target_version.resource_id = target.resource_id
+               and target_version.version = target.resource_version
+              left join lateral (
+                select item.payload
+                from knowledge_enrichments item
+                where item.tenant_id = target.tenant_id
+                  and item.resource_id = target.resource_id
+                  and item.resource_version = target.resource_version
+                  and item.enrichment_type = 'deterministic_metadata'
+                order by item.created_at desc, item.id desc
+                limit 1
+              ) target_enrichment on true
+              cross join current_asset
+              where target.tenant_id = %s
+                and target.resource_id <> %s
+                and target.asset_kind not in ('signal', 'pattern')
+                and (live.visibility = 'team' or live.owner_open_id = %s)
+            )
+            select resource_id, resource_version,
+                   case
+                     when (
+                       nullif(content_json->>'table_id', '') = nullif(current_content->>'table_id', '')
+                       or nullif(content_json->>'space_id', '') = nullif(current_content->>'space_id', '')
+                     ) then 'co_ingested'
+                     when nullif(metadata->>'niche', '') = nullif(current_metadata->>'niche', '')
+                       then 'same_niche'
+                     when coalesce(metadata->'tags', '[]'::jsonb) ?|
+                          array(
+                            select jsonb_array_elements_text(
+                              coalesce(current_metadata->'tags', '[]'::jsonb)
+                            )
+                          ) then 'same_topic'
+                     else 'semantically_related'
+                   end as edge_type,
+                   similarity(left(normalized_text, 4000), left(current_text, 4000)) as similarity_score
+            from candidates
+            where (
+              nullif(content_json->>'table_id', '') = nullif(current_content->>'table_id', '')
+              or nullif(content_json->>'space_id', '') = nullif(current_content->>'space_id', '')
+              or (
+                nullif(metadata->>'niche', '') is not null
+                and nullif(metadata->>'niche', '') = nullif(current_metadata->>'niche', '')
+              )
+              or coalesce(metadata->'tags', '[]'::jsonb) ?|
+                 array(
+                   select jsonb_array_elements_text(
+                     coalesce(current_metadata->'tags', '[]'::jsonb)
+                   )
+                 )
+              or similarity(left(normalized_text, 4000), left(current_text, 4000)) >= 0.12
+            )
+            order by
+              case
+                when nullif(content_json->>'table_id', '') = nullif(current_content->>'table_id', '')
+                  or nullif(content_json->>'space_id', '') = nullif(current_content->>'space_id', '') then 0
+                when nullif(metadata->>'niche', '') = nullif(current_metadata->>'niche', '') then 1
+                when coalesce(metadata->'tags', '[]'::jsonb) ?|
+                     array(
+                       select jsonb_array_elements_text(
+                         coalesce(current_metadata->'tags', '[]'::jsonb)
+                       )
+                     ) then 2
+                else 3
+              end,
+              similarity_score desc,
+              quality_score desc,
+              resource_id,
+              resource_version desc
+            limit 1
+            """,
+            (
+                snapshot.tenant_id,
+                snapshot.resource_id,
+                snapshot.resource_version,
+                snapshot.tenant_id,
+                snapshot.resource_id,
+                snapshot.owner_open_id,
+            ),
+        ).fetchone()
+        if target is None:
+            return "", 0, False
+        edge_type = str(target["edge_type"])
+        similarity_score = max(0.0, min(float(target["similarity_score"] or 0.0), 1.0))
+        weight = 1.0 if edge_type == "co_ingested" else max(similarity_score, 0.1)
+        properties = json.dumps(
+            {
+                "strength": "strong" if edge_type == "co_ingested" else "weak",
+                "system_generated": True,
+                "basis": edge_type,
+                "similarity": round(similarity_score, SIMILARITY_DECIMAL_PLACES),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         inserted = cur.execute(
             """
             insert into resource_edges (
@@ -855,10 +990,7 @@ class KnowledgeRepository:
               source_resource_id, source_resource_version,
               target_resource_id, target_resource_version,
               edge_type, weight, properties
-            ) values (
-              %s, %s, %s, %s, %s, 'belongs_to_knowledge_base', 0.05,
-              '{"strength":"weak","system_generated":true}'::jsonb
-            )
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             on conflict (
               tenant_id,
               source_resource_id, source_resource_version,
@@ -870,69 +1002,48 @@ class KnowledgeRepository:
             (
                 snapshot.tenant_id,
                 snapshot.resource_id, snapshot.resource_version,
-                anchor_id, anchor_version,
+                target["resource_id"], int(target["resource_version"]),
+                edge_type, weight, properties,
             ),
         ).fetchone()
-        return anchor_id, anchor_version, inserted is not None
-
-    def _ensure_anchor(self, cur, *, tenant_id: str) -> tuple[str, int]:
-        existing = cur.execute(
+        # 若目标是此前入库的第一条素材且仍无出边，本次用同一事实依据反向补齐。
+        reciprocal = cur.execute(
             """
-            select r.id::text as id, latest.version
-            from resources r
-            join lateral (
-              select rv.version
-              from resource_versions rv
-              where rv.tenant_id = r.tenant_id and rv.resource_id = r.id
-              order by rv.version desc
-              limit 1
-            ) latest on true
-            where r.tenant_id = %s and r.type = 'knowledge_anchor'
-            for update of r
-            """,
-            (tenant_id,),
-        ).fetchone()
-        if existing is not None:
-            return existing["id"], int(existing["version"])
-        anchor_id = str(uuid.uuid5(ANCHOR_NAMESPACE, tenant_id))
-        content_json = {"system_role": "knowledge_anchor"}
-        content_hash = hashlib.sha256(
-            ("\n" + json.dumps(content_json, sort_keys=True, ensure_ascii=False)).encode("utf-8")
-        ).hexdigest()
-        cur.execute(
-            """
-            insert into resources (
-              id, tenant_id, type, title, summary, content_text, content_json,
-              status, visibility, owner_open_id
-            ) values (
-              %s, %s, 'knowledge_anchor', '知识库根节点',
-              '系统图根，不参与正文检索', '', %s::jsonb,
-              'active', 'team', 'system'
+            insert into resource_edges (
+              tenant_id,
+              source_resource_id, source_resource_version,
+              target_resource_id, target_resource_version,
+              edge_type, weight, properties
             )
-            """,
-            (anchor_id, tenant_id, json.dumps(content_json, sort_keys=True, ensure_ascii=False)),
-        )
-        cur.execute(
-            """
-            insert into resource_versions (
-              tenant_id, resource_id, version, content_hash, content_text, content_json, changed_by
-            ) values (%s, %s, 1, %s, '', %s::jsonb, 'knowledge_enrich')
+            select %s, %s, %s, %s, %s, %s, %s, %s::jsonb
+            where not exists (
+              select 1 from resource_edges existing
+              where existing.tenant_id = %s
+                and existing.source_resource_id = %s
+                and existing.source_resource_version = %s
+            )
+            on conflict (
+              tenant_id,
+              source_resource_id, source_resource_version,
+              target_resource_id, target_resource_version,
+              edge_type
+            ) do nothing
+            returning id
             """,
             (
-                tenant_id, anchor_id, content_hash,
-                json.dumps(content_json, sort_keys=True, ensure_ascii=False),
+                snapshot.tenant_id,
+                target["resource_id"], int(target["resource_version"]),
+                snapshot.resource_id, snapshot.resource_version,
+                edge_type, weight, properties,
+                snapshot.tenant_id,
+                target["resource_id"], int(target["resource_version"]),
             ),
+        ).fetchone()
+        return (
+            str(target["resource_id"]),
+            int(target["resource_version"]),
+            inserted is not None or reciprocal is not None,
         )
-        cur.execute(
-            """
-            insert into resource_type_counts (tenant_id, type, count)
-            values (%s, 'knowledge_anchor', 1)
-            on conflict (tenant_id, type) do update
-            set count = greatest(resource_type_counts.count, 1), updated_at = now()
-            """,
-            (tenant_id,),
-        )
-        return anchor_id, 1
 
     @staticmethod
     def _enqueue_teardown_dependents(

@@ -99,7 +99,6 @@ def _knowledge_gate_targets(conn: Connection) -> list[dict[str, Any]]:
             from resources r
             left join generated_copy_states gcs
               on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
-            where r.type <> 'knowledge_anchor'
             order by r.tenant_id,
                      case
                        when r.type in ('writing_teardown', 'explosive_teardown', 'xhs_teardown') then 1

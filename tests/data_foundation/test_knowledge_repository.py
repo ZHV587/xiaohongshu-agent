@@ -24,7 +24,7 @@ def _save(repo, *, tenant="tenant-a", owner="ou_owner", resource_id=None, text="
     )
 
 
-def test_knowledge_service_builds_history_current_family_and_no_island(migrated_conn):
+def test_knowledge_service_builds_history_current_family_and_real_material_edges(migrated_conn):
     resources = ResourceRepository(migrated_conn)
     service = KnowledgeService(migrated_conn)
     first = _save(resources, text="Cafe\u0301\u200b\n\n👩\u200d💻")
@@ -34,6 +34,12 @@ def test_knowledge_service_builds_history_current_family_and_no_island(migrated_
         resource_id=first.id,
         resource_version=1,
     )
+    neighbor = _save(resources, text="职场复盘的另一篇真实素材")
+    neighbor_result = service.enrich_exact_version(
+        tenant_id=neighbor.tenant_id,
+        resource_id=neighbor.id,
+        resource_version=1,
+    )
     second = _save(resources, resource_id=first.id, text="第二版正文")
     result_v2 = service.enrich_exact_version(
         tenant_id=second.tenant_id,
@@ -41,7 +47,7 @@ def test_knowledge_service_builds_history_current_family_and_no_island(migrated_
         resource_version=2,
     )
 
-    assert result_v1.status == result_v2.status == "qualified"
+    assert result_v1.status == result_v2.status == neighbor_result.status == "qualified"
     history = migrated_conn.execute(
         """
         select resource_version from qualified_knowledge_versions
@@ -63,7 +69,7 @@ def test_knowledge_service_builds_history_current_family_and_no_island(migrated_
         "select id::text from resources where tenant_id = %s and type = 'knowledge_anchor'",
         (first.tenant_id,),
     ).fetchall()
-    assert len(anchors) == 1
+    assert anchors == []
     edges = migrated_conn.execute(
         """
         select source_resource_version, target_resource_version, edge_type, properties
@@ -75,7 +81,16 @@ def test_knowledge_service_builds_history_current_family_and_no_island(migrated_
     ).fetchall()
     assert [edge["source_resource_version"] for edge in edges] == [1, 2]
     assert all(edge["target_resource_version"] == 1 for edge in edges)
-    assert all(edge["edge_type"] == "belongs_to_knowledge_base" for edge in edges)
+    assert all(edge["edge_type"] in {"same_niche", "same_topic", "semantically_related"} for edge in edges)
+    assert migrated_conn.execute(
+        """
+        select 1 from resource_edges
+        where tenant_id = %s
+          and source_resource_id = %s and source_resource_version = 1
+          and target_resource_id = %s and target_resource_version = 1
+        """,
+        (first.tenant_id, neighbor.id, first.id),
+    ).fetchone() is not None
 
 
 def test_knowledge_enrich_retry_reuses_exact_family_without_orphan_rows(migrated_conn):

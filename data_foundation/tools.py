@@ -337,6 +337,12 @@ def save_generated_copy(
     evidence: list[dict[str, Any]] | None = None,
     reference_resource_id: str | None = None,
     reference_resource_version: int | None = None,
+    knowledge_grounding: Annotated[
+        dict[str, Any] | None, InjectedState("knowledge_grounding")
+    ] = None,
+    latest_user_request: Annotated[
+        str | None, InjectedState("latest_user_request")
+    ] = None,
     config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation.
@@ -357,24 +363,107 @@ def save_generated_copy(
         if isinstance(configurable, dict)
         else ""
     ) or None
+    grounding = _validated_grounding_context(
+        knowledge_grounding,
+        expected_turn_id=origin_turn_id,
+    )
+    authoritative_evidence = _grounded_evidence(grounding, evidence)
     with _repository() as repo:
-        return save_generated_copy_resource(
-            repo,
-            tenant_id=default_tenant_id(),
-            actor_open_id=actor,
-            title=title,
-            body=body,
-            tags=tags,
-            versions=versions,
-            resource_id=resource_id,
-            expected_resource_version=expected_resource_version,
-            expected_state_version=expected_state_version,
-            origin_turn_id=origin_turn_id,
-            source_topic=source_topic,
-            evidence=evidence,
-            reference_resource_id=reference_resource_id,
-            reference_resource_version=reference_resource_version,
+        # 新版本与“用户为什么要改”必须原子提交，不能出现文案已改但反馈未进入学习闭环。
+        with repo.unit_of_work():
+            result = save_generated_copy_resource(
+                repo,
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                title=title,
+                body=body,
+                tags=tags,
+                versions=versions,
+                resource_id=resource_id,
+                expected_resource_version=expected_resource_version,
+                expected_state_version=expected_state_version,
+                origin_turn_id=origin_turn_id,
+                source_topic=source_topic,
+                evidence=authoritative_evidence,
+                grounding={
+                    "query": grounding["query"],
+                    "retrieval_mode": grounding["retrieval_mode"],
+                    "turn_id": grounding.get("turn_id"),
+                    "gaps": grounding.get("gaps"),
+                },
+                reference_resource_id=reference_resource_id,
+                reference_resource_version=reference_resource_version,
+            )
+            feedback_text = (
+                latest_user_request.strip()
+                if isinstance(latest_user_request, str) and latest_user_request.strip()
+                else ""
+            )
+            if resource_id and feedback_text:
+                feedback_result = save_user_feedback_resource(
+                    repo,
+                    tenant_id=default_tenant_id(),
+                    actor_open_id=actor,
+                    feedback=feedback_text,
+                    target_resource_id=resource_id,
+                    target_resource_version=expected_resource_version,
+                    feedback_type="revision_request",
+                    idempotency_key=(
+                        f"auto-revision-feedback:{origin_turn_id}"
+                        if origin_turn_id
+                        else None
+                    ),
+                )
+                result["feedback_resource"] = feedback_result["resource"]
+            return result
+
+
+def _validated_grounding_context(
+    value: dict[str, Any] | None, *, expected_turn_id: str | None
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("status") != "ready":
+        raise RuntimeError(
+            "automatic retrieve_knowledge grounding is required before saving generated copy"
         )
+    mode = value.get("retrieval_mode")
+    evidence = value.get("evidence")
+    query = value.get("query")
+    if mode not in {
+        "hybrid",
+        "semantic_only",
+        "keyword_only",
+        "insufficient_relevance",
+    } or not isinstance(evidence, list) or not isinstance(query, str) or not query.strip():
+        raise RuntimeError("automatic knowledge grounding is invalid")
+    if mode == "insufficient_relevance" and evidence:
+        raise RuntimeError("insufficient_relevance grounding must not contain evidence")
+    if mode != "insufficient_relevance" and not evidence:
+        raise RuntimeError("successful knowledge grounding must contain evidence")
+    context_turn_id = value.get("turn_id")
+    if expected_turn_id and context_turn_id != expected_turn_id:
+        raise RuntimeError("automatic knowledge grounding belongs to another turn")
+    return value
+
+
+def _grounded_evidence(
+    grounding: dict[str, Any], requested: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """只允许自动检索命中的 exact identity 进入文案依据，拒绝 LLM 伪造。"""
+
+    authoritative = [item for item in grounding["evidence"] if isinstance(item, dict)]
+    by_identity = {
+        (item.get("resource_id"), item.get("resource_version")): item
+        for item in authoritative
+    }
+    for item in requested or []:
+        if not isinstance(item, dict):
+            raise ValueError("evidence items must be objects")
+        identity = (item.get("resource_id"), item.get("resource_version"))
+        if identity not in by_identity:
+            raise PermissionError(
+                "copy evidence must come from this turn's automatic knowledge retrieval"
+            )
+    return authoritative
 
 
 @tool
@@ -425,7 +514,8 @@ def save_writing_teardown(
     """保存一份小红书文案拆解，并精确关联到真实来源版本。
 
     source_resource_id 与 source_resource_version 必须来自检索/读取结果，禁止只凭资源 id
-    猜测最新版。工具会在同一事务内校验 ACL、创建拆解资源并写入 teardown_of 版本边。
+    猜测最新版。quality 仅保存为模型完整度自评，不参与知识资格或质量打分；工具会在
+    同一事务内校验 ACL、创建版本化结构分析并写入 teardown_of 精确来源边。
     """
     actor = actor_from_config(config)
     with _repository() as repo:

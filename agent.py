@@ -26,6 +26,7 @@ from models import build_initial_placeholder_model, build_router_middleware
 from prompts import MAIN_SYSTEM_PROMPT
 from subagents_executor import build_executor_subagents
 from data_foundation.agent_trace import TRACE_TOOL_STAGES, with_trace
+from data_foundation.knowledge_grounding import KnowledgeGroundingMiddleware
 from data_foundation.user_skill_runtime import RevisionAwareSkillsMiddleware
 from data_foundation.tools import data_foundation_tools
 from tools.feishu_actions import feishu_action_tools
@@ -78,6 +79,7 @@ agent = create_deep_agent(
     middleware=[
         build_retry_middleware(),
         FrontendStateMiddleware(),
+        KnowledgeGroundingMiddleware(),
         RevisionAwareSkillsMiddleware(
             backend=backend,
             system_sources=[("/skills/", "系统")],

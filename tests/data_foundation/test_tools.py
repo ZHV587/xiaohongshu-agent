@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 from contextlib import nullcontext
 
+import pytest
+
 from data_foundation.preference_learning import ExactResourceVersion
 from tools.runtime_identity import identity_config
 
@@ -272,6 +274,15 @@ def test_save_generated_copy_tool_persists_for_current_actor(monkeypatch):
         tags=["#露营"],
         source_topic="轻量露营",
         evidence=[],
+        knowledge_grounding={
+            "status": "ready",
+            "query": "写一篇轻量露营文案",
+            "turn_id": None,
+            "retrieval_mode": "insufficient_relevance",
+            "evidence": [],
+            "gaps": "暂无相关案例",
+        },
+        latest_user_request="写一篇轻量露营文案",
         config=identity_config("ou_user"),
     )
 
@@ -279,6 +290,85 @@ def test_save_generated_copy_tool_persists_for_current_actor(monkeypatch):
     assert repo.upsert["actor_open_id"] == "ou_user"
     assert repo.upsert["resource_type"] == "generated_copy"
     assert repo.upsert["content_json"]["source_topic"] == "轻量露营"
+    assert repo.upsert["content_json"]["knowledge_grounding"]["retrieval_mode"] == "insufficient_relevance"
+
+
+def test_save_generated_copy_grounding_is_injected_not_llm_writable():
+    from data_foundation import tools as df_tools
+
+    llm_args = set(df_tools.save_generated_copy.args)
+    assert "knowledge_grounding" not in llm_args
+    assert "latest_user_request" not in llm_args
+
+
+def test_save_generated_copy_requires_runtime_grounding(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(RecordingRepository()))
+    with pytest.raises(RuntimeError, match="retrieve_knowledge grounding"):
+        df_tools.save_generated_copy.func(
+            title="标题",
+            body="正文",
+            tags=[],
+            config=identity_config("ou_user"),
+        )
+
+
+def test_revision_save_automatically_persists_exact_user_request(monkeypatch):
+    from data_foundation import tools as df_tools
+
+    repo = RecordingRepository()
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+    saved_calls = []
+    feedback_calls = []
+    monkeypatch.setattr(
+        df_tools,
+        "save_generated_copy_resource",
+        lambda _repo, **kwargs: saved_calls.append(kwargs) or {
+            "ok": True,
+            "resource": {"resource_id": kwargs["resource_id"], "resource_version": 5},
+        },
+    )
+    monkeypatch.setattr(
+        df_tools,
+        "save_user_feedback_resource",
+        lambda _repo, **kwargs: feedback_calls.append(kwargs) or {
+            "ok": True,
+            "resource": {"resource_id": "feedback-1", "resource_version": 1},
+        },
+    )
+    grounding = {
+        "status": "ready",
+        "query": "标题再狠一点",
+        "turn_id": "turn-1",
+        "retrieval_mode": "insufficient_relevance",
+        "evidence": [],
+        "gaps": "暂无相近案例",
+    }
+
+    result = df_tools.save_generated_copy.func(
+        title="更狠的标题",
+        body="正文",
+        tags=[],
+        resource_id="11111111-1111-4111-8111-111111111111",
+        expected_resource_version=4,
+        expected_state_version=2,
+        knowledge_grounding=grounding,
+        latest_user_request="标题再狠一点",
+        config={
+            "configurable": {
+                "langgraph_auth_user": {"identity": "ou_user"},
+                "turn_id": "turn-1",
+            }
+        },
+    )
+
+    assert result["feedback_resource"]["resource_id"] == "feedback-1"
+    assert saved_calls[0]["evidence"] == []
+    assert feedback_calls[0]["feedback"] == "标题再狠一点"
+    assert feedback_calls[0]["target_resource_version"] == 4
+    assert feedback_calls[0]["feedback_type"] == "revision_request"
+    assert feedback_calls[0]["idempotency_key"] == "auto-revision-feedback:turn-1"
 
 
 def test_save_user_feedback_tool_persists_revision_request(monkeypatch):

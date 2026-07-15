@@ -153,6 +153,18 @@ def test_zero_score_keyword_candidate_cannot_be_promoted_by_rrf() -> None:
     assert package.evidence == []
 
 
+def test_weak_positive_keyword_candidate_below_absolute_floor_is_rejected() -> None:
+    repo = _Repo([_row(1)])
+    package = _service(
+        repo,
+        semantic=lambda **_: [],
+        keyword=lambda **_: [RecallHit(_id(1), 1, 0.149)],
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="仅擦边的词")
+
+    assert package.retrieval_mode == "insufficient_relevance"
+    assert package.evidence == []
+
+
 def test_filters_reach_keyword_prefilter_and_postgres_final_gate() -> None:
     repo = _Repo([_row(1)])
     keyword_calls: list[dict] = []

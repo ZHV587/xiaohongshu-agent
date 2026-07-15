@@ -10,6 +10,8 @@ from data_foundation.outbox_requests import default_write_requests
 
 TEARDOWN_EDGE = "teardown_of"
 TEARDOWN_NAMESPACE = uuid.UUID("522b8cd5-2ce8-4fe9-874f-a74b7772a593")
+TEARDOWN_ANALYSIS_SCHEMA_VERSION = 1
+TEARDOWN_DETERMINISTIC_QUALITY = 0.8
 
 
 def save_writing_teardown_resource(
@@ -45,8 +47,9 @@ def save_writing_teardown_resource(
         or not 0 <= float(quality) <= 100
     ):
         raise ValueError("quality must be a finite number between 0 and 100")
-    raw_quality = float(quality)
-    quality_score = raw_quality / 100.0
+    # quality 是模型对“拆解完整度”的自评，只作为审计信息保存，绝不能反过来决定
+    # 自己是否有资格进入知识库。资格与质量由 policy 根据 schema 完整性和精确来源边确定。
+    model_assessed_quality = float(quality)
 
     with _unit_of_work(repo):
         source = repo.get_resource_for_knowledge(
@@ -61,6 +64,9 @@ def save_writing_teardown_resource(
             )
         visibility = "team" if source.visibility == "team" else "private"
         content_json = {
+            "analysis_schema_version": TEARDOWN_ANALYSIS_SCHEMA_VERSION,
+            "analysis_kind": "writing_teardown",
+            "metadata_provenance": "model_analysis_exact_source",
             "source_resource_id": source_resource_id,
             "source_resource_version": source_resource_version,
             "niche": niche,
@@ -69,8 +75,7 @@ def save_writing_teardown_resource(
             "structure": structure,
             "success_factors": success_factors,
             "style_tags": style_tags,
-            "quality_score": quality_score,
-            "raw_quality": raw_quality,
+            "model_assessed_quality": model_assessed_quality,
         }
         content_text = "\n".join(
             [
@@ -80,7 +85,7 @@ def save_writing_teardown_resource(
                 "结构：" + " → ".join(structure),
                 "成功要素：" + "；".join(success_factors),
                 "风格标签：" + "、".join(style_tags),
-                f"质量分：{raw_quality:g}",
+                f"模型完整度自评：{model_assessed_quality:g}",
             ]
         )
         stable_identity = (
@@ -123,8 +128,12 @@ def save_writing_teardown_resource(
             target_resource_id=source_resource_id,
             target_resource_version=source_resource_version,
             edge_type=TEARDOWN_EDGE,
-            weight=max(quality_score, 0.01),
-            properties={"analysis_kind": "writing_teardown"},
+            weight=1.0,
+            properties={
+                "analysis_kind": "writing_teardown",
+                "analysis_schema_version": TEARDOWN_ANALYSIS_SCHEMA_VERSION,
+                "provenance": "exact_source",
+            },
         )
 
     return {
@@ -165,4 +174,10 @@ def _unit_of_work(repo: Any):
     return unit_of_work() if callable(unit_of_work) else nullcontext()
 
 
-__all__ = ["TEARDOWN_EDGE", "TEARDOWN_NAMESPACE", "save_writing_teardown_resource"]
+__all__ = [
+    "TEARDOWN_ANALYSIS_SCHEMA_VERSION",
+    "TEARDOWN_DETERMINISTIC_QUALITY",
+    "TEARDOWN_EDGE",
+    "TEARDOWN_NAMESPACE",
+    "save_writing_teardown_resource",
+]

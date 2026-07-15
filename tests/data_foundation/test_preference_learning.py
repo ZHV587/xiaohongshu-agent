@@ -135,7 +135,7 @@ def _asset(
     *,
     version: int = 1,
     visibility: str = "team",
-    quality: float = 0.5,
+    quality: float = 0.8,
     normalized_hash: str | None = None,
 ):
     return KnowledgeAsset(
@@ -170,6 +170,91 @@ def test_pattern_threshold_counts_independent_families_not_duplicate_copies():
     assert candidate.source_family_ids == ("family-1", "family-2", "family-3")
     assert candidate.sources[0].source == ExactResourceVersion("copy-1", 2)
     assert candidate.visibility == "private"
+
+
+def test_pattern_family_representative_prefers_measured_success_over_self_quality():
+    candidates = synthesize_pattern_candidates(
+        [
+            KnowledgeAsset(
+                source=ExactResourceVersion("copy-unmeasured", 1),
+                duplicate_family_id="family-1",
+                visibility="team",
+                quality_score=0.95,
+                content_json={"title": "标题", "hook_type": "反常识"},
+            ),
+            KnowledgeAsset(
+                source=ExactResourceVersion("copy-measured", 1),
+                duplicate_family_id="family-1",
+                visibility="team",
+                quality_score=0.75,
+                performance_score=0.08,
+                content_json={"title": "标题", "hook_type": "反常识"},
+            ),
+            _asset("copy-2", "family-2"),
+            _asset("copy-3", "family-3"),
+        ]
+    )
+
+    assert candidates[0].sources[0].source == ExactResourceVersion(
+        "copy-measured", 1
+    )
+
+
+def test_pattern_synthesis_rejects_low_quality_and_observed_low_performance():
+    low_quality = [
+        _asset(f"copy-{index}", f"family-{index}", quality=0.69)
+        for index in range(1, 4)
+    ]
+    assert synthesize_pattern_candidates(low_quality) == []
+
+    low_outcome = [
+        KnowledgeAsset(
+            source=ExactResourceVersion(f"copy-{index}", 1),
+            duplicate_family_id=f"family-{index}",
+            visibility="team",
+            quality_score=0.9,
+            performance_score=0.0,
+            content_json={"title": "标题", "hook_type": "反常识"},
+        )
+        for index in range(1, 4)
+    ]
+    assert synthesize_pattern_candidates(low_outcome) == []
+
+    objectively_good = [
+        KnowledgeAsset(
+            source=ExactResourceVersion(f"measured-{index}", 1),
+            duplicate_family_id=f"measured-family-{index}",
+            visibility="team",
+            quality_score=0.65,
+            performance_score=0.08,
+            content_json={"title": "标题", "hook_type": "反常识"},
+        )
+        for index in range(1, 4)
+    ]
+    assert len(synthesize_pattern_candidates(objectively_good)) == 1
+
+
+@pytest.mark.parametrize("score", [0.0, 0.01])
+def test_low_metric_does_not_reinforce_failed_copy_features(score):
+    failed = build_preference_observation(
+        event_type="metric",
+        source=ExactResourceVersion("copy-failed", 1),
+        source_event_id="metric-failed",
+        snapshot=_snapshot("3 个方法", hook_type="数字清单"),
+        event_payload={"score": score, "metrics": {"views": 1000, "likes": 0}},
+    )
+    adopted = build_preference_observation(
+        event_type="adopted",
+        source=ExactResourceVersion("copy-failed", 1),
+        source_event_id="adopted-failed",
+        snapshot=_snapshot("3 个方法", hook_type="数字清单"),
+    )
+    profile = rebuild_preference_profile("ou-owner", [adopted, failed])
+    assert profile["preferences"]["hook_type"] == []
+    assert profile["avoid_preferences"]["hook_type"] == [
+        {"value": "数字清单", "score": 1.0}
+    ]
+    assert profile["outcome_summary"]["low_metric_count"] == 1
 
 
 def test_pattern_threshold_collapses_equal_hashes_even_if_old_acl_split_families():
@@ -238,6 +323,70 @@ def test_pattern_repository_only_reads_current_qualified_version(migrated_conn):
         if asset.source.resource_id == str(first.id)
     ]
     assert exact_versions == [2]
+
+
+def test_teardown_pattern_input_uses_its_exact_source_performance(migrated_conn):
+    from data_foundation.knowledge.service import KnowledgeService
+    from data_foundation.performance_feedback import save_performance_metric_resource
+    from data_foundation.repositories.preference import PreferenceRepository
+    from data_foundation.repositories.resource import ResourceRepository
+    from data_foundation.writing_teardown import save_writing_teardown_resource
+
+    resources = ResourceRepository(migrated_conn)
+    source = resources.upsert_resource(
+        tenant_id="tenant-a",
+        actor_open_id="ou-owner",
+        resource_type="feishu_doc",
+        title="真实爆款",
+        content_text="真实爆款正文，含明确的反常识开头和步骤清单。",
+        content_json={"title": "真实爆款", "hook_type": "反常识"},
+        visibility="team",
+        owner_open_id="ou-owner",
+        outbox_requests=[],
+    )
+    knowledge = KnowledgeService(migrated_conn)
+    knowledge.enrich_exact_version(
+        tenant_id="tenant-a",
+        resource_id=str(source.id),
+        resource_version=int(source.version),
+    )
+    save_performance_metric_resource(
+        resources,
+        tenant_id="tenant-a",
+        actor_open_id="ou-owner",
+        target_resource_id=str(source.id),
+        target_resource_version=int(source.version),
+        metrics={"views": 1000, "likes": 80, "collects": 20},
+    )
+    teardown = save_writing_teardown_resource(
+        resources,
+        tenant_id="tenant-a",
+        actor_open_id="ou-owner",
+        source_resource_id=str(source.id),
+        source_resource_version=int(source.version),
+        niche="职场",
+        hook="反常识",
+        cta="收藏检查",
+        structure=["钩子", "证据", "步骤"],
+        success_factors=["具体证据"],
+        style_tags=["口语"],
+        quality=99,
+    )
+    knowledge.enrich_exact_version(
+        tenant_id="tenant-a",
+        resource_id=teardown["resource_id"],
+        resource_version=teardown["resource_version"],
+    )
+
+    asset = next(
+        item
+        for item in PreferenceRepository(migrated_conn).list_eligible_assets(
+            tenant_id="tenant-a", actor_open_id="ou-owner"
+        )
+        if item.source.resource_id == teardown["resource_id"]
+    )
+    assert asset.quality_score == 0.8
+    assert asset.performance_score == 0.12
 
 
 def test_synthesis_completion_replay_is_idempotent_but_old_revision_is_rejected(

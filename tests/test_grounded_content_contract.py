@@ -14,16 +14,17 @@
 不再要求 SKILL.md 自含全套检索口径(那是改造前的双份维护,已废除)。
 """
 import json
+import inspect
 import re
 from pathlib import Path
 
+from data_foundation import tools as foundation_tools
 from prompts import MAIN_SYSTEM_PROMPT
 
 
 ROOT = Path(__file__).resolve().parents[1]
 _topic_content = (ROOT / ".agents" / "skills" / "topic-content" / "SKILL.md").read_text(encoding="utf-8")
-_xhs_copywriting = (ROOT / ".agents" / "skills" / "xhs-copywriting" / "SKILL.md").read_text(encoding="utf-8")
-SKILL_CONTRACT = _topic_content + "\n" + _xhs_copywriting
+SKILL_CONTRACT = _topic_content
 
 # 检索口径里的工具名 —— 唯一源是 MAIN_SYSTEM_PROMPT §6《检索与证据规约》。
 RETRIEVAL_TOOLS = {
@@ -34,10 +35,6 @@ RETRIEVAL_TOOLS = {
 # 差异化工作流的持久化/反馈工具 —— 唯一源是 topic-content/SKILL.md。
 WORKFLOW_TOOLS = {
     "save_generated_topic",
-    "save_generated_copy",
-    "save_user_feedback",
-    "save_performance_metric",
-    "get_resource_performance",
 }
 EVIDENCE_FIELDS = {
     "resource_id",
@@ -199,24 +196,24 @@ def test_skill_owns_persistence_workflow_toolset():
         assert f"`{tool}`" in SKILL_CONTRACT, tool
 
 
-def test_skill_defines_creation_memory_persistence_timing():
-    assert "最终回复用户前" in SKILL_CONTRACT and "save_generated_topic" in SKILL_CONTRACT
-    assert "save_generated_copy" in SKILL_CONTRACT
-    assert "当前文案 ID" in SKILL_CONTRACT and "target_resource_id" in SKILL_CONTRACT
-    assert 'feedback_type="revision_request"' in SKILL_CONTRACT
+def test_current_runtime_defines_creation_memory_and_atomic_revision_feedback():
+    assert "save_generated_copy" in MAIN_SYSTEM_PROMPT
+    assert "同一事务" in MAIN_SYSTEM_PROMPT and "revision_request" in MAIN_SYSTEM_PROMPT
+    source = inspect.getsource(foundation_tools.save_generated_copy.func)
+    assert "latest_user_request" in source
+    assert "save_user_feedback_resource" in source
 
 
-def test_skill_defines_performance_feedback_loop():
-    assert "`save_performance_metric`" in SKILL_CONTRACT
-    assert "`get_resource_performance`" in SKILL_CONTRACT
-    assert "发布后" in SKILL_CONTRACT and "点赞" in SKILL_CONTRACT and "收藏" in SKILL_CONTRACT
-    assert "过去表现" in SKILL_CONTRACT and "为什么推荐" in SKILL_CONTRACT
-    assert "最终回复用户前" in SKILL_CONTRACT and "save_performance_metric" in SKILL_CONTRACT
-    assert "不得猜" in SKILL_CONTRACT and "目标内容" in SKILL_CONTRACT
+def test_current_prompt_defines_performance_feedback_loop():
+    assert "`save_performance_metric`" in MAIN_SYSTEM_PROMPT
+    assert "`get_resource_performance`" in MAIN_SYSTEM_PROMPT
+    assert "发布后" in MAIN_SYSTEM_PROMPT and "点赞" in MAIN_SYSTEM_PROMPT and "收藏" in MAIN_SYSTEM_PROMPT
+    assert "过去表现" in MAIN_SYSTEM_PROMPT and "为什么推荐" in MAIN_SYSTEM_PROMPT
+    assert "禁止猜测" in MAIN_SYSTEM_PROMPT and "目标版本" in MAIN_SYSTEM_PROMPT
 
 
-def test_skill_records_source_freshness_fields():
-    """技能在记录证据时仍要带源端/索引时间字段,未知写"未知"(口径细则在 §6)。"""
-    assert "未知" in SKILL_CONTRACT
-    assert "source_updated_at" in SKILL_CONTRACT
-    assert "indexed_at" in SKILL_CONTRACT
+def test_prompt_records_source_freshness_fields():
+    """证据唯一事实源在主提示词，技能只引用它。"""
+    assert "未知" in MAIN_SYSTEM_PROMPT
+    assert "source_updated_at" in MAIN_SYSTEM_PROMPT
+    assert "indexed_at" in MAIN_SYSTEM_PROMPT

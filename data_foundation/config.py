@@ -4,7 +4,10 @@ from dataclasses import dataclass
 import os
 from typing import Literal, Mapping
 
-from data_foundation.search_ranker import DEFAULT_RELEVANCE_FLOOR
+from data_foundation.search_ranker import (
+    DEFAULT_KEYWORD_RELEVANCE_FLOOR,
+    DEFAULT_RELEVANCE_FLOOR,
+)
 
 
 EMBEDDING_REQUIRED_KEYS = (
@@ -92,6 +95,21 @@ def current_relevance_floor() -> float:
     # 余弦相似度阈值的有效域 [0, 1];越界视为误配,回退默认。
     if not (0.0 <= value <= 1.0):
         return DEFAULT_RELEVANCE_FLOOR
+    return value
+
+
+def current_keyword_relevance_floor() -> float:
+    """Meilisearch 原始相关度下限；防止低分 rank-1 被 RRF 人为抬高。"""
+
+    raw = os.environ.get("XHS_KEYWORD_RELEVANCE_FLOOR", "").strip()
+    if not raw:
+        return DEFAULT_KEYWORD_RELEVANCE_FLOOR
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_KEYWORD_RELEVANCE_FLOOR
+    if not (0.0 <= value <= 1.0):
+        return DEFAULT_KEYWORD_RELEVANCE_FLOOR
     return value
 
 

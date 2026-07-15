@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import os
 from typing import Any
 
 from data_foundation.models import SourceSecrets
@@ -31,6 +32,16 @@ class _ManualLease:
         return None
 
 
+def _feishu_sync_interval_seconds() -> int:
+    raw = os.environ.get("XHS_FEISHU_SYNC_INTERVAL_SECONDS", "86400").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 86400
+    # 防误配成高频全量拉取；生产默认每天一次，测试/人工可最低 5 分钟。
+    return min(max(value, 300), 31 * 86400)
+
+
 def sync_feishu_sources(
     repo,
     *,
@@ -49,25 +60,26 @@ def sync_feishu_sources(
     preloaded_wiki_documents = wiki_documents
     base_rows = base_rows or []
     wiki_documents = wiki_documents or []
+    schedule_seconds = _feishu_sync_interval_seconds()
     base_source = source_repo.register_source(
         tenant_id=tenant_id,
         source_type="feishu_base",
-        name=f"{triggered_by}-feishu-base",
+        name="feishu-base-daily",
         external_id=app_token or "configured-base",
         credentials={},
         config={"app_token": app_token or "configured-base", "table_id": table_id or "configured-table"},
-        schedule_seconds=60,
-        enabled=False,
+        schedule_seconds=schedule_seconds,
+        enabled=True,
     )
     wiki_source = source_repo.register_source(
         tenant_id=tenant_id,
         source_type="feishu_wiki",
-        name=f"{triggered_by}-feishu-wiki",
+        name="feishu-wiki-daily",
         external_id=wiki_space_id or "configured-space",
         credentials={},
         config={"wiki_space_id": wiki_space_id or "configured-space"},
-        schedule_seconds=60,
-        enabled=False,
+        schedule_seconds=schedule_seconds,
+        enabled=True,
     )
     run_id = source_repo.start_run(
         base_source.id,
@@ -148,6 +160,7 @@ def sync_feishu_sources(
             updated=updated,
             skipped=skipped,
             errors=errors,
+            schedule_seconds=schedule_seconds,
         )
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
@@ -164,6 +177,7 @@ def sync_feishu_sources(
             updated=updated,
             skipped=skipped,
             errors=[*errors, message],
+            schedule_seconds=schedule_seconds,
         )
 
 
@@ -189,6 +203,7 @@ def _finish(
     updated: int,
     skipped: int,
     errors: list[str],
+    schedule_seconds: int,
 ) -> dict[str, Any]:
     failed = len(errors)
     source_repo.finish_run(
@@ -209,14 +224,14 @@ def _finish(
         tenant_id=tenant_id,
         lease_owner=None,
         cursor=cursor.get("feishu_base", {}),
-        next_run_after_seconds=60,
+        next_run_after_seconds=schedule_seconds,
     )
     source_repo.finish_source(
         wiki_source_id,
         tenant_id=tenant_id,
         lease_owner=None,
         cursor=cursor.get("feishu_wiki", {}),
-        next_run_after_seconds=60,
+        next_run_after_seconds=schedule_seconds,
     )
     return {
         "ok": status == "succeeded",

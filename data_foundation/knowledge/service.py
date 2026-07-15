@@ -12,20 +12,60 @@ from data_foundation.knowledge.repository import PIPELINE_VERSION, KnowledgeRepo
 
 
 _LIST_FIELDS = {
-    "tags": ("tags", "topic_tags"),
-    "hook_types": ("hook_types", "hook_type", "hook", "hook_mechanism"),
-    "cta_types": ("cta_types", "cta_type", "cta"),
-    "structure_tags": ("structure_tags", "structure"),
-    "style_tags": ("style_tags", "style"),
-    "success_factors": ("success_factors",),
+    "tags": ("tags", "topic_tags", "标签", "话题标签", "关键词"),
+    "hook_types": (
+        "hook_types", "hook_type", "hook", "hook_mechanism",
+        "钩子", "开头钩子", "标题钩子", "钩子类型",
+    ),
+    "cta_types": (
+        "cta_types", "cta_type", "cta", "CTA", "行动引导", "互动方式", "结尾互动",
+    ),
+    "structure_tags": (
+        "structure_tags", "structure", "内容结构", "文案结构", "结构标签",
+    ),
+    "style_tags": ("style_tags", "style", "风格", "文案风格", "风格标签", "语气"),
+    "success_factors": ("success_factors", "成功要素", "爆款要素", "有效因素"),
 }
+
+_NICHE_FIELDS = (
+    "niche", "vertical", "category", "垂类", "赛道", "领域", "内容分类", "分类",
+)
+
+_NICHE_RULES = (
+    ("职场", ("职场", "面试", "求职", "同事", "领导", "升职")),
+    ("护肤", ("护肤", "防晒", "精华", "面霜", "痘痘", "敏感肌")),
+    ("美妆", ("美妆", "化妆", "口红", "粉底", "眼影", "妆容")),
+    ("母婴", ("母婴", "宝宝", "育儿", "辅食", "孕期", "产后")),
+    ("穿搭", ("穿搭", "显瘦", "搭配", "衣柜", "通勤装")),
+    ("家居收纳", ("家居", "收纳", "装修", "清洁")),
+    ("美食", ("美食", "菜谱", "烘焙", "早餐", "减脂餐", "探店")),
+    ("旅行", ("旅行", "旅游", "酒店", "景点", "行程", "民宿")),
+    ("健身", ("健身", "减脂", "增肌", "瑜伽", "跑步", "体重")),
+    ("学习成长", ("学习", "考研", "考试", "读书", "自律", "效率")),
+    ("数码", ("数码", "手机", "电脑", "相机", "耳机", "软件")),
+    ("宠物", ("宠物", "养猫", "养狗", "猫咪", "狗狗")),
+    ("露营", ("露营", "帐篷", "营地", "户外装备")),
+)
 
 
 def _stable_strings(value: Any) -> list[str]:
-    raw = value if isinstance(value, list) else [value]
+    raw = value if isinstance(value, (list, tuple, set)) else [value]
     result: list[str] = []
     seen: set[str] = set()
     for item in raw:
+        if isinstance(item, dict):
+            for key in ("text", "name", "value", "label"):
+                for text in _stable_strings(item.get(key)):
+                    if text not in seen:
+                        seen.add(text)
+                        result.append(text)
+            continue
+        if isinstance(item, (list, tuple, set)):
+            for text in _stable_strings(item):
+                if text not in seen:
+                    seen.add(text)
+                    result.append(text)
+            continue
         if not isinstance(item, (str, int, float)) or isinstance(item, bool):
             continue
         text = str(item).strip()
@@ -40,6 +80,9 @@ def _explicit_values(content_json: dict[str, Any], source_keys: tuple[str, ...])
     nested = content_json.get("metadata")
     if isinstance(nested, dict):
         candidates.append(nested)
+    fields = content_json.get("fields")
+    if isinstance(fields, dict):
+        candidates.append(fields)
     values: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -59,6 +102,20 @@ def _infer_hook_types(title: str) -> list[str]:
         ("反常识", any(token in title for token in ("没想到", "居然", "原来", "反而"))),
     )
     return [label for label, matched in rules if matched]
+
+
+def _infer_niche(title: str, body: str, tags: list[str]) -> str | None:
+    haystack = "\n".join([title, *tags, body[:1200]])
+    scored = [
+        (sum(haystack.count(token) for token in tokens), index, label)
+        for index, (label, tokens) in enumerate(_NICHE_RULES)
+    ]
+    best = min(
+        (item for item in scored if item[0] > 0),
+        key=lambda item: (-item[0], item[1]),
+        default=None,
+    )
+    return best[2] if best else None
 
 
 def _infer_cta_types(body: str) -> list[str]:
@@ -122,10 +179,11 @@ def extract_deterministic_metadata(
 ) -> dict[str, Any]:
     """Extract explicit metadata plus falsifiable surface-form writing features.
 
-    The inference rules above are fixed string/regex checks.  They do not infer niche,
-    success, intent, or quality when the source does not state those facts.
+    The inference rules above are fixed string/regex checks.  Niche may use the fixed
+    taxonomy only when a literal token is observable; success, intent and quality are
+    never guessed when the source does not state those facts.
     """
-    niche_values = _explicit_values(content_json, ("niche", "vertical"))
+    niche_values = _explicit_values(content_json, _NICHE_FIELDS)
     observed_title = str(content_json.get("title") or title or "").strip()
     observed_body = str(content_json.get("body") or normalized_text or "").strip()
     inferred_structure, paragraph_count, has_list = _infer_structure_tags(observed_body)
@@ -143,6 +201,13 @@ def extract_deterministic_metadata(
     }
     for output_key, source_keys in _LIST_FIELDS.items():
         metadata[output_key] = _explicit_values(content_json, source_keys)
+
+    if not metadata["niche"]:
+        metadata["niche"] = _infer_niche(
+            observed_title,
+            observed_body,
+            metadata["tags"],
+        )
 
     # Explicit structured fields win.  Only absent dimensions are inferred, so the
     # pipeline never contradicts a teardown/user-provided label.

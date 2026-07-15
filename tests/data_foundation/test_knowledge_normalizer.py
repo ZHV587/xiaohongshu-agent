@@ -98,3 +98,29 @@ def test_explicit_writing_labels_override_surface_inference():
     assert metadata["cta_types"] == ["私信咨询"]
     assert metadata["structure_tags"] == ["故事弧"]
     assert metadata["style_tags"] == ["克制叙事"]
+
+
+def test_feishu_fields_are_authoritative_metadata_and_niche_can_use_fixed_taxonomy():
+    metadata = extract_deterministic_metadata(
+        {
+            "fields": {
+                "垂类": [{"text": "护肤"}],
+                "话题标签": ["敏感肌", "防晒"],
+                "开头钩子": "痛点前置",
+                "互动方式": "评论区答疑",
+                "内容结构": "场景-误区-动作",
+                "文案风格": "朋友聊天",
+                "成功要素": ["前后对比", "真人实测"],
+            }
+        },
+        "敏感肌防晒实测正文",
+        title="敏感肌防晒怎么选",
+    )
+
+    assert metadata["niche"] == "护肤"
+    assert metadata["tags"] == ["敏感肌", "防晒"]
+    assert metadata["hook_types"] == ["痛点前置"]
+    assert metadata["cta_types"] == ["评论区答疑"]
+    assert metadata["structure_tags"] == ["场景-误区-动作"]
+    assert metadata["style_tags"] == ["朋友聊天"]
+    assert metadata["success_factors"] == ["前后对比", "真人实测"]

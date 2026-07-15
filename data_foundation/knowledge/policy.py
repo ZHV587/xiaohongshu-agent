@@ -4,6 +4,10 @@ import math
 from typing import Any
 
 from data_foundation.knowledge.models import KnowledgeDecision, KnowledgeSnapshot
+from data_foundation.writing_teardown import (
+    TEARDOWN_ANALYSIS_SCHEMA_VERSION,
+    TEARDOWN_DETERMINISTIC_QUALITY,
+)
 
 
 _SIGNAL_TYPES = {
@@ -16,6 +20,7 @@ _SIGNAL_TYPES = {
     "writing_preference_profile",
 }
 _TEARDOWN_TYPES = {"writing_teardown", "explosive_teardown", "xhs_teardown"}
+_TEARDOWN_REQUIRED_LIST_FIELDS = ("structure", "success_factors", "style_tags")
 
 
 def _authority(*, origin: str, validation: str, provenance: str, score: float) -> dict[str, Any]:
@@ -80,13 +85,6 @@ def classify_knowledge_asset(
                 origin="system", validation="inactive", provenance="resource", score=0.0
             ),
             quality=0.0, synthesis=False, reason="INACTIVE_RESOURCE_NOT_KNOWLEDGE",
-        )
-
-    if resource_type == "knowledge_anchor":
-        return _decision(
-            "rejected", asset_kind="knowledge_anchor", source_kind="system",
-            authority=_authority(origin="system", validation="none", provenance="internal", score=0.0),
-            quality=0.0, synthesis=False, reason="SYSTEM_ANCHOR_NOT_KNOWLEDGE",
         )
 
     if resource_type in _SIGNAL_TYPES:
@@ -185,10 +183,36 @@ def classify_knowledge_asset(
                 ),
                 quality=0.0, synthesis=False, reason="TEARDOWN_REQUIRES_ONE_EXACT_SOURCE",
             )
+        structured = (
+            content.get("analysis_schema_version") == TEARDOWN_ANALYSIS_SCHEMA_VERSION
+            and content.get("analysis_kind") == "writing_teardown"
+            and content.get("metadata_provenance") == "model_analysis_exact_source"
+            and all(
+                isinstance(content.get(field), str) and content[field].strip()
+                for field in ("niche", "hook", "cta")
+            )
+            and all(
+                isinstance(content.get(field), list)
+                and any(isinstance(item, str) and item.strip() for item in content[field])
+                for field in _TEARDOWN_REQUIRED_LIST_FIELDS
+            )
+        )
+        if not structured:
+            return _decision(
+                "rejected", asset_kind="teardown", source_kind="writing_teardown",
+                authority=_authority(
+                    origin="derived", validation="invalid_schema",
+                    provenance="teardown_payload", score=0.1,
+                ),
+                quality=0.0, synthesis=False, reason="TEARDOWN_SCHEMA_INCOMPLETE",
+            )
         return _decision(
             "qualified", asset_kind="teardown", source_kind="writing_teardown",
             authority=_authority(origin="derived", validation="structured", provenance="exact_source", score=0.85),
-            quality=_quality(content, 0.8), synthesis=True, reason="STRUCTURED_TEARDOWN",
+            # 模型自评不能作为知识资格分；结构完整 + 唯一 exact source 使用固定、可复现质量。
+            quality=TEARDOWN_DETERMINISTIC_QUALITY,
+            synthesis=True,
+            reason="STRUCTURED_TEARDOWN",
         )
 
     if resource_type == "xhs_online_note":

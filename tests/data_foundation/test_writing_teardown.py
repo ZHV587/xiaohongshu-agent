@@ -77,8 +77,12 @@ def test_teardown_uses_exact_acl_snapshot_and_writes_versioned_edge():
     assert repo.upserts[0]["resource_type"] == "writing_teardown"
     assert repo.upserts[0]["visibility"] == "team"
     assert repo.upserts[0]["content_json"]["source_resource_version"] == 7
-    assert repo.upserts[0]["content_json"]["quality_score"] == 0.92
-    assert repo.upserts[0]["content_json"]["raw_quality"] == 92.0
+    assert repo.upserts[0]["content_json"]["model_assessed_quality"] == 92.0
+    assert repo.upserts[0]["content_json"]["analysis_schema_version"] == 1
+    assert repo.upserts[0]["content_json"]["metadata_provenance"] == (
+        "model_analysis_exact_source"
+    )
+    assert "quality_score" not in repo.upserts[0]["content_json"]
     assert len(repo.edges) == 1
     edge = repo.edges[0]
     assert edge["source_resource_id"] == result["resource_id"]
@@ -86,8 +90,12 @@ def test_teardown_uses_exact_acl_snapshot_and_writes_versioned_edge():
     assert edge["target_resource_id"] == "source-1"
     assert edge["target_resource_version"] == 7
     assert edge["edge_type"] == "teardown_of"
-    assert edge["weight"] == 0.92
-    assert edge["properties"] == {"analysis_kind": "writing_teardown"}
+    assert edge["weight"] == 1.0
+    assert edge["properties"] == {
+        "analysis_kind": "writing_teardown",
+        "analysis_schema_version": 1,
+        "provenance": "exact_source",
+    }
     assert result["source_resource_version"] == 7
     assert result["idempotent_replay"] is False
 

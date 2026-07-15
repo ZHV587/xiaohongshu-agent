@@ -1631,10 +1631,10 @@ class ResourceRepository(BaseRepository):
         source_topic: str | None = None,
         conn: Optional[Connection] = None,
     ) -> bool:
-        """保证新素材至少有一条图关联；无强证据时挂同主题/同作者弱关联。
+        """保证新素材至少有一条有事实依据的素材关联。
 
-        强关联由上层先写 derived_from / imitated_from。本方法只在仍无出边时，从 actor
-        可读的既有选题或文案中选最近一条；全库第一条素材没有可连对象时返回 False。
+        强关联由上层先写 derived_from / imitated_from。本方法只在仍无出边时，按明确
+        选题、同垂类、共享标签或文本相似选择 actor 可读素材；禁止把“最近一条”冒充同主题。
         """
         if (
             not isinstance(resource_version, int)
@@ -1659,29 +1659,95 @@ class ResourceRepository(BaseRepository):
                     return True
                 target = cursor.execute(
                     f"""
+                    with source as (
+                      select rv.content_text, rv.content_json
+                      from resource_versions rv
+                      where rv.tenant_id = %(tenant_id)s
+                        and rv.resource_id = %(resource_id)s
+                        and rv.version = %(resource_version)s
+                    )
                     select r.id::text as id,
-                           latest.version as resource_version
+                           latest.version as resource_version,
+                           case
+                             when %(source_topic)s <> '' and (
+                               r.summary = %(source_topic)s
+                               or latest.content_text ilike '%%' || %(source_topic)s || '%%'
+                             ) then 'same_topic'
+                             when nullif(latest.content_json->>'niche', '') =
+                                  nullif(source.content_json->>'niche', '') then 'same_niche'
+                             when coalesce(latest.content_json->'tags', '[]'::jsonb) ?|
+                                  array(
+                                    select jsonb_array_elements_text(
+                                      coalesce(source.content_json->'tags', '[]'::jsonb)
+                                    )
+                                  ) then 'same_topic'
+                             else 'semantically_related'
+                           end as edge_type,
+                           similarity(
+                             left(coalesce(latest.content_text, ''), 4000),
+                             left(coalesce(source.content_text, ''), 4000)
+                           ) as similarity_score
                     from resources r
                     join lateral (
-                      select rv.version
+                      select rv.version, rv.content_text, rv.content_json
                       from resource_versions rv
                       where rv.tenant_id = r.tenant_id and rv.resource_id = r.id
                       order by rv.version desc
                       limit 1
                     ) latest on true
+                    cross join source
                     where r.id <> %(resource_id)s
-                      and r.type in ('generated_topic', 'generated_copy', 'xhs_note', 'xhs_online_note')
+                      and r.status = 'active'
+                      and r.type in (
+                        'generated_topic', 'generated_copy', 'xhs_note', 'xhs_online_note',
+                        'feishu_base_record', 'feishu_doc', 'writing_teardown'
+                      )
                       and {where_clause}
+                      and (
+                        (%(source_topic)s <> '' and (
+                          r.summary = %(source_topic)s
+                          or latest.content_text ilike '%%' || %(source_topic)s || '%%'
+                        ))
+                        or (
+                          nullif(latest.content_json->>'niche', '') is not null
+                          and nullif(latest.content_json->>'niche', '') =
+                              nullif(source.content_json->>'niche', '')
+                        )
+                        or coalesce(latest.content_json->'tags', '[]'::jsonb) ?|
+                           array(
+                             select jsonb_array_elements_text(
+                               coalesce(source.content_json->'tags', '[]'::jsonb)
+                             )
+                           )
+                        or similarity(
+                             left(coalesce(latest.content_text, ''), 4000),
+                             left(coalesce(source.content_text, ''), 4000)
+                           ) >= 0.12
+                      )
                     order by
-                      case when %(source_topic)s <> '' and
-                                     (r.summary = %(source_topic)s or r.content_text ilike '%%' || %(source_topic)s || '%%')
-                           then 0 else 1 end,
+                      case
+                        when %(source_topic)s <> '' and (
+                          r.summary = %(source_topic)s
+                          or latest.content_text ilike '%%' || %(source_topic)s || '%%'
+                        ) then 0
+                        when nullif(latest.content_json->>'niche', '') =
+                             nullif(source.content_json->>'niche', '') then 1
+                        when coalesce(latest.content_json->'tags', '[]'::jsonb) ?|
+                             array(
+                               select jsonb_array_elements_text(
+                                 coalesce(source.content_json->'tags', '[]'::jsonb)
+                               )
+                             ) then 2
+                        else 3
+                      end,
+                      similarity_score desc,
                       r.updated_at desc,
                       r.id desc
                     limit 1
                     """,
                     {
                         "resource_id": resource_id,
+                        "resource_version": resource_version,
                         "source_topic": source_topic or "",
                         "tenant_id": tenant_id,
                         "actor_open_id": actor_open_id,
@@ -1689,14 +1755,24 @@ class ResourceRepository(BaseRepository):
                 ).fetchone()
                 if target is None:
                     return False
+                similarity_score = max(
+                    0.0, min(float(target["similarity_score"] or 0.0), 1.0)
+                )
+                edge_type = str(target["edge_type"])
                 self.add_edge(
                     tenant_id=tenant_id,
                     source_resource_id=resource_id,
                     source_resource_version=resource_version,
                     target_resource_id=target["id"],
                     target_resource_version=int(target["resource_version"]),
-                    edge_type="same_topic",
-                    weight=0.1,
+                    edge_type=edge_type,
+                    weight=max(similarity_score, 0.1),
+                    properties={
+                        "strength": "strong" if edge_type == "co_ingested" else "weak",
+                        "system_generated": True,
+                        "basis": edge_type,
+                        "similarity": round(similarity_score, 6),
+                    },
                     conn=connection,
                 )
                 return True

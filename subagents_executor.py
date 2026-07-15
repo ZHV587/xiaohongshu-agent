@@ -11,6 +11,7 @@ from models import ModelPoolProvider, build_router_middleware
 from middlewares import build_retry_middleware
 from data_foundation.agent_trace import with_trace
 from data_foundation.evidence import EvidencePackage
+from data_foundation.knowledge_grounding import KnowledgeGroundingMiddleware
 from data_foundation.tools import (
     get_operations_data,
     get_resource,
@@ -30,14 +31,20 @@ EXECUTOR_SUBAGENT_NAMES = frozenset({
 })
 
 
-def build_subagent_middleware(registry: ModelPoolProvider):
+def build_subagent_middleware(
+    registry: ModelPoolProvider, *, automatic_grounding: bool = False
+):
     """子代理标准 middleware 栈:retry(外) → router(内)。
 
     retry 兜底原生结构化输出偶发返回空/非 JSON(StructuredOutputValidationError,见
     middlewares.is_retryable_error)等可重试错误——整轮模型调用重来,而不是一次解析失败就让整轮 run
     (可能已跑几分钟)直接挂掉。此前 7 个执行型子代理只挂 router、无 retry(middlewares.py 头注曾警告
     "子代理仍需自带 retry")。"""
-    return [build_retry_middleware(), build_router_middleware(registry)]
+    stack = [build_retry_middleware()]
+    if automatic_grounding:
+        stack.append(KnowledgeGroundingMiddleware())
+    stack.append(build_router_middleware(registry))
+    return stack
 
 
 def _structured(schema: type[BaseModel]) -> ToolStrategy:
@@ -64,7 +71,11 @@ class BenchmarkSourceTeardown(BaseModel):
     structure: list[str] = Field(min_length=1, description="按顺序拆开的内容结构")
     success_factors: list[str] = Field(min_length=1, description="可验证的成功要素")
     style_tags: list[str] = Field(min_length=1, description="风格、语气与排版标签")
-    quality: float = Field(ge=0, le=100, description="拆解完整度与依据质量分")
+    quality: float = Field(
+        ge=0,
+        le=100,
+        description="模型对拆解完整度的审计自评，仅供追踪，不决定知识资格",
+    )
 
 
 class BenchmarkReport(BaseModel):
@@ -156,7 +167,11 @@ class ReferenceTeardown(BaseModel):
     structure_steps: list[str] = Field(min_length=1, description="按顺序拆开的结构步骤,供知识库结构化归档")
     success_factors: list[str] = Field(min_length=1, description="这篇内容成立的可验证成功要素")
     style_tags: list[str] = Field(min_length=1, description="风格、语气、排版等标签")
-    quality: float = Field(ge=0, le=100, description="拆解完整度与证据质量分,0~100")
+    quality: float = Field(
+        ge=0,
+        le=100,
+        description="模型对拆解完整度的审计自评,0~100，仅供追踪，不决定知识资格",
+    )
 
 
 class ImitationReport(BaseModel):
@@ -375,7 +390,7 @@ def build_copywriting_coprocessor(
 (误伤提示:#8 不足 3 次、#5 偶一次、学术/法律体的 #1、短视频体裁的 #13 不判 AI。)
 
 ## 任务
-1. 基于主控传入的选题大纲、博主人设及背景素材(用检索结果中的精确身份调用 `get_resource(resource_id, resource_version)` 精读对标爆款),起草 **A/B 两版**(≥2 版,差异化角度,如"避坑清单派 vs 故事共鸣派")。
+1. 运行时已在模型调用前自动执行 `retrieve_knowledge`，结果位于 `<automatic_knowledge_grounding>`。必须先使用其中精确身份调用 `get_resource(resource_id, resource_version)` 精读最相关案例；若是 `insufficient_relevance`，如实按当前素材创作，不得伪造历史依据。然后基于主控传入的选题大纲、博主人设及背景素材起草 **A/B 两版**(≥2 版,差异化角度,如"避坑清单派 vs 故事共鸣派")。
 2. 初稿完成后,**逐条按上面《22 条指纹》检查并纠偏**,把每条的判定与纠偏动作用**纯文本编号**(不要 markdown 表格)记入 `ai_audit_self_correction_log`,如"3. 匀速排比:A 版器械清单段已打散为长短句"。
 3. `outline` 用**纯文本**写清:对标了哪几篇(resource_id/标题/金句)、论证链、各版本的差异化定位——供创作者回看"为什么这么写"。
 4. 每个 version 必须含 `label/title/body/tags/cover/note` 六个字段照填;主控会**机械映射**进 xhs_copy 块,你**不要**自己再加任何 markdown 包装、不要把 outline/自审写进 body。
@@ -383,7 +398,7 @@ def build_copywriting_coprocessor(
         "model": initial_model,
         "tools": [get_resource, retrieve_knowledge],
         "response_format": _structured(CopywritingReport),
-        "middleware": build_subagent_middleware(registry),
+        "middleware": build_subagent_middleware(registry, automatic_grounding=True),
     }
 
 
@@ -406,6 +421,7 @@ def build_imitation_writer(
         "system_prompt": """你是小红书两段式仿写协处理器。你的产出**不是照抄原文**,而是先"看懂"这篇范本、再据它的套路重写成用户自己的一篇。下面两套规约是全系统去 AI 腔的唯一权威源,逐条遵守。
 
 ## 铁律:范本原文必须完整原样作为依据
+- 运行时会在模型调用前自动执行 `retrieve_knowledge` 补充同主题案例；可以用来理解垂类偏好，但不能替代下方用户指定范本的精确身份。
 - 主控会给你范本的精确 `(resource_id, resource_version)`。你**必须**先调 `get_resource(resource_id, resource_version)` 把该不可变版本正文**完整读进来**,以它的真实结构与钩子为准；禁止读取 latest。
 - **严禁**凭记忆/想象复述范本,**严禁**压缩或概括后再仿——那样仿出来的东西贴不住范本的骨架与钩子。读不到范本原文(get_resource 返回 not found/空)时,不要硬编,如实在报告里说明并停下。
 
@@ -446,7 +462,7 @@ def build_imitation_writer(
         "model": initial_model,
         "tools": [get_resource, retrieve_knowledge],
         "response_format": _structured(ImitationReport),
-        "middleware": build_subagent_middleware(registry),
+        "middleware": build_subagent_middleware(registry, automatic_grounding=True),
     }
 
 

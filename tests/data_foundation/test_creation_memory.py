@@ -289,6 +289,10 @@ def test_save_generated_copy_links_every_candidate_exact_version():
         (edge_type, source_version, target_version)
         for source_version in (1, 2, 3)
         for edge_type, target_version in (("derived_from", 4), ("imitated_from", 6))
+    } | {
+        ("co_generated_variant", 1, 2),
+        ("co_generated_variant", 2, 1),
+        ("co_generated_variant", 3, 1),
     }
 
 

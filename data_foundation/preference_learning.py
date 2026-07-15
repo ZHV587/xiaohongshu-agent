@@ -38,6 +38,9 @@ OBSERVATION_SCHEMA_VERSION = 1
 PROFILE_SCHEMA_VERSION = 1
 PATTERN_SCHEMA_VERSION = 1
 MIN_PATTERN_FAMILIES = 3
+MIN_PATTERN_QUALITY = 0.70
+MIN_PATTERN_PERFORMANCE = 0.02
+METRIC_SCORE_PIVOT = 0.05
 
 _PROFILE_NAMESPACE = uuid.UUID("32534dcb-fb1d-4e51-96fd-58a51cde4a57")
 _PATTERN_NAMESPACE = uuid.UUID("9860ae32-34bd-43c7-8a3c-d62af7577cae")
@@ -107,6 +110,7 @@ class KnowledgeAsset:
     visibility: str
     content_json: dict[str, Any]
     quality_score: float = 0.0
+    performance_score: float | None = None
     normalized_hash: str | None = None
 
     def __post_init__(self) -> None:
@@ -121,6 +125,14 @@ class KnowledgeAsset:
         object.__setattr__(self, "visibility", normalize_visibility(self.visibility))
         score = float(self.quality_score)
         object.__setattr__(self, "quality_score", score if math.isfinite(score) else 0.0)
+        performance = self.performance_score
+        if performance is not None:
+            performance = float(performance)
+            if not math.isfinite(performance):
+                performance = None
+            else:
+                performance = max(performance, 0.0)
+        object.__setattr__(self, "performance_score", performance)
         digest = (
             self.normalized_hash.strip()
             if isinstance(self.normalized_hash, str) and self.normalized_hash.strip()
@@ -287,22 +299,45 @@ def rebuild_preference_profile(
     revision_counts: Counter[str] = Counter()
     feedback_traits: Counter[str] = Counter()
     metric_scores: list[float] = []
+    avoid_dimension_scores: dict[str, Counter[str]] = {
+        dimension: Counter() for dimension in _PROFILE_DIMENSIONS
+    }
+    avoid_tag_scores: Counter[str] = Counter()
+    avoid_style_scores: Counter[str] = Counter()
+
+    measured_source_factors: dict[ExactResourceVersion, list[float]] = defaultdict(list)
+    for observation in ordered:
+        if observation.event_type != "metric":
+            continue
+        signal = dict(observation.payload.get("signal") or {})
+        measured_source_factors[observation.source].append(
+            _metric_outcome_factor(signal.get("score"))
+        )
+    source_outcome_factor = {
+        source: sum(factors) / len(factors)
+        for source, factors in measured_source_factors.items()
+        if factors
+    }
 
     for observation in ordered:
-        weight = _EVENT_WEIGHTS[observation.event_type]
+        weight = _observation_weight(observation)
+        if observation.event_type in {"adopted", "finalized", "published"}:
+            weight *= source_outcome_factor.get(observation.source, 1.0)
         features = dict(observation.payload.get("features") or {})
-        for key in ("title_length", "body_length", "paragraph_count", "tag_count"):
-            value = features.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                numeric[key].append((float(value), weight))
-        for dimension in _PROFILE_DIMENSIONS:
-            value = _normalized_feature_value(features.get(dimension))
-            if value:
-                dimension_scores[dimension][value] += weight
-        for tag in _string_list(features.get("tags")):
-            tag_scores[tag] += weight
-        for tag in _string_list(features.get("style_tags")):
-            style_scores[tag] += weight
+        # 低/零效果 metric 仍进入 outcome_summary，但不再把失败稿的写法强化为偏好。
+        if weight > 0:
+            for key in ("title_length", "body_length", "paragraph_count", "tag_count"):
+                value = features.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    numeric[key].append((float(value), weight))
+            for dimension in _PROFILE_DIMENSIONS:
+                value = _normalized_feature_value(features.get(dimension))
+                if value:
+                    dimension_scores[dimension][value] += weight
+            for tag in _string_list(features.get("tags")):
+                tag_scores[tag] += weight
+            for tag in _string_list(features.get("style_tags")):
+                style_scores[tag] += weight
         signal = dict(observation.payload.get("signal") or {})
         for related in signal.get("exact_sources", []):
             if not isinstance(related, Mapping):
@@ -327,6 +362,15 @@ def rebuild_preference_profile(
             score = signal.get("score")
             if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score):
                 metric_scores.append(float(score))
+                if float(score) < MIN_PATTERN_PERFORMANCE:
+                    for dimension in _PROFILE_DIMENSIONS:
+                        value = _normalized_feature_value(features.get(dimension))
+                        if value:
+                            avoid_dimension_scores[dimension][value] += 1
+                    for tag in _string_list(features.get("tags")):
+                        avoid_tag_scores[tag] += 1
+                    for tag in _string_list(features.get("style_tags")):
+                        avoid_style_scores[tag] += 1
         if observation.event_type == "feedback":
             for trait in _string_list(signal.get("traits")):
                 feedback_traits[trait] += 1
@@ -361,8 +405,22 @@ def rebuild_preference_profile(
             {"trait": key, "count": count}
             for key, count in sorted(feedback_traits.items(), key=lambda item: (-item[1], item[0]))
         ],
+        "avoid_preferences": {
+            **{
+                dimension: _ranked_values(scores)
+                for dimension, scores in avoid_dimension_scores.items()
+            },
+            "tags": _ranked_values(avoid_tag_scores),
+            "style_tags": _ranked_values(avoid_style_scores),
+        },
         "outcome_summary": {
             "metric_observation_count": len(metric_scores),
+            "positive_metric_count": sum(
+                1 for score in metric_scores if score >= MIN_PATTERN_PERFORMANCE
+            ),
+            "low_metric_count": sum(
+                1 for score in metric_scores if score < MIN_PATTERN_PERFORMANCE
+            ),
             "average_score": round(sum(metric_scores) / len(metric_scores), 6)
             if metric_scores
             else None,
@@ -380,7 +438,7 @@ def synthesize_pattern_candidates(
 
     Multiple copies in one duplicate family, equal normalized texts, and historical
     variants of one stable resource count once.  The best representative is selected
-    deterministically by quality, then exact identity.
+    deterministically by observed performance, quality, then exact identity.
     """
     if (
         not isinstance(minimum_families, int)
@@ -390,6 +448,11 @@ def synthesize_pattern_candidates(
         raise ValueError(f"minimum_families must be >= {MIN_PATTERN_FAMILIES}")
     grouped: dict[tuple[str, str], list[KnowledgeAsset]] = defaultdict(list)
     for asset in assets:
+        if asset.performance_score is None:
+            if asset.quality_score < MIN_PATTERN_QUALITY:
+                continue
+        elif asset.performance_score < MIN_PATTERN_PERFORMANCE:
+            continue
         for dimension, value in pattern_features(asset.content_json):
             grouped[(dimension, value)].append(asset)
 
@@ -704,6 +767,7 @@ class PreferenceLearningService:
                         "duplicate_family_id": asset.duplicate_family_id,
                         "visibility": asset.visibility,
                         "quality_score": asset.quality_score,
+                        "performance_score": asset.performance_score,
                     }
                     for asset in candidate.sources
                 ]
@@ -899,6 +963,29 @@ def _metric_signal(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {"metrics": metrics, "score": score, "exact_sources": exact_sources}
 
 
+def _observation_weight(observation: PreferenceObservation) -> float:
+    base = _EVENT_WEIGHTS[observation.event_type]
+    if observation.event_type != "metric":
+        return base
+    signal = dict(observation.payload.get("signal") or {})
+    score = signal.get("score")
+    factor = _metric_outcome_factor(score)
+    return base * factor
+
+
+def _metric_outcome_factor(score: Any) -> float:
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not math.isfinite(score)
+        or score < MIN_PATTERN_PERFORMANCE
+    ):
+        return 0.0
+    # score 可能是有 views 时的互动率，也可能是无 views 时的绝对互动量。
+    # 饱和函数同时兼容两种量纲：低效果接近 0，高效果趋近基础权重但不无限放大。
+    return float(score) / (float(score) + METRIC_SCORE_PIVOT)
+
+
 def _feedback_signal(
     payload: Mapping[str, Any], snapshot: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -947,6 +1034,8 @@ def _best_family_representative(assets: Sequence[KnowledgeAsset]) -> KnowledgeAs
     return sorted(
         assets,
         key=lambda asset: (
+            asset.performance_score is None,
+            -(asset.performance_score or 0.0),
             -asset.quality_score,
             asset.source.resource_id,
             -asset.source.resource_version,
@@ -1045,6 +1134,8 @@ __all__ = [
     "ExactResourceVersion",
     "KnowledgeAsset",
     "MIN_PATTERN_FAMILIES",
+    "MIN_PATTERN_PERFORMANCE",
+    "MIN_PATTERN_QUALITY",
     "PatternCandidate",
     "PreferenceLearningService",
     "PreferenceObservation",

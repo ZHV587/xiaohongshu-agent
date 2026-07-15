@@ -625,9 +625,10 @@ create table if not exists preference_synthesis_events (
     deferrable initially deferred
 );
 
--- 每租户唯一的 system 图根；它只用于 no-island 关联，不进入正文资格或检索。
-create unique index if not exists uq_resources_tenant_knowledge_anchor
-  on resources (tenant_id) where type = 'knowledge_anchor';
+-- 旧版本用 synthetic knowledge_anchor 掩盖素材孤岛；现在只允许有事实依据的素材间边。
+drop index if exists uq_resources_tenant_knowledge_anchor;
+delete from resources where type = 'knowledge_anchor';
+delete from resource_type_counts where type = 'knowledge_anchor';
 
 create table if not exists resource_events (
   id uuid primary key default gen_random_uuid(),
@@ -958,7 +959,7 @@ join resource_versions rv
  and rv.resource_id = kas.resource_id
  and rv.version = kas.resource_version
 where kas.eligibility = 'qualified'
-  and kas.asset_kind not in ('signal', 'knowledge_anchor');
+  and kas.asset_kind <> 'signal';
 
 -- 当前稳定版本指针的基础门。拆解还要在下一层验证它依赖的精确来源仍是当前知识，
 -- 因而不能直接把本视图暴露给检索。
@@ -1108,6 +1109,30 @@ create table if not exists sync_sources (
   unique (tenant_id, source_type, name),
   unique (tenant_id, id, source_type)
 );
+
+-- 既有部署的手动飞书 source 曾被注册为 disabled/60 秒但永不调度。升级后直接
+-- 收敛到稳定的 daily 名称并启用，部署完成即可由 scheduler 每天增量拉取。
+update sync_sources legacy
+set name = case legacy.source_type
+      when 'feishu_base' then 'feishu-base-daily'
+      when 'feishu_wiki' then 'feishu-wiki-daily'
+      else legacy.name
+    end,
+    enabled = true,
+    schedule_seconds = 86400,
+    next_run_at = least(legacy.next_run_at, now()),
+    updated_at = now()
+where legacy.name in ('manual-feishu-base', 'manual-feishu-wiki')
+  and not exists (
+    select 1 from sync_sources current
+    where current.tenant_id = legacy.tenant_id
+      and current.source_type = legacy.source_type
+      and current.name = case legacy.source_type
+        when 'feishu_base' then 'feishu-base-daily'
+        when 'feishu_wiki' then 'feishu-wiki-daily'
+        else legacy.name
+      end
+  );
 
 create index if not exists idx_sync_sources_tenant_recent
   on sync_sources (tenant_id, updated_at desc);
@@ -1511,7 +1536,6 @@ targets as materialized (
   join resources r on true
   left join generated_copy_states gcs
     on gcs.tenant_id = r.tenant_id and gcs.resource_id = r.id
-  where r.type <> 'knowledge_anchor'
 )
 insert into resource_outbox (
   tenant_id, resource_id, resource_version, topic, dedupe_key, payload

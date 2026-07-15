@@ -146,6 +146,12 @@ def test_sync_service_records_success(monkeypatch):
     assert repo.started is not None
     assert repo.registered[0]["source_type"] == "feishu_base"
     assert repo.registered[1]["source_type"] == "feishu_wiki"
+    assert repo.registered[0]["enabled"] is True
+    assert repo.registered[1]["enabled"] is True
+    assert repo.registered[0]["schedule_seconds"] == 86400
+    assert repo.registered[1]["schedule_seconds"] == 86400
+    assert repo.registered[0]["name"] == "feishu-base-daily"
+    assert repo.registered[1]["name"] == "feishu-wiki-daily"
     assert repo.started["source_id"] == "source-1"
     assert repo.finished is not None
     assert repo.finished["status"] == "succeeded"

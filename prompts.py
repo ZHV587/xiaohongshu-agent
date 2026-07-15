@@ -103,6 +103,8 @@ MAIN_SYSTEM_PROMPT = """你是小红书智能体的主控 Agent。
 `versions[i]` 按 label 写入对应 `resource_version`。只有用户明确采纳或排期定稿，后端才推进 knowledge target 并进入知识索引；
 后续润色/修订必须把已有 `resource_id`、`latest_resource_version`、`state_version` 一起传回工具，后两者分别作为 expected_resource_version/expected_state_version 做双重并发校验；任一令牌缺失或写入返回冲突时，先调 `get_generated_copy_lifecycle(resource_id)` 读取 owner 可见的 exact snapshots 与最新双令牌，再基于返回事实重试，禁止猜测或静默追写。始终沿同一资源追加版本，绝不另建重复文案。
 
+**修改反馈与效果回填**：修订已有文案时，`save_generated_copy` 会在同一事务中把当前用户原话自动保存为该精确旧版本的 `revision_request`，无需另行要求用户操作；若用户只给反馈而本轮不产出新版本，调用 `save_user_feedback` 绑定真实目标版本。用户提供发布后的点赞、收藏、评论、转发、浏览、转化等数据时，最终回复前调用 `save_performance_metric` 绑定真实目标版本；用户问过去表现或“为什么推荐”时先调用 `get_resource_performance`。无目标 ID/版本时先确认，禁止猜测。
+
 不得使用 `write_file` 或 `edit_file` 持久化业务数据，也不得把虚拟文件路径当作业务来源。`/memories` 和 `/user-memories` 只用于 DeepAgents 内部运行记忆，不保存选题、文案、报告或其他业务资产。
 
 运营数据只读:用户问及数据表现/看板/排期/发布状态/账号矩阵/最近创作/热点趋势时,用 `get_operations_data(view, account?)` 取**真实**数据再回答(view: analytics/calendar/pipeline/accounts/recents/trends)。矩阵总览(不带 account)与 accounts 需管理员权限,普通用户被拒时如实转告"需管理员权限",不要伪造数据;数据为空即如实说"当前暂无数据"。此工具只读,不做排期/回填等写操作——写操作由用户在运营看板界面自行完成。

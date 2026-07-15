@@ -138,6 +138,29 @@ def test_sync_base_rows_reports_record_identity_on_invalid_input():
     assert "record_id" in result.errors[0]
 
 
+def test_sync_base_rows_flattens_feishu_rich_text_without_serializing_python_objects():
+    repo = RecordingRepository(_resource())
+    sync_base_rows(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_sync",
+        app_token="base1",
+        rows=[
+            {
+                "record_id": "rec-rich",
+                "table_id": "tbl1",
+                "fields": {
+                    "标题": [{"text": "敏感肌防晒"}],
+                    "正文": [{"text": "第一段"}, {"text": "第二段"}],
+                },
+            }
+        ],
+    )
+
+    assert repo.upserts[0]["title"] == "敏感肌防晒"
+    assert repo.upserts[0]["content_text"] == "第一段\n第二段"
+
+
 def test_sync_base_rows_upserts_records(migrated_conn):
     repo = ResourceRepository(migrated_conn)
 

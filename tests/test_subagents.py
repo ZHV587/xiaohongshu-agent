@@ -14,6 +14,7 @@ from subagents_executor import (
     build_knowledge_atom_retriever,
     build_persona_distiller,
     build_imitation_writer,
+    build_copywriting_coprocessor,
     build_executor_subagents,
 )
 
@@ -59,6 +60,19 @@ def test_imitation_writer_tools_and_contract():
     # 落库/同步类工具不应挂在仿写子代理上(职责收回主控直调)
     assert "save_generated_copy" not in names
     assert "adopt_online_notes" not in names
+    assert any(
+        type(item).__name__ == "KnowledgeGroundingMiddleware"
+        for item in ag["middleware"]
+    )
+
+
+def test_copywriting_coprocessor_has_runtime_automatic_grounding():
+    agent = build_copywriting_coprocessor(_registry(), Mock())
+    assert any(
+        type(item).__name__ == "KnowledgeGroundingMiddleware"
+        for item in agent["middleware"]
+    )
+    assert "<automatic_knowledge_grounding>" in agent["system_prompt"]
 
 
 def test_build_executor_subagents_includes_imitation_writer():

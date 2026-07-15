@@ -16,6 +16,7 @@ from data_foundation.metric_parse import weighted_engagement
 
 
 DEFAULT_RELEVANCE_FLOOR: float = 0.50
+DEFAULT_KEYWORD_RELEVANCE_FLOOR: float = 0.15
 RRF_K: int = 60
 RRF_ENGINE_WEIGHTS: dict[str, float] = {
     "semantic": 0.55,
@@ -102,6 +103,13 @@ def _first_rank(hits: Sequence[RecallHit]) -> dict[ExactIdentity, int]:
     return ranks
 
 
+def _first_score(hits: Sequence[RecallHit]) -> dict[ExactIdentity, float]:
+    scores: dict[ExactIdentity, float] = {}
+    for hit in hits:
+        scores.setdefault(hit.identity, _clamp_unit(hit.score))
+    return scores
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
@@ -182,6 +190,7 @@ def weighted_rrf_order(
         sources = {source for source, hits in hits_by_source.items() if hits}
     sources &= set(RRF_ENGINE_WEIGHTS)  # type: ignore[arg-type]
     rank_maps = {source: _first_rank(hits_by_source[source]) for source in sources}
+    score_maps = {source: _first_score(hits_by_source[source]) for source in sources}
     identities = {
         identity
         for rank_map in rank_maps.values()
@@ -190,7 +199,9 @@ def weighted_rrf_order(
 
     def score(identity: ExactIdentity) -> float:
         return sum(
-            RRF_ENGINE_WEIGHTS[source] / (RRF_K + rank_map[identity])
+            RRF_ENGINE_WEIGHTS[source]
+            * score_maps[source][identity]
+            / (RRF_K + rank_map[identity])
             for source, rank_map in rank_maps.items()
             if identity in rank_map
         )
@@ -225,6 +236,7 @@ def rank_knowledge_candidates(
     }
     sources = set(active_sources) & set(RRF_ENGINE_WEIGHTS)  # type: ignore[arg-type]
     rank_maps = {source: _first_rank(hits_by_source[source]) for source in sources}
+    score_maps = {source: _first_score(hits_by_source[source]) for source in sources}
     denominator = sum(
         RRF_ENGINE_WEIGHTS[source] / (RRF_K + 1)
         for source in sources
@@ -246,6 +258,7 @@ def rank_knowledge_candidates(
             continue
         rrf_raw = sum(
             RRF_ENGINE_WEIGHTS[source]
+            * score_maps[source][identity]
             / (RRF_K + rank_maps[source][identity])
             for source in retrieval_sources
         )
@@ -321,6 +334,7 @@ def rank_knowledge_candidates(
 
 __all__ = [
     "DEFAULT_RELEVANCE_FLOOR",
+    "DEFAULT_KEYWORD_RELEVANCE_FLOOR",
     "ExactIdentity",
     "P_SCORE_LOG_CAP",
     "RRF_ENGINE_WEIGHTS",

@@ -11,6 +11,7 @@ from data_foundation.preference_learning import (
     PreferenceObservation,
 )
 from data_foundation.repositories.base import BaseRepository
+from data_foundation.repositories.performance import PerformanceRepository
 
 
 class PreferenceRepository(BaseRepository):
@@ -177,6 +178,14 @@ class PreferenceRepository(BaseRepository):
                            q.duplicate_family_id::text, live.visibility,
                            q.content_json, q.metadata, q.quality_score,
                            q.normalized_hash,
+                           coalesce(
+                             teardown_source.resource_id::text,
+                             q.resource_id::text
+                           ) as performance_resource_id,
+                           coalesce(
+                             teardown_source.resource_version,
+                             q.resource_version
+                           ) as performance_resource_version,
                            coalesce(enrichment.payload, '{}'::jsonb) as enrichment
                     from current_knowledge_targets q
                     join resources live
@@ -193,6 +202,18 @@ class PreferenceRepository(BaseRepository):
                       order by ke.created_at desc, ke.id desc
                       limit 1
                     ) enrichment on true
+                    left join lateral (
+                      select edge.target_resource_id as resource_id,
+                             edge.target_resource_version as resource_version
+                      from resource_edges edge
+                      where q.asset_kind = 'teardown'
+                        and edge.tenant_id = q.tenant_id
+                        and edge.source_resource_id = q.resource_id
+                        and edge.source_resource_version = q.resource_version
+                        and edge.edge_type = 'teardown_of'
+                      order by edge.id
+                      limit 1
+                    ) teardown_source on true
                     where q.tenant_id = %s
                       and q.eligible_for_synthesis is true
                       and q.duplicate_family_id is not null
@@ -213,6 +234,26 @@ class PreferenceRepository(BaseRepository):
                     """,
                     (tenant_id, actor_open_id, actor_open_id),
                 ).fetchall()
+        identities: list[tuple[str, int]] = []
+        performance_identity_by_asset: dict[tuple[str, int], tuple[str, int]] = {}
+        for row in rows:
+            asset_identity = (
+                str(row["resource_id"]),
+                int(row["resource_version"]),
+            )
+            performance_identity = (
+                str(row["performance_resource_id"]),
+                int(row["performance_resource_version"]),
+            )
+            performance_identity_by_asset[asset_identity] = performance_identity
+            identities.append(performance_identity)
+        performance = PerformanceRepository(self.conn).bulk_exact_performance_metrics(
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            resource_ids=[identity[0] for identity in identities],
+            resource_versions=[identity[1] for identity in identities],
+            conn=self.conn,
+        ) if identities else {}
         assets: list[KnowledgeAsset] = []
         for row in rows:
             content = dict(row["content_json"] or {})
@@ -222,6 +263,15 @@ class PreferenceRepository(BaseRepository):
             }
             if metadata:
                 content["metadata"] = metadata
+            exact_identity = (str(row["resource_id"]), int(row["resource_version"]))
+            metric_rows = performance.get(
+                performance_identity_by_asset[exact_identity], []
+            )
+            performance_score = (
+                float(metric_rows[0].get("score") or 0.0)
+                if metric_rows
+                else None
+            )
             assets.append(
                 KnowledgeAsset(
                     source=ExactResourceVersion(
@@ -231,6 +281,7 @@ class PreferenceRepository(BaseRepository):
                     visibility=row["visibility"],
                     content_json=content,
                     quality_score=float(row["quality_score"] or 0.0),
+                    performance_score=performance_score,
                     normalized_hash=row["normalized_hash"],
                 )
             )

@@ -17,6 +17,7 @@ import uuid
 import httpx
 
 from data_foundation.config import (
+    current_keyword_relevance_floor,
     current_relevance_floor,
     embedding_snapshot_for_version,
     resolve_query_instruction,
@@ -34,6 +35,7 @@ from data_foundation.processors.embedding import (
 )
 from data_foundation.search import semantic_search
 from data_foundation.search_ranker import (
+    DEFAULT_KEYWORD_RELEVANCE_FLOOR,
     RecallHit,
     rank_knowledge_candidates,
     weighted_rrf_order,
@@ -359,15 +361,19 @@ class RetrievalService:
         keyword_recall: KeywordRecall | None,
         graph_expand: GraphExpand | None = None,
         relevance_floor: float = 0.50,
+        keyword_relevance_floor: float = DEFAULT_KEYWORD_RELEVANCE_FLOOR,
         unavailable_reasons: Mapping[RecallEngine, str] | None = None,
     ) -> None:
         if not 0.0 <= float(relevance_floor) <= 1.0:
             raise ValueError("relevance_floor must be between 0 and 1")
+        if not 0.0 <= float(keyword_relevance_floor) <= 1.0:
+            raise ValueError("keyword_relevance_floor must be between 0 and 1")
         self.repo = repo
         self.semantic_recall = semantic_recall
         self.keyword_recall = keyword_recall
         self.graph_expand = graph_expand
         self.relevance_floor = float(relevance_floor)
+        self.keyword_relevance_floor = float(keyword_relevance_floor)
         self.unavailable_reasons = dict(unavailable_reasons or {})
 
     def _degradation(
@@ -483,9 +489,13 @@ class RetrievalService:
                     filters=filter_payload,
                 )
                 keyword_hits = _normalize_hits(raw_keyword, semantic_floor=None)
-                # Meili 的 _rankingScore 为 0 表示没有可用词面相关性；RRF 只看名次，
-                # 若把 0 分文档留在候选中，它反而会被抬成 keyword rank-1。
-                keyword_hits = [hit for hit in keyword_hits if hit.score > 0.0]
+                # Meili 原始分必须先过绝对门；之后的 RRF 还会乘原始分，低分 rank-1
+                # 不再被归一化成 relevance=1。
+                keyword_hits = [
+                    hit
+                    for hit in keyword_hits
+                    if hit.score >= self.keyword_relevance_floor
+                ]
                 successful_engines.append("keyword")
             except Exception as exc:
                 degraded.append(self._degradation("keyword", exc))
@@ -660,6 +670,7 @@ def build_runtime_retrieval_service(repo: Any) -> RetrievalService:
         keyword_recall=keyword,
         graph_expand=graph,
         relevance_floor=current_relevance_floor(),
+        keyword_relevance_floor=current_keyword_relevance_floor(),
         unavailable_reasons=unavailable,
     )
 
