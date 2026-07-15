@@ -16,6 +16,11 @@ DATA_FOUNDATION_TABLES = (
     "knowledge_retrieval_exposures",
     "knowledge_retrieval_runs",
     "knowledge_retrieval_evidence_keys",
+    "knowledge_reranker_shadow_runs",
+    "generation_pairwise_preferences",
+    "generation_variants",
+    "generation_runs",
+    "resource_contexts",
     "agent_trace_events",
     "writing_profile_states",
     "preference_synthesis_events",
@@ -44,6 +49,7 @@ DATA_FOUNDATION_TABLES = (
     "resource_versions",
     "resource_mappings",
     "resource_type_counts",
+    "xhs_accounts",
     "resources",
 )
 

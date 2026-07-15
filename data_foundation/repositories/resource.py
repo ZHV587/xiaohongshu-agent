@@ -870,6 +870,7 @@ class ResourceRepository(BaseRepository):
         asset_kinds: list[str] | None = None,
         source_kinds: list[str] | None = None,
         niches: list[str] | None = None,
+        account_ids: list[str] | None = None,
         min_quality: float | None = None,
         updated_after: Any | None = None,
         conn: Optional[Connection] = None,
@@ -901,11 +902,33 @@ class ResourceRepository(BaseRepository):
         asset_kinds = [value.strip() for value in (asset_kinds or []) if value.strip()]
         source_kinds = [value.strip() for value in (source_kinds or []) if value.strip()]
         niches = [value.strip() for value in (niches or []) if value.strip()]
+        normalized_account_ids: list[str] = []
+        for account_id in account_ids or []:
+            try:
+                normalized_account_ids.append(str(uuid.UUID(str(account_id))))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValueError("account_ids must contain UUID values") from exc
         if min_quality is not None and not 0.0 <= float(min_quality) <= 1.0:
             raise ValueError("min_quality must be between 0 and 1")
 
         readable = self.readable_resource_where("r")
         with self.connection_context(conn) as connection:
+            if normalized_account_ids:
+                owned_rows = connection.execute(
+                    """
+                    select id::text
+                    from xhs_accounts
+                    where tenant_id = %s and owner_open_id = %s
+                      and status = 'active'
+                      and id = any(%s::uuid[])
+                    """,
+                    (tenant_id, actor_open_id, normalized_account_ids),
+                ).fetchall()
+                owned_ids = {str(row["id"]) for row in owned_rows}
+                if owned_ids != set(normalized_account_ids):
+                    raise PermissionError(
+                        "account filter is not owned by current actor"
+                    )
             with connection.cursor(row_factory=dict_row) as cursor:
                 rows = cursor.execute(
                     f"""
@@ -933,6 +956,7 @@ class ResourceRepository(BaseRepository):
                            target.metadata || coalesce(enrichment.payload, '{{}}'::jsonb)
                              as metadata,
                            coalesce(
+                             nullif(resource_context.niche, ''),
                              nullif(enrichment.payload->>'niche', ''),
                              nullif(target.content_json->>'niche', ''),
                              nullif(target.content_json->>'vertical', '')
@@ -961,6 +985,10 @@ class ResourceRepository(BaseRepository):
                                knowledge_enrichments.id desc
                       limit 1
                     ) enrichment on true
+                    left join resource_contexts resource_context
+                      on resource_context.tenant_id = target.tenant_id
+                     and resource_context.resource_id = target.resource_id
+                     and resource_context.resource_version = target.resource_version
                     where {readable}
                       and (
                         not %(has_asset_kinds)s
@@ -973,10 +1001,16 @@ class ResourceRepository(BaseRepository):
                       and (
                         not %(has_niches)s
                         or coalesce(
+                          nullif(resource_context.niche, ''),
                           nullif(enrichment.payload->>'niche', ''),
                           nullif(target.content_json->>'niche', ''),
                           nullif(target.content_json->>'vertical', '')
                         ) = any(%(niches)s::text[])
+                      )
+                      and (
+                        not %(has_account_ids)s
+                        or resource_context.account_id is null
+                        or resource_context.account_id = any(%(account_ids)s::uuid[])
                       )
                       and (
                         %(min_quality)s::double precision is null
@@ -999,6 +1033,8 @@ class ResourceRepository(BaseRepository):
                         "source_kinds": source_kinds,
                         "has_niches": bool(niches),
                         "niches": niches,
+                        "has_account_ids": bool(normalized_account_ids),
+                        "account_ids": normalized_account_ids,
                         "min_quality": min_quality,
                         "updated_after": updated_after,
                     },

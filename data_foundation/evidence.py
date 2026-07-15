@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from data_foundation.writing_context import normalize_account_id
+
 
 RetrievalMode = Literal[
     "hybrid",
@@ -31,6 +33,7 @@ class RetrievalFilters(BaseModel):
     asset_kinds: list[str] = Field(default_factory=list, max_length=20)
     source_kinds: list[str] = Field(default_factory=list, max_length=20)
     niches: list[str] = Field(default_factory=list, max_length=20)
+    account_ids: list[str] = Field(default_factory=list, max_length=20)
     min_quality: float | None = Field(default=None, ge=0.0, le=1.0)
     updated_after: datetime | None = None
 
@@ -46,6 +49,17 @@ class RetrievalFilters(BaseModel):
             if value not in seen:
                 normalized.append(value)
                 seen.add(value)
+        return normalized
+
+    @field_validator("account_ids")
+    @classmethod
+    def _normalize_account_ids(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for raw in values:
+            value = normalize_account_id(raw)
+            assert value is not None
+            if value not in normalized:
+                normalized.append(value)
         return normalized
 
     @field_validator("updated_after")

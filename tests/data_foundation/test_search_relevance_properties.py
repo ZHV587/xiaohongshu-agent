@@ -70,6 +70,8 @@ def _service(
     keyword,
     graph=None,
     floor: float = 0.5,
+    shadow_reranker=None,
+    shadow_observer=None,
 ) -> RetrievalService:
     return RetrievalService(
         repo,
@@ -77,6 +79,8 @@ def _service(
         keyword_recall=keyword,
         graph_expand=graph,
         relevance_floor=floor,
+        shadow_reranker=shadow_reranker,
+        shadow_observer=shadow_observer,
     )
 
 
@@ -249,6 +253,25 @@ def test_postgres_gate_failure_fails_closed() -> None:
         )
     assert str(exc_info.value) == "POSTGRES_KNOWLEDGE_GATE_FAILED"
     assert "secret" not in str(exc_info.value).lower()
+
+
+def test_shadow_reranker_never_changes_online_evidence_order() -> None:
+    repo = _Repo([_row(1), _row(2)])
+    observations = []
+    package = _service(
+        repo,
+        semantic=lambda **_: [
+            RecallHit(_id(1), 1, 0.9),
+            RecallHit(_id(2), 1, 0.8),
+        ],
+        keyword=lambda **_: [],
+        shadow_reranker=lambda **_: [(_id(2), 1), (_id(1), 1)],
+        shadow_observer=lambda **kwargs: observations.append(kwargs),
+    ).retrieve(tenant_id="default", actor_open_id="ou_user", query="职场")
+
+    assert [item.resource_id for item in package.evidence] == [_id(1), _id(2)]
+    assert observations[0]["observation"].shadow_order[0] == (_id(2), 1)
+    assert observations[0]["task_type"] == "general"
 
 
 @given(score=st.floats(min_value=-1, max_value=1, allow_nan=False, allow_infinity=False))

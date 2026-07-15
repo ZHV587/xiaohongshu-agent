@@ -8,6 +8,10 @@ from data_foundation.feishu_metrics import extract_performance_metrics
 from data_foundation.outbox_requests import default_write_requests
 from data_foundation.performance_feedback import save_performance_metric_resource
 from data_foundation.repositories.resource import ResourceRepository
+from data_foundation.knowledge.source_qualification import (
+    qualify_base_record,
+    qualify_wiki_document,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +53,7 @@ def sync_base_rows(
     actor_open_id: str,
     app_token: str,
     rows: list[dict[str, Any]],
+    source_config: dict[str, Any] | None = None,
 ) -> SyncResult:
     imported = 0
     errors: list[str] = []
@@ -66,6 +71,12 @@ def sync_base_rows(
             fields = dict(row.get("fields") or {})
             title = _field(fields, ["标题", "选题", "title", "Title"]) or table_name or record_id
             body = _field(fields, ["正文", "正文内容", "视频文案", "评论内容", "文档内容", "content", "Content"])
+            qualification = qualify_base_record(
+                table_id=table_id,
+                title=title,
+                body=body,
+                source_config=source_config,
+            )
             mapping = {
                 "system": "feishu",
                 "external_type": external_type,
@@ -85,6 +96,7 @@ def sync_base_rows(
                     "identity_kind": identity_kind,
                     "table_id": table_id,
                     "table_name": table_name,
+                    "knowledge_qualification": qualification,
                 },
                 visibility="team",
                 owner_open_id=actor_open_id,
@@ -131,6 +143,7 @@ def sync_wiki_documents(
     actor_open_id: str,
     space_id: str,
     documents: list[dict[str, Any]],
+    source_config: dict[str, Any] | None = None,
 ) -> SyncResult:
     imported = 0
     errors: list[str] = []
@@ -144,6 +157,11 @@ def sync_wiki_documents(
                 raise ValueError("node_token is required")
             title = str(doc.get("title") or obj_token)
             content = str(doc.get("content") or "")
+            qualification = qualify_wiki_document(
+                title=title,
+                content=content,
+                source_config=source_config,
+            )
             doc_mapping = {
                 "system": "feishu",
                 "external_type": "docx",
@@ -166,7 +184,12 @@ def sync_wiki_documents(
                     resource_type="feishu_doc",
                     title=title,
                     content_text=content,
-                    content_json={"space_id": space_id, "obj_token": obj_token, "node_token": node_token},
+                    content_json={
+                        "space_id": space_id,
+                        "obj_token": obj_token,
+                        "node_token": node_token,
+                        "knowledge_qualification": qualification,
+                    },
                     visibility="team",
                     owner_open_id=actor_open_id,
                     mapping=doc_mapping,

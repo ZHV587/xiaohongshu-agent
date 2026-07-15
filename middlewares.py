@@ -98,6 +98,8 @@ class FrontendDirectState(AgentState):
     selected_topic: NotRequired[dict]
     selected_reference: NotRequired[dict]
     selected_user_skill: NotRequired[dict | None]
+    current_account_id: NotRequired[str | None]
+    current_niche: NotRequired[str | None]
 
 
 class FrontendStateMiddleware(AgentMiddleware):

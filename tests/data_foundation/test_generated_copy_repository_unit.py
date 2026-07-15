@@ -354,6 +354,49 @@ def test_schedule_validates_state_latest_and_selected_as_distinct_cas_dimensions
         )
 
 
+def test_schedule_binds_account_before_finalized_preference_event(monkeypatch):
+    current = SimpleNamespace(
+        lifecycle_status="selected",
+        state_version=3,
+        latest_resource_version=1,
+        selected_version=1,
+        selected_label="A",
+    )
+    repo = _repo_with_locked_state(monkeypatch, current)
+    order = []
+    monkeypatch.setattr(repo, "_assert_version", lambda **_kwargs: None)
+    monkeypatch.setattr(repo, "_version_label", lambda **_kwargs: "A")
+    monkeypatch.setattr(
+        repo,
+        "_bind_version_account",
+        lambda **kwargs: order.append(("bind", kwargs["account_id"])),
+    )
+    monkeypatch.setattr(
+        repo,
+        "_event_and_index",
+        lambda **_kwargs: order.append(("event", "finalized")),
+    )
+    expected = object()
+    monkeypatch.setattr(repo, "_state", lambda *_args, **_kwargs: expected)
+    repo.conn.execute.return_value.fetchone.return_value = {"resource_id": "copy-1"}
+
+    result = repo.finalize_for_schedule(
+        tenant_id="default",
+        actor_open_id="ou_owner",
+        resource_id="copy-1",
+        target_resource_version=1,
+        expected_latest_resource_version=1,
+        expected_state_version=3,
+        account_id="11111111-1111-4111-8111-111111111111",
+    )
+
+    assert result is expected
+    assert order == [
+        ("bind", "11111111-1111-4111-8111-111111111111"),
+        ("event", "finalized"),
+    ]
+
+
 def test_published_and_measured_terminal_retries_are_idempotent(monkeypatch):
     published = SimpleNamespace(lifecycle_status="published")
     published_repo = _repo_with_locked_state(monkeypatch, published)

@@ -12,6 +12,11 @@ const ctx = readFileSync(
   "utf8",
 );
 
+test("写作上下文使用机器垂类字段，不把展示占位写进画像", () => {
+  assert.match(ctx, /current_niche:\s*selectedAccountRecord\?\.writingNiche \?\? null/);
+  assert.doesNotMatch(ctx, /current_niche:\s*selectedAccountRecord\?\.niche \?\? null/);
+});
+
 // 抽出 chooseTopic 的函数体做局部断言,避免匹配到文件别处的同名字段。
 function chooseTopicBody(): string {
   const start = ctx.indexOf("const chooseTopic = useCallback(");
@@ -43,10 +48,13 @@ test("chooseTopic 从 evidence[topic.id] 取精确素材身份,不编造", () =>
   assert.match(body, /indexed_at:\s*it\.indexed_at/);
 });
 
-test("chooseTopic 依赖数组包含本地编辑状态/evidence/versions/topicId(闭包拿到最新依据/文案/绑定选题)", () => {
+test("chooseTopic 依赖数组包含本地编辑状态/evidence/versions/topicId/写作上下文", () => {
   const body = chooseTopicBody();
   // 依赖需含 topicId:守卫要按"是否同一选题"判定,闭包必须读到当前绑定的 topicId,否则读旧值误判。
-  assert.match(body, /\[setLocalEditState,\s*setSection,\s*t,\s*evidence,\s*versions,\s*topicId\]/);
+  assert.match(
+    body,
+    /\[setLocalEditState,\s*setSection,\s*t,\s*evidence,\s*versions,\s*topicId,\s*writingContextState\]/,
+  );
 });
 
 test("chooseTopic 守卫按选题区分:只在重进同一选题且已有内容时不重跑", () => {

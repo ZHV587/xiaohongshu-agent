@@ -13,7 +13,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from langchain.agents.middleware import AgentMiddleware, ModelRequest
@@ -244,11 +244,25 @@ class ModelRouterMiddleware(AgentMiddleware):
             # 池为空:registry 尚未被 lifespan/探测/事件填充(server 接客前不会命中),
             # 或测试/CLI 态。回退到 request 自带的装配占位 model,不阻断调用。
             logger.debug("ModelRouter: 模型池为空,回退到装配占位 model")
-            return handler(request)
+            response = handler(request)
+            _annotate_model_response(
+                response,
+                provider=(os.environ.get("LLM_PROVIDER") or "openai").strip().lower(),
+                model_id=_model_id(request.model),
+                gateway_name=None,
+            )
+            return response
         last_exc: Exception | None = None
         for cand in candidates:
             try:
-                return handler(request.override(model=cand.model))
+                response = handler(request.override(model=cand.model))
+                _annotate_model_response(
+                    response,
+                    provider=(os.environ.get("LLM_PROVIDER") or "openai").strip().lower(),
+                    model_id=cand.model_id,
+                    gateway_name=cand.gateway_name,
+                )
+                return response
             except Exception as exc:  # noqa: BLE001
                 if is_gateway_failover_error(exc):
                     # 仅记 model_id 与异常类型名(不打印 request/prompt/响应体/api_key,守安全铁律)。
@@ -264,11 +278,25 @@ class ModelRouterMiddleware(AgentMiddleware):
         candidates = self._ordered_candidates()
         if not candidates:
             logger.debug("ModelRouter: 模型池为空,回退到装配占位 model")
-            return await handler(request)
+            response = await handler(request)
+            _annotate_model_response(
+                response,
+                provider=(os.environ.get("LLM_PROVIDER") or "openai").strip().lower(),
+                model_id=_model_id(request.model),
+                gateway_name=None,
+            )
+            return response
         last_exc: Exception | None = None
         for cand in candidates:
             try:
-                return await handler(request.override(model=cand.model))
+                response = await handler(request.override(model=cand.model))
+                _annotate_model_response(
+                    response,
+                    provider=(os.environ.get("LLM_PROVIDER") or "openai").strip().lower(),
+                    model_id=cand.model_id,
+                    gateway_name=cand.gateway_name,
+                )
+                return response
             except Exception as exc:  # noqa: BLE001
                 if is_gateway_failover_error(exc):
                     # 仅记 model_id 与异常类型名(不打印 request/prompt/响应体/api_key,守安全铁律)。
@@ -279,6 +307,38 @@ class ModelRouterMiddleware(AgentMiddleware):
                 raise  # 请求级错误(400/404/422)换网关也一样,不切候选
         assert last_exc is not None
         raise last_exc
+
+
+def _model_id(model: BaseChatModel) -> str | None:
+    for name in ("model_name", "model"):
+        value = getattr(model, name, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _annotate_model_response(
+    response: Any,
+    *,
+    provider: str,
+    model_id: str | None,
+    gateway_name: str | None,
+) -> None:
+    """把实际成功候选写进 AIMessage 元数据，供后续保存工具做权威归因。"""
+
+    if not model_id:
+        return
+    for message in getattr(response, "result", []) or []:
+        metadata = getattr(message, "response_metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        metadata.update(
+            {
+                "xhs_model_provider": provider,
+                "xhs_model_id": model_id,
+                "xhs_gateway_name": gateway_name,
+            }
+        )
 
 
 def build_router_middleware(pool_provider: ModelPoolProvider) -> ModelRouterMiddleware:

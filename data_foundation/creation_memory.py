@@ -7,6 +7,7 @@ from typing import Any
 import uuid
 
 from data_foundation.outbox_requests import candidate_graph_requests, default_write_requests
+from data_foundation.writing_context import WritingContext
 
 DERIVED_EDGE = "derived_from"
 FEEDBACK_EDGE = "feedback_on"
@@ -101,12 +102,14 @@ def save_generated_copy_resource(
     expected_resource_version: int | None = None,
     expected_state_version: int | None = None,
     origin_turn_id: str | None = None,
+    writing_context: WritingContext | None = None,
 ) -> dict[str, Any]:
     implicit_single_revision = versions is None
     candidates = _clean_copy_candidates(title=title, body=body, tags=tags, versions=versions)
     canonical = candidates[0]
     cleaned_evidence = _clean_evidence(evidence)
     source_topic = source_topic.strip() if isinstance(source_topic, str) and source_topic.strip() else None
+    writing_context = writing_context or WritingContext()
     with _unit_of_work(repo):
         is_real_repo = callable(getattr(getattr(repo, "conn", None), "transaction", None))
         lifecycle = None
@@ -146,6 +149,7 @@ def save_generated_copy_resource(
                     label=None if implicit_single_revision else candidate["label"],
                     cover=None if implicit_single_revision else candidate["cover"],
                     note=None if implicit_single_revision else candidate["note"],
+                    account_id=writing_context.account_id,
                 )
                 current_resource_version = state.latest_resource_version
                 current_state_version = state.state_version
@@ -217,6 +221,7 @@ def save_generated_copy_resource(
                 source_topic=source_topic,
                 evidence=cleaned_evidence,
                 grounding=grounding,
+                writing_context=writing_context,
             ),
             visibility="team",
             owner_open_id=actor_open_id,
@@ -245,6 +250,7 @@ def save_generated_copy_resource(
                     source_topic=source_topic,
                     evidence=cleaned_evidence,
                     grounding=grounding,
+                    writing_context=writing_context,
                 ),
                 visibility="team",
                 owner_open_id=actor_open_id,
@@ -258,6 +264,14 @@ def save_generated_copy_resource(
                     "title": candidate["title"],
                 }
             )
+        _attach_candidate_contexts(
+            repo,
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            resource_id=str(resource.id),
+            candidate_versions=candidate_versions,
+            context=writing_context,
+        )
         _link_copy_versions(
             repo,
             tenant_id=tenant_id,
@@ -356,6 +370,7 @@ def _copy_json(
     source_topic: str | None,
     evidence: list[dict[str, str]],
     grounding: dict[str, Any] | None = None,
+    writing_context: WritingContext | None = None,
 ) -> dict[str, Any]:
     payload = {
         "title": candidate["title"],
@@ -366,10 +381,46 @@ def _copy_json(
         "variant_label": candidate["label"],
         "source_topic": source_topic,
         "evidence": evidence,
+        "resource_context": (writing_context or WritingContext()).payload(),
     }
     if grounding:
         payload["knowledge_grounding"] = dict(grounding)
     return payload
+
+
+def _attach_candidate_contexts(
+    repo: Any,
+    *,
+    tenant_id: str,
+    actor_open_id: str,
+    resource_id: str,
+    candidate_versions: list[dict[str, Any]],
+    context: WritingContext,
+) -> None:
+    if context.is_global or getattr(repo, "conn", None) is None:
+        return
+    from data_foundation.repositories.account import AccountRepository
+
+    contexts = AccountRepository(repo.conn)
+    for candidate in candidate_versions:
+        if context.account_id is not None:
+            contexts.bind_resource_to_account(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                resource_version=int(candidate["resource_version"]),
+                account_id=context.account_id,
+                source="frontend",
+            )
+        else:
+            contexts.attach_resource_context(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                resource_version=int(candidate["resource_version"]),
+                context=context,
+                source="frontend",
+            )
 
 
 def _copy_text(candidate: dict[str, Any]) -> str:
@@ -454,6 +505,26 @@ def save_user_feedback_resource(
             },
             outbox_requests=default_write_requests(),
         )
+        connection = getattr(repo, "conn", None)
+        if target_resource_id and callable(getattr(connection, "execute", None)):
+            from data_foundation.repositories.account import AccountRepository
+
+            contexts = AccountRepository(connection)
+            target_context = contexts.get_resource_context(
+                tenant_id=tenant_id,
+                resource_id=target_resource_id,
+                resource_version=int(target_resource_version),
+                actor_open_id=actor_open_id,
+            )
+            if not target_context.is_global:
+                contexts.attach_resource_context(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=str(resource.id),
+                    resource_version=int(resource.version),
+                    context=target_context,
+                    source="inherited",
+                )
         if target_resource_id:
             # 仅当 actor 对 target 有读权限才建反馈边(防越权连到他人私有资源)。
             # revision_request 已强制要求 target,但其权限同样需校验。

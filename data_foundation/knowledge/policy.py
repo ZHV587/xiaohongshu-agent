@@ -8,6 +8,7 @@ from data_foundation.writing_teardown import (
     TEARDOWN_ANALYSIS_SCHEMA_VERSION,
     TEARDOWN_DETERMINISTIC_QUALITY,
 )
+from data_foundation.knowledge.source_qualification import is_explicitly_qualified
 
 
 _SIGNAL_TYPES = {
@@ -222,7 +223,32 @@ def classify_knowledge_asset(
             quality=_quality(content, 0.75), synthesis=True, reason="ADOPTED_BENCHMARK",
         )
 
-    synced = bool(snapshot.mapping_systems) or resource_type in {"feishu_doc", "feishu_base_record"}
+    if resource_type in {"feishu_doc", "feishu_base_record"}:
+        qualification = content.get("knowledge_qualification")
+        if not is_explicitly_qualified(qualification):
+            reason = (
+                str(qualification.get("reason") or "SYNC_SOURCE_NOT_EXPLICITLY_QUALIFIED")
+                if isinstance(qualification, dict)
+                else "SYNC_SOURCE_NOT_EXPLICITLY_QUALIFIED"
+            )
+            return _decision(
+                "rejected", asset_kind="source_material", source_kind="workspace_excluded",
+                authority=_authority(
+                    origin="workspace", validation="excluded", provenance="source_policy", score=0.0,
+                ),
+                quality=0.0, synthesis=False, reason=reason,
+            )
+        return _decision(
+            "qualified", asset_kind="source_material", source_kind="workspace_sync",
+            authority=_authority(
+                origin="workspace", validation="source_allowlist",
+                provenance="source_policy", score=0.8,
+            ),
+            quality=_quality(content, 0.7), synthesis=True,
+            reason="EXPLICIT_WORKSPACE_KNOWLEDGE_SOURCE",
+        )
+
+    synced = bool(snapshot.mapping_systems)
     return _decision(
         "qualified", asset_kind="source_material",
         source_kind="workspace_sync" if synced else "imported",

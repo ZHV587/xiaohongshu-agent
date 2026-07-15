@@ -9,10 +9,12 @@ import calendar as _calendar
 from datetime import date, datetime, timedelta, timezone
 
 from data_foundation.db import connect
+from data_foundation.repositories.account import AccountRepository
 from data_foundation.studio_shared import (
     day_of_month,
     derive_stage,
 )
+from data_foundation.writing_context import WritingContext
 
 
 # ── 格式化 helper(纯函数,中文计数口径,与 UI types.ts 字段对齐) ──
@@ -182,39 +184,102 @@ def _build_library_and_teardown(rows: list[dict]) -> tuple[list[dict], dict]:
     return library, teardown
 
 
+def load_owned_account_context(
+    *, tenant_id: str, actor_open_id: str, account: str
+) -> WritingContext:
+    """验证单账号访问权，并返回账号表中的权威写作上下文。"""
+    conn = connect()
+    try:
+        return AccountRepository(conn).get_owned_context(
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            account_id=account,
+        )
+    finally:
+        conn.close()
+
+
 def load_analytics(*, tenant_id: str, account: str | None) -> dict:
-    """看板 + 选题库 + 拆解。account 指定(单账号)时无真实归属可聚合 → 真实空集合。"""
-    if account is not None:
-        return {"dashboard": [], "library": [], "teardown": {"title": "", "points": []}}
+    """看板 + 选题库 + 拆解；账号过滤以精确版本 resource_contexts 为准。"""
     conn = connect()
     try:
         metric_rows = conn.execute(
             """
-            select content_json, updated_at
-            from resources
-            where tenant_id = %s and type = 'performance_metric' and status = 'active'
+            with latest_metric as (
+              select distinct on (rv.resource_id)
+                     rv.resource_id, rv.version, rv.content_json, rv.created_at
+              from resource_versions rv
+              join resources live
+                on live.tenant_id = rv.tenant_id and live.id = rv.resource_id
+              where rv.tenant_id = %s and live.type = 'performance_metric'
+                and live.status = 'active'
+              order by rv.resource_id, rv.version desc
+            )
+            select distinct on (metric.resource_id)
+                   metric.content_json, metric.created_at as updated_at
+            from latest_metric metric
+            join resource_edges edge
+              on edge.tenant_id = %s
+             and edge.target_resource_id = metric.resource_id
+             and edge.target_resource_version = metric.version
+             and edge.edge_type = 'measured_by'
+            left join resource_contexts context
+              on context.tenant_id = edge.tenant_id
+             and context.resource_id = edge.source_resource_id
+             and context.resource_version = edge.source_resource_version
+            where (%s::uuid is null or context.account_id = %s::uuid)
+            order by metric.resource_id, edge.created_at desc
             """,
-            (tenant_id,),
+            (tenant_id, tenant_id, account, account),
         ).fetchall()
         library_rows = conn.execute(
             """
+            with latest_metric as (
+              select distinct on (rv.resource_id)
+                     rv.resource_id, rv.version, rv.content_json, rv.created_at
+              from resource_versions rv
+              join resources live
+                on live.tenant_id = rv.tenant_id and live.id = rv.resource_id
+              where rv.tenant_id = %s and live.type = 'performance_metric'
+                and live.status = 'active'
+              order by rv.resource_id, rv.version desc
+            )
             select c.id::text as id, c.title, c.summary,
-                   c.content_json as copy_json, c.updated_at as copy_updated,
-                   m.content_json as metric_json
+                   exact.content_json as copy_json, exact.created_at as copy_updated,
+                   metric.content_json as metric_json
             from resources c
-            left join resource_edges e
-              on e.tenant_id = c.tenant_id
-             and e.source_resource_id = c.id
-             and e.edge_type = 'measured_by'
-            left join resources m
-              on m.tenant_id = c.tenant_id
-             and m.id = e.target_resource_id
-             and m.type = 'performance_metric'
-            where c.tenant_id = %s and c.type = 'generated_copy' and c.status = 'active'
+            join lateral (
+              select rv.version, rv.content_json, rv.created_at
+              from resource_versions rv
+              where rv.tenant_id = c.tenant_id and rv.resource_id = c.id
+              order by rv.version desc
+              limit 1
+            ) exact on true
+            left join lateral (
+              select latest.content_json, edge.source_resource_version
+              from resource_edges edge
+              join latest_metric latest
+                on latest.resource_id = edge.target_resource_id
+               and latest.version = edge.target_resource_version
+              where edge.tenant_id = c.tenant_id
+                and edge.source_resource_id = c.id
+                and edge.edge_type = 'measured_by'
+              order by latest.created_at desc, edge.id desc
+              limit 1
+            ) metric on true
+            left join resource_contexts context
+              on context.tenant_id = c.tenant_id
+             and context.resource_id = c.id
+             and context.resource_version = coalesce(
+                   metric.source_resource_version, exact.version
+                 )
+            where c.tenant_id = %s and c.type = 'generated_copy'
+              and c.status = 'active'
+              and (%s::uuid is null or context.account_id = %s::uuid)
             order by c.updated_at desc, c.id desc
             limit 50
             """,
-            (tenant_id,),
+            (tenant_id, tenant_id, account, account),
         ).fetchall()
     finally:
         conn.close()
@@ -227,43 +292,58 @@ def _load_schedule_items(*, tenant_id: str, account: str | None) -> list[dict]:
     """日历排期项:performance_metric.content_json 含 scheduled_date 的条目按天分组(需求 12.x)。
 
     真实来源:写接口(/internal/studio/schedule)把排期落为 generated_copy 的 performance_metric
-    (measured_by 边 + content_json.scheduled_date/scheduled_time/account),此处经边回读其归属
-    generated_copy 标题。account 指定 → 仅该账号(需求 12.3);无排期 → 真实空集合(需求 12.4)。
+    (measured_by 边 + content_json.scheduled_date/scheduled_time),此处经边和 resource_contexts
+    回读精确版本标题与账号归属。account 指定 → 仅该账号;无排期 → 真实空集合。
     存储不可用直接抛出 → calendar 接口据此返回 503(真实错误,不降级吞错)。
     """
     conn = connect()
     try:
         rows = conn.execute(
             """
+            with latest_metric as (
+              select distinct on (rv.resource_id)
+                     rv.resource_id, rv.version, rv.content_json
+              from resource_versions rv
+              join resources live
+                on live.tenant_id = rv.tenant_id and live.id = rv.resource_id
+              where rv.tenant_id = %s and live.type = 'performance_metric'
+                and live.status = 'active'
+              order by rv.resource_id, rv.version desc
+            )
             select c.id::text as resource_id,
                    coalesce(nullif(cv.content_json->>'title', ''), c.title) as title,
-                   m.content_json as metric_json
-            from resources m
+                   metric.content_json as metric_json,
+                   context.account_id::text as account_id
+            from latest_metric metric
             join resource_edges e
-              on e.tenant_id = m.tenant_id
-             and e.target_resource_id = m.id
+              on e.tenant_id = %s
+             and e.target_resource_id = metric.resource_id
+             and e.target_resource_version = metric.version
              and e.edge_type = 'measured_by'
             join resources c
-              on c.tenant_id = m.tenant_id
+              on c.tenant_id = e.tenant_id
              and c.id = e.source_resource_id
             left join resource_versions cv
               on cv.tenant_id = c.tenant_id
              and cv.resource_id = c.id
-             and cv.version = nullif(m.content_json->>'target_resource_version', '')::int
-            where m.tenant_id = %s and m.type = 'performance_metric' and m.status = 'active'
-              and (m.content_json ->> 'scheduled_date') is not null
-            order by m.content_json ->> 'scheduled_date', m.content_json ->> 'scheduled_time'
+             and cv.version = e.source_resource_version
+            left join resource_contexts context
+              on context.tenant_id = e.tenant_id
+             and context.resource_id = e.source_resource_id
+             and context.resource_version = e.source_resource_version
+            where (metric.content_json ->> 'scheduled_date') is not null
+              and (%s::uuid is null or context.account_id = %s::uuid)
+            order by metric.content_json ->> 'scheduled_date',
+                     metric.content_json ->> 'scheduled_time'
             """,
-            (tenant_id,),
+            (tenant_id, tenant_id, account, account),
         ).fetchall()
     finally:
         conn.close()
     by_day: dict[int, list[dict]] = {}
     for row in rows:
         content = dict(row["metric_json"] or {})
-        acct = content.get("account") or ""
-        if account is not None and acct != account:
-            continue
+        acct = row["account_id"] or ""
         day = day_of_month(content.get("scheduled_date"))
         if day is None:
             continue
@@ -289,11 +369,96 @@ def load_calendar(*, tenant_id: str, account: str | None) -> dict:
     return {"month": month, "calendar": _load_schedule_items(tenant_id=tenant_id, account=account)}
 
 
-def load_accounts(*, tenant_id: str) -> dict:
-    """账号矩阵 + 聚合总览。数据底座暂无账号实体模型 → 真实空集合 + overview 全 0(需求 9.5)。"""
+def load_accounts(*, tenant_id: str, actor_open_id: str) -> dict:
+    """当前用户的账号矩阵 + 真实档案/近七天创作聚合。"""
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """
+            select account.id::text as id,
+                   account.display_name,
+                   account.niche,
+                   account.is_default,
+                   account.metadata,
+                   count(distinct case
+                     when exact_live.type = 'generated_copy'
+                      and exact.created_at >= now() - interval '7 days'
+                     then context.resource_id
+                   end)::int as week_posts,
+                   coalesce(avg(case
+                     when metric_exact.created_at >= now() - interval '7 days'
+                     then nullif(metric_exact.content_json->'normalized_performance'->>'score', '')::double precision
+                   end), 0.0) as hot_rate
+            from xhs_accounts account
+            left join resource_contexts context
+              on context.tenant_id = account.tenant_id
+             and context.account_id = account.id
+            left join resource_versions exact
+              on exact.tenant_id = context.tenant_id
+             and exact.resource_id = context.resource_id
+             and exact.version = context.resource_version
+            left join resources exact_live
+              on exact_live.tenant_id = context.tenant_id
+             and exact_live.id = context.resource_id
+            left join resource_edges measured
+              on measured.tenant_id = context.tenant_id
+             and measured.source_resource_id = context.resource_id
+             and measured.source_resource_version = context.resource_version
+             and measured.edge_type = 'measured_by'
+             and exact_live.type = 'generated_copy'
+            left join resource_versions metric_exact
+              on metric_exact.tenant_id = measured.tenant_id
+             and metric_exact.resource_id = measured.target_resource_id
+             and metric_exact.version = measured.target_resource_version
+            where account.tenant_id = %s and account.owner_open_id = %s
+              and account.status = 'active'
+            group by account.id, account.display_name, account.niche,
+                     account.is_default, account.metadata
+            order by account.is_default desc, account.updated_at desc, account.id
+            """,
+            (tenant_id, actor_open_id),
+        ).fetchall()
+    finally:
+        conn.close()
+    accounts: list[dict] = []
+    tones = ("coral", "topic", "draft")
+    for index, row in enumerate(rows):
+        metadata = dict(row["metadata"] or {})
+        fans = max(int(metadata.get("fans") or 0), 0)
+        delta = max(int(metadata.get("week_new_fans") or 0), 0)
+        hot = round(float(row["hot_rate"] or 0.0) * 100)
+        name = str(row["display_name"])
+        accounts.append(
+            {
+                "id": str(row["id"]),
+                "handle": name,
+                "niche": str(row["niche"] or "未设置垂类"),
+                # 展示占位与机器写作上下文分离，避免“未设置垂类”进入画像 scope。
+                "writingNiche": str(row["niche"]) if row["niche"] else None,
+                "initial": name[:1],
+                "fans": _compact_number(fans),
+                "fansNum": fans,
+                "dFans": delta,
+                "posts": int(row["week_posts"] or 0),
+                "hot": hot,
+                "status": "主力" if row["is_default"] else "成长",
+                "tone": tones[index % len(tones)],
+            }
+        )
+    total_fans = sum(item["fansNum"] for item in accounts)
+    week_new = sum(item["dFans"] for item in accounts)
+    week_posts = sum(item["posts"] for item in accounts)
+    average_hot = (
+        sum(item["hot"] for item in accounts) / len(accounts) if accounts else 0
+    )
     return {
-        "accounts": [],
-        "overview": {"totalFans": 0, "weekNewFans": 0, "weekPosts": 0, "avgHotRate": 0},
+        "accounts": accounts,
+        "overview": {
+            "totalFans": total_fans,
+            "weekNewFans": week_new,
+            "weekPosts": week_posts,
+            "avgHotRate": average_hot,
+        },
     }
 
 
@@ -308,27 +473,44 @@ def load_pipeline(*, tenant_id: str, account: str | None) -> list[dict]:
     try:
         rows = conn.execute(
             """
+            with latest_metric as (
+              select distinct on (rv.resource_id)
+                     rv.resource_id, rv.version, rv.content_json, rv.created_at
+              from resource_versions rv
+              join resources live
+                on live.tenant_id = rv.tenant_id and live.id = rv.resource_id
+              where rv.tenant_id = %s and live.type = 'performance_metric'
+                and live.status = 'active'
+              order by rv.resource_id, rv.version desc
+            )
             select c.id::text as id,
                    coalesce(nullif(cv.content_json->>'title', ''), c.title) as title,
-                   m.content_json as metric_json, m.updated_at as metric_updated
+                   metric.content_json as metric_json,
+                   metric.created_at as metric_updated,
+                   context.account_id::text as account_id
             from resources c
             join resource_edges e
               on e.tenant_id = c.tenant_id
              and e.source_resource_id = c.id
              and e.edge_type = 'measured_by'
-            join resources m
-              on m.tenant_id = c.tenant_id
-             and m.id = e.target_resource_id
-             and m.type = 'performance_metric'
+            join latest_metric metric
+              on metric.resource_id = e.target_resource_id
+             and metric.version = e.target_resource_version
             left join resource_versions cv
               on cv.tenant_id = c.tenant_id
              and cv.resource_id = c.id
-             and cv.version = nullif(m.content_json->>'target_resource_version', '')::int
-            where c.tenant_id = %s and c.type = 'generated_copy' and c.status = 'active'
-            order by m.updated_at desc, c.id desc
+             and cv.version = e.source_resource_version
+            left join resource_contexts context
+              on context.tenant_id = e.tenant_id
+             and context.resource_id = e.source_resource_id
+             and context.resource_version = e.source_resource_version
+            where c.tenant_id = %s and c.type = 'generated_copy'
+              and c.status = 'active'
+              and (%s::uuid is null or context.account_id = %s::uuid)
+            order by metric.created_at desc, c.id desc
             limit 50
             """,
-            (tenant_id,),
+            (tenant_id, tenant_id, account, account),
         ).fetchall()
     finally:
         conn.close()
@@ -336,9 +518,7 @@ def load_pipeline(*, tenant_id: str, account: str | None) -> list[dict]:
     index = 0
     for row in rows:
         content = dict(row["metric_json"] or {})
-        acct = content.get("account") or ""
-        if account is not None and acct != account:
-            continue
+        acct = row["account_id"] or ""
         stage = derive_stage(content)
         if stage is None:
             continue

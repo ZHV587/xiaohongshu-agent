@@ -12,6 +12,7 @@ from data_foundation.preference_learning import (
 )
 from data_foundation.repositories.base import BaseRepository
 from data_foundation.repositories.performance import PerformanceRepository
+from data_foundation.writing_context import WritingContext
 
 
 class PreferenceRepository(BaseRepository):
@@ -32,6 +33,7 @@ class PreferenceRepository(BaseRepository):
         tenant_id: str,
         actor_open_id: str,
         observation: PreferenceObservation,
+        scope_key: str = "global",
     ) -> bool:
         metadata = {"source_event_id": observation.source_event_id}
         with self.connection_context() as connection:
@@ -40,8 +42,9 @@ class PreferenceRepository(BaseRepository):
                     """
                     insert into preference_observations (
                       tenant_id, owner_open_id, resource_id, resource_version,
-                      observation_type, signal, weight, idempotency_key, metadata
-                    ) values (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb)
+                      observation_type, signal, weight, idempotency_key, metadata,
+                      scope_key
+                    ) values (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s)
                     on conflict (tenant_id, owner_open_id, idempotency_key) do nothing
                     returning id
                     """,
@@ -55,12 +58,13 @@ class PreferenceRepository(BaseRepository):
                         1.0,
                         observation.event_key,
                         json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                        scope_key,
                     ),
                 ).fetchone()
                 return row is not None
 
     def list_observations(
-        self, *, tenant_id: str, actor_open_id: str
+        self, *, tenant_id: str, actor_open_id: str, scope_key: str = "global"
     ) -> list[PreferenceObservation]:
         with self.connection_context() as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
@@ -70,9 +74,10 @@ class PreferenceRepository(BaseRepository):
                            signal, idempotency_key, metadata
                     from preference_observations
                     where tenant_id = %s and owner_open_id = %s
+                      and (%s = 'global' or scope_key in ('global', %s))
                     order by idempotency_key
                     """,
-                    (tenant_id, actor_open_id),
+                    (tenant_id, actor_open_id, scope_key, scope_key),
                 ).fetchall()
         observations: list[PreferenceObservation] = []
         for row in rows:
@@ -91,7 +96,7 @@ class PreferenceRepository(BaseRepository):
         return observations
 
     def get_profile_state(
-        self, *, tenant_id: str, actor_open_id: str
+        self, *, tenant_id: str, actor_open_id: str, scope_key: str = "global"
     ) -> dict[str, Any] | None:
         with self.connection_context() as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
@@ -102,9 +107,9 @@ class PreferenceRepository(BaseRepository):
                            profile, evidence_count, revision, rebuilt_through,
                            created_at, updated_at
                     from writing_profile_states
-                    where tenant_id = %s and owner_open_id = %s
+                    where tenant_id = %s and owner_open_id = %s and scope_key = %s
                     """,
-                    (tenant_id, actor_open_id),
+                    (tenant_id, actor_open_id, scope_key),
                 ).fetchone()
                 return None if row is None else dict(row)
 
@@ -118,6 +123,7 @@ class PreferenceRepository(BaseRepository):
         input_digest: str,
         observation_count: int,
         profile: dict[str, Any] | None = None,
+        scope_key: str = "global",
     ) -> dict[str, Any]:
         profile_payload = dict(profile or {})
         with self.connection_context() as connection:
@@ -127,9 +133,9 @@ class PreferenceRepository(BaseRepository):
                     insert into writing_profile_states (
                       tenant_id, owner_open_id, profile_resource_id, profile_resource_version,
                       input_digest, observation_count, profile, evidence_count,
-                      revision, rebuilt_through
-                    ) values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, 1, now())
-                    on conflict (tenant_id, owner_open_id) do update
+                      revision, rebuilt_through, scope_key
+                    ) values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, 1, now(), %s)
+                    on conflict (tenant_id, owner_open_id, scope_key) do update
                     set profile_resource_id = excluded.profile_resource_id,
                         profile_resource_version = excluded.profile_resource_version,
                         input_digest = excluded.input_digest,
@@ -162,14 +168,20 @@ class PreferenceRepository(BaseRepository):
                         observation_count,
                         json.dumps(profile_payload, ensure_ascii=False, sort_keys=True),
                         observation_count,
+                        scope_key,
                     ),
                 ).fetchone()
                 return dict(row)
 
     def list_eligible_assets(
-        self, *, tenant_id: str, actor_open_id: str
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        writing_context: WritingContext | None = None,
     ) -> list[KnowledgeAsset]:
         """Return exact qualified inputs, excluding other users' private assets."""
+        context = writing_context or WritingContext()
         with self.connection_context() as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 rows = cursor.execute(
@@ -192,6 +204,10 @@ class PreferenceRepository(BaseRepository):
                       on live.tenant_id = q.tenant_id
                      and live.id = q.resource_id
                      and live.status = 'active'
+                    left join resource_contexts asset_context
+                      on asset_context.tenant_id = q.tenant_id
+                     and asset_context.resource_id = q.resource_id
+                     and asset_context.resource_version = q.resource_version
                     left join lateral (
                       select ke.payload
                       from knowledge_enrichments ke
@@ -218,6 +234,19 @@ class PreferenceRepository(BaseRepository):
                       and q.eligible_for_synthesis is true
                       and q.duplicate_family_id is not null
                       and (
+                        (%s = 'global' and asset_context.resource_id is null)
+                        or (
+                          %s <> 'global'
+                          and (
+                            asset_context.resource_id is null
+                            or (
+                              asset_context.owner_open_id = %s
+                              and asset_context.scope_key = %s
+                            )
+                          )
+                        )
+                      )
+                      and (
                         live.visibility = 'team'
                         or live.owner_open_id = %s
                         or exists (
@@ -232,7 +261,15 @@ class PreferenceRepository(BaseRepository):
                       )
                     order by q.duplicate_family_id, q.resource_id, q.resource_version
                     """,
-                    (tenant_id, actor_open_id, actor_open_id),
+                    (
+                        tenant_id,
+                        context.scope_key,
+                        context.scope_key,
+                        actor_open_id,
+                        context.scope_key,
+                        actor_open_id,
+                        actor_open_id,
+                    ),
                 ).fetchall()
         identities: list[tuple[str, int]] = []
         performance_identity_by_asset: dict[tuple[str, int], tuple[str, int]] = {}
@@ -287,8 +324,56 @@ class PreferenceRepository(BaseRepository):
             )
         return assets
 
-    def list_actor_patterns(
+    def list_eligible_contexts(
         self, *, tenant_id: str, actor_open_id: str
+    ) -> list[WritingContext]:
+        """列出当前 actor 有资格参与模式综合的精确账号/垂类范围。"""
+
+        with self.connection_context() as connection:
+            rows = connection.execute(
+                """
+                select distinct context.account_id::text, context.niche, context.scope_key
+                from current_knowledge_targets q
+                join resources live
+                  on live.tenant_id = q.tenant_id
+                 and live.id = q.resource_id
+                 and live.status = 'active'
+                join resource_contexts context
+                  on context.tenant_id = q.tenant_id
+                 and context.resource_id = q.resource_id
+                 and context.resource_version = q.resource_version
+                 and context.owner_open_id = %s
+                where q.tenant_id = %s
+                  and q.eligible_for_synthesis is true
+                  and q.duplicate_family_id is not null
+                  and (
+                    live.visibility = 'team'
+                    or live.owner_open_id = %s
+                    or exists (
+                      select 1
+                      from resource_permissions rp
+                      where rp.tenant_id = live.tenant_id
+                        and rp.resource_id = live.id
+                        and rp.subject_type = 'user'
+                        and rp.subject_id = %s
+                        and rp.permission in ('read', 'write', 'admin')
+                    )
+                  )
+                order by context.scope_key
+                """,
+                (actor_open_id, tenant_id, actor_open_id, actor_open_id),
+            ).fetchall()
+        return [
+            WritingContext(account_id=row["account_id"], niche=row["niche"])
+            for row in rows
+        ]
+
+    def list_actor_patterns(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        scope_key: str = "global",
     ) -> list[dict[str, Any]]:
         """Return every latest actor-owned pattern, including inactive ones."""
         with self.connection_context() as connection:
@@ -310,9 +395,13 @@ class PreferenceRepository(BaseRepository):
                     where r.tenant_id = %s
                       and r.owner_open_id = %s
                       and r.type = 'writing_pattern'
+                      and coalesce(
+                        rv.content_json->'writing_context'->>'scope_key',
+                        'global'
+                      ) = %s
                     order by r.id
                     """,
-                    (tenant_id, actor_open_id),
+                    (tenant_id, actor_open_id, scope_key),
                 ).fetchall()
         return [dict(row) for row in rows]
 

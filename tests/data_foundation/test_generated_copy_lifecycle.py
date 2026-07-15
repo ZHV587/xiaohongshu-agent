@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from data_foundation.creation_memory import save_generated_copy_resource
+from data_foundation.creation_memory import (
+    save_generated_copy_resource,
+    save_user_feedback_resource,
+)
 from data_foundation.performance_feedback import save_performance_metric_resource
 from data_foundation.embedding_repository import EmbeddingRepository, VectorChunk
 from data_foundation.knowledge.service import KnowledgeService
@@ -10,6 +13,7 @@ from data_foundation.repositories.generated_copy import (
     GeneratedCopyConflict,
     GeneratedCopyRepository,
 )
+from data_foundation.repositories.account import AccountRepository
 from data_foundation.repositories.resource import ResourceRepository
 
 
@@ -342,6 +346,130 @@ def test_schedule_final_draft_appends_snapshot_and_finalizes_atomically(migrated
     assert snapshots[1]["body"] == versions[1][1]["body"]
     assert state.selected_label == snapshots[1]["label"]
     assert versions[1][1]["body"] == "这是用户编辑后的精确正文。"
+
+
+def test_schedule_binds_exact_account_scope_idempotently_and_rejects_rebinding(
+    migrated_conn,
+):
+    repo, _topic_id, resource_id = _seed_copy(migrated_conn)
+    accounts = AccountRepository(migrated_conn)
+    account_a = accounts.upsert_account(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        display_name="露营号",
+        niche="露营",
+    )
+    account_b = accounts.upsert_account(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        display_name="职场号",
+        niche="职场",
+    )
+    foreign = accounts.upsert_account(
+        tenant_id="default",
+        actor_open_id="ou_other",
+        display_name="他人账号",
+        niche="美妆",
+    )
+    lifecycle = GeneratedCopyRepository(repo)
+
+    finalized = lifecycle.finalize_for_schedule(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id=resource_id,
+        target_resource_version=1,
+        expected_latest_resource_version=1,
+        expected_state_version=1,
+        account_id=str(account_a["id"]),
+    )
+    context = migrated_conn.execute(
+        """
+        select account_id::text, niche, scope_key
+        from resource_contexts
+        where tenant_id = 'default' and resource_id = %s and resource_version = 1
+        """,
+        (resource_id,),
+    ).fetchone()
+    assert context["account_id"] == str(account_a["id"])
+    assert context["niche"] == "露营"
+    observation = migrated_conn.execute(
+        """
+        select scope_key
+        from preference_observations
+        where tenant_id = 'default' and owner_open_id = 'ou_user'
+          and resource_id = %s and resource_version = 1
+          and observation_type = 'finalized'
+        """,
+        (resource_id,),
+    ).fetchone()
+    assert observation["scope_key"] == context["scope_key"]
+
+    feedback = save_user_feedback_resource(
+        repo,
+        tenant_id="default",
+        actor_open_id="ou_user",
+        feedback="开头再直接一点",
+        target_resource_id=resource_id,
+        target_resource_version=1,
+        feedback_type="revision_request",
+    )
+    feedback_context = migrated_conn.execute(
+        """
+        select account_id::text, scope_key
+        from resource_contexts
+        where tenant_id = 'default' and resource_id = %s and resource_version = %s
+        """,
+        (
+            feedback["resource"]["resource_id"],
+            feedback["resource"]["version"],
+        ),
+    ).fetchone()
+    assert feedback_context["account_id"] == str(account_a["id"])
+    feedback_observation = migrated_conn.execute(
+        """
+        select scope_key
+        from preference_observations
+        where tenant_id = 'default' and owner_open_id = 'ou_user'
+          and resource_id = %s and resource_version = %s
+          and observation_type = 'feedback'
+        """,
+        (
+            feedback["resource"]["resource_id"],
+            feedback["resource"]["version"],
+        ),
+    ).fetchone()
+    assert feedback_observation["scope_key"] == feedback_context["scope_key"]
+
+    replay = lifecycle.finalize_for_schedule(
+        tenant_id="default",
+        actor_open_id="ou_user",
+        resource_id=resource_id,
+        target_resource_version=1,
+        expected_latest_resource_version=1,
+        expected_state_version=1,
+        account_id=str(account_a["id"]),
+    )
+    assert replay.finalized_version == finalized.finalized_version
+    with pytest.raises(GeneratedCopyConflict, match="another account"):
+        lifecycle.finalize_for_schedule(
+            tenant_id="default",
+            actor_open_id="ou_user",
+            resource_id=resource_id,
+            target_resource_version=1,
+            expected_latest_resource_version=1,
+            expected_state_version=1,
+            account_id=str(account_b["id"]),
+        )
+    with pytest.raises(PermissionError):
+        lifecycle.finalize_for_schedule(
+            tenant_id="default",
+            actor_open_id="ou_user",
+            resource_id=resource_id,
+            target_resource_version=1,
+            expected_latest_resource_version=1,
+            expected_state_version=1,
+            account_id=str(foreign["id"]),
+        )
 
 
 def test_dirty_schedule_revises_selected_snapshot_when_latest_is_newer(migrated_conn):

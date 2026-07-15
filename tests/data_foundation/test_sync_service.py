@@ -205,10 +205,20 @@ def test_sync_service_invokes_feishu_source_processors(monkeypatch):
     assert result["status"] == "succeeded"
     assert result["created"] == 3
     assert calls[0][0] == "base"
-    assert calls[0][1] == {"app_token": "base-app", "table_id": "tbl"}
+    assert calls[0][1]["app_token"] == "base-app"
+    assert calls[0][1]["table_id"] == "tbl"
+    assert calls[0][1]["knowledge_enabled"] is True
+    assert calls[0][1]["knowledge_domain"] == "xhs_copywriting"
+    assert "tbl" in calls[0][1]["knowledge_table_ids"]
+    assert calls[0][1]["minimum_content_chars"] == 20
     assert calls[0][2]["sync_rows"] == [{"record_id": "rec1", "fields": {"标题": "a"}}]
     assert calls[1][0] == "wiki"
-    assert calls[1][1] == {"wiki_space_id": "sp1"}
+    assert calls[1][1] == {
+        "wiki_space_id": "sp1",
+        "knowledge_domain": "xhs_copywriting",
+        "knowledge_enabled": True,
+        "minimum_content_chars": 20,
+    }
     assert calls[1][2]["documents"] == [{"obj_token": "doc1", "node_token": "wik1", "title": "b"}]
 
 

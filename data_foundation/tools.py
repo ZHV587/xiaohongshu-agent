@@ -87,6 +87,9 @@ def retrieve_knowledge(
     query: str,
     limit: int = 10,
     filters: dict[str, Any] | None = None,
+    account_id: str | None = None,
+    niche: str | None = None,
+    task_type: str | None = None,
     config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """统一检索当前可用的知识证据。
@@ -103,18 +106,38 @@ def retrieve_knowledge(
         RetrievalSecurityGateError,
         retrieve_for_actor,
     )
+    from data_foundation.retrieval_policy import validate_retrieval_task
 
     try:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise TypeError("limit must be an integer")
-        selected_filters = RetrievalFilters.model_validate(filters or {})
+        filter_payload = dict(filters or {})
+        if account_id:
+            filter_payload["account_ids"] = [account_id]
+        if niche and not filter_payload.get("niches"):
+            filter_payload["niches"] = [niche]
+        selected_filters = RetrievalFilters.model_validate(filter_payload)
+        selected_task = validate_retrieval_task(task_type, query=query)
     except (TypeError, ValueError, ValidationError):
         return retrieval_error("INVALID_RETRIEVAL_REQUEST")
 
     try:
         with _repository() as repo:
+            if selected_filters.account_ids:
+                from data_foundation.repositories.account import AccountRepository
+                from data_foundation.writing_context import WritingContext
+
+                contexts = getattr(repo, "account_repo", None) or AccountRepository(
+                    repo.conn
+                )
+                for selected_account_id in selected_filters.account_ids:
+                    contexts.assert_owned_context(
+                        tenant_id=default_tenant_id(),
+                        actor_open_id=actor,
+                        context=WritingContext(account_id=selected_account_id),
+                    )
             package = retrieve_for_actor(
                 repo,
                 tenant_id=default_tenant_id(),
@@ -122,13 +145,18 @@ def retrieve_knowledge(
                 query=query,
                 limit=limit,
                 filters=selected_filters,
+                task_type=selected_task,
             )
     except RetrievalSecurityGateError:
         return retrieval_error("POSTGRES_KNOWLEDGE_GATE_FAILED")
+    except PermissionError:
+        return retrieval_error("ACCOUNT_CONTEXT_FORBIDDEN")
     except Exception as exc:  # noqa: BLE001
         logger.warning("knowledge retrieval failed: %s", type(exc).__name__)
         return retrieval_error("KNOWLEDGE_RETRIEVAL_FAILED")
-    return package.model_dump(mode="json")
+    payload = package.model_dump(mode="json")
+    payload["task_type"] = selected_task
+    return payload
 
 
 @tool
@@ -243,7 +271,11 @@ def get_generated_copy_lifecycle(
 
 
 @tool
-def get_writing_profile(config: RunnableConfig = None) -> dict[str, Any]:
+def get_writing_profile(
+    account_id: str | None = None,
+    niche: str | None = None,
+    config: RunnableConfig = None,
+) -> dict[str, Any]:
     """Read the current actor's exact private writing-preference profile.
 
     The profile is loaded through ``writing_profile_states`` rather than general
@@ -252,10 +284,13 @@ def get_writing_profile(config: RunnableConfig = None) -> dict[str, Any]:
     """
     actor = actor_from_config(config)
     from data_foundation.preference_learning import PreferenceLearningService
+    from data_foundation.writing_context import WritingContext
 
     with _repository() as repo:
         return PreferenceLearningService(repo).get_profile(
-            tenant_id=default_tenant_id(), actor_open_id=actor
+            tenant_id=default_tenant_id(),
+            actor_open_id=actor,
+            writing_context=WritingContext(account_id=account_id, niche=niche),
         )
 
 
@@ -343,6 +378,21 @@ def save_generated_copy(
     latest_user_request: Annotated[
         str | None, InjectedState("latest_user_request")
     ] = None,
+    current_account_id: Annotated[
+        str | None, InjectedState("current_account_id")
+    ] = None,
+    current_niche: Annotated[
+        str | None, InjectedState("current_niche")
+    ] = None,
+    writing_profile_grounding: Annotated[
+        dict[str, Any] | None, InjectedState("writing_profile_grounding")
+    ] = None,
+    resolved_user_skill: Annotated[
+        dict[str, Any] | None, InjectedState("resolved_user_skill")
+    ] = None,
+    state_messages: Annotated[
+        list[Any] | None, InjectedState("messages")
+    ] = None,
     config: RunnableConfig = None,
 ) -> dict[str, Any]:
     """Persist a generated Xiaohongshu copy draft into the shared Postgres data foundation.
@@ -368,7 +418,21 @@ def save_generated_copy(
         expected_turn_id=origin_turn_id,
     )
     authoritative_evidence = _grounded_evidence(grounding, evidence)
+    from data_foundation.writing_context import WritingContext
+
+    writing_context = WritingContext(
+        account_id=current_account_id,
+        niche=current_niche,
+    )
     with _repository() as repo:
+        if writing_context.account_id is not None and getattr(repo, "conn", None) is not None:
+            from data_foundation.repositories.account import AccountRepository
+
+            writing_context = AccountRepository(repo.conn).get_owned_context(
+                tenant_id=default_tenant_id(),
+                actor_open_id=actor,
+                account_id=writing_context.account_id,
+            )
         # 新版本与“用户为什么要改”必须原子提交，不能出现文案已改但反馈未进入学习闭环。
         with repo.unit_of_work():
             result = save_generated_copy_resource(
@@ -393,6 +457,7 @@ def save_generated_copy(
                 },
                 reference_resource_id=reference_resource_id,
                 reference_resource_version=reference_resource_version,
+                writing_context=writing_context,
             )
             feedback_text = (
                 latest_user_request.strip()
@@ -415,6 +480,61 @@ def save_generated_copy(
                     ),
                 )
                 result["feedback_resource"] = feedback_result["resource"]
+            connection = getattr(repo, "conn", None)
+            if callable(getattr(connection, "transaction", None)) and callable(
+                getattr(connection, "execute", None)
+            ):
+                from data_foundation.generation_provenance import (
+                    PROMPT_CONTRACT_VERSION,
+                    digest_text,
+                    latest_model_provenance,
+                    safe_grounding_summary,
+                )
+                from data_foundation.repositories.generation import GenerationRepository
+
+                profile = (
+                    writing_profile_grounding.get("profile")
+                    if isinstance(writing_profile_grounding, dict)
+                    and writing_profile_grounding.get("status") == "ready"
+                    else None
+                )
+                generated = result["resource"]
+                generation_run_id = GenerationRepository(repo.conn).record_generation(
+                    tenant_id=default_tenant_id(),
+                    actor_open_id=actor,
+                    resource_id=str(generated["resource_id"]),
+                    variants=list(generated.get("versions") or []),
+                    run_id=(
+                        str(configurable.get("run_id") or "").strip() or None
+                        if isinstance(configurable, dict)
+                        else None
+                    ),
+                    turn_id=origin_turn_id,
+                    thread_id=(
+                        str(configurable.get("thread_id") or "").strip() or None
+                        if isinstance(configurable, dict)
+                        else None
+                    ),
+                    task_type=(
+                        "revision"
+                        if resource_id
+                        else "imitation"
+                        if reference_resource_id
+                        else "copywriting"
+                    ),
+                    request_digest=digest_text(latest_user_request),
+                    prompt_contract_version=PROMPT_CONTRACT_VERSION,
+                    model=latest_model_provenance(state_messages),
+                    knowledge_grounding=safe_grounding_summary(knowledge_grounding),
+                    profile=profile if isinstance(profile, dict) else None,
+                    user_skill=(
+                        resolved_user_skill
+                        if isinstance(resolved_user_skill, dict)
+                        else None
+                    ),
+                    writing_context=writing_context,
+                )
+                result["generation_run_id"] = generation_run_id
             return result
 
 
@@ -587,7 +707,8 @@ def get_operations_data(
 
     view: analytics(数据看板/选题库/爆款拆解) | calendar(内容日历/排期) |
           pipeline(发布管线) | accounts(账号矩阵) | recents(我的最近创作) | trends(热点趋势)。
-    account: 单账号过滤;不传=矩阵总览(analytics/calendar/pipeline/accounts 的矩阵总览需管理员)。
+    account: 单账号过滤;不传=矩阵总览(analytics/calendar/pipeline 的跨用户总览需管理员；
+             accounts 永远只返回当前用户自己的账号)。
     数据为空即真实无数据,不编造。
     """
     actor = actor_from_config(config)
@@ -595,8 +716,8 @@ def get_operations_data(
     admin = is_admin_open_id(actor)
     account = account.strip() if isinstance(account, str) and account.strip() else None
 
-    # 鉴权口径 A:矩阵总览(不带 account)与 accounts 需 admin;单账号/recents/trends 任意用户。
-    needs_admin = (account is None and view in ("analytics", "calendar", "pipeline")) or view == "accounts"
+    # 跨用户聚合总览需 admin；accounts 在数据层强制 owner 过滤，普通用户可安全读取。
+    needs_admin = account is None and view in ("analytics", "calendar", "pipeline")
     if needs_admin and not admin:
         return {"ok": False, "error": "该视图为跨账号矩阵总览,需管理员权限;请指定 account 查看单账号,或联系管理员。"}
 
@@ -604,6 +725,12 @@ def get_operations_data(
     # 返回与 BFF 503 同口径的通用提示(不含异常细节),避免 ToolNode 把异常原文
     # (可能含 DSN)注入模型上下文再转告用户。鉴权拒绝在此之上,不受影响。
     try:
+        if account is not None and view in ("analytics", "calendar", "pipeline"):
+            ops.load_owned_account_context(
+                tenant_id=tenant,
+                actor_open_id=actor,
+                account=account,
+            )
         if view == "analytics":
             return {"ok": True, "view": view, "account": account, **ops.load_analytics(tenant_id=tenant, account=account)}
         if view == "calendar":
@@ -611,11 +738,19 @@ def get_operations_data(
         if view == "pipeline":
             return {"ok": True, "view": view, "account": account, "queue": ops.load_pipeline(tenant_id=tenant, account=account)}
         if view == "accounts":
-            return {"ok": True, "view": view, **ops.load_accounts(tenant_id=tenant)}
+            return {
+                "ok": True,
+                "view": view,
+                **ops.load_accounts(tenant_id=tenant, actor_open_id=actor),
+            }
         if view == "recents":
             return {"ok": True, "view": view, "recents": ops.load_recents(tenant_id=tenant, open_id=actor)}
         if view == "trends":
             return {"ok": True, "view": view, "trends": ops.load_trends(tenant_id=tenant)}
+    except ValueError as exc:
+        return {"ok": False, "error": f"账号参数无效:{exc}"}
+    except PermissionError:
+        return {"ok": False, "error": "无权访问该账号。"}
     except Exception as exc:  # noqa: BLE001
         logger.warning("operations_data_load_failed view=%s type=%s", view, type(exc).__name__)
         return {"ok": False, "error": "运营数据暂不可用,请稍后重试。"}

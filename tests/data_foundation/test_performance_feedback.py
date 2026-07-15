@@ -14,6 +14,7 @@ from data_foundation.performance_feedback import (
 )
 from data_foundation.repositories.generated_copy import GeneratedCopyRepository
 from data_foundation.repositories.resource import ResourceRepository
+from data_foundation.writing_context import WritingContext
 
 
 class _MemoryPreferenceRepository:
@@ -116,6 +117,9 @@ class RecordingRepository:
 
     def __init__(self):
         self.conn = None
+        self.account_repo = SimpleNamespace(
+            get_resource_context=lambda **_kwargs: WritingContext()
+        )
         self.upserts = []
         self.edges = []
         self.resources = {}
@@ -201,34 +205,49 @@ def test_save_performance_metric_persists_metric_and_measured_by_edge(preference
         note_url="https://example.com/note/1",
     )
 
-    assert result == {
-        "ok": True,
-        "resource": {
-            "resource_id": "metric-1",
-            "type": "performance_metric",
-            "title": "小红书效果 2026-06-20",
-            "version": 1,
-        },
-        "score": 0.112,
-        "target_resource_version": 1,
+    assert result["ok"] is True
+    assert result["resource"] == {
+        "resource_id": "metric-1",
+        "type": "performance_metric",
+        "title": "小红书效果 2026-06-20",
+        "version": 1,
     }
+    assert result["target_resource_version"] == 1
+    normalized = result["normalized_performance"]
+    assert result["score"] == normalized["score"]
+    assert normalized["schema_version"] == 1
+    assert normalized["raw_engagement_rate"] == pytest.approx(0.112)
+    assert normalized["confidence"] >= 0.25
+    assert normalized["learning_eligible"] is True
     assert repo.upserts[0]["resource_type"] == "performance_metric"
     assert repo.upserts[0]["title"] == "小红书效果 2026-06-20"
-    assert repo.upserts[0]["summary"] == "score=0.112 likes=120 collects=80 comments=12 shares=5 views=3000"
-    assert repo.upserts[0]["content_json"] == {
-        "target_resource_id": "generated-1",
-        "target_resource_version": 1,
-        "metrics": {"likes": 120, "collects": 80, "comments": 12, "shares": 5, "views": 3000},
-        "score": 0.112,
-        "published_at": "2026-06-20T08:00:00+00:00",
-        "channel": "xiaohongshu",
-        "note_url": "https://example.com/note/1",
+    assert repo.upserts[0]["summary"].startswith(f"score={result['score']:g} ")
+    content = repo.upserts[0]["content_json"]
+    assert content["target_resource_id"] == "generated-1"
+    assert content["target_resource_version"] == 1
+    assert content["metrics"] == {
+        "likes": 120,
+        "collects": 80,
+        "comments": 12,
+        "shares": 5,
+        "views": 3000,
     }
+    assert content["score"] == result["score"]
+    assert content["normalized_performance"] == normalized
+    assert content["resource_context"] == {
+        "schema_version": 1,
+        "account_id": None,
+        "niche": None,
+        "scope_key": "global",
+    }
+    assert content["published_at"] == "2026-06-20T08:00:00+00:00"
+    assert content["channel"] == "xiaohongshu"
+    assert content["note_url"] == "https://example.com/note/1"
     assert repo.upserts[0]["visibility"] == "private"
     assert repo.upserts[0]["owner_open_id"] == "ou_owner"
     assert [request.topic for request in repo.upserts[0]["outbox_requests"]] == ["knowledge_enrich"]
     assert [edge for edge in repo.edges if edge[2] == "measured_by"] == [
-        ("generated-1", "metric-1", "measured_by", 0.112)
+        ("generated-1", "metric-1", "measured_by", result["score"])
     ]
     assert len(preference_memory.observations) == 1
 
@@ -296,6 +315,7 @@ def test_get_resource_performance_payload_returns_metrics():
                 "resource_id": "metric-1",
                 "title": "小红书效果 2026-06-20",
                 "score": 0.112,
+                "normalized_performance": {},
                 "metrics": {"likes": 120, "collects": 80, "comments": 12, "shares": 5, "views": 3000},
                 "channel": "xiaohongshu",
                 "target_resource_version": None,
@@ -330,7 +350,7 @@ def test_performance_metric_writes_real_resource_edges(migrated_conn):
     )
 
     assert result["metrics"][0]["resource_id"] == saved["resource"]["resource_id"]
-    assert result["metrics"][0]["score"] == 0.2
+    assert result["metrics"][0]["score"] == saved["score"]
     assert result["metrics"][0]["target_resource_version"] == target.version
     assert migrated_conn.execute(
         """
@@ -416,6 +436,9 @@ class _StatefulRepo:
 
     def __init__(self):
         self.conn = None
+        self.account_repo = SimpleNamespace(
+            get_resource_context=lambda **_kwargs: WritingContext()
+        )
         self.metric_by_target: dict[str, str] = {}
         self.metric_content: dict[str, dict] = {}
         self.edges: set[tuple[str, str, str]] = set()

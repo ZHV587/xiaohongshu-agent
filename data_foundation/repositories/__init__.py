@@ -6,6 +6,7 @@ from data_foundation.repositories.user_skill import UserSkillRepository
 from data_foundation.repositories.generated_copy import GeneratedCopyRepository
 from data_foundation.repositories.preference import PreferenceRepository
 from data_foundation.repositories.retrieval_metrics import RetrievalMetricsRepository
+from data_foundation.repositories.reranker_shadow import RerankerShadowRepository
 
 resource_repo = ResourceRepository()
 feedback_repo = FeedbackRepository()
@@ -27,4 +28,5 @@ __all__ = [
     "GeneratedCopyRepository",
     "PreferenceRepository",
     "RetrievalMetricsRepository",
+    "RerankerShadowRepository",
 ]

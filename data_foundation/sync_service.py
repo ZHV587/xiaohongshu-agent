@@ -8,6 +8,10 @@ from typing import Any
 from data_foundation.models import SourceSecrets
 from data_foundation.sources.base import SourceContext
 from data_foundation.sources.feishu import FeishuBaseSourceProcessor, FeishuWikiSourceProcessor
+from data_foundation.knowledge.source_qualification import (
+    default_base_source_config,
+    default_wiki_source_config,
+)
 
 
 def _run_coro(coro):
@@ -67,7 +71,7 @@ def sync_feishu_sources(
         name="feishu-base-daily",
         external_id=app_token or "configured-base",
         credentials={},
-        config={"app_token": app_token or "configured-base", "table_id": table_id or "configured-table"},
+        config=default_base_source_config(app_token=app_token, table_id=table_id),
         schedule_seconds=schedule_seconds,
         enabled=True,
     )
@@ -77,7 +81,7 @@ def sync_feishu_sources(
         name="feishu-wiki-daily",
         external_id=wiki_space_id or "configured-space",
         credentials={},
-        config={"wiki_space_id": wiki_space_id or "configured-space"},
+        config=default_wiki_source_config(wiki_space_id=wiki_space_id),
         schedule_seconds=schedule_seconds,
         enabled=True,
     )

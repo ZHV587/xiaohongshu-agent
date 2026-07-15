@@ -4,7 +4,23 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from data_foundation.writing_context import WritingContext
 from tests.data_foundation.asgi_client import ASGIClient
+
+
+ACCOUNT_ID = "11111111-1111-4111-8111-111111111111"
+
+
+@pytest.fixture(autouse=True)
+def _stub_owned_account_lookup(monkeypatch):
+    """Handler 单测不连数据库；账号仓储行为由独立权限测试显式覆盖。"""
+    import data_foundation.studio_api as studio_api
+
+    monkeypatch.setattr(
+        studio_api,
+        "load_owned_account_context",
+        lambda **_kwargs: WritingContext(account_id=ACCOUNT_ID, niche="露营"),
+    )
 
 
 def _client(monkeypatch, *, secret: str = "internal-secret", admins: str = "ou_admin"):
@@ -59,10 +75,10 @@ def test_analytics_matrix_overview_requires_admin(monkeypatch):
 
 
 def test_matrix_overview_endpoints_require_admin(monkeypatch):
-    # calendar/pipeline 矩阵总览(无 account)与 accounts 均跨 owner 聚合,普通用户须被拒 403。
+    # calendar/pipeline 矩阵总览(无 account)跨 owner 聚合,普通用户须被拒 403。
     # 底层聚合不带 owner 过滤,无 account 即全租户可见——杜绝越权读他人排期/发布管线(需求 17.1)。
     client = _client(monkeypatch, admins="ou_admin")
-    for path in ("/internal/studio/calendar", "/internal/studio/pipeline", "/internal/studio/accounts"):
+    for path in ("/internal/studio/calendar", "/internal/studio/pipeline"):
         response = client.get(path, headers=_user_headers())
         assert response.status_code == 403, path
     # 指定 account 的单账号视图仍允许普通用户(calendar/pipeline)
@@ -100,6 +116,42 @@ def test_analytics_account_view_allows_user(monkeypatch):
     assert payload["teardown"] == {"title": "", "points": []}
 
 
+@pytest.mark.parametrize("path", ("analytics", "calendar", "pipeline"))
+def test_single_account_views_reject_another_users_account(monkeypatch, path):
+    import data_foundation.studio_api as studio_api
+
+    def _forbidden(**_kwargs):
+        raise PermissionError("not owned")
+
+    monkeypatch.setattr(studio_api, "load_owned_account_context", _forbidden)
+    client = _client(monkeypatch)
+    response = client.get(
+        f"/internal/studio/{path}?account={ACCOUNT_ID}",
+        headers=_user_headers(open_id="ou_intruder"),
+    )
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": "Forbidden: account is not owned by current user"
+    }
+
+
+@pytest.mark.parametrize("path", ("analytics", "calendar", "pipeline"))
+def test_single_account_views_reject_non_uuid_account(monkeypatch, path):
+    import data_foundation.studio_api as studio_api
+
+    monkeypatch.setattr(
+        studio_api,
+        "load_owned_account_context",
+        lambda **kwargs: WritingContext(account_id=kwargs["account"]),
+    )
+    client = _client(monkeypatch)
+    response = client.get(
+        f"/internal/studio/{path}?account=acc_1", headers=_user_headers()
+    )
+    assert response.status_code == 400
+    assert "account_id must be a UUID" in response.json()["error"]
+
+
 def test_calendar_contract_shape_and_empty_grid(monkeypatch):
     # 存储可用但无排期行 → 200 + 真实月份网格 + 空 calendar(需求 12.4)。
     # _load_schedule_items 走真实 DB;此处注入空排期模拟「库里暂无排期」,与「库不可用」区分。
@@ -134,9 +186,25 @@ def test_calendar_store_unavailable_returns_503_not_degraded(monkeypatch):
 
 
 def test_accounts_empty_overview_all_zero(monkeypatch):
+    import data_foundation.studio_api as studio_api
+
+    monkeypatch.setattr(
+        studio_api,
+        "load_accounts",
+        lambda *, tenant_id, actor_open_id: {
+            "accounts": [],
+            "overview": {
+                "totalFans": 0,
+                "weekNewFans": 0,
+                "weekPosts": 0,
+                "avgHotRate": 0,
+            },
+        },
+    )
     client = _client(monkeypatch)
-    # 账号矩阵总览 → require_admin(需求 17.1)
-    response = client.get("/internal/studio/accounts", headers=_admin_headers())
+    response = client.get(
+        "/internal/studio/accounts", headers=_user_headers(open_id="ou_owner")
+    )
     assert response.status_code == 200
     payload = response.json()
     # 无账号实体模型 → 真实空集合 + overview 全 0(需求 9.5)
@@ -386,6 +454,62 @@ def test_schedule_persist_failure_returns_500_without_leak(monkeypatch):
     # 落库失败整体失败(前端据此回滚乐观更新),不回带异常细节
     assert response.status_code == 500
     assert "db-secret" not in response.text
+
+
+def test_schedule_rejects_unowned_account_before_lifecycle_write(monkeypatch):
+    import data_foundation.studio_api as studio_api
+
+    def _forbidden(**_kwargs):
+        raise PermissionError("account-secret")
+
+    persisted = []
+    monkeypatch.setattr(studio_api, "load_owned_account_context", _forbidden)
+    monkeypatch.setattr(
+        studio_api, "_persist_schedule", lambda **kwargs: persisted.append(kwargs)
+    )
+    client = _client(monkeypatch)
+    response = client.post(
+        "/internal/studio/schedule",
+        headers=_user_headers(open_id="ou_intruder"),
+        json={
+            "resourceId": "11111111-1111-1111-1111-111111111111",
+            "targetResourceVersion": 1,
+            "expectedLatestResourceVersion": 1,
+            "expectedStateVersion": 1,
+            "date": "2026-02-12",
+            "time": "19:00",
+            "account": ACCOUNT_ID,
+        },
+    )
+    assert response.status_code == 403
+    assert persisted == []
+    assert "account-secret" not in response.text
+
+
+def test_schedule_rejects_non_uuid_account(monkeypatch):
+    import data_foundation.studio_api as studio_api
+
+    monkeypatch.setattr(
+        studio_api,
+        "load_owned_account_context",
+        lambda **kwargs: WritingContext(account_id=kwargs["account"]),
+    )
+    client = _client(monkeypatch)
+    response = client.post(
+        "/internal/studio/schedule",
+        headers=_user_headers(),
+        json={
+            "resourceId": "11111111-1111-1111-1111-111111111111",
+            "targetResourceVersion": 1,
+            "expectedLatestResourceVersion": 1,
+            "expectedStateVersion": 1,
+            "date": "2026-02-12",
+            "time": "19:00",
+            "account": "acc_1",
+        },
+    )
+    assert response.status_code == 400
+    assert "account_id must be a UUID" in response.json()["error"]
 
 
 def test_backfill_missing_resource_id_returns_400(monkeypatch):
@@ -676,24 +800,32 @@ class _MemoryPreferenceRepository:
     def acquire_actor_lock(self, **kwargs):
         self.actor_locks.append((kwargs["tenant_id"], kwargs["actor_open_id"]))
 
-    def insert_observation(self, *, tenant_id, actor_open_id, observation):
-        key = (tenant_id, actor_open_id, observation.event_key)
+    def insert_observation(
+        self, *, tenant_id, actor_open_id, observation, scope_key="global"
+    ):
+        key = (tenant_id, actor_open_id, scope_key, observation.event_key)
         inserted = key not in self._observations
         self._observations.setdefault(key, observation)
         return inserted
 
-    def list_observations(self, *, tenant_id, actor_open_id):
+    def list_observations(self, *, tenant_id, actor_open_id, scope_key="global"):
         return [
             observation
-            for (tenant, actor, _), observation in self._observations.items()
+            for (tenant, actor, observed_scope, _), observation in self._observations.items()
             if tenant == tenant_id and actor == actor_open_id
+            and (
+                scope_key == "global"
+                or observed_scope in {"global", scope_key}
+            )
         ]
 
-    def get_profile_state(self, *, tenant_id, actor_open_id):
-        return self._states.get((tenant_id, actor_open_id))
+    def get_profile_state(self, *, tenant_id, actor_open_id, scope_key="global"):
+        return self._states.get((tenant_id, actor_open_id, scope_key))
 
-    def upsert_profile_state(self, *, tenant_id, actor_open_id, **state):
-        key = (tenant_id, actor_open_id)
+    def upsert_profile_state(
+        self, *, tenant_id, actor_open_id, scope_key="global", **state
+    ):
+        key = (tenant_id, actor_open_id, scope_key)
         previous = self._states.get(key)
         revision = 1 if previous is None else previous["revision"]
         if previous is not None and previous["input_digest"] != state["input_digest"]:
@@ -701,6 +833,7 @@ class _MemoryPreferenceRepository:
         stored = {
             "tenant_id": tenant_id,
             "owner_open_id": actor_open_id,
+            "scope_key": scope_key,
             **state,
             "revision": revision,
         }
@@ -708,11 +841,27 @@ class _MemoryPreferenceRepository:
         return stored
 
 
+class _MemoryAccountRepository:
+    def __init__(self):
+        self.contexts = {}
+
+    def get_resource_context(
+        self, *, tenant_id, resource_id, resource_version, actor_open_id=None
+    ):
+        return self.contexts.get(
+            (tenant_id, resource_id, resource_version), WritingContext()
+        )
+
+    def assert_owned_context(self, **_kwargs):
+        return None
+
+
 class _FakeRepo:
     """跑通 _persist_* 真实代码路径的内存仓储(对齐 ResourceRepository 被调用面)。"""
 
     def __init__(self, *, resources=None, metric_id=None, metric_content=None):
         self.conn = None
+        self.account_repo = _MemoryAccountRepository()
         self._resources = dict(resources or {})
         self._versions = {
             (resource_id, resource.version): resource

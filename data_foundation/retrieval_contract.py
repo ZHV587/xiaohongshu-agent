@@ -6,6 +6,7 @@ from typing import Any
 RETRIEVAL_ERROR_CODES = frozenset(
     {
         "INVALID_RETRIEVAL_REQUEST",
+        "ACCOUNT_CONTEXT_FORBIDDEN",
         "POSTGRES_KNOWLEDGE_GATE_FAILED",
         "KNOWLEDGE_RETRIEVAL_FAILED",
     }

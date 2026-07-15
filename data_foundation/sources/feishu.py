@@ -44,6 +44,7 @@ class FeishuBaseSourceProcessor:
                     or ""
                 ),
                 rows=rows[start : start + _SYNC_CHUNK_SIZE],
+                source_config=context.source.config,
             )
             imported += result.imported
             errors.extend(result.errors)
@@ -85,6 +86,7 @@ class FeishuWikiSourceProcessor:
                     or ""
                 ),
                 documents=documents[start : start + _SYNC_CHUNK_SIZE],
+                source_config=context.source.config,
             )
             imported += result.imported
             errors.extend(result.errors)

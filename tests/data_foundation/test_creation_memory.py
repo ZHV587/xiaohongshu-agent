@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from data_foundation.repositories.resource import ResourceRepository
+from data_foundation.writing_context import WritingContext
 from data_foundation.creation_memory import (
     associate_ingested_resource,
     link_imitation_source,
@@ -61,6 +62,9 @@ class RecordingRepository:
         self.edge_versions = []
         self.resources = {}
         self.conn = object()
+        self.account_repo = SimpleNamespace(
+            get_resource_context=lambda **_kwargs: WritingContext()
+        )
 
     def unit_of_work(self):
         return nullcontext()
@@ -206,13 +210,19 @@ def test_save_generated_copy_persists_publishable_text_and_evidence_edges():
         "variant_label": "A",
         "source_topic": "轻量露营",
         "evidence": [{
-                "resource_id": "source-1",
-                "resource_version": 4,
+            "resource_id": "source-1",
+            "resource_version": 4,
             "title": "轻量露营样本",
             "summary": "清单型内容收藏高",
             "source_updated_at": "未知",
             "indexed_at": "2026-06-19T12:30:00+00:00",
         }],
+        "resource_context": {
+            "schema_version": 1,
+            "account_id": None,
+            "niche": None,
+            "scope_key": "global",
+        },
     }
     assert repo.edges == [("generated-1", "source-1", "derived_from")]
 

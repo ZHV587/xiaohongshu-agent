@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 
 from data_foundation.knowledge.locking import acquire_classification_lock
 from data_foundation.outbox_requests import default_write_requests
+from data_foundation.repositories.account import AccountRepository, ResourceContextConflict
 
 
 REVISION_EDGE = "revised_from"
@@ -323,6 +324,7 @@ class GeneratedCopyRepository:
         label: str | None = None,
         cover: str | None = None,
         note: str | None = None,
+        account_id: str | None = None,
     ) -> GeneratedCopyState:
         with self.conn.transaction():
             current = self._lock_and_authorize(
@@ -368,6 +370,13 @@ class GeneratedCopyRepository:
                 base_resource_version=base_version,
                 revision_resource_version=int(saved.version),
             )
+            self._bind_version_account(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                resource_version=int(saved.version),
+                account_id=account_id,
+            )
             row = self.conn.execute(
                 """
                 update generated_copy_states
@@ -405,6 +414,7 @@ class GeneratedCopyRepository:
         resource_id: str,
         resource_version: int,
         expected_state_version: int,
+        account_id: str | None = None,
     ) -> GeneratedCopyState:
         with self.conn.transaction():
             current = self._lock_and_authorize(
@@ -423,6 +433,13 @@ class GeneratedCopyRepository:
                 current.lifecycle_status == "adopted"
                 and current.adopted_version == resource_version
             ):
+                self._bind_version_account(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=resource_id,
+                    resource_version=resource_version,
+                    account_id=account_id,
+                )
                 return current
             self._expect_state(current, expected_state_version)
             self._ensure_mutable(current, action="adopt")
@@ -431,6 +448,13 @@ class GeneratedCopyRepository:
                 actor_open_id=actor_open_id,
                 resource_id=resource_id,
                 resource_version=resource_version,
+            )
+            self._bind_version_account(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                resource_version=resource_version,
+                account_id=account_id,
             )
             selected_label = self._version_label(
                 tenant_id=tenant_id, resource_id=resource_id, resource_version=resource_version
@@ -480,6 +504,7 @@ class GeneratedCopyRepository:
         expected_state_version: int,
         final_draft: dict[str, Any] | None = None,
         request_id: str | None = None,
+        account_id: str | None = None,
     ) -> GeneratedCopyState:
         """把排期所用的精确快照原子地采纳并定稿。
 
@@ -520,12 +545,26 @@ class GeneratedCopyRepository:
                     raise GeneratedCopyConflict(
                         "finalization request id was reused with a different draft"
                     )
+                self._bind_version_account(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=resource_id,
+                    resource_version=int(current.finalized_version),
+                    account_id=account_id,
+                )
                 return current
             if current.lifecycle_status in {"finalized", "published", "measured"}:
                 if normalized_draft is not None or current.finalized_version != target_resource_version:
                     raise GeneratedCopyConflict(
                         "a finalized or published copy cannot be replaced by rescheduling"
                     )
+                self._bind_version_account(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=resource_id,
+                    resource_version=int(current.finalized_version),
+                    account_id=account_id,
+                )
                 return current
             self._expect_state(current, expected_state_version)
             if current.latest_resource_version != expected_latest_resource_version:
@@ -567,6 +606,13 @@ class GeneratedCopyRepository:
                     base_resource_version=target_resource_version,
                     revision_resource_version=final_version,
                 )
+                self._bind_version_account(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=resource_id,
+                    resource_version=final_version,
+                    account_id=account_id,
+                )
                 self._event(
                     tenant_id=tenant_id,
                     resource_id=resource_id,
@@ -580,6 +626,13 @@ class GeneratedCopyRepository:
                     actor_open_id=actor_open_id,
                     resource_id=resource_id,
                     resource_version=target_resource_version,
+                )
+                self._bind_version_account(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=resource_id,
+                    resource_version=final_version,
+                    account_id=account_id,
                 )
             row = self.conn.execute(
                 """
@@ -633,6 +686,30 @@ class GeneratedCopyRepository:
                 },
             )
             return self._state(row, latest_resource_version=max(current.latest_resource_version, final_version))
+
+    def _bind_version_account(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        resource_id: str,
+        resource_version: int,
+        account_id: str | None,
+    ) -> None:
+        """在生命周期偏好事件前绑定账号，确保画像归因读取到精确范围。"""
+        if account_id is None:
+            return
+        try:
+            AccountRepository(self.conn).bind_resource_to_account(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                resource_version=resource_version,
+                account_id=account_id,
+                source="frontend",
+            )
+        except ResourceContextConflict as exc:
+            raise GeneratedCopyConflict(str(exc)) from exc
 
     def mark_published(
         self,
@@ -766,7 +843,7 @@ class GeneratedCopyRepository:
         if isinstance(note, str):
             content_json["note"] = note.strip()
         text = "\n".join([title, "", body, "", " ".join(cleaned_tags)]).rstrip()
-        return self.resource_repo.upsert_resource(
+        saved = self.resource_repo.upsert_resource(
             tenant_id=tenant_id,
             actor_open_id=actor_open_id,
             resource_id=resource_id,
@@ -780,6 +857,23 @@ class GeneratedCopyRepository:
             owner_open_id=existing.owner_open_id,
             outbox_requests=[],
         )
+        # 上下文属于不可变版本事实。修订沿用 base 的账号/垂类，除非未来显式创建
+        # 新 stable resource；不能因为用户润色一次就退回全局范围造成跨账号污染。
+        self.conn.execute(
+            """
+            insert into resource_contexts (
+              tenant_id, resource_id, resource_version, owner_open_id,
+              account_id, niche, scope_key, context_source
+            )
+            select tenant_id, resource_id, %s, owner_open_id,
+                   account_id, niche, scope_key, 'inherited'
+            from resource_contexts
+            where tenant_id = %s and resource_id = %s and resource_version = %s
+            on conflict (tenant_id, resource_id, resource_version) do nothing
+            """,
+            (saved.version, tenant_id, resource_id, base_resource_version),
+        )
+        return saved
 
     def _inherit_revision_provenance(
         self,
@@ -997,6 +1091,44 @@ class GeneratedCopyRepository:
                     payload.get("base_version") if event_type == "revision_saved" else None
                 ),
             )
+            if event_type == "adopted":
+                from data_foundation.repositories.generation import GenerationRepository
+
+                comparisons = GenerationRepository(self.conn).record_selection(
+                    tenant_id=tenant_id,
+                    actor_open_id=actor_open_id,
+                    resource_id=resource_id,
+                    resource_version=resource_version,
+                    selection_event_id=str(event_id),
+                )
+                comparison_service = PreferenceLearningService(self.resource_repo)
+                for index, comparison in enumerate(comparisons):
+                    comparison_service.record_exact_event(
+                        tenant_id=tenant_id,
+                        actor_open_id=actor_open_id,
+                        event_type="variant_selected",
+                        source_resource_id=resource_id,
+                        source_resource_version=resource_version,
+                        source_event_id=(
+                            f"pairwise:{event_id}:"
+                            f"{comparison['rejected_resource_id']}:"
+                            f"{comparison['rejected_resource_version']}"
+                        ),
+                        event_payload={
+                            "generation_run_id": comparison["generation_run_id"],
+                            "chosen_ordinal": int(comparison["chosen_ordinal"]),
+                            "rejected_ordinal": int(comparison["rejected_ordinal"]),
+                            "rejected_source": {
+                                "resource_id": str(comparison["rejected_resource_id"]),
+                                "resource_version": int(
+                                    comparison["rejected_resource_version"]
+                                ),
+                            },
+                        },
+                        # 先原子写齐全部 rejected 配对事实，最后一条再一次性重建
+                        # 全局 + 当前账号画像，避免 A/B/C 选择连续重建两遍同一画像。
+                        rebuild_profile=index == len(comparisons) - 1,
+                    )
         return event_id
 
     def _state_with_latest(self, row: Any) -> GeneratedCopyState:

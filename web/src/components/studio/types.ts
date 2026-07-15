@@ -204,6 +204,7 @@ export interface Account {
   id: string;
   handle: string;
   niche: string;
+  writingNiche?: string | null;
   initial: string;
   fans: string;
   fansNum: number;

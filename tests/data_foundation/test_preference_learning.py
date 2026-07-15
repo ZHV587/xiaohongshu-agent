@@ -16,6 +16,7 @@ from data_foundation.preference_learning import (
     synthesize_pattern_candidates,
 )
 from tools.runtime_identity import identity_config
+from data_foundation.writing_context import WritingContext
 
 
 def _snapshot(title: str, body: str = "正文", **extra):
@@ -99,6 +100,7 @@ def test_profile_rebuild_is_deterministic_and_deduplicates_event_keys():
         "metric": 1,
         "revision": 0,
         "feedback": 0,
+        "comparison": 0,
     }
     assert first["preferences"]["hook_type"][0]["value"] == "避坑警示"
     assert first["sources"] == [
@@ -255,6 +257,26 @@ def test_low_metric_does_not_reinforce_failed_copy_features(score):
         {"value": "数字清单", "score": 1.0}
     ]
     assert profile["outcome_summary"]["low_metric_count"] == 1
+
+
+def test_missing_exposure_is_uncertain_not_a_failed_outcome():
+    unknown = build_preference_observation(
+        event_type="metric",
+        source=ExactResourceVersion("copy-unknown", 1),
+        source_event_id="metric-unknown",
+        snapshot=_snapshot("3 个方法", hook_type="数字清单"),
+        event_payload={"metrics": {"likes": 100}},
+    )
+    profile = rebuild_preference_profile("ou-owner", [unknown])
+    assert profile["outcome_summary"] == {
+        "metric_observation_count": 1,
+        "evaluable_metric_count": 0,
+        "uncertain_metric_count": 1,
+        "positive_metric_count": 0,
+        "low_metric_count": 0,
+        "average_score": None,
+    }
+    assert profile["avoid_preferences"]["hook_type"] == []
 
 
 def test_pattern_threshold_collapses_equal_hashes_even_if_old_acl_split_families():
@@ -549,17 +571,24 @@ class _FakePreferenceRepository:
         self.assets = list(assets or [])
         self.actor_locks = []
         self.patterns = []
+        self.scopes = {}
 
     def acquire_actor_lock(self, **kwargs):
         self.actor_locks.append((kwargs["tenant_id"], kwargs["actor_open_id"]))
 
-    def insert_observation(self, *, observation, **_kwargs):
+    def insert_observation(self, *, observation, scope_key="global", **_kwargs):
         inserted = observation.event_key not in self.observations
         self.observations.setdefault(observation.event_key, observation)
+        self.scopes.setdefault(observation.event_key, scope_key)
         return inserted
 
-    def list_observations(self, **_kwargs):
-        return list(self.observations.values())
+    def list_observations(self, *, scope_key="global", **_kwargs):
+        return [
+            observation
+            for event_key, observation in self.observations.items()
+            if scope_key == "global"
+            or self.scopes.get(event_key) in {"global", scope_key}
+        ]
 
     def get_profile_state(self, **_kwargs):
         return self.state
@@ -570,6 +599,9 @@ class _FakePreferenceRepository:
 
     def list_eligible_assets(self, **_kwargs):
         return list(self.assets)
+
+    def list_eligible_contexts(self, **_kwargs):
+        return []
 
     def list_actor_patterns(self, **_kwargs):
         return list(self.patterns)
@@ -585,6 +617,7 @@ class _FakeResourceRepository:
         self.writes = []
         self.edges = {}
         self.edge_calls = []
+        self.account_repo = _FakeAccountRepository()
 
     def unit_of_work(self):
         return nullcontext()
@@ -648,6 +681,21 @@ class _FakeResourceRepository:
         self.edges[key] = dict(kwargs)
 
 
+class _FakeAccountRepository:
+    def __init__(self):
+        self.contexts = {}
+
+    def get_resource_context(
+        self, *, tenant_id, resource_id, resource_version, actor_open_id=None
+    ):
+        return self.contexts.get(
+            (tenant_id, resource_id, resource_version), WritingContext()
+        )
+
+    def assert_owned_context(self, **_kwargs):
+        return None
+
+
 def test_service_rebuilds_private_profile_resource_and_exact_learned_from_edges():
     resources = _FakeResourceRepository()
     resources.add_snapshot(
@@ -698,6 +746,63 @@ def test_service_rebuilds_private_profile_resource_and_exact_learned_from_edges(
     assert service.get_profile(tenant_id="tenant-a", actor_open_id="ou-owner")["profile"][
         "resource_version"
     ] == 1
+
+
+def test_preference_scope_uses_authoritative_exact_resource_context():
+    stale = WritingContext(
+        account_id="11111111-1111-4111-8111-111111111111", niche="旧垂类"
+    )
+    authoritative = WritingContext(
+        account_id="22222222-2222-4222-8222-222222222222", niche="露营"
+    )
+    resources = _FakeResourceRepository()
+    resources.add_snapshot(
+        "copy-1",
+        1,
+        title="露营清单",
+        body="正文",
+        resource_context=stale.payload(),
+    )
+    resources.account_repo.contexts[("tenant-a", "copy-1", 1)] = authoritative
+    observations = _FakePreferenceRepository()
+
+    result = PreferenceLearningService(resources, observations).record_exact_event(
+        tenant_id="tenant-a",
+        actor_open_id="ou-owner",
+        event_type="finalized_for_schedule",
+        source_resource_id="copy-1",
+        source_resource_version=1,
+        source_event_id="event-finalized-1",
+    )
+
+    assert result["inserted"] is True
+    assert observations.scopes[result["event_key"]] == authoritative.scope_key
+    profile_write = next(
+        write
+        for write in resources.writes
+        if write["resource_type"] == "writing_preference_profile"
+        and write["content_json"]["writing_context"]["scope_key"]
+        == authoritative.scope_key
+    )
+    assert profile_write["content_json"]["writing_context"] == authoritative.payload()
+
+
+def test_scoped_profile_rejects_unowned_account_context():
+    resources = _FakeResourceRepository()
+
+    def _forbidden(**_kwargs):
+        raise PermissionError("not owned")
+
+    resources.account_repo.assert_owned_context = _forbidden
+    service = PreferenceLearningService(resources, _FakePreferenceRepository())
+    with pytest.raises(PermissionError, match="not owned"):
+        service.get_profile(
+            tenant_id="tenant-a",
+            actor_open_id="ou-intruder",
+            writing_context=WritingContext(
+                account_id="11111111-1111-4111-8111-111111111111"
+            ),
+        )
 
 
 def test_service_saves_only_cross_family_patterns_with_exact_authority_and_edges():
@@ -771,6 +876,56 @@ def test_service_retires_pattern_when_current_acl_inputs_no_longer_support_it():
     assert retirement_write["content_json"]["retired_reason"]
 
 
+def test_pattern_synthesis_isolated_by_account_and_niche_scope():
+    account_a = WritingContext(
+        account_id="11111111-1111-4111-8111-111111111111", niche="露营"
+    )
+    account_b = WritingContext(
+        account_id="22222222-2222-4222-8222-222222222222", niche="职场"
+    )
+    assets_by_scope = {
+        "global": [
+            _asset(f"global-{index}", f"global-family-{index}")
+            for index in range(1, 4)
+        ],
+        account_a.scope_key: [
+            _asset(f"camp-{index}", f"camp-family-{index}")
+            for index in range(1, 4)
+        ],
+        account_b.scope_key: [
+            _asset(f"career-{index}", f"career-family-{index}")
+            for index in range(1, 4)
+        ],
+    }
+
+    class _ScopedPreferences(_FakePreferenceRepository):
+        def list_eligible_contexts(self, **_kwargs):
+            return [account_b, account_a]
+
+        def list_eligible_assets(self, *, writing_context, **_kwargs):
+            return list(assets_by_scope[writing_context.scope_key])
+
+    resources = _FakeResourceRepository()
+    saved = PreferenceLearningService(
+        resources, _ScopedPreferences()
+    ).synthesize_patterns(tenant_id="tenant-a", actor_open_id="ou-owner")
+
+    assert len(saved) == 3
+    assert len({item["resource_id"] for item in saved}) == 3
+    assert {item["writing_context"]["scope_key"] for item in saved} == {
+        "global",
+        account_a.scope_key,
+        account_b.scope_key,
+    }
+    pattern_writes = [
+        write for write in resources.writes if write["resource_type"] == "writing_pattern"
+    ]
+    assert {
+        write["content_json"]["writing_context"]["scope_key"]
+        for write in pattern_writes
+    } == {"global", account_a.scope_key, account_b.scope_key}
+
+
 def test_get_writing_profile_tool_routes_current_actor_to_private_state(monkeypatch):
     from data_foundation import preference_learning
     from data_foundation import tools as df_tools
@@ -802,6 +957,7 @@ def test_get_writing_profile_tool_routes_current_actor_to_private_state(monkeypa
         "repo": repo,
         "tenant_id": "default",
         "actor_open_id": "ou-owner",
+        "writing_context": WritingContext(),
     }
     assert df_tools.get_writing_profile in df_tools.data_foundation_tools
 

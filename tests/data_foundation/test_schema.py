@@ -15,6 +15,12 @@ EXPECTED_TABLES = {
     "knowledge_retrieval_runs",
     "knowledge_retrieval_exposures",
     "knowledge_retrieval_evidence_keys",
+    "knowledge_reranker_shadow_runs",
+    "xhs_accounts",
+    "resource_contexts",
+    "generation_runs",
+    "generation_variants",
+    "generation_pairwise_preferences",
     "knowledge_families",
     "knowledge_asset_states",
     "knowledge_enrichments",
@@ -129,6 +135,28 @@ def test_schema_declares_exact_knowledge_state_views_and_immutable_enrichments()
     assert "profile_resource_version int" in schema
     assert "input_digest text" in schema
     assert "observation_count int" in schema
+
+
+def test_schema_declares_account_generation_and_safe_reranker_shadow_facts():
+    schema = Path("data_foundation/schema.sql").read_text(encoding="utf-8").lower()
+    assert "create table if not exists xhs_accounts" in schema
+    assert "create table if not exists resource_contexts" in schema
+    assert "create table if not exists generation_runs" in schema
+    assert "presentation_sequence bigint generated always as identity" in schema
+    assert "create table if not exists generation_variants" in schema
+    assert "create table if not exists generation_pairwise_preferences" in schema
+    assert "uq_generation_runs_tenant_id" in schema
+    assert "generation_variants_tenant_run_fk" in schema
+    assert "generation_pairwise_tenant_run_fk" in schema
+    assert "generation_pairwise_selection_event_fk" in schema
+
+    shadow = schema.split(
+        "create table if not exists knowledge_reranker_shadow_runs", 1
+    )[1].split("create table if not exists resource_edges", 1)[0]
+    for forbidden in ("query text", "title text", "content_text", "model_response"):
+        assert forbidden not in shadow
+    assert "baseline_order_hash char(64)" in shadow
+    assert "shadow_order_hash char(64)" in shadow
 
 
 def test_schema_migrates_resource_edges_to_exact_inferred_versions_once():

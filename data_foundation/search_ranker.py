@@ -12,7 +12,7 @@ import math
 from typing import Any, Collection, Iterable, Literal, Mapping, Sequence
 import uuid
 
-from data_foundation.metric_parse import weighted_engagement
+from data_foundation.performance_scoring import normalized_performance_from_payload
 
 
 DEFAULT_RELEVANCE_FLOOR: float = 0.50
@@ -30,8 +30,7 @@ WEIGHT_QUALITY: float = 0.12
 WEIGHT_FRESHNESS: float = 0.08
 WEIGHT_PERFORMANCE: float = 0.08
 
-P_SCORE_LOG_CAP: float = 1_000_000.0
-_P_SCORE_LOG_DENOM: float = math.log10(1.0 + P_SCORE_LOG_CAP)
+P_SCORE_LOG_CAP: float = 1.0
 _FRESHNESS_HALF_LIFE_DAYS: float = 180.0
 
 RetrievalSource = Literal["semantic", "keyword", "graph"]
@@ -141,16 +140,11 @@ def _freshness_score(row: Mapping[str, Any], *, now: datetime) -> float:
 
 
 def _performance_score(rows: Sequence[Mapping[str, Any]]) -> float:
-    best_engagement = 0.0
+    best_score = 0.0
     for row in rows:
-        engagement = weighted_engagement(dict(row.get("metrics") or {}))
-        best_engagement = max(best_engagement, engagement)
-    if best_engagement <= 0:
-        return 0.0
-    return min(
-        math.log10(1.0 + best_engagement) / _P_SCORE_LOG_DENOM,
-        1.0,
-    )
+        score, confidence = normalized_performance_from_payload(row)
+        best_score = max(best_score, score * (0.5 + 0.5 * confidence))
+    return _clamp_unit(best_score)
 
 
 def _clamp_unit(value: Any, *, default: float = 0.0) -> float:

@@ -283,6 +283,24 @@ def test_router_first_candidate_success():
     assert seen == [pool[0].model]  # 只用了首候选
 
 
+def test_router_annotates_actual_successful_model_for_generation_provenance(monkeypatch):
+    from types import SimpleNamespace
+    from langchain_core.messages import AIMessage
+
+    pool = [_candidate("gateway-quality", "quality-model")]
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    middleware = ModelRouterMiddleware(StaticModelPoolProvider(pool))
+    message = AIMessage(content="生成结果")
+    response = SimpleNamespace(result=[message])
+
+    assert middleware.wrap_model_call(_fake_request(), lambda _request: response) is response
+    assert message.response_metadata == {
+        "xhs_model_provider": "openai",
+        "xhs_model_id": "quality-model",
+        "xhs_gateway_name": "gateway-quality",
+    }
+
+
 def test_router_switches_on_retryable():
     pool = [_candidate("g1", "a"), _candidate("g2", "b")]
     mw = ModelRouterMiddleware(StaticModelPoolProvider(pool))
@@ -597,4 +615,3 @@ def test_build_pool_no_thinking_when_off(monkeypatch):
         "LLM_THINKING": "off",
     })
     assert captured["thinking"] is None
-

@@ -8,6 +8,61 @@ from data_foundation.models import RuntimeIdentityConfig
 
 
 class PerformanceRepository(BaseRepository):
+    def normalized_cohort_scores(
+        self,
+        *,
+        tenant_id: str,
+        channel: str,
+        limit: int = 2_000,
+        account_id: str | None = None,
+        niche: str | None = None,
+    ) -> list[float]:
+        """读取同租户同渠道的历史归一化分，供当前快照计算 cohort percentile。"""
+
+        with self.connection_context() as connection:
+            rows = connection.execute(
+                """
+                select (rv.content_json->'normalized_performance'->>'score')::double precision as score
+                from resources r
+                join lateral (
+                  select version, content_json
+                  from resource_versions exact
+                  where exact.tenant_id = r.tenant_id and exact.resource_id = r.id
+                  order by exact.version desc
+                  limit 1
+                ) rv on true
+                left join resource_edges measured
+                  on measured.tenant_id = r.tenant_id
+                 and measured.target_resource_id = r.id
+                 and measured.target_resource_version = rv.version
+                 and measured.edge_type = 'measured_by'
+                left join resource_contexts context
+                  on context.tenant_id = measured.tenant_id
+                 and context.resource_id = measured.source_resource_id
+                 and context.resource_version = measured.source_resource_version
+                where r.tenant_id = %s
+                  and r.type = 'performance_metric'
+                  and r.status = 'active'
+                  and rv.content_json->>'channel' = %s
+                  and rv.content_json->'normalized_performance'->>'schema_version' = '1'
+                  and (rv.content_json->'normalized_performance'->>'score') is not null
+                  and (%s::uuid is null or context.account_id = %s::uuid)
+                  and (%s::text is null or context.niche = %s::text)
+                order by r.updated_at desc, r.id desc
+                limit %s
+                """,
+                (
+                    tenant_id,
+                    channel,
+                    account_id,
+                    account_id,
+                    niche,
+                    niche,
+                    min(max(int(limit), 1), 10_000),
+                ),
+            ).fetchall()
+        return [float(row["score"]) for row in rows]
+
     def save_performance(
         self,
         resource_id: str,
@@ -205,6 +260,9 @@ class PerformanceRepository(BaseRepository):
                         "title": row["title"],
                         "score": float(content_json.get("score", row.get("weight", 0.0))),
                         "metrics": dict(content_json.get("metrics") or {}),
+                        "normalized_performance": dict(
+                            content_json.get("normalized_performance") or {}
+                        ),
                         "channel": content_json.get("channel"),
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                     })
@@ -316,6 +374,7 @@ class PerformanceRepository(BaseRepository):
                     "resource_version": int(row["metric_resource_version"]),
                     "score": float(content.get("score", row["weight"] or 0.0)),
                     "metrics": dict(content.get("metrics") or {}),
+                    "normalized_performance": dict(content.get("normalized_performance") or {}),
                     "channel": content.get("channel"),
                     "updated_at": (
                         row["created_at"].isoformat() if row["created_at"] else None

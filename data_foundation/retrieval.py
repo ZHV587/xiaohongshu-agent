@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
+import logging
 import math
 import re
 from typing import Any, Protocol
 import uuid
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from data_foundation.config import (
     current_keyword_relevance_floor,
@@ -40,6 +43,13 @@ from data_foundation.search_ranker import (
     rank_knowledge_candidates,
     weighted_rrf_order,
 )
+from data_foundation.retrieval_policy import (
+    RetrievalTask,
+    graph_edge_types,
+    select_task_bundle,
+    validate_retrieval_task,
+)
+from data_foundation.reranker_shadow import execute_shadow_rerank
 
 
 class RetrievalEngineUnavailable(RuntimeError):
@@ -92,6 +102,7 @@ class GraphExpand(Protocol):
         tenant_id: str,
         resource_ids: list[str],
         resource_versions: list[int],
+        edge_types: list[str],
     ) -> Any: ...
 
 
@@ -242,11 +253,12 @@ class FalkorGraphExpand:
         tenant_id: str,
         resource_ids: list[str],
         resource_versions: list[int],
+        edge_types: list[str],
     ) -> Any:
         return self.graph.expand(
             resource_ids=resource_ids,
             resource_versions=resource_versions,
-            edge_types=None,
+            edge_types=edge_types,
             tenant_id=tenant_id,
         )
 
@@ -363,6 +375,8 @@ class RetrievalService:
         relevance_floor: float = 0.50,
         keyword_relevance_floor: float = DEFAULT_KEYWORD_RELEVANCE_FLOOR,
         unavailable_reasons: Mapping[RecallEngine, str] | None = None,
+        shadow_reranker: Callable[..., Sequence[Any]] | None = None,
+        shadow_observer: Callable[..., Any] | None = None,
     ) -> None:
         if not 0.0 <= float(relevance_floor) <= 1.0:
             raise ValueError("relevance_floor must be between 0 and 1")
@@ -375,6 +389,8 @@ class RetrievalService:
         self.relevance_floor = float(relevance_floor)
         self.keyword_relevance_floor = float(keyword_relevance_floor)
         self.unavailable_reasons = dict(unavailable_reasons or {})
+        self.shadow_reranker = shadow_reranker
+        self.shadow_observer = shadow_observer
 
     def _degradation(
         self, engine: RecallEngine, exc: Exception | None = None
@@ -406,6 +422,7 @@ class RetrievalService:
                 asset_kinds=filters.asset_kinds,
                 source_kinds=filters.source_kinds,
                 niches=filters.niches,
+                account_ids=filters.account_ids,
                 min_quality=filters.min_quality,
                 updated_after=filters.updated_after,
             )
@@ -436,6 +453,7 @@ class RetrievalService:
         query: str,
         limit: int = 10,
         filters: RetrievalFilters | Mapping[str, Any] | None = None,
+        task_type: str | None = None,
     ) -> EvidencePackage:
         if not isinstance(query, str):
             raise TypeError("query must be a string")
@@ -447,6 +465,7 @@ class RetrievalService:
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise TypeError("limit must be an integer")
         safe_limit = min(max(int(limit), 1), 20)
+        task = validate_retrieval_task(task_type, query=query)
         over_fetch = min(max(safe_limit * 5, 25), 200)
         if filters is None:
             selected_filters = RetrievalFilters()
@@ -455,6 +474,11 @@ class RetrievalService:
         else:
             selected_filters = RetrievalFilters.model_validate(filters)
         filter_payload = selected_filters.model_dump(mode="json", exclude_none=True)
+        keyword_filter_payload = dict(filter_payload)
+        # account ownership is an exact-version PostgreSQL fact and is intentionally
+        # not copied to the external keyword index. Meili only narrows recall; PG is
+        # the authoritative anti-cross-account gate below.
+        keyword_filter_payload.pop("account_ids", None)
 
         successful_engines: list[RecallEngine] = []
         degraded: list[EngineDegradation] = []
@@ -486,7 +510,7 @@ class RetrievalService:
                     query=query,
                     tenant_id=tenant_id,
                     limit=over_fetch,
-                    filters=filter_payload,
+                    filters=keyword_filter_payload,
                 )
                 keyword_hits = _normalize_hits(raw_keyword, semantic_floor=None)
                 # Meili 原始分必须先过绝对门；之后的 RRF 还会乘原始分，低分 rank-1
@@ -542,8 +566,10 @@ class RetrievalService:
                         tenant_id=tenant_id,
                         resource_ids=[identity[0] for identity in seed_order],
                         resource_versions=[identity[1] for identity in seed_order],
+                        edge_types=graph_edge_types(task),
                     )
                     graph_hits = _normalize_graph_hits(raw_graph, seeds=set(seed_order))
+                    graph_hits = graph_hits[: min(safe_limit * 2, 20)]
                     successful_engines.append("graph")
                     graph_rows = self._gate(
                         tenant_id=tenant_id,
@@ -605,8 +631,9 @@ class RetrievalService:
             graph_hits=graph_hits,
             active_sources=active_sources,
             performance_data=performance,
-            limit=safe_limit,
+            limit=min(safe_limit * 3, 50),
         )
+        ranked = select_task_bundle(ranked, task=task, limit=safe_limit)
         if not ranked:
             return EvidencePackage(
                 retrieval_mode="insufficient_relevance",
@@ -615,6 +642,23 @@ class RetrievalService:
                 degraded_engines=degraded,
                 gaps="当前知识库没有足够相关的可用证据",
             )
+
+        if self.shadow_reranker is not None:
+            try:
+                shadow = execute_shadow_rerank(
+                    query=query,
+                    ranked_candidates=ranked,
+                    reranker=self.shadow_reranker,
+                )
+                if self.shadow_observer is not None:
+                    self.shadow_observer(
+                        tenant_id=tenant_id,
+                        actor_open_id=actor_open_id,
+                        task_type=task,
+                        observation=shadow,
+                    )
+            except Exception as exc:  # noqa: BLE001 - 影子实验永不影响线上证据顺序
+                logger.warning("reranker_shadow_failed type=%s", type(exc).__name__)
 
         evidence = []
         for item in ranked:
@@ -683,6 +727,7 @@ def retrieve_for_actor(
     query: str,
     limit: int = 10,
     filters: RetrievalFilters | Mapping[str, Any] | None = None,
+    task_type: str | None = None,
 ) -> EvidencePackage:
     """工具、在线采用流程与脚本共用的生产领域入口。"""
 
@@ -692,6 +737,7 @@ def retrieve_for_actor(
         query=query,
         limit=limit,
         filters=filters,
+        task_type=task_type,
     )
 
 

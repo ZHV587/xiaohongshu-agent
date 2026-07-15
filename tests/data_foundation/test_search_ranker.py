@@ -85,7 +85,11 @@ def test_rank_returns_complete_exact_evidence_signals() -> None:
         semantic_hits=[RecallHit(*identity, 0.91)],
         keyword_hits=[RecallHit(*identity, 0.77)],
         active_sources=["semantic", "keyword"],
-        performance_data={identity: [{"metrics": {"likes": 1200, "collects": 400}}]},
+        performance_data={
+            identity: [
+                {"metrics": {"likes": 1200, "collects": 400, "views": 20_000}}
+            ]
+        },
         now=datetime(2026, 7, 13, tzinfo=timezone.utc),
     )
     assert len(ranked) == 1

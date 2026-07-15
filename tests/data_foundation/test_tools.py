@@ -6,6 +6,7 @@ from contextlib import nullcontext
 import pytest
 
 from data_foundation.preference_learning import ExactResourceVersion
+from data_foundation.writing_context import WritingContext
 from tools.runtime_identity import identity_config
 
 
@@ -28,6 +29,14 @@ class RecordingRepository:
         self.upserts = []
         self.resources = {}
         self.conn = object()
+        self.account_repo = type(
+            "AccountRepository",
+            (),
+            {
+                "get_resource_context": lambda _self, **_kwargs: WritingContext(),
+                "assert_owned_context": lambda _self, **_kwargs: None,
+            },
+        )()
         self.session_rows = []
 
     def unit_of_work(self):
@@ -685,7 +694,10 @@ def test_retrieve_knowledge_delegates_to_unified_domain_service(monkeypatch):
         config=identity_config("ou_user"),
     )
 
-    assert result == package.model_dump(mode="json")
+    assert result == {
+        **package.model_dump(mode="json"),
+        "task_type": "general",
+    }
     assert calls == [
         {
             "tenant_id": "default",
@@ -693,6 +705,7 @@ def test_retrieve_knowledge_delegates_to_unified_domain_service(monkeypatch):
             "query": "露营",
             "limit": 10,
             "filters": RetrievalFilters(niches=["露营"]),
+            "task_type": "general",
         }
     ]
     assert not hasattr(df_tools, "search_resources")
@@ -721,6 +734,34 @@ def test_retrieve_knowledge_returns_only_safe_error_codes(monkeypatch):
     )
     assert failed == {"error": "KNOWLEDGE_RETRIEVAL_FAILED"}
     assert "must-not-leak" not in str(failed)
+
+
+def test_retrieve_knowledge_rejects_unowned_account_context(monkeypatch):
+    from data_foundation import tools as df_tools
+    import data_foundation.retrieval as retrieval
+
+    repo = RecordingRepository()
+
+    def _forbidden(**_kwargs):
+        raise PermissionError("private-account")
+
+    repo.account_repo.assert_owned_context = _forbidden
+    monkeypatch.setattr(df_tools, "_repository", lambda: _RepoContext(repo))
+    called = []
+    monkeypatch.setattr(
+        retrieval,
+        "retrieve_for_actor",
+        lambda *_args, **_kwargs: called.append(True),
+    )
+
+    result = df_tools.retrieve_knowledge.func(
+        query="露营",
+        account_id="11111111-1111-4111-8111-111111111111",
+        config=identity_config("ou_intruder"),
+    )
+
+    assert result == {"error": "ACCOUNT_CONTEXT_FORBIDDEN"}
+    assert called == []
 
 
 

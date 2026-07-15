@@ -172,6 +172,30 @@ create trigger trg_user_skill_audit_immutable
   before update or delete on user_skill_audit_events
   for each row execute function reject_user_skill_immutable_mutation();
 
+create table if not exists xhs_accounts (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  owner_open_id text not null,
+  platform_account_id text,
+  display_name text not null check (trim(display_name) <> ''),
+  niche text,
+  is_default boolean not null default false,
+  status text not null default 'active' check (status in ('active', 'archived')),
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, owner_open_id, id)
+);
+
+create unique index if not exists uq_xhs_accounts_platform_identity
+  on xhs_accounts (tenant_id, owner_open_id, platform_account_id)
+  where platform_account_id is not null;
+create unique index if not exists uq_xhs_accounts_owner_default
+  on xhs_accounts (tenant_id, owner_open_id)
+  where is_default is true and status = 'active';
+create index if not exists idx_xhs_accounts_tenant_active
+  on xhs_accounts (tenant_id, status, updated_at desc);
+
 create table if not exists resources (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
@@ -262,6 +286,187 @@ create index if not exists idx_resource_versions_tenant_recent
   on resource_versions (tenant_id, created_at desc);
 create index if not exists idx_resource_versions_resource_recent
   on resource_versions (resource_id, created_at desc);
+
+create table if not exists resource_contexts (
+  tenant_id text not null,
+  resource_id uuid not null,
+  resource_version int not null check (resource_version > 0),
+  owner_open_id text not null,
+  account_id uuid,
+  niche text,
+  scope_key text not null check (scope_key <> ''),
+  context_source text not null
+    check (context_source in ('frontend', 'account_default', 'source_metadata', 'inherited')),
+  created_at timestamptz not null default now(),
+  primary key (tenant_id, resource_id, resource_version),
+  foreign key (tenant_id, resource_id, resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  foreign key (tenant_id, owner_open_id, account_id)
+    references xhs_accounts(tenant_id, owner_open_id, id),
+  check (account_id is not null or niche is not null)
+);
+
+create index if not exists idx_resource_contexts_scope
+  on resource_contexts (tenant_id, owner_open_id, scope_key, created_at desc);
+create index if not exists idx_resource_contexts_account
+  on resource_contexts (tenant_id, account_id, created_at desc)
+  where account_id is not null;
+
+create or replace function reject_resource_context_mutation()
+returns trigger as $$
+begin
+  raise exception 'resource contexts are immutable; bind a new resource version instead'
+    using errcode = '55000';
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_resource_contexts_immutable on resource_contexts;
+create trigger trg_resource_contexts_immutable
+  before update or delete on resource_contexts
+  for each row execute function reject_resource_context_mutation();
+
+create table if not exists generation_runs (
+  id uuid primary key default gen_random_uuid(),
+  presentation_sequence bigint generated always as identity,
+  tenant_id text not null,
+  owner_open_id text not null,
+  run_key char(64) not null,
+  run_id text,
+  turn_id text,
+  thread_id text,
+  task_type text not null
+    check (task_type in ('copywriting', 'imitation', 'revision', 'other')),
+  request_digest char(64) not null,
+  prompt_contract_version text not null check (prompt_contract_version <> ''),
+  model_provider text,
+  model_id text,
+  gateway_name text,
+  knowledge_grounding jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(knowledge_grounding) = 'object'),
+  profile_resource_id uuid,
+  profile_resource_version int,
+  user_skill_id uuid,
+  user_skill_version_id uuid,
+  account_id uuid,
+  niche text,
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  unique (tenant_id, owner_open_id, run_key),
+  foreign key (tenant_id, profile_resource_id, profile_resource_version)
+    references resource_versions(tenant_id, resource_id, version),
+  foreign key (tenant_id, owner_open_id, account_id)
+    references xhs_accounts(tenant_id, owner_open_id, id),
+  constraint generation_runs_profile_pair_check check (
+    (profile_resource_id is null and profile_resource_version is null)
+    or (profile_resource_id is not null and profile_resource_version is not null
+      and profile_resource_version > 0)
+  ),
+  constraint generation_runs_skill_pair_check check (
+    (user_skill_id is null and user_skill_version_id is null)
+    or (user_skill_id is not null and user_skill_version_id is not null)
+  )
+);
+
+create index if not exists idx_generation_runs_owner_recent
+  on generation_runs (tenant_id, owner_open_id, created_at desc, id desc);
+create unique index if not exists uq_generation_runs_tenant_id
+  on generation_runs (tenant_id, id);
+
+alter table generation_runs
+  add column if not exists presentation_sequence bigint generated always as identity;
+create unique index if not exists uq_generation_runs_presentation_sequence
+  on generation_runs (presentation_sequence);
+
+alter table generation_runs
+  drop constraint if exists generation_runs_profile_pair_check;
+alter table generation_runs
+  add constraint generation_runs_profile_pair_check check (
+    (profile_resource_id is null and profile_resource_version is null)
+    or (profile_resource_id is not null and profile_resource_version is not null
+      and profile_resource_version > 0)
+  );
+
+create table if not exists generation_variants (
+  tenant_id text not null,
+  generation_run_id uuid not null,
+  resource_id uuid not null,
+  resource_version int not null check (resource_version > 0),
+  label text not null check (label <> ''),
+  ordinal int not null check (ordinal > 0),
+  presented_at timestamptz not null default now(),
+  selected_at timestamptz,
+  primary key (tenant_id, generation_run_id, resource_id, resource_version),
+  unique (tenant_id, generation_run_id, ordinal),
+  constraint generation_variants_tenant_run_fk
+    foreign key (tenant_id, generation_run_id)
+    references generation_runs(tenant_id, id) on delete cascade,
+  foreign key (tenant_id, resource_id, resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade
+);
+
+create index if not exists idx_generation_variants_exact
+  on generation_variants (tenant_id, resource_id, resource_version, presented_at desc);
+
+create table if not exists generation_pairwise_preferences (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  owner_open_id text not null,
+  generation_run_id uuid not null,
+  chosen_resource_id uuid not null,
+  chosen_resource_version int not null check (chosen_resource_version > 0),
+  rejected_resource_id uuid not null,
+  rejected_resource_version int not null check (rejected_resource_version > 0),
+  chosen_ordinal int not null check (chosen_ordinal > 0),
+  rejected_ordinal int not null check (rejected_ordinal > 0),
+  selection_event_id uuid not null,
+  created_at timestamptz not null default now(),
+  constraint generation_pairwise_tenant_run_fk
+    foreign key (tenant_id, generation_run_id)
+    references generation_runs(tenant_id, id) on delete cascade,
+  foreign key (tenant_id, chosen_resource_id, chosen_resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  foreign key (tenant_id, rejected_resource_id, rejected_resource_version)
+    references resource_versions(tenant_id, resource_id, version) on delete cascade,
+  unique (
+    tenant_id, generation_run_id, chosen_resource_id, chosen_resource_version,
+    rejected_resource_id, rejected_resource_version, selection_event_id
+  ),
+  check (
+    (chosen_resource_id, chosen_resource_version)
+      <> (rejected_resource_id, rejected_resource_version)
+  )
+);
+
+create index if not exists idx_generation_pairwise_owner_recent
+  on generation_pairwise_preferences (
+    tenant_id, owner_open_id, created_at desc, generation_run_id
+  );
+
+-- 已有安装的子表由旧版单列外键保护；补上租户 + run 的复合约束，禁止任何
+-- 跨租户 generation_run_id 错配。fresh database 已在建表语句中获得同名约束。
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'generation_variants'::regclass
+      and conname = 'generation_variants_tenant_run_fk'
+  ) then
+    alter table generation_variants
+      add constraint generation_variants_tenant_run_fk
+      foreign key (tenant_id, generation_run_id)
+      references generation_runs(tenant_id, id) on delete cascade;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'generation_pairwise_preferences'::regclass
+      and conname = 'generation_pairwise_tenant_run_fk'
+  ) then
+    alter table generation_pairwise_preferences
+      add constraint generation_pairwise_tenant_run_fk
+      foreign key (tenant_id, generation_run_id)
+      references generation_runs(tenant_id, id) on delete cascade;
+  end if;
+end $$;
 
 -- AI 文案在整个创作/发布周期内只有一个稳定 resources.id。候选、用户修订、采纳稿和
 -- 排期定稿都复用 resource_versions 的不可变快照；本表只保存各阶段的精确版本指针。
@@ -561,6 +766,7 @@ create table if not exists preference_observations (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null,
   owner_open_id text not null,
+  scope_key text not null default 'global' check (scope_key <> ''),
   resource_id uuid not null,
   resource_version int not null check (resource_version > 0),
   observation_type text not null check (observation_type <> ''),
@@ -575,12 +781,19 @@ create table if not exists preference_observations (
   unique (tenant_id, owner_open_id, idempotency_key)
 );
 
+alter table preference_observations
+  add column if not exists scope_key text not null default 'global';
+
+drop index if exists idx_preference_observations_owner_recent;
 create index if not exists idx_preference_observations_owner_recent
-  on preference_observations (tenant_id, owner_open_id, observed_at desc, id desc);
+  on preference_observations (
+    tenant_id, owner_open_id, scope_key, observed_at desc, id desc
+  );
 
 create table if not exists writing_profile_states (
   tenant_id text not null,
   owner_open_id text not null,
+  scope_key text not null default 'global' check (scope_key <> ''),
   profile_resource_id uuid,
   profile_resource_version int,
   input_digest text not null default '' check (input_digest = '' or input_digest ~ '^[0-9a-f]{64}$'),
@@ -591,7 +804,7 @@ create table if not exists writing_profile_states (
   rebuilt_through timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  primary key (tenant_id, owner_open_id),
+  primary key (tenant_id, owner_open_id, scope_key),
   foreign key (tenant_id, profile_resource_id, profile_resource_version)
     references resource_versions(tenant_id, resource_id, version),
   constraint writing_profile_states_exact_pair_check check (
@@ -601,6 +814,24 @@ create table if not exists writing_profile_states (
       and profile_resource_version > 0)
   )
 );
+
+alter table writing_profile_states
+  add column if not exists scope_key text not null default 'global';
+do $$
+declare current_pk text;
+begin
+  select conname into current_pk
+  from pg_constraint
+  where conrelid = 'writing_profile_states'::regclass and contype = 'p';
+  if current_pk is not null and pg_get_constraintdef(
+    (select oid from pg_constraint where conname = current_pk
+      and conrelid = 'writing_profile_states'::regclass)
+  ) not ilike '%scope_key%' then
+    execute format('alter table writing_profile_states drop constraint %I', current_pk);
+    alter table writing_profile_states
+      add primary key (tenant_id, owner_open_id, scope_key);
+  end if;
+end $$;
 
 create table if not exists preference_synthesis_states (
   tenant_id text not null,
@@ -645,6 +876,24 @@ create table if not exists resource_events (
 
 create index if not exists idx_resource_events_tenant_recent
   on resource_events (tenant_id, created_at desc);
+
+-- generation_pairwise_preferences 在 fresh database 中先于 resource_events 创建；
+-- 外键必须等被引用表存在后再补。已有安装若已具备等价外键则保持原约束，不重复添加。
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'generation_pairwise_preferences'::regclass
+      and confrelid = 'resource_events'::regclass
+      and contype = 'f'
+  ) then
+    alter table generation_pairwise_preferences
+      add constraint generation_pairwise_selection_event_fk
+      foreign key (tenant_id, selection_event_id)
+      references resource_events(tenant_id, id) on delete cascade;
+  end if;
+end $$;
 
 create table if not exists agent_trace_events (
   id uuid primary key default gen_random_uuid(),
@@ -809,6 +1058,32 @@ create index if not exists idx_knowledge_retrieval_exposures_fingerprint
   );
 create index if not exists idx_knowledge_retrieval_exposures_run
   on knowledge_retrieval_exposures (retrieval_run_id, evidence_key);
+
+-- Reranker 影子实验只记录聚合差异和不可逆顺序摘要；没有查询、标题、正文或模型响应列。
+-- 该表不参与线上排序，清空它也不会改变任何检索结果。
+create table if not exists knowledge_reranker_shadow_runs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  actor_key char(64) not null check (actor_key ~ '^[0-9a-f]{64}$'),
+  experiment_id text not null check (trim(experiment_id) <> ''),
+  task_type text not null check (trim(task_type) <> ''),
+  candidate_count int not null check (candidate_count > 0),
+  top1_changed boolean not null,
+  top_k_overlap double precision not null check (top_k_overlap between 0.0 and 1.0),
+  mean_rank_displacement double precision not null check (mean_rank_displacement >= 0.0),
+  baseline_order_hash char(64) not null
+    check (baseline_order_hash ~ '^[0-9a-f]{64}$'),
+  shadow_order_hash char(64) not null
+    check (shadow_order_hash ~ '^[0-9a-f]{64}$'),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_reranker_shadow_experiment_recent
+  on knowledge_reranker_shadow_runs (
+    tenant_id, experiment_id, created_at desc, id desc
+  );
+create index if not exists idx_reranker_shadow_retention
+  on knowledge_reranker_shadow_runs (created_at, id);
 
 create table if not exists resource_edges (
   id uuid primary key default gen_random_uuid(),
@@ -1318,6 +1593,71 @@ alter table data_foundation_migrations
 insert into data_foundation_migrations (migration_key, status, completed_at)
 values ('20260713_retrieval_adoption_metrics_v1', 'complete', now())
 on conflict (migration_key) do nothing;
+
+-- 飞书“同步成功”不再等于“知识合格”。历史版本没有显式来源资格声明，必须立即从
+-- PostgreSQL 权威知识门撤下；随后投递 Meili 对账删除任务。重新同步后，只有带
+-- knowledge_qualification.policy_version=1 且属于 xhs_copywriting 域的精确新版本
+-- 才能重新获得资格。
+do $$
+begin
+  if not exists (
+    select 1 from data_foundation_migrations
+    where migration_key = 'feishu-explicit-knowledge-source-v1'
+  ) then
+    update knowledge_asset_states state
+    set eligibility = 'rejected',
+        eligible_for_synthesis = false,
+        asset_kind = 'source_material',
+        source_kind = 'workspace_excluded',
+        source_authority = jsonb_build_object(
+          'origin', 'workspace', 'validation', 'excluded',
+          'provenance', 'source_policy', 'score', 0.0
+        ),
+        quality_score = 0.0,
+        qualified_at = null,
+        indexed_at = null,
+        search_reconcile_generation = search_reconcile_generation + 1,
+        metadata = state.metadata || jsonb_build_object(
+          'policy_reason', 'SYNC_SOURCE_NOT_EXPLICITLY_QUALIFIED',
+          'source_policy_migration', 'feishu-explicit-knowledge-source-v1'
+        ),
+        updated_at = now()
+    from resources live, resource_versions exact
+    where live.tenant_id = state.tenant_id
+      and live.id = state.resource_id
+      and live.type in ('feishu_doc', 'feishu_base_record')
+      and exact.tenant_id = state.tenant_id
+      and exact.resource_id = state.resource_id
+      and exact.version = state.resource_version
+      and state.eligibility = 'qualified'
+      and not (
+        exact.content_json->'knowledge_qualification'->>'policy_version' = '1'
+        and exact.content_json->'knowledge_qualification'->>'eligible' = 'true'
+        and exact.content_json->'knowledge_qualification'->>'domain' = 'xhs_copywriting'
+      );
+
+    insert into resource_outbox (
+      tenant_id, resource_id, resource_version, topic, dedupe_key, payload
+    )
+    select state.tenant_id, state.resource_id, state.resource_version,
+           'meili_index',
+           encode(digest(concat_ws(':', state.tenant_id, state.resource_id::text,
+             state.resource_version::text, 'feishu-explicit-knowledge-source-v1'),
+             'sha256'), 'hex'),
+           jsonb_build_object(
+             'resource_id', state.resource_id::text,
+             'version', state.resource_version,
+             'reconcile_generation', state.search_reconcile_generation
+           )
+    from knowledge_asset_states state
+    where state.metadata->>'source_policy_migration' =
+          'feishu-explicit-knowledge-source-v1'
+    on conflict (tenant_id, dedupe_key) do nothing;
+
+    insert into data_foundation_migrations (migration_key, status)
+    values ('feishu-explicit-knowledge-source-v1', 'complete');
+  end if;
+end $$;
 
 -- 2026-07:历史 Meili 文档没有 resource_version。新检索契约会拒绝这些无法精确回表的
 -- 文档，因此升级时必须为每个当前可检索的精确版本做一次 outbox 重建：

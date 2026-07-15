@@ -106,6 +106,7 @@ class MeiliProcessor:
                        target.normalized_text,
                        target.metadata || coalesce(enrichment.payload, '{}'::jsonb)
                          as metadata,
+                       resource_context.niche as context_niche,
                        target.qualified_at
                 from current_knowledge_targets target
                 left join lateral (
@@ -119,6 +120,10 @@ class MeiliProcessor:
                            knowledge_enrichments.id desc
                   limit 1
                 ) enrichment on true
+                left join resource_contexts resource_context
+                  on resource_context.tenant_id = target.tenant_id
+                 and resource_context.resource_id = target.resource_id
+                 and resource_context.resource_version = target.resource_version
                 where target.tenant_id = %s
                   and target.resource_id = %s
                 """,
@@ -165,7 +170,8 @@ class MeiliProcessor:
             "resource_version": int(row["resource_version"]),
             "asset_kind": row["asset_kind"],
             "source_kind": row["source_kind"],
-            "niche": clean_text(metadata.get("niche")),
+            "niche": clean_text(row.get("context_niche"))
+            or clean_text(metadata.get("niche")),
             "quality_score": float(row["quality_score"]),
             "qualified_at_epoch": int(qualified_at.timestamp()),
             "normalized_text": row["normalized_text"],

@@ -289,6 +289,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const teardown = analyticsRes.data.teardown ?? EMPTY_TEARDOWN;
   const month = calendarRes.data.month ?? EMPTY_MONTH;
   const accounts = accountsRes.data.accounts ?? [];
+  const selectedAccountRecord = accounts.find((item) => item.id === selectedAccount);
+  const writingContextState = useMemo(
+    () => ({
+      current_account_id: selectedAccount,
+      current_niche: selectedAccountRecord?.writingNiche ?? null,
+    }),
+    [selectedAccount, selectedAccountRecord?.writingNiche],
+  );
   const publishQueue = pipelineRes.data.queue ?? [];
   const trends = trendsRes.data.trends ?? [];
   // 暂无配图后端来源 —— 真实空容器（组件按 images.length 守卫，不渲染占位图）。
@@ -706,10 +714,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         indexed_at: it.indexed_at,
       }));
       t.submitText(`写第 ${topic.id} 个选题：${topic.title}`, {
+        ...writingContextState,
         selected_topic: { topic: topic.title, evidence: selectedEvidence },
       });
     },
-    [setLocalEditState, setSection, t, evidence, versions, topicId],
+    [setLocalEditState, setSection, t, evidence, versions, topicId, writingContextState],
   );
 
   // 采纳用户在发现卡勾选的笔记:经官方 state-update 通道把 selected_notes 直传 graph
@@ -720,10 +729,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (!notes.length) return;
       t.submitText(
         "请采纳我在面板勾选的这些线上笔记(收录入库),然后基于这批 + 本地相关内容出选题。",
-        { selected_notes: notes },
+        { ...writingContextState, selected_notes: notes },
       );
     },
-    [t],
+    [t, writingContextState],
   );
 
   // ── 收录结果弹窗:最新一次 adopt_online_notes 的结局(计数 + 逐条 + 失败项) ──
@@ -764,9 +773,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setDismissedAdoptionId(adoptionModal.callId);
     t.submitText(
       "请重新采纳我上次收录失败的这些线上笔记(仅这几篇,收录入库即可)。",
-      { selected_notes: notes },
+      { ...writingContextState, selected_notes: notes },
     );
-  }, [adoptionModal, materials, t, showToast]);
+  }, [adoptionModal, materials, t, showToast, writingContextState]);
 
   // 素材栏搜索:用户在参考素材工作台输入关键词,发一条明确的「只检索参考素材、先别出选题/写文案」
   // 指令给 agent。agent 走检索工具(本地笔记卡 + 线上),命中的笔记以 discovery 项流回,由
@@ -777,9 +786,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       const q = query.trim();
       if (!q) return;
       setSection("create");
-      t.submitText(`帮我检索「${q}」相关的参考素材笔记(本地库 + 线上都找),只把找到的笔记列出来放进参考素材工作台,先不要出选题、也先别写文案。`);
+      t.submitText(`帮我检索「${q}」相关的参考素材笔记(本地库 + 线上都找),只把找到的笔记列出来放进参考素材工作台,先不要出选题、也先别写文案。`, writingContextState);
     },
-    [setSection, t],
+    [setSection, t, writingContextState],
   );
 
   // 仿写:对单篇范本触发两段式仿写(§5)。经 state 直传 selected_reference(权威标识,不经
@@ -812,6 +821,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         (note.resource_version ?? 0) > 0
       ) {
         t.submitText(`照着${label}的套路,仿写成我自己的一篇。先拆解它的选题方向与套路,再据此写成品。`, {
+          ...writingContextState,
           selected_reference: {
             resource_id: note.resource_id,
             resource_version: note.resource_version,
@@ -821,12 +831,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       } else {
         // 线上未入库:范本本身作为 selected_notes 直传,后端先收录拿 id 再仿。
         t.submitText(`照着${label}的套路,仿写成我自己的一篇(这是线上笔记,请先收录入库以便可追溯,再拆解套路写成品)。`, {
+          ...writingContextState,
           selected_reference: { note },
           selected_notes: [note],
         });
       }
     },
-    [setLocalEditState, setSection, t],
+    [setLocalEditState, setSection, t, writingContextState],
   );
   // 注:setTags/setCover 是 useState setter,恒稳定(React 保证),无需列入 imitate 依赖;
   // t 已在依赖内(其 setDraft* 亦稳定)。此处保持与 chooseTopic 同样的依赖口径。
@@ -911,13 +922,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         cover,
         note: saved.note,
         label: saved.label || v,
+        ...(selectedAccount ? { account: selectedAccount } : {}),
       });
       if (!revised.selectedVersion) throw new StudioWriteError("修订未返回精确版本", 502);
       setLocalEditState(false);
       applyAuthoritativeLifecycle(revised);
       return revised;
     },
-    [activeVersion, applyAuthoritativeLifecycle, cover, currentVersionSnapshot, draftDiffersFromSnapshot, postCopyLifecycle, setLocalEditState, t.draftTitle, t.draftContent, tags],
+    [activeVersion, applyAuthoritativeLifecycle, cover, currentVersionSnapshot, draftDiffersFromSnapshot, postCopyLifecycle, selectedAccount, setLocalEditState, t.draftTitle, t.draftContent, tags],
   );
 
   // 切版本身是一个保存边界：当前版有编辑时必须先追加不可变修订，再用修订响应里的
@@ -1001,6 +1013,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           resourceId: lifecycleWriteBinding.resourceId,
           resourceVersion,
           expectedStateVersion: ready.stateVersion,
+          ...(selectedAccount ? { account: selectedAccount } : {}),
         });
         setLocalEditState(false);
         applyAuthoritativeLifecycle(adopted);
@@ -1015,7 +1028,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         lifecycleWriteBusyRef.current = false;
       }
     },
-    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, lifecycleWriteBinding, postCopyLifecycle, saveRevisionAtBoundary, setLocalEditState, showToast],
+    [activeVersion, applyAuthoritativeLifecycle, copyLifecycle, currentVersionSnapshot, draftDiffersFromSnapshot, handleLifecycleConflict, lifecycleWriteBinding, postCopyLifecycle, saveRevisionAtBoundary, selectedAccount, setLocalEditState, showToast],
   );
 
   // schedule：乐观更新 + await POST /api/backend/schedule，成功保留、失败回滚。
@@ -1319,7 +1332,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         t.setThreadId(null);
         setSection("create");
       },
-      say: (text: string) => t.submitText(text),
+      say: (text: string) => t.submitText(text, writingContextState),
       stop: () => t.stopGeneration(),
       toast: showToast,
       openEvidence: setSelectedEvidence,

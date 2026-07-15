@@ -39,15 +39,15 @@ def _rank(metrics: dict) -> float:
 
 def test_no_effect_facts_produce_zero_performance() -> None:
     assert _rank({}) == 0.0
-    assert _rank({"likes": 0, "collects": 0, "comments": 0}) == 0.0
+    assert _rank({"likes": 0, "collects": 0, "comments": 0, "views": 1000}) == 0.0
 
 
 def test_performance_is_monotonic_but_not_immediately_saturated() -> None:
     scores = [
-        _rank({"likes": 10}),
-        _rank({"likes": 1_000}),
-        _rank({"likes": 100_000}),
-        _rank({"likes": 1_000_000}),
+        _rank({"likes": 1, "views": 1000}),
+        _rank({"likes": 10, "views": 1000}),
+        _rank({"likes": 50, "views": 1000}),
+        _rank({"likes": 100, "views": 1000}),
     ]
     assert scores == sorted(scores)
     assert len(set(scores)) == len(scores)
@@ -55,7 +55,7 @@ def test_performance_is_monotonic_but_not_immediately_saturated() -> None:
 
 
 def test_best_exact_effect_snapshot_wins() -> None:
-    low = _rank({"likes": 20})
+    low = _rank({"likes": 20, "views": 10_000})
     rows = [
         {
             "resource_id": RESOURCE_ID,
@@ -77,8 +77,8 @@ def test_best_exact_effect_snapshot_wins() -> None:
         active_sources=["semantic"],
         performance_data={
             IDENTITY: [
-                {"metrics": {"likes": 20}},
-                {"metrics": {"likes": 20_000}},
+                {"metrics": {"likes": 20, "views": 10_000}},
+                {"metrics": {"likes": 2_000, "views": 10_000}},
             ]
         },
     )
@@ -91,7 +91,14 @@ def test_best_exact_effect_snapshot_wins() -> None:
     comments=st.integers(min_value=0, max_value=10_000_000),
 )
 def test_performance_property_is_bounded(likes: int, collects: int, comments: int) -> None:
-    score = _rank({"likes": likes, "collects": collects, "comments": comments})
+    score = _rank(
+        {
+            "likes": likes,
+            "collects": collects,
+            "comments": comments,
+            "views": 10_000_000,
+        }
+    )
     assert 0.0 <= score <= 1.0
     if likes == collects == comments == 0:
         assert score == pytest.approx(0.0)

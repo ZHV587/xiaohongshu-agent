@@ -32,6 +32,12 @@ from typing import Any, Iterable, Mapping, Sequence
 import uuid
 
 from data_foundation.outbox_requests import default_write_requests
+from data_foundation.writing_context import (
+    GLOBAL_SCOPE_KEY,
+    WritingContext,
+    context_from_payload,
+)
+from data_foundation.performance_scoring import normalize_performance
 
 
 OBSERVATION_SCHEMA_VERSION = 1
@@ -56,6 +62,7 @@ _EVENT_ALIASES = {
     "feedback": "feedback",
     "user_feedback": "feedback",
     "revision_request": "feedback",
+    "variant_selected": "comparison",
 }
 _EVENT_WEIGHTS = {
     "adopted": 2.0,
@@ -64,6 +71,7 @@ _EVENT_WEIGHTS = {
     "metric": 4.0,
     "revision": 2.0,
     "feedback": 1.0,
+    "comparison": 0.0,
 }
 _PROFILE_DIMENSIONS = ("niche", "hook_type", "cta_type", "structure_type", "variant_label")
 _PATTERN_DIMENSIONS = ("hook_type", "cta_type", "structure_type")
@@ -255,6 +263,20 @@ def build_preference_observation(
         signal = _metric_signal(event_payload)
     elif normalized_type == "feedback":
         signal = _feedback_signal(event_payload, snapshot)
+    elif normalized_type == "comparison":
+        rejected_features = event_payload.get("rejected_features")
+        signal = {
+            "rejected_features": (
+                dict(rejected_features)
+                if isinstance(rejected_features, Mapping)
+                else {}
+            ),
+            "chosen_ordinal": event_payload.get("chosen_ordinal"),
+            "rejected_ordinal": event_payload.get("rejected_ordinal"),
+            "exact_sources": [
+                dict(event_payload["rejected_source"])
+            ] if isinstance(event_payload.get("rejected_source"), Mapping) else [],
+        }
     observation_payload = {
         "schema_version": OBSERVATION_SCHEMA_VERSION,
         "features": features,
@@ -299,6 +321,7 @@ def rebuild_preference_profile(
     revision_counts: Counter[str] = Counter()
     feedback_traits: Counter[str] = Counter()
     metric_scores: list[float] = []
+    eligible_metric_scores: list[float] = []
     avoid_dimension_scores: dict[str, Counter[str]] = {
         dimension: Counter() for dimension in _PROFILE_DIMENSIONS
     }
@@ -311,7 +334,7 @@ def rebuild_preference_profile(
             continue
         signal = dict(observation.payload.get("signal") or {})
         measured_source_factors[observation.source].append(
-            _metric_outcome_factor(signal.get("score"))
+            _metric_lifecycle_factor(signal)
         )
     source_outcome_factor = {
         source: sum(factors) / len(factors)
@@ -362,7 +385,9 @@ def rebuild_preference_profile(
             score = signal.get("score")
             if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score):
                 metric_scores.append(float(score))
-                if float(score) < MIN_PATTERN_PERFORMANCE:
+                if signal.get("learning_eligible") is True:
+                    eligible_metric_scores.append(float(score))
+                if signal.get("learning_eligible") is True and float(score) < MIN_PATTERN_PERFORMANCE:
                     for dimension in _PROFILE_DIMENSIONS:
                         value = _normalized_feature_value(features.get(dimension))
                         if value:
@@ -371,6 +396,17 @@ def rebuild_preference_profile(
                         avoid_tag_scores[tag] += 1
                     for tag in _string_list(features.get("style_tags")):
                         avoid_style_scores[tag] += 1
+        if observation.event_type == "comparison":
+            rejected = dict(signal.get("rejected_features") or {})
+            bias_weight = _pairwise_bias_weight(signal)
+            for dimension in _PROFILE_DIMENSIONS:
+                value = _normalized_feature_value(rejected.get(dimension))
+                if value:
+                    avoid_dimension_scores[dimension][value] += bias_weight
+            for tag in _string_list(rejected.get("tags")):
+                avoid_tag_scores[tag] += bias_weight
+            for tag in _string_list(rejected.get("style_tags")):
+                avoid_style_scores[tag] += bias_weight
         if observation.event_type == "feedback":
             for trait in _string_list(signal.get("traits")):
                 feedback_traits[trait] += 1
@@ -415,14 +451,20 @@ def rebuild_preference_profile(
         },
         "outcome_summary": {
             "metric_observation_count": len(metric_scores),
+            "evaluable_metric_count": len(eligible_metric_scores),
+            "uncertain_metric_count": len(metric_scores) - len(eligible_metric_scores),
             "positive_metric_count": sum(
-                1 for score in metric_scores if score >= MIN_PATTERN_PERFORMANCE
+                1
+                for score in eligible_metric_scores
+                if score >= MIN_PATTERN_PERFORMANCE
             ),
             "low_metric_count": sum(
-                1 for score in metric_scores if score < MIN_PATTERN_PERFORMANCE
+                1 for score in eligible_metric_scores if score < MIN_PATTERN_PERFORMANCE
             ),
-            "average_score": round(sum(metric_scores) / len(metric_scores), 6)
-            if metric_scores
+            "average_score": round(
+                sum(eligible_metric_scores) / len(eligible_metric_scores), 6
+            )
+            if eligible_metric_scores
             else None,
         },
         "sources": [source.payload() for source in sources],
@@ -577,13 +619,25 @@ def normalize_visibility(visibility: str) -> str:
 class PreferenceLearningService:
     """Transaction-aware orchestration over ResourceRepository + preference tables."""
 
-    def __init__(self, resource_repo: Any, preference_repo: Any | None = None) -> None:
+    def __init__(
+        self,
+        resource_repo: Any,
+        preference_repo: Any | None = None,
+        account_repo: Any | None = None,
+    ) -> None:
         self.resource_repo = resource_repo
         if preference_repo is None:
             from data_foundation.repositories.preference import PreferenceRepository
 
             preference_repo = PreferenceRepository(resource_repo.conn)
         self.preference_repo = preference_repo
+        if account_repo is None:
+            account_repo = getattr(resource_repo, "account_repo", None)
+        if account_repo is None:
+            from data_foundation.repositories.account import AccountRepository
+
+            account_repo = AccountRepository(resource_repo.conn)
+        self.account_repo = account_repo
 
     def record_exact_event(
         self,
@@ -615,24 +669,64 @@ class PreferenceLearningService:
                     actor_open_id=actor_open_id,
                     source=ExactResourceVersion(source_resource_id, base_resource_version),
                 )
+            normalized_event_type = normalize_event_type(event_type)
+            enriched_event_payload = dict(event_payload or {})
+            if normalized_event_type == "comparison":
+                rejected = enriched_event_payload.get("rejected_source")
+                if not isinstance(rejected, Mapping):
+                    raise ValueError("comparison requires rejected_source")
+                rejected_source = ExactResourceVersion(
+                    str(rejected.get("resource_id") or ""),
+                    rejected.get("resource_version"),
+                )
+                enriched_event_payload["rejected_features"] = extract_writing_features(
+                    self._snapshot(
+                        tenant_id=tenant_id,
+                        actor_open_id=actor_open_id,
+                        source=rejected_source,
+                    )
+                )
             observation = build_preference_observation(
                 event_type=event_type,
                 source=source,
                 snapshot=snapshot,
                 source_event_id=source_event_id,
-                event_payload=event_payload,
+                event_payload=enriched_event_payload,
                 previous_snapshot=previous_snapshot,
             )
+            writing_context = context_from_payload(snapshot.get("resource_context"))
+            scope_key = writing_context.scope_key
             inserted = self.preference_repo.insert_observation(
                 tenant_id=tenant_id,
                 actor_open_id=actor_open_id,
                 observation=observation,
+                scope_key=scope_key,
             )
             profile = None
             if rebuild_profile:
                 if inserted:
-                    profile = self._rebuild_profile(
-                        tenant_id=tenant_id, actor_open_id=actor_open_id
+                    # global 是跨上下文兜底；一旦素材有账号/垂类，同时重建精确范围画像。
+                    self._rebuild_profile(
+                        tenant_id=tenant_id,
+                        actor_open_id=actor_open_id,
+                        scope_key=GLOBAL_SCOPE_KEY,
+                        writing_context=WritingContext(),
+                    )
+                    profile = (
+                        self._rebuild_profile(
+                            tenant_id=tenant_id,
+                            actor_open_id=actor_open_id,
+                            scope_key=scope_key,
+                            writing_context=writing_context,
+                        )
+                        if scope_key != GLOBAL_SCOPE_KEY
+                        else self._profile_result(
+                            self.preference_repo.get_profile_state(
+                                tenant_id=tenant_id,
+                                actor_open_id=actor_open_id,
+                                scope_key=GLOBAL_SCOPE_KEY,
+                            )
+                        )
                     )
                 else:
                     # An idempotent replay adds no evidence. Rebuilding anyway walks
@@ -640,13 +734,18 @@ class PreferenceLearningService:
                     # edge; a scheduled metrics replay therefore grows as O(N^2).
                     # Return the existing pointer without creating graph work.
                     state = self.preference_repo.get_profile_state(
-                        tenant_id=tenant_id, actor_open_id=actor_open_id
+                        tenant_id=tenant_id,
+                        actor_open_id=actor_open_id,
+                        scope_key=scope_key,
                     )
                     profile = (
                         self._profile_result(state)
                         if state is not None and state.get("profile_resource_id")
                         else self._rebuild_profile(
-                            tenant_id=tenant_id, actor_open_id=actor_open_id
+                            tenant_id=tenant_id,
+                            actor_open_id=actor_open_id,
+                            scope_key=scope_key,
+                            writing_context=writing_context,
                         )
                     )
         return {
@@ -665,32 +764,57 @@ class PreferenceLearningService:
             "input_digest": str(state["input_digest"]),
         }
 
-    def rebuild_profile(self, *, tenant_id: str, actor_open_id: str) -> dict[str, Any]:
+    def rebuild_profile(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        writing_context: WritingContext | None = None,
+    ) -> dict[str, Any]:
+        context = writing_context or WritingContext()
         with self.resource_repo.unit_of_work():
             self.preference_repo.acquire_actor_lock(
                 tenant_id=tenant_id, actor_open_id=actor_open_id
             )
-            return self._rebuild_profile(tenant_id=tenant_id, actor_open_id=actor_open_id)
+            return self._rebuild_profile(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                scope_key=context.scope_key,
+                writing_context=context,
+            )
 
-    def _rebuild_profile(self, *, tenant_id: str, actor_open_id: str) -> dict[str, Any]:
+    def _rebuild_profile(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        scope_key: str = GLOBAL_SCOPE_KEY,
+        writing_context: WritingContext | None = None,
+    ) -> dict[str, Any]:
+        context = writing_context or WritingContext()
         observations = self.preference_repo.list_observations(
-            tenant_id=tenant_id, actor_open_id=actor_open_id
+            tenant_id=tenant_id, actor_open_id=actor_open_id, scope_key=scope_key
         )
         profile = rebuild_preference_profile(actor_open_id, observations)
+        profile["writing_context"] = context.payload()
         state = self.preference_repo.get_profile_state(
-            tenant_id=tenant_id, actor_open_id=actor_open_id
+            tenant_id=tenant_id, actor_open_id=actor_open_id, scope_key=scope_key
         )
         profile_resource_id = (
             str(state["profile_resource_id"])
             if state and state.get("profile_resource_id")
-            else str(uuid.uuid5(_PROFILE_NAMESPACE, f"{tenant_id}:{actor_open_id}"))
+            else str(uuid.uuid5(_PROFILE_NAMESPACE, f"{tenant_id}:{actor_open_id}:{scope_key}"))
         )
         resource = self.resource_repo.upsert_resource(
             tenant_id=tenant_id,
             actor_open_id=actor_open_id,
             resource_id=profile_resource_id,
             resource_type="writing_preference_profile",
-            title="我的写作偏好画像",
+            title=(
+                "我的全局写作偏好画像"
+                if scope_key == GLOBAL_SCOPE_KEY
+                else "我的账号/垂类写作偏好画像"
+            ),
             summary=f"基于 {profile['observation_count']} 条确定性行为事实重建",
             content_text=_profile_content_text(profile),
             content_json=profile,
@@ -718,6 +842,7 @@ class PreferenceLearningService:
             input_digest=profile["input_digest"],
             observation_count=profile["observation_count"],
             profile=profile,
+            scope_key=scope_key,
         )
         return {
             "resource_id": str(resource.id),
@@ -732,123 +857,182 @@ class PreferenceLearningService:
         tenant_id: str,
         actor_open_id: str,
         minimum_families: int = MIN_PATTERN_FAMILIES,
+        writing_context: WritingContext | None = None,
     ) -> list[dict[str, Any]]:
         saved: list[dict[str, Any]] = []
         with self.resource_repo.unit_of_work():
             self.preference_repo.acquire_actor_lock(
                 tenant_id=tenant_id, actor_open_id=actor_open_id
             )
-            assets = self.preference_repo.list_eligible_assets(
-                tenant_id=tenant_id, actor_open_id=actor_open_id
-            )
-            candidates = synthesize_pattern_candidates(
-                assets, minimum_families=minimum_families
-            )
-            existing_patterns = {
-                str(row["content_json"].get("pattern_key") or ""): row
-                for row in self.preference_repo.list_actor_patterns(
+            contexts = [writing_context] if writing_context is not None else [
+                WritingContext(),
+                *self.preference_repo.list_eligible_contexts(
                     tenant_id=tenant_id, actor_open_id=actor_open_id
-                )
-                if isinstance(row.get("content_json"), dict)
-                and str(row["content_json"].get("pattern_key") or "").strip()
+                ),
+            ]
+            unique_contexts = {
+                context.scope_key: context
+                for context in contexts
+                if isinstance(context, WritingContext)
             }
-            active_pattern_keys: set[str] = set()
-            for candidate in candidates:
-                active_pattern_keys.add(candidate.pattern_key)
-                resource_id = str(
-                    uuid.uuid5(
-                        _PATTERN_NAMESPACE,
-                        f"{tenant_id}:{actor_open_id}:{candidate.pattern_key}",
-                    )
-                )
-                source_authority = [
-                    {
-                        **asset.source.payload(),
-                        "duplicate_family_id": asset.duplicate_family_id,
-                        "visibility": asset.visibility,
-                        "quality_score": asset.quality_score,
-                        "performance_score": asset.performance_score,
-                    }
-                    for asset in candidate.sources
-                ]
-                content_json = {
-                    "schema_version": PATTERN_SCHEMA_VERSION,
-                    "pattern_key": candidate.pattern_key,
-                    "pattern_features": {
-                        "dimension": candidate.dimension,
-                        "value": candidate.value,
-                    },
-                    "synthesis_threshold": minimum_families,
-                    "source_family_ids": list(candidate.source_family_ids),
-                    "source_authority": source_authority,
-                }
-                resource = self.resource_repo.upsert_resource(
-                    tenant_id=tenant_id,
-                    actor_open_id=actor_open_id,
-                    resource_id=resource_id,
-                    resource_type="writing_pattern",
-                    title=f"写作模式 · {candidate.dimension} · {candidate.value}",
-                    summary=f"由 {len(candidate.sources)} 个独立素材家族确定性归纳",
-                    content_text=_pattern_content_text(candidate),
-                    content_json=content_json,
-                    visibility=candidate.visibility,
-                    owner_open_id=actor_open_id,
-                    outbox_requests=default_write_requests(),
-                )
-                pattern_version = int(resource.version)
-                for asset in candidate.sources:
-                    self.resource_repo.add_edge(
+            for scope_key in sorted(unique_contexts):
+                saved.extend(
+                    self._synthesize_pattern_scope(
                         tenant_id=tenant_id,
-                        source_resource_id=str(resource.id),
-                        source_resource_version=pattern_version,
-                        target_resource_id=asset.source.resource_id,
-                        target_resource_version=asset.source.resource_version,
-                        edge_type="synthesized_from",
-                        weight=1.0,
+                        actor_open_id=actor_open_id,
+                        minimum_families=minimum_families,
+                        writing_context=unique_contexts[scope_key],
                     )
-                saved.append(
-                    {
-                        "resource_id": str(resource.id),
-                        "resource_version": pattern_version,
-                        "pattern_key": candidate.pattern_key,
-                        "visibility": candidate.visibility,
-                        "source_family_count": len(candidate.sources),
-                        "status": "active",
-                    }
                 )
-            for pattern_key, previous in existing_patterns.items():
-                if pattern_key in active_pattern_keys or previous.get("status") != "active":
-                    continue
-                retired_content = {
-                    **dict(previous.get("content_json") or {}),
-                    "retired_reason": "CURRENT_READABLE_EVIDENCE_NO_LONGER_MEETS_THRESHOLD",
+        return saved
+
+    def _synthesize_pattern_scope(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        minimum_families: int,
+        writing_context: WritingContext,
+    ) -> list[dict[str, Any]]:
+        assets = self.preference_repo.list_eligible_assets(
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            writing_context=writing_context,
+        )
+        candidates = synthesize_pattern_candidates(
+            assets, minimum_families=minimum_families
+        )
+        existing_patterns = {
+            str(row["content_json"].get("pattern_key") or ""): row
+            for row in self.preference_repo.list_actor_patterns(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                scope_key=writing_context.scope_key,
+            )
+            if isinstance(row.get("content_json"), dict)
+            and str(row["content_json"].get("pattern_key") or "").strip()
+        }
+        saved: list[dict[str, Any]] = []
+        active_pattern_keys: set[str] = set()
+        for candidate in candidates:
+            active_pattern_keys.add(candidate.pattern_key)
+            identity_suffix = (
+                candidate.pattern_key
+                if writing_context.is_global
+                else f"{writing_context.scope_key}:{candidate.pattern_key}"
+            )
+            resource_id = str(
+                uuid.uuid5(
+                    _PATTERN_NAMESPACE,
+                    f"{tenant_id}:{actor_open_id}:{identity_suffix}",
+                )
+            )
+            source_authority = [
+                {
+                    **asset.source.payload(),
+                    "duplicate_family_id": asset.duplicate_family_id,
+                    "visibility": asset.visibility,
+                    "quality_score": asset.quality_score,
+                    "performance_score": asset.performance_score,
                 }
-                retired = self.resource_repo.upsert_resource(
+                for asset in candidate.sources
+            ]
+            content_json = {
+                "schema_version": PATTERN_SCHEMA_VERSION,
+                "pattern_key": candidate.pattern_key,
+                "pattern_features": {
+                    "dimension": candidate.dimension,
+                    "value": candidate.value,
+                },
+                "synthesis_threshold": minimum_families,
+                "source_family_ids": list(candidate.source_family_ids),
+                "source_authority": source_authority,
+                "writing_context": writing_context.payload(),
+            }
+            resource = self.resource_repo.upsert_resource(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=resource_id,
+                resource_type="writing_pattern",
+                title=f"写作模式 · {candidate.dimension} · {candidate.value}",
+                summary=f"由 {len(candidate.sources)} 个独立素材家族确定性归纳",
+                content_text=_pattern_content_text(candidate),
+                content_json=content_json,
+                visibility=candidate.visibility,
+                owner_open_id=actor_open_id,
+                outbox_requests=default_write_requests(),
+            )
+            pattern_version = int(resource.version)
+            connection = getattr(self.resource_repo, "conn", None)
+            if not writing_context.is_global and callable(
+                getattr(connection, "execute", None)
+            ):
+                from data_foundation.repositories.account import AccountRepository
+
+                AccountRepository(connection).attach_resource_context(
                     tenant_id=tenant_id,
                     actor_open_id=actor_open_id,
-                    resource_id=str(previous["resource_id"]),
-                    resource_type="writing_pattern",
-                    title=str(previous.get("title") or "写作模式"),
-                    summary=str(previous.get("summary") or "证据已失效的写作模式"),
-                    content_text=str(previous.get("content_text") or ""),
-                    content_json=retired_content,
-                    status="inactive",
-                    visibility=normalize_visibility(str(previous.get("visibility") or "private")),
-                    owner_open_id=actor_open_id,
-                    outbox_requests=default_write_requests(),
+                    resource_id=str(resource.id),
+                    resource_version=pattern_version,
+                    context=writing_context,
+                    source="source_metadata",
                 )
-                saved.append(
-                    {
-                        "resource_id": str(retired.id),
-                        "resource_version": int(retired.version),
-                        "pattern_key": pattern_key,
-                        "visibility": normalize_visibility(
-                            str(previous.get("visibility") or "private")
-                        ),
-                        "source_family_count": 0,
-                        "status": "retired",
-                    }
+            for asset in candidate.sources:
+                self.resource_repo.add_edge(
+                    tenant_id=tenant_id,
+                    source_resource_id=str(resource.id),
+                    source_resource_version=pattern_version,
+                    target_resource_id=asset.source.resource_id,
+                    target_resource_version=asset.source.resource_version,
+                    edge_type="synthesized_from",
+                    weight=1.0,
                 )
+            saved.append(
+                {
+                    "resource_id": str(resource.id),
+                    "resource_version": pattern_version,
+                    "pattern_key": candidate.pattern_key,
+                    "visibility": candidate.visibility,
+                    "source_family_count": len(candidate.sources),
+                    "status": "active",
+                    "writing_context": writing_context.payload(),
+                }
+            )
+        for pattern_key, previous in existing_patterns.items():
+            if pattern_key in active_pattern_keys or previous.get("status") != "active":
+                continue
+            retired_content = {
+                **dict(previous.get("content_json") or {}),
+                "retired_reason": "CURRENT_READABLE_EVIDENCE_NO_LONGER_MEETS_THRESHOLD",
+                "writing_context": writing_context.payload(),
+            }
+            retired = self.resource_repo.upsert_resource(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                resource_id=str(previous["resource_id"]),
+                resource_type="writing_pattern",
+                title=str(previous.get("title") or "写作模式"),
+                summary=str(previous.get("summary") or "证据已失效的写作模式"),
+                content_text=str(previous.get("content_text") or ""),
+                content_json=retired_content,
+                status="inactive",
+                visibility=normalize_visibility(str(previous.get("visibility") or "private")),
+                owner_open_id=actor_open_id,
+                outbox_requests=default_write_requests(),
+            )
+            saved.append(
+                {
+                    "resource_id": str(retired.id),
+                    "resource_version": int(retired.version),
+                    "pattern_key": pattern_key,
+                    "visibility": normalize_visibility(
+                        str(previous.get("visibility") or "private")
+                    ),
+                    "source_family_count": 0,
+                    "status": "retired",
+                    "writing_context": writing_context.payload(),
+                }
+            )
         return saved
 
     def mark_synthesis_completed(
@@ -864,12 +1048,40 @@ class PreferenceLearningService:
             requested_revision=requested_revision,
         )
 
-    def get_profile(self, *, tenant_id: str, actor_open_id: str) -> dict[str, Any]:
+    def get_profile(
+        self,
+        *,
+        tenant_id: str,
+        actor_open_id: str,
+        writing_context: WritingContext | None = None,
+    ) -> dict[str, Any]:
+        context = writing_context or WritingContext()
+        if context.account_id is not None:
+            self.account_repo.assert_owned_context(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                context=context,
+            )
         state = self.preference_repo.get_profile_state(
-            tenant_id=tenant_id, actor_open_id=actor_open_id
+            tenant_id=tenant_id,
+            actor_open_id=actor_open_id,
+            scope_key=context.scope_key,
         )
+        resolved_scope = context.scope_key
+        if state is None and context.scope_key != GLOBAL_SCOPE_KEY:
+            state = self.preference_repo.get_profile_state(
+                tenant_id=tenant_id,
+                actor_open_id=actor_open_id,
+                scope_key=GLOBAL_SCOPE_KEY,
+            )
+            resolved_scope = GLOBAL_SCOPE_KEY
         if state is None:
-            return {"ok": True, "profile": None}
+            return {
+                "ok": True,
+                "profile": None,
+                "requested_scope": context.scope_key,
+                "resolved_scope": None,
+            }
         resource = self.resource_repo.get_resource_version(
             tenant_id,
             actor_open_id,
@@ -885,6 +1097,8 @@ class PreferenceLearningService:
                 "resource_version": int(resource.version),
                 "observation_count": int(state["observation_count"]),
                 "content": dict(resource.content_json or {}),
+                "requested_scope": context.scope_key,
+                "resolved_scope": resolved_scope,
             },
         }
 
@@ -906,6 +1120,15 @@ class PreferenceLearningService:
         snapshot = dict(resource.content_json or {})
         snapshot.setdefault("title", resource.title)
         snapshot.setdefault("content_text", resource.content_text or "")
+        # resource_contexts 是精确版本上下文的唯一真源。即使 content_json 中残留了
+        # 生成时的旧字段，排期绑定后的生命周期事实也必须进入权威账号范围。
+        context = self.account_repo.get_resource_context(
+            tenant_id=tenant_id,
+            resource_id=source.resource_id,
+            resource_version=source.resource_version,
+            actor_open_id=actor_open_id,
+        )
+        snapshot["resource_context"] = context.payload()
         return snapshot
 
 
@@ -960,7 +1183,25 @@ def _metric_signal(payload: Mapping[str, Any]) -> dict[str, Any]:
         pass
     else:
         exact_sources.append(metric_source.payload())
-    return {"metrics": metrics, "score": score, "exact_sources": exact_sources}
+    normalized = payload.get("normalized_performance")
+    normalized = dict(normalized) if isinstance(normalized, Mapping) else {}
+    if not normalized:
+        rebuilt = normalize_performance(
+            metrics,
+            published_at=payload.get("published_at"),
+        )
+        normalized = rebuilt.payload()
+        score = rebuilt.score
+    confidence = normalized.get("confidence")
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not math.isfinite(confidence):
+        confidence = 0.0
+    return {
+        "metrics": metrics,
+        "score": score,
+        "confidence": max(0.0, min(float(confidence), 1.0)),
+        "learning_eligible": normalized.get("learning_eligible") is True,
+        "exact_sources": exact_sources,
+    }
 
 
 def _observation_weight(observation: PreferenceObservation) -> float:
@@ -968,9 +1209,30 @@ def _observation_weight(observation: PreferenceObservation) -> float:
     if observation.event_type != "metric":
         return base
     signal = dict(observation.payload.get("signal") or {})
-    score = signal.get("score")
-    factor = _metric_outcome_factor(score)
+    factor = _metric_signal_factor(signal)
     return base * factor
+
+
+def _metric_signal_factor(signal: Mapping[str, Any]) -> float:
+    if signal.get("learning_eligible") is not True:
+        return 0.0
+    confidence = signal.get("confidence")
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not math.isfinite(confidence)
+    ):
+        return 0.0
+    return _metric_outcome_factor(signal.get("score")) * max(
+        0.0, min(float(confidence), 1.0)
+    )
+
+
+def _metric_lifecycle_factor(signal: Mapping[str, Any]) -> float:
+    # 缺曝光/观察窗不足是“证据未知”，不能把已经采纳、发布的正向事实归零。
+    if signal.get("learning_eligible") is not True:
+        return 1.0
+    return _metric_signal_factor(signal)
 
 
 def _metric_outcome_factor(score: Any) -> float:
@@ -981,8 +1243,6 @@ def _metric_outcome_factor(score: Any) -> float:
         or score < MIN_PATTERN_PERFORMANCE
     ):
         return 0.0
-    # score 可能是有 views 时的互动率，也可能是无 views 时的绝对互动量。
-    # 饱和函数同时兼容两种量纲：低效果接近 0，高效果趋近基础权重但不无限放大。
     return float(score) / (float(score) + METRIC_SCORE_PIVOT)
 
 
@@ -1010,6 +1270,16 @@ def _feedback_signal(
         "feedback_type": _text(payload.get("feedback_type")),
         "traits": sorted(traits),
     }
+
+
+def _pairwise_bias_weight(signal: Mapping[str, Any]) -> float:
+    chosen = signal.get("chosen_ordinal")
+    rejected = signal.get("rejected_ordinal")
+    if not isinstance(chosen, int) or not isinstance(rejected, int):
+        return 1.0
+    # 选中后位版本说明偏好克服了首位展示优势；首位胜出则适度降权，避免把位置偏差
+    # 误学成强烈内容厌恶。原始 ordinal 同时永久保存，可离线重估 propensity。
+    return 1.15 if chosen > rejected else 0.7 if chosen < rejected else 1.0
 
 
 def _weighted_range(values: list[tuple[float, float]]) -> dict[str, float | int]:
